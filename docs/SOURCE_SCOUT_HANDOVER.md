@@ -1,9 +1,9 @@
 # Source Scout handover — 2026-10-30
 
 The user asked to stop at a good point and leave a handover. This is a tested Source Scout foundation; the larger
-Source Scout and research-team roadmap remains open. **The changes in this handover have not been deployed to
-production.** The live server at `10.0.10.73:6646` still runs the previous code release `880f732` (Hub P0), with
-its worker and downloader running. The public endpoint is `https://wc.tdgs.org`.
+Source Scout and research-team roadmap remains open. **Deployed 2026-10-30:** `10.0.10.73:6646` (public endpoint
+`https://wc.tdgs.org`) runs `3668357` as image `watchcraft:3668357` (also tagged `latest`) for the API, worker and
+downloader. See "Deployment record" below.
 
 ## What is implemented
 
@@ -67,3 +67,31 @@ shared source polling, automatic adoption policies, AI relevance and investigati
 shared research-team experience. Scheduled Scout searches currently produce suggestions only, and there is no
 automatic repair or unapproved source registration. These limitations are also listed in `docs/WATCHCRAFT.md` and
 in the local `todo.md` (which is intentionally ignored by Git).
+
+## Deployment record — 2026-10-30
+
+- Local re-verification on `3668357`: backend 262 passed, 6 skipped; svelte-check 0 errors/warnings; production
+  build; 7 Playwright tests (Scout, access, navigation) passed.
+- Before rollout, prod API ran `880f732`; worker and downloader ran the `43f6230` image. Fresh online SQLite backup
+  (integrity `ok`) plus data extras, `.env`/compose config, live source tree and running-image record:
+  `/root/compose/watchcraft-backups/20261030T094200Z-pre-3668357`. Rollback image:
+  `watchcraft:rollback-20261030T094200Z-880f732`; `watchcraft:43f6230` is also retained. Media directory
+  `/mnt/local/localstorage/watchcraft` was not copied (unchanged by this release). `compose.host.yaml` checksum
+  verified unchanged.
+- Isolated restore of that backup ran `watchcraft:3668357` on `127.0.0.1:6699`, started twice: integrity `ok`,
+  6 profiles / 4822 videos / 115 history rows / 17 categories preserved, `scoutplan` and `scoutrun` created.
+- Isolated acceptance from the server (real egress), temporary profiles removed afterwards: lwn.net feed discovered,
+  revalidated and attached to a curator; anthropic.com/news (no feed) produced an `html_listing` watcher with 35
+  sample links, accepted to a curator; non-HTTPS rejected; `127.0.0.1` yields no suggestions; cross-profile run/plan
+  access returns 404; plan create/pause/resume/delete; Scout milestones absent from global events; converting a
+  PIN-protected adult to child disabled its plan and returned 403 for Scout plans and research. The disposable
+  container and restored data were removed.
+- Topic search was **not** tested: no SearXNG/Brave provider is configured in production (returns the configuration
+  error as designed).
+- Deployed with `docker compose -p watchcraft -f compose.yaml -f compose.watchcraft.yaml -f compose.host.yaml up -d
+  --no-build --wait`: all containers healthy, local and public `/api/health` OK, live DB quick_check `ok` with Scout
+  tables, `/sources` 200 locally and publicly, Scout API 200, deployed frontend bundle matches the local build, and a
+  saved offline video served with HTTP 206 and decoded 3 s of distinct frames via ffmpeg.
+- Rollback: `docker tag watchcraft:rollback-20261030T094200Z-880f732 watchcraft:latest` and rerun the compose command
+  above (the new tables are additive and ignored by the old release). Restore the backup only if data must be reverted.
+- Still not done: physical TV remote pass and a real topic-search provider test.
