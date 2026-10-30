@@ -694,7 +694,8 @@ def caption_vtt(info: dict, key: str, origin: str = "user") -> str:
     if not track:
         raise YtUnavailable(f"no captions {key!r}")
     fmt, raw = fetch_track(track, origin, "captions")
-    return json3_to_vtt(raw) if fmt == "json3" else raw
+    from .captions import two_line_vtt
+    return two_line_vtt(raw, fmt, rolling=bool(track.get("auto")))
 
 
 def transcript(info: dict, max_chars: int, langs: list[str] | None = None, origin: str = "worker") -> str:

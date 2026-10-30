@@ -370,7 +370,7 @@
 		el.kind = 'subtitles';
 		el.srclang = c.lang;
 		el.label = c.name;
-		el.src = c.url;
+		el.src = `${c.url}${c.url.includes('?') ? '&' : '?'}layout=two-line-v1`;
 		el.default = true;
 		video.appendChild(el);
 		el.addEventListener('load', () => (el.track.mode = 'showing'));
@@ -938,7 +938,7 @@
 	}
 	video::cue {
 		font-family: var(--font);
-		font-size: clamp(1.1rem, 1.6vw, 2.2rem);
+		font-size: clamp(1.3rem, 1.9vw, 2.6rem);
 		background: rgba(0, 0, 0, 0.72);
 		color: #fff;
 		line-height: 1.3;
