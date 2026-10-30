@@ -175,7 +175,7 @@
 									<div class="test"><b>Recent checks</b>
 										{#if !checks[s.id].length}<span class="small muted">No recorded checks yet.</span>{/if}
 										{#each checks[s.id] as check (check.id)}
-											<span class="small" class:bad={check.status !== 'ok'}>{check.status === 'ok' ? 'Succeeded' : check.status === 'partial' ? 'Partially succeeded' : 'Failed'} · {check.trigger === 'test' ? 'connection test' : check.trigger === 'validation' ? 'Scout validation' : 'curator run'} · {ago(check.checked_at)} · {check.item_count} items{check.error ? ` · ${check.error}` : ''}</span>
+											<span class="small" class:bad={check.status !== 'ok'}>{check.status === 'ok' ? 'Succeeded' : check.status === 'partial' ? 'Partially succeeded' : 'Failed'} · {check.trigger === 'test' ? 'connection test' : check.trigger === 'validation' ? 'Scout validation' : check.trigger === 'shared' ? 'reused source fetch' : 'curator run'} · {ago(check.checked_at)} · {check.item_count} items{check.error ? ` · ${check.error}` : ''}</span>
 										{/each}
 									</div>
 								{/if}

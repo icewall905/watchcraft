@@ -12,13 +12,17 @@ test('page watcher history compares real retained observations', async ({ page, 
 		] });
 	});
 	await page.route(`**/api/hub/sources/${source.id}/checks`, async route => {
-		await route.fulfill({ json: [{ id: 1, checked_at: 1000000000, trigger: 'curator', status: 'partial', item_count: 2, error: 'Provider unavailable' }] });
+		await route.fulfill({ json: [
+			{ id: 2, checked_at: 1000000000, trigger: 'shared', status: 'ok', item_count: 2, error: '' },
+			{ id: 1, checked_at: 1000000000, trigger: 'curator', status: 'partial', item_count: 2, error: 'Provider unavailable' }
+		] });
 	});
 	try {
 		await freshPage(page, '/sources');
 		const row = page.locator('li.row').filter({ hasText: 'Release notes' });
 		await row.getByRole('button', { name: 'Check history' }).click();
 		await expect(row.getByText(/Partially succeeded.*Provider unavailable/)).toBeVisible();
+		await expect(row.getByText(/reused source fetch/)).toBeVisible();
 		await row.getByRole('button', { name: 'View history' }).click();
 		await row.getByText('Page changed', { exact: false }).click();
 		await expect(row.getByText('Title before:')).toBeVisible();

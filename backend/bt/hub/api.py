@@ -14,7 +14,7 @@ from ..access import hub_allowed, require_hub
 from ..api.core import profile_id
 from ..db import session
 from ..models import AgentEvent
-from . import ai, engine, scout, slots
+from . import ai, engine, polling, scout, slots
 from .models import (Alert, Briefing, BriefingIssue, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
                      CuratorRun, CuratorSource, ItemState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, Source, SourceCheck, Topic, TopicItem)
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
@@ -505,12 +505,20 @@ def test_source(sid: int, pid: int = Depends(profile_id)):
         engine.record_source_check(src, 'test', 0, reason)
         return {'ok': False, 'count': 0, 'sample': [], 'error': reason}
     try:
-        got = p.fetch(src.url, 'open source' if p.mode == 'query' else '')
+        checked_at = None
+        if p.mode == 'feed':
+            result = polling.fetch(p, src.url, engine._safe_error, force=True)
+            checked_at = result.fetched_at
+            if result.error:
+                raise ValueError(result.error)
+            got = result.items
+        else:
+            got = p.fetch(src.url, 'open source' if p.mode == 'query' else '')
     except Exception as e:  # noqa: BLE001
         err = engine._safe_error(e)
-        engine.record_source_check(src, 'test', 0, err)
+        engine.record_source_check(src, 'test', 0, err, checked_at)
         return {'ok': False, 'count': 0, 'sample': [], 'error': err}
-    engine.record_source_check(src, 'test', len(got))
+    engine.record_source_check(src, 'test', len(got), checked_at=checked_at)
     return {'ok': True, 'count': len(got), 'sample': [{'title': d.get('title', ''), 'url': d.get('url', '')} for d in got[:5]], 'error': ''}
 
 
@@ -789,7 +797,10 @@ def scout_accept(rid: int, body: ScoutAccept, pid: int = Depends(profile_id)):
         url = suggestion['url']
         provider = suggestion['provider']
     try:
-        items = PROVIDERS[provider].fetch(url, '')
+        validation = polling.fetch(PROVIDERS[provider], url, engine._safe_error, force=True)
+        if validation.error:
+            raise ValueError(validation.error)
+        items = validation.items
     except Exception:
         raise HTTPException(422, 'This source could not be validated again. Research the site again.')
     with session() as s:
@@ -798,12 +809,12 @@ def scout_accept(rid: int, body: ScoutAccept, pid: int = Depends(profile_id)):
         owned(s, ScoutRun, rid, pid)
         curator = owned(s, Curator, body.curator_id, pid) if body.curator_id is not None else None
         src = get_or_create_source(s, pid, provider, url, suggestion.get('name', ''))
-        src.last_checked = src.last_success = time.time(); src.last_error = ''; src.item_count = len(items)
+        src.last_checked = src.last_success = validation.fetched_at; src.last_error = ''; src.item_count = len(items)
         if curator and not s.get(CuratorSource, (curator.id, src.id)):
             s.add(CuratorSource(curator_id=curator.id, source_id=src.id))
         s.add(src); s.commit(); s.refresh(src)
         result = source_dict(s, src)
-    engine.record_source_check(src, 'validation', len(items))
+    engine.record_source_check(src, 'validation', len(items), checked_at=validation.fetched_at)
     return result
 
 

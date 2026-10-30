@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 from .. import curation
 from ..access import hub_allowed
 from ..db import engine as db_engine, get_settings, session
-from . import ai, slots
+from . import ai, polling, slots
 from .models import (Alert, Briefing, CollectionItem, ContentItem, Curator, CuratorDiscovery, CuratorRun,
                      CuratorSource, PageRevision, Source, SourceCheck, TopicItem)
 from .providers import PROVIDERS
@@ -23,7 +23,7 @@ SEVERITY = ['info', 'low', 'medium', 'high', 'critical']
 TRACKING = re.compile(r'^(utm_[a-z]+|fbclid|gclid|mc_cid|mc_eid|ref|ref_src)$', re.I)
 
 
-def record_page_revision(src: Source, data: dict) -> None:
+def record_page_revision(src: Source, data: dict, observed_at: float | None = None) -> None:
     """Record a changed observation, serializing concurrent checks of the same source."""
     title, body = data['title'], data['body']
     digest = hashlib.sha256((title + '\0' + body).encode()).hexdigest()
@@ -35,9 +35,12 @@ def record_page_revision(src: Source, data: dict) -> None:
             return
         last = s.exec(select(PageRevision).where(PageRevision.source_id == src.id)
                       .order_by(PageRevision.id.desc()).limit(1)).first()
+        if last and observed_at is not None and last.observed_at > observed_at:
+            return
         if last and last.digest == digest:
             return
-        s.add(PageRevision(source_id=src.id, profile_id=src.profile_id, digest=digest, title=title, body=body))
+        s.add(PageRevision(source_id=src.id, profile_id=src.profile_id, digest=digest, title=title, body=body,
+                           observed_at=observed_at if observed_at is not None else time.time()))
         s.flush()
         old = s.exec(select(PageRevision).where(PageRevision.source_id == src.id)
                      .order_by(PageRevision.id.desc()).offset(20)).all()
@@ -46,14 +49,16 @@ def record_page_revision(src: Source, data: dict) -> None:
         s.commit()
 
 
-def record_source_check(src: Source, trigger: str, count: int, error: str = '') -> bool:
+def record_source_check(src: Source, trigger: str, count: int, error: str = '', checked_at: float | None = None) -> bool:
     """Record a completed check only if its source and profile still match the request."""
     with session() as s:
         s.exec(text('BEGIN IMMEDIATE'))
         row = s.get(Source, src.id)
         if not row or row.profile_id != src.profile_id or row.url != src.url or not hub_allowed(s, src.profile_id):
             return False
-        now = time.time()
+        now = checked_at if checked_at is not None else time.time()
+        if row.last_checked is not None and row.last_checked > now:
+            return False
         status = 'partial' if error and count else 'failed' if error else 'ok'
         row.last_checked, row.last_error = now, error
         if status != 'failed':
@@ -227,15 +232,22 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         if not ok:
             record_source_check(src, 'curator', 0, reason)
             errors.append({'source': src.name or src.provider, 'message': reason}); continue
-        got, failed = 0, None
+        got, failed, checked_at, shared = 0, None, None, False
         for q in (queries if prov.mode == 'query' else ['']):
             with session() as s:
                 if not hub_allowed(s, c.profile_id):
                     raise ValueError('Hub access was restricted during the run.')
             try:
-                fetched = prov.fetch(src.url, q)
+                if prov.mode == 'feed':
+                    result = polling.fetch(prov, src.url, _safe_error, force=r.trigger == 'manual')
+                    checked_at, shared = result.fetched_at, result.shared
+                    if result.error:
+                        raise ValueError(result.error)
+                    fetched = result.items
+                else:
+                    fetched = prov.fetch(src.url, q)
                 if src.provider == 'page_watch':
-                    record_page_revision(src, fetched[0])
+                    record_page_revision(src, fetched[0], checked_at)
                 for d in fetched:
                     candidates.append((src, q, d)); got += 1
             except Exception as e:  # noqa: BLE001 — one source never fails the run
@@ -243,7 +255,7 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
                 failed = _safe_error(e)
         if prov.mode == 'query' and not queries:
             failed = 'No search queries configured.'
-        record_source_check(src, 'curator', got, failed or '')
+        record_source_check(src, 'shared' if shared else 'curator', got, failed or '', checked_at)
         if failed:
             errors.append({'source': src.name or src.provider, 'message': failed})
 

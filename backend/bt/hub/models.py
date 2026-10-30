@@ -94,6 +94,16 @@ class SourceCheck(SQLModel, table=True):
     error: str = ''
 
 
+class SourcePoll(SQLModel, table=True):
+    """Shared raw public-feed responses; never contains curator/profile interpretation."""
+    key: str = Field(primary_key=True)
+    fetched_at: float = 0
+    items: list = J()
+    error: str = ''
+    lease_until: float = 0
+    lease_token: str = ''
+
+
 class ScoutPlan(SQLModel, table=True):
     __table_args__ = (UniqueConstraint('profile_id', 'query'),)
     id: Optional[int] = Field(default=None, primary_key=True)

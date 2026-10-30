@@ -490,12 +490,12 @@ def test_page_watcher_records_changes_and_is_profile_scoped(client, monkeypatch)
     assert len(client.get(f'/api/hub/sources/{sid}/revisions').json()) == 1
     html['body'] = b'<html><title>Release notes</title><main>Version two</main></html>'
     client.post(f"/api/hub/curators/{curator['id']}/run")
-    assert hub.run(curator['id']).new_items == 0
+    assert hub.run(curator['id'], 'manual').new_items == 0
     revisions = client.get(f'/api/hub/sources/{sid}/revisions').json()
     assert len(revisions) == 2 and 'Version two' in revisions[0]['body']
     html['body'] = b'<html><script>unreadable</script></html>'
     client.post(f"/api/hub/curators/{curator['id']}/run")
-    assert hub.run(curator['id']).status == 'failed'
+    assert hub.run(curator['id'], 'manual').status == 'failed'
     assert len(client.get(f'/api/hub/sources/{sid}/revisions').json()) == 2
     other = client.post('/api/profiles', json={'name': 'Other'}).json()
     assert client.get(f'/api/hub/sources/{sid}/revisions', headers={'X-Profile-Id': str(other['id'])}).status_code == 404

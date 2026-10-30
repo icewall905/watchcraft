@@ -107,7 +107,7 @@ same-host HTTPS URLs, ordered by last-modified date when present. Entries use UR
 and do not track changes to existing entries; large undated sitemaps may omit new entries. The scheduler claims due work atomically,
 limits concurrent jobs, and disables plans when a profile becomes child-restricted. A run examines at most three search
 results and five feed candidates per site; results can miss relevant sources. AI-generated watcher rules, automatic
-source adoption, complete sitemap index traversal, advanced page-change/browser watchers, repair, shared polling and automated relevance scoring remain
+source adoption, complete sitemap index traversal, advanced page-change/browser watchers, repair and automated relevance scoring remain
 planned. This is a foundation, not the full autonomous research-team roadmap.
 
 ### Page change watcher
@@ -123,7 +123,7 @@ or when the source URL changes. Pausing the source or detaching it from curators
 This is basic text comparison, not a semantic change detector: dynamic page content may cause noise, navigation and
 scripts are excluded, only the first 20,000 extracted characters are compared, and JavaScript rendering is not
 supported. Changes appear in source history, not as new Discover items or notifications. Polling is per curator;
-shared polling and configurable extraction rules remain planned. The revision table is additive and is created at
+configurable extraction rules remain planned. The revision table is additive and is created at
 startup, so follow the backup and restore procedure before deploying.
 
 ### Source check history
@@ -132,6 +132,19 @@ Each source can show its latest 20 recorded checks, including curator runs, conn
 validation. A multi-query run that returns results but also fails a query is marked partial, with the error retained.
 Older checks from before this feature are not reconstructed. History belongs to the source's profile and is removed
 with the source or profile, or when its URL changes. This history does not yet diagnose trends or repair sources.
+
+### Shared source polling
+
+Scheduled curators reuse a successful feed response for up to five minutes when the provider and exact endpoint
+match. Only raw public feed results are shared; each profile keeps its own sources, scoring, discoveries, page history
+and access rules. Query providers run independently. Manual curator runs, connection tests and Scout acceptance
+request a fresh response; concurrent requests can reuse a fetch completed after their request began.
+
+The latest 256 completed endpoint responses are stored in an additive `sourcepoll` table, with a two-megabyte limit
+per response. Failed fetches are reused for at most 30 seconds to avoid retry storms. A database lease prevents
+duplicate concurrent polls, is renewed during slow fetches, and expires after three minutes if a process dies. Waiting
+checks stop after 190 seconds. History labels reused results and keeps the original fetch timestamp; reuse does not
+pretend a new network check happened. Successful results survive API restarts until their five-minute freshness expires.
 
 ## Agent Activity and parallel agents
 
@@ -199,7 +212,7 @@ checks without changing production PINs or child profiles. The live acceptance t
 The navigation fix also passed local player-error and playlist Back tests. Physical TV remote acceptance and live
 external-provider acceptance are still outstanding.
 
-PLANNED: advanced Source Scout and declarative watchers, shared source polling, persistent team activity, Scout Report, home layout
+PLANNED: advanced Source Scout and declarative watchers, persistent team activity, Scout Report, home layout
 presets, Meme Radar and the remaining advanced capabilities in `todo.md`. Existing item pages, collections, News
 grouping, cited reports and search filters already provide parts of the P4 experience; they must be extended in place.
 
