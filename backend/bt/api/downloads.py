@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlmodel import Session, col, select
 
 from ..db import get_kv, get_session, get_settings
+from ..access import require_admin
 from ..downloader.service import GB, delete_files, used_bytes
 from ..models import Download, ReencodeJob, Video, now
 from .core import profile_id, video_out
@@ -49,7 +50,7 @@ class DownloadIn(BaseModel):
     video_id: str
 
 
-@router.post("/downloads/reencode")
+@router.post("/downloads/reencode", dependencies=[Depends(require_admin)])
 def queue_reencode(s: Session = Depends(get_session)):
     """Queue saved copies that have not already been re-encoded; retry failed jobs."""
     n = 0

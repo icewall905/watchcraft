@@ -58,6 +58,7 @@ def protect_admin(client):
     ('post', '/api/agent/llm-models', {}),
     ('post', '/api/agent/llm-test', {}),
     ('post', '/api/proxy/test', {}),
+    ('post', '/api/downloads/reencode', {}),
     ('post', '/api/profiles', {'name': 'Impersonator', 'role': 'admin'}),
 ])
 def test_adult_cannot_change_shared_configuration(client, method, path, body):
