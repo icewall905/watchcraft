@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { focusable } from '$lib/nav';
+	import SourceScout from '$lib/hub/SourceScout.svelte';
 	import Modal from '$lib/components/Modal.svelte';
 	import Select from '$lib/components/form/Select.svelte';
 	import TextField from '$lib/components/form/TextField.svelte';
@@ -66,6 +67,8 @@
 		<h1>Where WatchCraft is allowed to look</h1>
 		<p class="muted">Curators can only visit what is listed here. Public sources only. Nothing is fetched outside these providers.</p>
 	</header>
+
+	<SourceScout onAdded={load} />
 
 	{#if error}<ErrorBox message={error} onretry={load} />{/if}
 

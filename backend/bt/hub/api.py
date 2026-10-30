@@ -10,12 +10,13 @@ from sqlalchemy import func, or_, text
 from sqlmodel import Session, delete, select
 
 from .. import curation
-from ..access import require_hub
+from ..access import hub_allowed, require_hub
 from ..api.core import profile_id
 from ..db import session
-from . import ai, engine
+from ..models import AgentEvent
+from . import ai, engine, scout
 from .models import (Alert, Briefing, BriefingIssue, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
-                     CuratorRun, CuratorSource, ItemState, SavedSearch, Source, Topic, TopicItem)
+                     CuratorRun, CuratorSource, ItemState, SavedSearch, ScoutPlan, ScoutRun, Source, Topic, TopicItem)
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
 from .templates import TEMPLATES
 
@@ -487,6 +488,207 @@ def test_source(sid: int, pid: int = Depends(profile_id)):
     with session() as s:
         row = s.get(Source, sid); row.last_checked = row.last_success = time.time(); row.last_error = ''; s.add(row); s.commit()
     return {'ok': True, 'count': len(got), 'sample': [{'title': d.get('title', ''), 'url': d.get('url', '')} for d in got[:5]], 'error': ''}
+
+
+# ---------- Source Scout
+
+class ScoutInput(BaseModel):
+    query: str = Input(min_length=1, max_length=2000)
+
+
+class ScoutAccept(BaseModel):
+    index: int = Input(ge=0, le=14)
+    curator_id: int | None = None
+
+
+def _scout_events(s: Session, pid: int, rid: int):
+    events = s.exec(select(AgentEvent).where(AgentEvent.kind == 'source_scout', AgentEvent.profile_id == pid,
+                                             AgentEvent.payload['scout_run_id'].as_integer() == rid)
+                    .order_by(AgentEvent.id)).all()
+    from datetime import timezone
+    return [{'kind': e.payload.get('step', ''), 'message': e.message,
+             'at': e.ts.replace(tzinfo=timezone.utc).timestamp()} for e in events]
+
+
+def _scout_dict(s: Session, row: ScoutRun):
+    return {**row.model_dump(), 'events': _scout_events(s, row.profile_id, row.id)}
+
+
+def _delete_scout_events(s: Session, pid: int, rid: int):
+    s.exec(delete(AgentEvent).where(AgentEvent.kind == 'source_scout', AgentEvent.profile_id == pid,
+                                    AgentEvent.payload['scout_run_id'].as_integer() == rid))
+
+
+def _expire_scout_runs(s: Session):
+    # A crashed process cannot leave research permanently running. Normal requests have a bounded fetch budget.
+    stale = s.exec(select(ScoutRun).where(ScoutRun.status == 'running', ScoutRun.created_at < time.time() - 600)).all()
+    for row in stale:
+        row.status = 'failed'; row.error = 'Research was interrupted. Please try again.'; row.finished_at = time.time()
+        s.add(row)
+
+
+class ScoutPlanInput(BaseModel):
+    query: str = Input(min_length=1, max_length=2000)
+    interval_hours: int = Input(ge=24, le=168)
+
+
+class ScoutPlanUpdate(BaseModel):
+    enabled: bool | None = None
+    interval_hours: int | None = Input(default=None, ge=24, le=168)
+
+
+@router.get('/scout/plans')
+def scout_plans(pid: int = Depends(profile_id)):
+    with session() as s:
+        return [r.model_dump() for r in s.exec(select(ScoutPlan).where(ScoutPlan.profile_id == pid)
+                                               .order_by(ScoutPlan.created_at.desc())).all()]
+
+
+@router.post('/scout/plans')
+def scout_plan_create(body: ScoutPlanInput, pid: int = Depends(profile_id)):
+    query = body.query.strip()
+    if not query: raise HTTPException(422, 'Enter a topic or HTTPS website URL.')
+    if '://' in query and not query.lower().startswith('https://'):
+        raise HTTPException(422, 'Use a public HTTPS website URL.')
+    if query.lower().startswith('https://'):
+        try: curation.canonical(query)
+        except ValueError: raise HTTPException(422, 'Use a public HTTPS website URL.')
+    elif not PROVIDERS['web_search'].availability()[0]:
+        raise HTTPException(422, PROVIDERS['web_search'].availability()[1])
+    with session() as s:
+        s.exec(text('BEGIN IMMEDIATE'))
+        row = s.exec(select(ScoutPlan).where(ScoutPlan.profile_id == pid, ScoutPlan.query == query)).first()
+        if not row:
+            if len(s.exec(select(ScoutPlan.id).where(ScoutPlan.profile_id == pid)).all()) >= 20:
+                raise HTTPException(422, 'Maximum 20 scheduled Scout searches per profile.')
+            row = ScoutPlan(profile_id=pid, query=query)
+        row.enabled = True; row.interval_hours = body.interval_hours
+        row.next_run = time.time() + body.interval_hours * 3600
+        s.add(row); s.commit(); s.refresh(row)
+        return row.model_dump()
+
+
+@router.patch('/scout/plans/{plan_id}')
+def scout_plan_update(plan_id: int, body: ScoutPlanUpdate, pid: int = Depends(profile_id)):
+    with session() as s:
+        row = owned(s, ScoutPlan, plan_id, pid)
+        if body.interval_hours is not None: row.interval_hours = body.interval_hours
+        if body.enabled is not None: row.enabled = body.enabled
+        if row.enabled: row.next_run = time.time() + row.interval_hours * 3600
+        s.add(row); s.commit(); s.refresh(row)
+        return row.model_dump()
+
+
+@router.delete('/scout/plans/{plan_id}')
+def scout_plan_delete(plan_id: int, pid: int = Depends(profile_id)):
+    with session() as s:
+        row = owned(s, ScoutPlan, plan_id, pid)
+        s.delete(row); s.commit()
+        return {'ok': True}
+
+
+@router.get('/scout/runs')
+def scout_runs(pid: int = Depends(profile_id)):
+    with session() as s:
+        _expire_scout_runs(s); s.commit()
+        return [_scout_dict(s, r) for r in s.exec(select(ScoutRun).where(ScoutRun.profile_id == pid)
+                                               .order_by(ScoutRun.created_at.desc()).limit(50)).all()]
+
+
+@router.post('/scout/runs')
+def scout_run(body: ScoutInput, pid: int = Depends(profile_id)):
+    query = body.query.strip()
+    if not query: raise HTTPException(422, 'Enter a topic or HTTPS website URL.')
+    if '://' in query and not query.lower().startswith('https://'):
+        raise HTTPException(422, 'Use a public HTTPS website URL.')
+    if not query.lower().startswith('https://'):
+        ok, reason = PROVIDERS['web_search'].availability()
+        if not ok: raise HTTPException(422, reason)
+    with session() as s:
+        # Serialize check-and-create across API workers and bound the number of network jobs.
+        s.exec(text('BEGIN IMMEDIATE'))
+        _expire_scout_runs(s)
+        active = s.exec(select(ScoutRun).where(ScoutRun.status == 'running')).all()
+        if any(r.profile_id == pid for r in active):
+            raise HTTPException(409, 'A research run is already in progress for this profile.')
+        if len(active) >= 4:
+            raise HTTPException(429, 'Source Scout is busy. Try again shortly.')
+        old = s.exec(select(ScoutRun).where(ScoutRun.profile_id == pid, ScoutRun.status != 'running')
+                     .order_by(ScoutRun.created_at.desc()).offset(49)).all()
+        for row in old:
+            _delete_scout_events(s, pid, row.id); s.delete(row)
+        run = ScoutRun(profile_id=pid, query=query)
+        s.add(run); s.commit(); s.refresh(run)
+        rid = run.id
+    def emit(kind, message):
+        # Short-lived transactions let other requests see real progress during network calls.
+        with session() as s:
+            row = s.get(ScoutRun, rid)
+            if not row or row.status != 'running': raise ValueError('Research is no longer active.')
+            if not hub_allowed(s, pid): raise ValueError('Profile access was restricted.')
+            s.add(AgentEvent(kind='source_scout', profile_id=pid, message=message,
+                             payload={'scout_run_id': rid, 'step': kind}))
+            s.commit()
+    try:
+        suggestions, sitemaps = scout.research(query, emit)
+        if sitemaps: emit('sitemaps', f'Found {len(sitemaps)} sitemap links; sitemap monitoring is not available yet.')
+        emit('complete', f'Found {len(suggestions)} validated sources.')
+        with session() as s:
+            row = s.get(ScoutRun, rid)
+            if not row: raise HTTPException(404, 'Research run not found')
+            if row.status != 'running': raise HTTPException(409, 'Research was interrupted.')
+            row.suggestions = suggestions; row.sitemaps = sitemaps; row.status = 'complete'; row.finished_at = time.time()
+            s.add(row); s.commit(); s.refresh(row)
+            return _scout_dict(s, row)
+    except HTTPException:
+        raise
+    except Exception:
+        with session() as s:
+            row = s.get(ScoutRun, rid)
+            if row:
+                row.status = 'failed'; row.error = 'Research could not be completed.'; row.finished_at = time.time()
+                s.add(row); s.commit(); s.refresh(row)
+                return _scout_dict(s, row)
+        raise HTTPException(404, 'Research run not found')
+
+
+@router.post('/scout/runs/{rid}/accept')
+def scout_accept(rid: int, body: ScoutAccept, pid: int = Depends(profile_id)):
+    with session() as s:
+        run = owned(s, ScoutRun, rid, pid)
+        if run.status != 'complete' or body.index >= len(run.suggestions):
+            raise HTTPException(422, 'No validated suggestion at that position.')
+        suggestion = run.suggestions[body.index]
+        if suggestion.get('provider') not in ('rss', 'html_listing') or suggestion.get('validated') is not True:
+            raise HTTPException(422, 'This suggestion is not a validated feed.')
+        if body.curator_id is not None: owned(s, Curator, body.curator_id, pid)
+        url = suggestion['url']
+        provider = suggestion['provider']
+    try:
+        items = PROVIDERS[provider].fetch(url, '')
+    except Exception:
+        raise HTTPException(422, 'This source could not be validated again. Research the site again.')
+    with session() as s:
+        if not hub_allowed(s, pid):
+            raise HTTPException(403, 'Hub discovery and research are unavailable for this profile.')
+        owned(s, ScoutRun, rid, pid)
+        curator = owned(s, Curator, body.curator_id, pid) if body.curator_id is not None else None
+        src = get_or_create_source(s, pid, provider, url, suggestion.get('name', ''))
+        src.last_checked = src.last_success = time.time(); src.last_error = ''; src.item_count = len(items)
+        if curator and not s.get(CuratorSource, (curator.id, src.id)):
+            s.add(CuratorSource(curator_id=curator.id, source_id=src.id))
+        s.add(src); s.commit(); s.refresh(src)
+        return source_dict(s, src)
+
+
+@router.delete('/scout/runs/{rid}')
+def scout_delete(rid: int, pid: int = Depends(profile_id)):
+    with session() as s:
+        row = owned(s, ScoutRun, rid, pid)
+        if row.status == 'running': raise HTTPException(409, 'Wait until research finishes.')
+        _delete_scout_events(s, pid, rid)
+        s.delete(row); s.commit()
+        return {'ok': True}
 
 
 # ---------- curators
@@ -1015,5 +1217,6 @@ def delete_profile_data(s: Session, pid: int) -> None:
     s.exec(delete(BriefingIssue).where(BriefingIssue.briefing_id.in_(bids or [0])))
     s.exec(delete(CollectionItem).where(CollectionItem.collection_id.in_(colls or [0])))
     s.exec(delete(TopicItem).where(TopicItem.topic_id.in_(tids or [0])))
-    for model in (CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, Source, Curator):
+    s.exec(delete(AgentEvent).where(AgentEvent.kind == 'source_scout', AgentEvent.profile_id == pid))
+    for model in (CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, Source, Curator, ScoutRun, ScoutPlan):
         s.exec(delete(model).where(model.profile_id == pid))

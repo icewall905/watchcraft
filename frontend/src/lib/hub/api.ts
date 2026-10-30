@@ -2,7 +2,7 @@
 import { request } from '$lib/api';
 import type {
 	Alert, Briefing, Collection, Counts, Curator, CuratorDetail, CuratorInput, Issue, Item, ItemDetail, ItemState,
-	NewsGroup, Page, Registry, SavedSearch, SearchResult, Source, Template, Topic, TopicDetail, WebResult
+	NewsGroup, Page, Registry, SavedSearch, SearchResult, ScoutPlan, ScoutRun, Source, Template, Topic, TopicDetail, WebResult
 } from './types';
 
 type Params = Record<string, string | number | boolean | undefined | null>;
@@ -33,6 +33,14 @@ export const hub = {
 	addToCollection: (id: number, itemId: number) => send<{ ok: boolean }>('POST', `/collections/${id}/items/${itemId}`),
 	removeFromCollection: (id: number, itemId: number) => send<{ ok: boolean }>('DELETE', `/collections/${id}/items/${itemId}`),
 
+	scoutPlans: () => get<ScoutPlan[]>('/scout/plans'),
+	scoutPlan: (query: string, interval_hours: number) => send<ScoutPlan>('POST', '/scout/plans', { query, interval_hours }),
+	scoutPlanUpdate: (id: number, enabled: boolean) => send<ScoutPlan>('PATCH', `/scout/plans/${id}`, { enabled }),
+	scoutPlanDelete: (id: number) => send<{ ok: boolean }>('DELETE', `/scout/plans/${id}`),
+	scoutRuns: () => get<ScoutRun[]>('/scout/runs'),
+	scoutRun: (query: string) => send<ScoutRun>('POST', '/scout/runs', { query }),
+	scoutAccept: (id: number, index: number, curator_id: number | null) => send<Source>('POST', `/scout/runs/${id}/accept`, { index, curator_id }),
+	scoutDelete: (id: number) => send<{ ok: boolean }>('DELETE', `/scout/runs/${id}`),
 	sources: () => get<Source[]>('/sources'),
 	createSource: (body: Partial<Source>) => send<Source>('POST', '/sources', body),
 	updateSource: (id: number, body: Partial<Source>) => send<Source>('PATCH', `/sources/${id}`, body),

@@ -28,10 +28,10 @@ def canonical(url):
         raise ValueError('Use a public HTTPS URL on port 443.')
     return urlunsplit(('https', p.netloc.lower(), p.path or '/', p.query, ''))
 
-FEED_TYPES = ('application/atom+xml', 'application/rss+xml', 'application/xml', 'text/xml', 'application/json')
+FEED_TYPES = ('application/atom+xml', 'application/rss+xml', 'application/xml', 'text/xml', 'application/json', 'application/feed+json')
 HTML_TYPES = ('text/html', 'application/xhtml+xml')
 
-def fetch(url, kinds=FEED_TYPES, limit=2_000_000, headers=None):
+def fetch(url, kinds=FEED_TYPES, limit=2_000_000, headers=None, with_metadata=False):
     """Pin validated public DNS to the actual socket; validate every redirect."""
     origin = urlsplit(url).hostname
     for _ in range(4):
@@ -57,6 +57,8 @@ def fetch(url, kinds=FEED_TYPES, limit=2_000_000, headers=None):
             data = response.read(limit + 1)
             if len(data) > limit:
                 raise ValueError(f'Source exceeds {limit // 1_000_000} MB limit.')
+            if with_metadata:
+                return data, url, {'content_type': kind, 'link': response.getheader('Link', '')[:8192]}
             return data
         finally:
             conn.close()

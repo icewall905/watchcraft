@@ -90,6 +90,23 @@ does not enforce the new roles, so rolling back must also restrict access until 
 4. Install `deploy/traefik-wc.yml` as `/opt/traefik/dynamic/wc.yml` on 10.0.10.60.
 5. Media center: point the TV browser at `https://wc.tdgs.org/tv?mode=tv`.
 
+## Source Scout
+
+Under Sources, research a public HTTPS website or a topic (topic search requires the configured web-search provider).
+Scout checks RSS, Atom and JSON Feeds advertised by the page or HTTP Link header, and tries a few common feed paths
+when none are advertised. It validates each candidate using the same public-address, HTTPS, redirect and size checks
+as the Hub. When no valid feed is available, it can test same-host links inside semantic HTML `article` elements as a
+simple article-listing watcher. Sitemaps found in page metadata or robots.txt are displayed as unverified leads;
+they are not currently monitored. Preview samples before explicitly adding a source, optionally to a curator. Adding
+rechecks the source; the ordinary curator scheduler performs subsequent monitoring.
+
+Runs and milestones are profile-owned and persisted in the existing activity store. Research may be repeated manually
+or scheduled daily/weekly with pause/resume; scheduled runs only suggest sources. The scheduler claims due work atomically,
+limits concurrent jobs, and disables plans when a profile becomes child-restricted. A run examines at most three search
+results and five feed candidates per site; results can miss relevant sources. AI-generated watcher rules, automatic
+source adoption, sitemap/page-change/browser watchers, repair, shared polling and automated relevance scoring remain
+planned. This is a foundation, not the full autonomous research-team roadmap.
+
 ## Not implemented yet (honest list)
 
 Semantic search/embeddings, child-approved Hub content (child profiles currently have no Hub access), advanced cron schedules and explicit run
@@ -126,8 +143,8 @@ viewports plus drilldowns, and the status preview. Screenshots of child blocking
 P0 baseline audit COMPLETE: the reported navigation, routes, Hub models/providers, optional AI, scheduling and v2
 migration are present in this checkout. Source facts, per-profile state and provenance reuse the existing implementation.
 Provider adapters are present, but live external-provider availability has not been verified. Browser handoff is already
-implemented; additional pairing/authorization hardening remains planned. No Source Scout, programmable website watchers,
-mixed home layout system, team activity, Scout Report or Meme Radar implementation was found.
+implemented; additional pairing/authorization hardening remains planned. At that point no Source Scout, programmable website watchers,
+mixed home layout system, team activity, Scout Report or Meme Radar implementation was found; see the Source Scout section above for the subsequent foundation.
 
 Additional verification: six browser playback/offline/error/back-navigation tests passed, including actual playback of
 generated local media on a browser receiver. `tests/test_access.py` now has 24 passing cases, including a real SQLite
@@ -147,8 +164,8 @@ checks without changing production PINs or child profiles. The live acceptance t
 The navigation fix also passed local player-error and playlist Back tests. Physical TV remote acceptance and live
 external-provider acceptance are still outstanding.
 
-PLANNED: Source Scout, declarative watchers, shared source polling, persistent team activity, Scout Report, home layout
+PLANNED: advanced Source Scout and declarative watchers, shared source polling, persistent team activity, Scout Report, home layout
 presets, Meme Radar and the remaining advanced capabilities in `todo.md`. Existing item pages, collections, News
 grouping, cited reports and search filters already provide parts of the P4 experience; they must be extended in place.
 
-Production acceptance used a temporary profile, which was removed, and a disposable server-side database for child-profile checks. The remaining roadmap begins with Source Scout.
+Production acceptance used a temporary profile, which was removed, and a disposable server-side database for child-profile checks. The remaining roadmap continues with advanced Source Scout and the shared research-team experience.

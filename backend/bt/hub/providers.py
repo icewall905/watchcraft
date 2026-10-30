@@ -6,6 +6,7 @@ endpoint is admin-trusted configuration and may live on the LAN."""
 import json
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from typing import Callable
 from urllib.parse import quote, urlencode, urljoin, urlsplit
 
@@ -61,8 +62,38 @@ def _local(tag: str) -> str:
     return tag.split('}')[-1]
 
 
-def rss(url: str, _q: str = '') -> list[dict]:
-    root = _xml(curation.fetch(url))
+def parse_feed(data: bytes, url: str) -> list[dict]:
+    if data.lstrip().startswith(b'{'):
+        feed = json.loads(data)
+        if (not isinstance(feed, dict) or feed.get('version') not in ('https://jsonfeed.org/version/1', 'https://jsonfeed.org/version/1.1')
+                or not isinstance(feed.get('title'), str) or not isinstance(feed.get('items'), list)):
+            raise ValueError('Not a valid JSON Feed.')
+        out = []
+        for item in feed['items'][:50]:
+            if not isinstance(item, dict) or not isinstance(item.get('id'), str):
+                raise ValueError('Invalid JSON Feed item.')
+            text_content = item.get('content_text') if isinstance(item.get('content_text'), str) else ''
+            html_content = item.get('content_html') if isinstance(item.get('content_html'), str) else ''
+            if not isinstance(item.get('content_text'), str) and not isinstance(item.get('content_html'), str):
+                raise ValueError('JSON Feed items need text or HTML content.')
+            content = text_content or strip_tags(html_content)
+            link = item.get('url') or item.get('external_url') or ''
+            title = clean(item.get('title') or content, 500)
+            if not isinstance(link, str) or not title or not content: continue
+            author = item.get('authors') or feed.get('authors') or []
+            if not isinstance(author, list): author = []
+            out.append({'url': urljoin(url, link), 'title': title, 'type': 'news', 'provider': 'rss',
+                        'publisher': clean(feed['title'], 200), 'summary': clean(item.get('summary') or content, 1000),
+                        'published_at': ts(item.get('date_published')), 'image': safe_image(item['image']) if isinstance(item.get('image'), str) else '',
+                        'author': ', '.join(clean(a.get('name'), 100) for a in author[:3] if isinstance(a, dict) and a.get('name')),
+                        'external_id': clean(item['id'], 500), 'meta': {'updated_at': ts(item.get('date_modified'))}})
+        return out
+    root = _xml(data)
+    root_kind = _local(root.tag).lower()
+    if root_kind not in ('rss', 'rdf', 'feed'):
+        raise ValueError('Not an RSS or Atom feed.')
+    if root_kind in ('rss', 'rdf') and not any(_local(c.tag).lower() == 'channel' for c in root):
+        raise ValueError('RSS feed is missing its channel.')
     channel = clean(next((''.join(c.itertext()) for c in root.iter() if _local(c.tag) == 'title'), ''), 200)
     youtube = (urlsplit(url).hostname or '').endswith('youtube.com')
     out = []
@@ -93,6 +124,10 @@ def rss(url: str, _q: str = '') -> list[dict]:
         if len(out) >= 50:
             break
     return out
+
+
+def rss(url: str, _q: str = '') -> list[dict]:
+    return parse_feed(curation.fetch(url), url)
 
 
 def github_releases(url: str, _q: str = '') -> list[dict]:
@@ -242,6 +277,55 @@ def page(url: str, _q: str = '') -> list[dict]:
     return [item]
 
 
+class _ArticleLinks(HTMLParser):
+    """Conservative declarative listing: links inside article elements on the same host."""
+    def __init__(self, base):
+        super().__init__(convert_charrefs=True)
+        self.base = base
+        self.depth = 0
+        self.anchor = None
+        self.items = []
+        self.seen = set()
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'article': self.depth += 1
+        if self.depth and tag == 'a' and self.anchor is None:
+            self.anchor = {'href': dict(attrs).get('href', ''), 'text': []}
+
+    def handle_data(self, data):
+        if self.anchor is not None: self.anchor['text'].append(data)
+
+    def handle_endtag(self, tag):
+        if tag == 'a' and self.anchor is not None:
+            title = clean(' '.join(self.anchor['text']), 500)
+            href = self.anchor['href']
+            self.anchor = None
+            try:
+                url = curation.canonical(urljoin(self.base, href))
+            except (ValueError, TypeError):
+                return
+            if (len(title) >= 8 and urlsplit(url).hostname == urlsplit(self.base).hostname
+                    and url != self.base and url not in self.seen):
+                self.seen.add(url)
+                self.items.append({'url': url, 'title': title, 'type': 'news',
+                                   'publisher': urlsplit(self.base).hostname or '', 'provider': 'html_listing'})
+        if tag == 'article' and self.depth: self.depth -= 1
+
+
+def parse_listing(data: bytes, url: str) -> list[dict]:
+    parser = _ArticleLinks(url)
+    parser.feed(data.decode('utf-8', errors='replace'))
+    return parser.items[:50]
+
+
+def html_listing(url: str, _q: str = '') -> list[dict]:
+    data, final, _ = curation.fetch(url, kinds=curation.HTML_TYPES, with_metadata=True)
+    items = parse_listing(data, final)
+    if not items:
+        raise ValueError('No article links were found in the listing.')
+    return items
+
+
 def web_search(_url: str, q: str) -> list[dict]:
     cfg = get_settings()['search']
     if cfg['provider'] == 'searxng' and cfg['searxng_url']:
@@ -271,7 +355,7 @@ def web_search(_url: str, q: str) -> list[dict]:
 
 
 PROVIDERS = {p.key: p for p in [
-    Provider('rss', 'RSS / Atom feed', 'feed', 'Any public feed, including YouTube channel feeds.', rss,
+    Provider('rss', 'RSS / Atom / JSON feed', 'feed', 'Public RSS, Atom or JSON feeds, including YouTube channel feeds.', rss,
              ['feed', 'update-monitoring'], needs_url=True, default_type='news'),
     Provider('github_releases', 'GitHub releases', 'feed', 'Releases of one public repository.', github_releases,
              ['feed', 'update-monitoring', 'structured-metadata'], needs_url=True, default_type='project'),
@@ -291,6 +375,8 @@ PROVIDERS = {p.key: p for p in [
              ['keyword-search', 'requires-configuration'], default_type='web'),
     Provider('rdap', 'Domain registration (RDAP)', 'query', 'Registrar, dates and nameservers for a domain.', rdap,
              ['structured-metadata'], default_type='domain'),
+    Provider('html_listing', 'Article listing', 'feed', 'Article links from semantic article elements on a public page.', html_listing,
+             ['update-monitoring', 'article-links'], needs_url=True, default_type='news'),
     Provider('page', 'Web page', 'url', 'Extract one page (OpenGraph, JSON-LD recipes/articles).', page,
              ['url-extraction', 'structured-metadata'], needs_url=True, default_type='web'),
 ]}

@@ -71,6 +71,30 @@ class Source(SQLModel, table=True):
     created_at: float = Field(default_factory=time.time)
 
 
+class ScoutPlan(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint('profile_id', 'query'),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    profile_id: int = Field(index=True)
+    query: str
+    interval_hours: int = 24
+    enabled: bool = True
+    next_run: float = 0
+    created_at: float = Field(default_factory=time.time)
+
+
+class ScoutRun(SQLModel, table=True):
+    """Profile-owned, bounded research results; suggestions require explicit approval."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    profile_id: int = Field(index=True)
+    query: str = ''
+    status: str = 'running'
+    created_at: float = Field(default_factory=time.time)
+    finished_at: float | None = None
+    suggestions: list = J()
+    sitemaps: list = J()
+    error: str = ''
+
+
 class CuratorSource(SQLModel, table=True):
     curator_id: int = Field(primary_key=True)
     source_id: int = Field(primary_key=True, index=True)

@@ -83,7 +83,7 @@ def agent_status(pid: int = Depends(profile_id), s: Session = Depends(get_sessio
 @router.get("/agent/events")
 def agent_events(after_id: int = 0, limit: int = 200, category_id: Optional[int] = None,
                  s: Session = Depends(get_session)):
-    q = select(AgentEvent).where(AgentEvent.id > after_id)
+    q = select(AgentEvent).where(AgentEvent.id > after_id, AgentEvent.kind != 'source_scout')
     if category_id:
         q = q.where(AgentEvent.category_id == category_id)
     if after_id:
@@ -99,7 +99,7 @@ async def agent_stream(request: Request, after_id: int = 0):
             if last_id < 0:
                 last = s.exec(select(AgentEvent).order_by(col(AgentEvent.id).desc())).first()
                 return max(0, (last.id if last else 0) - 30), [], None
-            evs = s.exec(select(AgentEvent).where(AgentEvent.id > last_id).order_by(AgentEvent.id).limit(100)).all()
+            evs = s.exec(select(AgentEvent).where(AgentEvent.id > last_id, AgentEvent.kind != 'source_scout').order_by(AgentEvent.id).limit(100)).all()
             st = None
             if with_state:
                 st = status_payload(s)

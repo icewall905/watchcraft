@@ -302,6 +302,8 @@ async def scheduler() -> None:
             with session() as s:
                 ids = [c.id for c in s.exec(select(Curator).where(Curator.enabled == True, Curator.next_run <= time.time())).all()]
                 briefs = [b.id for b in s.exec(select(Briefing).where(Briefing.frequency != 'manual', Briefing.next_run <= time.time())).all()]
+            from . import scout
+            await asyncio.to_thread(scout.run_due)
             for cid in ids:
                 await asyncio.to_thread(run, cid)
             for bid in briefs:
