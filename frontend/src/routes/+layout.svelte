@@ -55,11 +55,13 @@
 
 	afterNavigate((n) => {
 		if (n.type === 'enter') baseIndex = histIndex();
-		if (n.to?.url.pathname.startsWith('/watch/') && !n.from?.url.pathname.startsWith('/watch/')) {
+		const fromPath = n.from?.url?.pathname;
+		const toPath = n.to?.url?.pathname;
+		if (toPath?.startsWith('/watch/') && !fromPath?.startsWith('/watch/')) {
 			watchReturnIndex = n.from && histIndex() > navigationStartIndex ? navigationStartIndex : null;
-		} else if (!n.to?.url.pathname.startsWith('/watch/')) watchReturnIndex = null;
+		} else if (!toPath?.startsWith('/watch/')) watchReturnIndex = null;
 		const key = page.url.pathname + page.url.search;
-		if (n.type === 'goto' && n.from?.url.pathname === n.to?.url.pathname) nav.setRouteKey(key);
+		if (n.type === 'goto' && fromPath === toPath) nav.setRouteKey(key);
 		else nav.setRoute(key);
 	});
 
