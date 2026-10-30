@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { api, ApiError } from '$lib/api';
 	import { dialogs } from '$lib/stores/dialogs.svelte';
 	import { session } from '$lib/stores/session.svelte';
@@ -10,6 +10,7 @@
 	import Keyboard from '$lib/components/Keyboard.svelte';
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import OfflineButton from '$lib/components/OfflineButton.svelte';
+	import VoiceSearch from '$lib/components/VoiceSearch.svelte';
 
 	const RECENT_KEY = 'bt.recentSearches';
 	let q = $state(page.url.searchParams.get('q') ?? '');
@@ -26,6 +27,11 @@
 			recent = [];
 		}
 		if (q) run(false);
+	});
+
+	$effect(() => {
+		const term = page.url.searchParams.get('q') ?? '';
+		untrack(() => { if (term !== q) { q = term; if (term) run(false); else results = null; } });
 	});
 
 	async function run(push = true) {
@@ -70,6 +76,7 @@
 				use:focusable={{ group: 'search-input', id: 'search-input', label: 'Search YouTube', onSelect: () => run() }}
 				onosksubmit={() => run()}
 			/>
+			<VoiceSearch group="search-input" onresult={(text) => { q = text; void run(); }} />
 		</form>
 		<div class="osk">
 			<Keyboard name="search-kb" value={q} onchange={(v) => (q = v)} onsubmit={() => run()} submitLabel="Search" autofocus={!q} />
@@ -129,6 +136,7 @@
 		gap: 1.1rem;
 	}
 	.bar {
+		display: flex; align-items: center; gap: .5rem;
 		position: relative;
 	}
 	.mag {
@@ -142,6 +150,7 @@
 		z-index: 6;
 	}
 	.q {
+		flex: 1; min-width: 0;
 		min-height: 3.4rem;
 		padding-left: 2.8rem;
 		font-size: 1.2rem;

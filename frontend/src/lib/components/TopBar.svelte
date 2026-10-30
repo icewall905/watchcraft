@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import VoiceSearch from './VoiceSearch.svelte';
 	import { deviceMode } from '$lib/stores/deviceMode.svelte';
 	import { agent } from '$lib/stores/agent.svelte';
 	import { session } from '$lib/stores/session.svelte';
@@ -23,6 +25,7 @@
 
 	{#if deviceMode.mode === 'tv'}
 		<a class="searchicon btn" href="/search" aria-label="Search videos" use:focusable={{ group: 'topbar', id: 'video-search', scroll: 'none' }}><Icon name="search" /></a>
+		<VoiceSearch group="topbar" onresult={(text) => { void goto(`/search?q=${encodeURIComponent(text)}`); }} />
 	{:else}
 		<button class="searchbox" aria-label="Search everything" aria-haspopup="dialog" onclick={() => palette.show()}>
 			<Icon name="search" size="1.1em" /><span class="st">Search everything…</span><kbd>Ctrl K</kbd>

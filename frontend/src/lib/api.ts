@@ -136,6 +136,9 @@ const q = (o: Record<string, string | number | boolean | undefined | null>) => {
 };
 
 export const api = {
+	transcribeAudio: (audio: Blob, signal?: AbortSignal) => request<{ text: string }>('/speech/transcribe', {
+		method: 'POST', raw: audio, headers: { 'Content-Type': audio.type || 'audio/webm' }, signal, toast: false
+	}),
 	// auth
 	authStatus: () => get<{ required: boolean; authenticated: boolean }>('/auth/status', { toast: false }),
 	login: (password: string) => post<{ ok: boolean }>('/auth/login', { password }, { toast: false }),

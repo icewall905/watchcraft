@@ -15,6 +15,7 @@ from .api import video
 from .api import ytimport
 from .api import downloads
 from .api import playback
+from .api import speech
 from .config import STATIC_DIR
 from .db import init_db
 
@@ -40,6 +41,7 @@ app.include_router(ytimport.router, prefix="/api")
 app.include_router(video.router, prefix="/api")
 app.include_router(downloads.router, prefix="/api")
 app.include_router(playback.router, prefix="/api")
+app.include_router(speech.router, prefix="/api")
 
 app.include_router(agent_api.router, prefix="/api")
 

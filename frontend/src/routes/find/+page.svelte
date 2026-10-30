@@ -8,6 +8,7 @@
 	import { lsGet, lsSet, errMsg } from '$lib/hub/util';
 	import type { Registry, SavedSearch, SearchResult, WebResult } from '$lib/hub/types';
 	import ContentCard from '$lib/hub/ContentCard.svelte';
+	import VoiceSearch from '$lib/components/VoiceSearch.svelte';
 
 	let q = $state('');
 	let type = $state('');
@@ -122,6 +123,7 @@
 
 	<search class="bar">
 		<input class="input big" type="search" bind:value={q} placeholder="Search items, videos, curators, topics…" aria-label="Search" autocomplete="off" />
+		<VoiceSearch onresult={(text) => q = text} />
 		<select class="input sel" bind:value={type} aria-label="Type">
 			<option value="">All types</option>
 			{#each reg?.types ?? [] as t}<option value={t.key}>{t.label}</option>{/each}

@@ -8,9 +8,11 @@
 	import { ALL_ENTRIES, FIND, isHubPath } from '$lib/navigation';
 	import { session } from '$lib/stores/session.svelte';
 	import Icon from './Icon.svelte';
+	import VoiceSearch from './VoiceSearch.svelte';
 
 	let q = $state('');
 	let idx = $state(-1);
+	let voiceActive = $state(false);
 	let input = $state<HTMLInputElement>();
 	let restore: HTMLElement | null = null;
 
@@ -43,7 +45,7 @@
 	}
 	// The remote-navigation engine owns arrows (capture phase); steer the list through it.
 	onMount(() => nav.handleKeys((key) => {
-		if (!palette.open) return;
+		if (!palette.open || voiceActive) return;
 		if (key === 'down') { idx = Math.min(idx + 1, results.length - 1); return true; }
 		if (key === 'up') { idx = Math.max(idx - 1, -1); return true; }
 	}));
@@ -60,6 +62,9 @@
 				<Icon name="search" />
 				<input bind:this={input} bind:value={q} use:focusable={{ group: 'palette', osk: false, scroll: 'none', onSelect: submit }} placeholder="Search everything, or jump to…" aria-label="Search everything" role="combobox"
 					aria-expanded="true" aria-controls="palette-list" aria-activedescendant={idx >= 0 ? `pal-${idx}` : undefined} autocomplete="off" />
+				<VoiceSearch group="palette" onactive={(active) => voiceActive = active} onresult={(text) => {
+					q = text; idx = -1; submit();
+				}} />
 				<kbd>Esc</kbd>
 			</form>
 			<ul id="palette-list" role="listbox" aria-label="Destinations">
