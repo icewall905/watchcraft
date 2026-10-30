@@ -116,3 +116,29 @@ in the local `todo.md` (which is intentionally ignored by Git).
   - `team.max_parallel` is 1, a saved video decoded 207 frames, and the API logs show no tracebacks.
 - Known test-order issue: `smoke.spec.ts` leaves a second profile, so `source-scout.spec.ts` then shows the profile
   picker when both run in one batch. Each passes when run alone.
+
+## Deployment record — source monitoring (`ed95110`, 2026-10-30)
+
+- Added bounded sitemap/index monitoring, page text revisions with before/after excerpts, Scout page-monitoring
+  fallback, and the latest 20 source checks. Partial multi-query failures retain their errors. These are incremental
+  features; shared polling, selector configuration, automatic repair, notifications and full index traversal remain open.
+- Backend release suite: 276 passed, 6 skipped. The access-test fixture no longer starts a live scheduler while
+  rebuilding test tables, resolving its background-thread teardown warning. Remaining warning: test-client deprecation.
+- Frontend check/build passed. Ten disposable browser checks passed for monitoring, Scout, roles/PINs, desktop/TV/mobile
+  navigation and Agent Activity. These do not establish hardware TV acceptance.
+- Backup: `/root/compose/watchcraft-backups/20261030T121656Z-pre-monitoring` contains a verified SQLite backup, private
+  data extras/configuration, previous source and rollback image record. `final-before-rollout.sqlite3` is the additional
+  backup taken with the three application services stopped immediately before rollout. Media was unchanged and not copied.
+- Restored the first backup into an isolated directory and initialized twice with the release image: all original table
+  counts, profile checksum and PIN records were preserved; new revision/check tables were created. Only the disposable
+  copy received QA profiles. Real server-egress acceptance passed for example.org page monitoring (including unchanged
+  detection), LWN RSS ingestion, source check history, child rejection and Django's sitemap (50 items).
+- Production API/worker/downloader run `watchcraft:ed95110`, image `c104af291d7f…`. Public health and local `/sources`,
+  `/team`, `/tv`, provider registry and check-history APIs passed. Deployed assets include the monitoring UI. Saved media
+  returned HTTP 206 and decoded 180 changing frames in three seconds. Six profiles, 4,822 videos, 115 history rows,
+  17 categories/playlists and the profile checksum were preserved. Host GPU override was retained.
+- Rollback: tag `watchcraft:rollback-20261030T121656Z-pre-monitoring` as `watchcraft:latest`, then run
+  `docker compose -p watchcraft -f compose.yaml -f compose.watchcraft.yaml -f compose.host.yaml up -d --no-build --wait`
+  from `/root/compose/watchcraft`. New tables are additive. Restore the stopped-service backup only if reverting data is
+  necessary, with all application services stopped first.
+- Physical TV remote acceptance and topic search with a configured SearXNG/Brave provider remain unverified.

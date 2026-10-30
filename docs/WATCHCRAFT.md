@@ -204,3 +204,9 @@ presets, Meme Radar and the remaining advanced capabilities in `todo.md`. Existi
 grouping, cited reports and search filters already provide parts of the P4 experience; they must be extended in place.
 
 Production acceptance used a temporary profile, which was removed, and a disposable server-side database for child-profile checks. The remaining roadmap continues with advanced Source Scout and the shared research-team experience.
+
+SOURCE MONITORING DEPLOYED — 2026-10-30: release `ed95110` is running on the production API, worker and downloader.
+Backup and practical rollback details are recorded in `docs/SOURCE_SCOUT_HANDOVER.md`. The restored-copy migration,
+real page/feed/sitemap acceptance, public health, monitoring APIs, deployed assets and cached-video delivery/decode
+passed. Original profile data, PIN records and checked content counts were preserved. Remaining roadmap items include
+shared source polling, configurable extraction, automatic repair, notifications and the broader Scout Report experience.
