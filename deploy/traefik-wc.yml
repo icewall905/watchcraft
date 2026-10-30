@@ -1,0 +1,16 @@
+http:
+  routers:
+    wc-router:
+      rule: "Host(`wc.tdgs.org`) || Host(`wc.lan`) || Host(`wc.nygaardboysen.dk`) || Host(`watchcraft.tdgs.org`)"
+      entryPoints: [web]
+      service: wc-service
+    wc-router-secure:
+      rule: "Host(`wc.tdgs.org`) || Host(`wc.lan`) || Host(`wc.nygaardboysen.dk`) || Host(`watchcraft.tdgs.org`)"
+      entryPoints: [websecure]
+      tls: {}
+      service: wc-service
+  services:
+    wc-service:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.10.73:6646"

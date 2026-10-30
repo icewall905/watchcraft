@@ -26,7 +26,7 @@
 <div class="login" use:navScope>
 	<form class="card panel" onsubmit={(e) => (e.preventDefault(), submit())}>
 		<img src="/favicon.svg" alt="" width="72" height="72" />
-		<h1>BetterTube</h1>
+		<h1>WatchCraft</h1>
 		<p class="muted">Enter the household passphrase to continue.</p>
 		<TextField type="password" label="Passphrase" bind:value={password} autofocus onsubmit={submit} />
 		{#if error}<p class="err small">{error}</p>{/if}

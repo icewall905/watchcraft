@@ -1,4 +1,4 @@
-/** The first palette is the original BetterTube appearance. The other themes
+/** The first palette is the original WatchCraft appearance. The other themes
  * only override visual tokens: playback, settings and profile colours are unchanged. */
 export interface Theme {
 	id: string; name: string; description: string;

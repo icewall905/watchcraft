@@ -23,7 +23,7 @@
 	}
 </script>
 
-<Section title="Appearance" intro="Choose a look for BetterTube. Your selection is shared across profiles and devices and applies immediately.">
+<Section title="Appearance" intro="Choose a look for WatchCraft. Your selection is shared across profiles and devices and applies immediately.">
 	<div class="themes" aria-label="Themes">
 		{#each THEMES as theme (theme.id)}
 			<button class="theme-card" class:selected={selected === theme.id} aria-pressed={selected === theme.id}

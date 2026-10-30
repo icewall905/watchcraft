@@ -25,20 +25,34 @@
 	// SvelteKit keeps a history index in history.state; back only pops entries this app created.
 	const histIndex = () => Number((history.state ?? {})['sveltekit:history'] ?? 0);
 	let baseIndex = histIndex();
+	let watchReturnIndex: number | null = null;
+	let navigationStartIndex = baseIndex;
 
 	nav.install();
 	nav.backFallback = () => {
 		if (page.url.pathname === '/') return;
+		if (page.url.pathname.startsWith('/watch/')) {
+			if (watchReturnIndex !== null && watchReturnIndex < histIndex()) history.go(watchReturnIndex - histIndex());
+			else {
+				const category = page.url.searchParams.get('c');
+				goto(category && /^\d+$/.test(category) ? `/category/${category}` : '/', { replaceState: true });
+			}
+			return;
+		}
 		if (histIndex() > baseIndex) history.back();
 		else goto('/', { replaceState: true });
 	};
 
 	beforeNavigate((n) => {
+		navigationStartIndex = histIndex();
 		if (!n.willUnload) nav.beginNavigation();
 	});
 
 	afterNavigate((n) => {
 		if (n.type === 'enter') baseIndex = histIndex();
+		if (n.to?.url.pathname.startsWith('/watch/') && !n.from?.url.pathname.startsWith('/watch/')) {
+			watchReturnIndex = n.from && histIndex() > navigationStartIndex ? navigationStartIndex : null;
+		} else if (!n.to?.url.pathname.startsWith('/watch/')) watchReturnIndex = null;
 		const key = page.url.pathname + page.url.search;
 		if (n.type === 'goto' && n.from?.url.pathname === n.to?.url.pathname) nav.setRouteKey(key);
 		else nav.setRoute(key);

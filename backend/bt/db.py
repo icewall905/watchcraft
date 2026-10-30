@@ -30,6 +30,9 @@ def init_db() -> None:
         connection.exec_driver_sql("BEGIN IMMEDIATE")
         SQLModel.metadata.create_all(connection)
         with Session(connection) as s:
+            if not s.get(Setting, "watchcraft_schema_version"):
+                s.add(Setting(key="watchcraft_schema_version", value={"version": 1}))
+                s.commit()
             if not s.exec(select(Profile)).first():
                 s.add(Profile(name="Family", emoji="🏠", color="#7c5cff"))
                 s.merge(Setting(key="setup", value={"completed": False}))

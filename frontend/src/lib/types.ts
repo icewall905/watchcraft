@@ -1,4 +1,4 @@
-// Shapes returned by the BetterTube backend (see docs/CONTRACT.md, backend/bt/api/*.py).
+// Shapes returned by the WatchCraft backend (see docs/CONTRACT.md, backend/bt/api/*.py).
 
 export interface Profile {
 	id: number;

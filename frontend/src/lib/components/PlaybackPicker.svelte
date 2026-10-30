@@ -35,13 +35,13 @@
 				</button>
 			{/each}
 			{#if !playback.targets.some(t => t.online && t.id !== playback.receiver?.id)}
-				<p class="muted small">To add a screen, open BetterTube on it and register it below. Keep that browser or PWA open.</p>
+				<p class="muted small">To add a screen, open WatchCraft on it and register it below. Keep that browser or PWA open.</p>
 			{/if}
 		</div>
 		{#if playback.selectedId}
 			<section>
 				<h3>{playback.selected?.name ?? 'Selected screen'}</h3>
-				<p class="muted small">{playback.selected?.online ? 'Tap any video to play it on this screen.' : 'Screen offline. Open BetterTube on it to reconnect.'}</p>
+				<p class="muted small">{playback.selected?.online ? 'Tap any video to play it on this screen.' : 'Screen offline. Open WatchCraft on it to reconnect.'}</p>
 				{#if playback.selected?.state.error}<p role="status">{playback.selected.state.error}</p>{/if}
 				<div class="hstack">
 					<button class="btn" disabled={!playback.selected?.online} use:focusable={{ group: 'cast', onSelect: () => playback.send('pause') }}>Pause</button>
@@ -62,7 +62,7 @@
 				<button class="btn" disabled={working || !name.trim()} use:focusable={{ group: 'cast', onSelect: register }}>Register this screen</button>
 			{/if}
 			{#if playback.error}<p role="status">{playback.error}</p>{/if}
-			<p class="muted small">If the browser asks, allow sound and autoplay for BetterTube. Anyone with access to this BetterTube server can send videos to registered screens.</p>
+			<p class="muted small">If the browser asks, allow sound and autoplay for WatchCraft. Anyone with access to this WatchCraft server can send videos to registered screens.</p>
 		</section>
 		<button class="btn" use:focusable={{ group: 'cast', onSelect: () => (playback.open = false) }}>Done</button>
 	</Modal>

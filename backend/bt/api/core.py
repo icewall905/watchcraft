@@ -177,6 +177,9 @@ def delete_profile(pid: int, request: Request, s: Session = Depends(get_session)
         s.exec(delete(Candidate).where(col(Candidate.category_id).in_(cats)))
     for m in (Category, ProfileChannel, Feedback, Lesson, LessonEvidenceState, LessonRevision, WatchHistory):
         s.exec(delete(m).where(m.profile_id == pid))
+    from ..curation import Curator, Discovery
+    s.exec(delete(Discovery).where(Discovery.profile_id == pid))
+    s.exec(delete(Curator).where(Curator.profile_id == pid))
     profile_pins.set_pin(s, pid, "")
     s.delete(p)
     s.commit()

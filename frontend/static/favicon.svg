@@ -1,18 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <defs>
-    <linearGradient id="surface" x1="0" y1="0" x2="1" y2="1">
-      <stop stop-color="#32266f"/>
-      <stop offset=".52" stop-color="#191337"/>
-      <stop offset="1" stop-color="#0b091a"/>
-    </linearGradient>
-    <linearGradient id="mark" x1=".15" y1="0" x2=".9" y2="1">
-      <stop stop-color="#ffe9b8"/>
-      <stop offset=".48" stop-color="#ffc66d"/>
-      <stop offset="1" stop-color="#ff9946"/>
-    </linearGradient>
-  </defs>
-  <rect width="512" height="512" rx="116" fill="url(#surface)"/>
-  <rect x="14" y="14" width="484" height="484" rx="104" fill="none" stroke="#cbb8ff" stroke-opacity=".16" stroke-width="3"/>
-  <!-- A B with a play window: a single mark that stays legible as an app icon. -->
-  <path transform="translate(256 256) scale(1.25) translate(-244.5 -242)" fill="url(#mark)" fill-rule="evenodd" d="M153 111h103c50 0 77 25 77 64 0 25-14 45-35 55 33 8 52 33 52 66 0 48-36 77-92 77H153c-8 0-14-6-14-14V125c0-8 6-14 14-14zm49 43v57h44c23 0 35-10 35-29s-12-28-35-28zm11 105c-4-2-9 1-9 6v58c0 5 5 8 9 6l57-29c5-2 5-9 0-11z"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128"><defs><linearGradient id="gold" x2=".3" y2="1"><stop stop-color="#fff0bd"/><stop offset=".5" stop-color="#c89a48"/><stop offset="1" stop-color="#765020"/></linearGradient><radialGradient id="night"><stop stop-color="#352348"/><stop offset="1" stop-color="#10131c"/></radialGradient></defs><path d="M64 5 115 30v57l-51 36L13 87V30Z" fill="url(#night)" stroke="url(#gold)" stroke-width="5"/><path d="M27 47 41 87l23-23 23 23 14-40-18 23-19-31-19 31Z" fill="url(#gold)" stroke="#f1d28b" stroke-width="1.5"/><path d="M82 20a15 15 0 1 0 18 19A18 18 0 0 1 82 20Z" fill="#bca4e6"/><path d="m29 29 2 5 5 2-5 2-2 5-2-5-5-2 5-2Z" fill="#ddd0ff"/><path d="m64 92 5 6-5 7-5-7Z" fill="#baa0ff"/></svg>

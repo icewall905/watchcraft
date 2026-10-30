@@ -1,0 +1,16 @@
+# Parallel install: use a separate .env with dedicated data/media paths.
+# docker compose -p watchcraft -f compose.yaml -f compose.watchcraft.yaml up -d --build --wait
+services:
+  bt-api:
+    image: watchcraft:latest
+    container_name: wc-api
+    ports: !override
+      - "${WC_PORT:-6646}:6645"
+  bt-worker:
+    image: watchcraft:latest
+    container_name: wc-worker
+  bt-downloader:
+    image: watchcraft:latest
+    container_name: wc-downloader
+  pot:
+    container_name: wc-pot

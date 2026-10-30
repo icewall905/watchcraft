@@ -14,7 +14,8 @@
 		{ href: '/', label: 'Home', icon: 'home' },
 		{ href: '/search', label: 'Search', icon: 'search' },
 		{ href: '/subscriptions', label: 'Subscriptions', icon: 'subs' },
-		{ href: '/agent', label: 'Agent', icon: 'agent' },
+		{ href: '/agent', label: 'Video AI', icon: 'agent' },
+		{ href: '/discover', label: 'Discover', icon: 'search' },
 		{ href: '/stats', label: 'Stats', icon: 'chart' },
 		{ href: '/settings', label: 'Settings', icon: 'settings' }
 	];
@@ -23,8 +24,8 @@
 </script>
 
 <header class="topbar glass" data-nav-noscroll data-nav-skip-initial>
-	<a class="logo" href="/" aria-label="BetterTube home" tabindex="-1" data-nav-off>
-		<img src="/favicon.svg" alt="" width="38" height="38" />
+	<a class="logo" href="/" aria-label="WatchCraft home" tabindex="-1" data-nav-off>
+		<img src="/favicon.svg" alt="" width="38" height="38" /><span class="wordmark">WatchCraft</span>
 	</a>
 
 	<nav class="tabs" aria-label="Main">
@@ -62,6 +63,8 @@
 {/if}
 
 <style>
+ .wordmark { font-family: Georgia, serif; font-weight: 800; color: #edcd86; letter-spacing: -.04em; text-shadow: 0 2px #503719; }
+ @media(max-width:1500px) { .wordmark { display:none; } }
 	.topbar {
 		position: sticky;
 		top: 0;
