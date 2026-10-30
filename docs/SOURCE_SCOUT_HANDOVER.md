@@ -95,3 +95,24 @@ in the local `todo.md` (which is intentionally ignored by Git).
 - Rollback: `docker tag watchcraft:rollback-20261030T094200Z-880f732 watchcraft:latest` and rerun the compose command
   above (the new tables are additive and ignored by the old release). Restore the backup only if data must be reverted.
 - Still not done: physical TV remote pass and a real topic-search provider test.
+
+## Deployment record — Agent Activity, parallel agents, new logo (`dfc8ed2`, 2026-10-30)
+
+- Backup before rollout (online SQLite `.backup`, integrity `ok`, plus data extras, config, source, running images):
+  `/root/compose/watchcraft-backups/20261030T102317Z-pre-dfc8ed2`. Rollback image:
+  `watchcraft:rollback-20261030T102317Z-3668357`.
+- Isolated copy on `127.0.0.1:6699` ran `watchcraft:dfc8ed2` and was started twice: integrity `ok`, counts kept.
+  Production profiles now have PINs and child profiles, so PINs were reset **on the disposable copy only**.
+  - `/api/hub/team` returned the profile's curator and Source Scout.
+  - `team.max_parallel` defaults to 1. A value of 9 is rejected (400), a non-admin profile cannot change it (403),
+    and an administrator can set it to 2.
+  - A manual curator run showed "running" and then "idle" with 7 new items out of 100.
+  - Another profile could not see the curator, and a child profile got 403.
+  - The copy and its container were removed.
+- Production after the deploy:
+  - API, worker and downloader all run `watchcraft:dfc8ed2` (`e3b389cc…`). Health checks pass locally and
+    publicly, the database quick_check is `ok` and counts are kept.
+  - `/team`, `/logo.png` and `/favicon.png` return 200, and the deployed bundle contains Agent Activity.
+  - `team.max_parallel` is 1, a saved video decoded 207 frames, and the API logs show no tracebacks.
+- Known test-order issue: `smoke.spec.ts` leaves a second profile, so `source-scout.spec.ts` then shows the profile
+  picker when both run in one batch. Each passes when run alone.
