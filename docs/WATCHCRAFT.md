@@ -8,7 +8,9 @@ FastAPI serves the SvelteKit static app, SQLite/SQLModel store application data,
 
 Schema version 1 is additive: `curator`, `discovery`, and the `watchcraft_schema_version` setting. Existing video categories, profile IDs, history, cookies, secrets and BT_* configuration remain intact. Discoveries are deduplicated by canonical HTTPS URL within each profile. Save state is profile-owned. Original source titles are displayed without generated summaries. No external HTML is rendered.
 
-Limitations: content and profile state are currently stored together; only the first discovering curator is retained. Run history, canonical cross-profile content records, editing/deletion, keyword filtering, AI enrichment, briefs, alerts, child-specific restrictions, exports, advanced schedules, pagination and notification rules remain planned. Do not enable these new curators for restricted child profiles until restriction enforcement is implemented. Device mode selection and a dedicated /tv entry point are still planned; existing TV launch URLs remain valid.
+Limitations: content and profile state are currently stored together; only the first discovering curator is retained. Run history, canonical cross-profile content records, editing/deletion, keyword filtering, AI enrichment, briefs, alerts, child-specific restrictions, exports, advanced schedules, pagination and notification rules remain planned. Do not enable these new curators for restricted child profiles until restriction enforcement is implemented. A dedicated /tv entry point is still planned; existing TV launch URLs remain valid.
+
+Desktop and TV modes are available under Settings → Appearance and are saved per browser. Desktop keeps the navigation sidebar visible; TV hides it until Left is pressed at the page edge (or the menu button is selected). Right or Back closes the TV drawer. The AI activity indicator opens Video AI; it has no separate navigation entry.
 
 ## Sources and security
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { deviceMode } from '$lib/stores/deviceMode.svelte';
 	import { api } from '$lib/api';
 	import { focusable } from '$lib/nav';
 	import { session } from '$lib/stores/session.svelte';
@@ -23,6 +24,19 @@
 	}
 </script>
 
+<div class="device-section">
+<Section title="Device mode" intro="Choose how navigation works on this device. This preference is saved in this browser only.">
+	<div class="themes" aria-label="Device mode">
+		{#each [{ id: 'desktop' as const, name: 'Desktop mode', description: 'Keep the sidebar visible for quick navigation.' }, { id: 'tv' as const, name: 'TV mode', description: 'Hide the sidebar. Press Left at the edge of the page to open it; Right or Back closes it.' }] as mode}
+			<button class="theme-card" class:selected={deviceMode.mode === mode.id} aria-pressed={deviceMode.mode === mode.id}
+				use:focusable={{ group: 'device-mode', id: `mode-${mode.id}`, onSelect: () => deviceMode.set(mode.id) }}>
+				<span class="details"><span class="name">{mode.name}</span><span class="small muted">{mode.description}</span></span>
+			</button>
+		{/each}
+	</div>
+</Section>
+</div>
+
 <Section title="Appearance" intro="Choose a look for WatchCraft. Your selection is shared across profiles and devices and applies immediately.">
 	<div class="themes" aria-label="Themes">
 		{#each THEMES as theme (theme.id)}
@@ -41,6 +55,7 @@
 </Section>
 
 <style>
+	.device-section { margin-bottom: 2rem; }
 	.themes { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: 1rem; }
 	.theme-card { display: grid; gap: 0; padding: 0; text-align: left; color: var(--text); border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--surface); overflow: hidden; cursor: pointer; }
 	.theme-card:hover { border-color: var(--accent); background: var(--surface-2); }

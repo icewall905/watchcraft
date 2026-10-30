@@ -174,6 +174,9 @@ class NavEngine {
 		return (document.documentElement.dataset.modality as 'keys' | 'pointer') ?? 'keys';
 	}
 
+	/** Current modal/overlay root; shell navigation must not intercept its keys. */
+	get scopeRoot(): HTMLElement | null { return this.scopes.at(-1)?.root ?? null; }
+
 	// ---------- registration
 
 	register(el: HTMLElement, opts: FocusOpts) {

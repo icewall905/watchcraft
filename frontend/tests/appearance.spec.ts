@@ -6,7 +6,7 @@ test('all themes apply immediately, persist, and retain readable text and button
 	try {
 		await freshPage(page, '/settings?tab=appearance');
 		await expect(page.getByRole('heading', { name: 'Appearance', exact: true })).toBeVisible();
-		const cards = page.locator('.theme-card');
+		const cards = page.getByLabel('Themes', { exact: true }).locator('.theme-card');
 		await expect(cards).toHaveCount(11);
 		await expect(cards.first()).toHaveAttribute('aria-pressed', 'true');
 		const original = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg-0').trim());

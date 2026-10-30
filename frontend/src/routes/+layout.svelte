@@ -8,6 +8,8 @@
 	import { session } from '$lib/stores/session.svelte';
 	import { agent } from '$lib/stores/agent.svelte';
 	import { dialogs } from '$lib/stores/dialogs.svelte';
+	import Sidebar from '$lib/components/Sidebar.svelte';
+	import { deviceMode } from '$lib/stores/deviceMode.svelte';
 	import TopBar from '$lib/components/TopBar.svelte';
 	import Toasts from '$lib/components/Toasts.svelte';
 	import OskOverlay from '$lib/components/OskOverlay.svelte';
@@ -59,6 +61,7 @@
 	});
 
 	onMount(() => {
+		deviceMode.init();
 		session.init();
 		agent.start();
 		return playback.start();
@@ -79,12 +82,15 @@
 	<Login />
 {:else}
 	{#if !session.profile?.pin_locked}
+		{#if !fullscreen}<Sidebar />{/if}
+		<div class:desktop={!fullscreen && deviceMode.mode === 'desktop'}>
 		{#if !fullscreen}<TopBar />{:else}<PlaybackPicker floating />{/if}
 		<main class:fullscreen>
 			{#key session.version}
 				{@render children()}
 			{/key}
 		</main>
+		</div>
 	{/if}
 	{#if session.choosing || session.profile?.pin_locked}
 		<ProfilePicker fullscreen onClose={() => (session.choosing = false)} />
@@ -105,11 +111,8 @@
 		z-index: 1;
 		padding-bottom: env(safe-area-inset-bottom);
 	}
-	@media (max-width: 760px) {
-		main:not(.fullscreen) {
-			padding-bottom: calc(4.5rem + env(safe-area-inset-bottom));
-		}
-	}
+	.desktop { margin-left: var(--sidebar-width, 14rem); }
+	@media (max-width: 760px) { .desktop { --sidebar-width: 4.5rem; } }
 	.splash {
 		position: fixed;
 		inset: 0;
