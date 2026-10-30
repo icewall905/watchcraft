@@ -201,7 +201,7 @@ def generate_briefing(bid: int) -> BriefingIssue | None:
     try:
         return _generate_briefing(bid, progress)
     except Exception as exc:
-        progress('failed', 'Briefing writing stopped before an issue was saved.', error=type(exc).__name__)
+        progress('failed', 'Briefing processing stopped unexpectedly. Check its issue history.', error=type(exc).__name__)
         raise
 
 
