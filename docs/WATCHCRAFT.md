@@ -155,6 +155,12 @@ agents (scheduled curators, Scout searches, briefings) may work at once (`team.m
 Scheduled work waits for a free slot; anything a user starts begins at once but occupies a slot. The video curator
 runs in its own worker and is not counted. AI calls remain serialized per process.
 
+Curator cards and Source Scout expose an expandable run timeline. Curator milestones record real source checks,
+reused fetches, matching, optional AI ranking, completion and report-writing steps as those operations occur. Source
+errors have expandable technical details. The existing event store retains up to 80 milestones per curator and shows
+the latest 12 from its latest run. Events belong to the profile and are excluded from the shared video-agent event/SSE
+feeds; deleting the curator/profile removes them. Detailed briefing-writer steps and narration modes remain planned.
+
 ## Not implemented yet (honest list)
 
 Semantic search/embeddings, child-approved Hub content (child profiles currently have no Hub access), advanced cron schedules and explicit run

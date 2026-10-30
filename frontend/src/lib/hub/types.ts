@@ -63,6 +63,7 @@ export type TeamAgent = {
 	status: TeamStatus; since: number | null; next_run: number | null; last_run?: number | null; doing?: string | null; query?: string;
 	role?: 'watch' | 'research'; error?: string; enabled?: boolean; found_today?: number; plans?: number;
 	finds?: { id: number; title: string; found_at: number }[];
+	timeline?: { id?: number; step: string; message: string; at: number; detail?: string }[];
 	last?: { status: string; new_items?: number; seen_items?: number; suggestions?: number; query?: string; error?: string; finished_at: number | null } | null;
 };
 export type TeamEntry = {

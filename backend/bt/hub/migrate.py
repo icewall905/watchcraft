@@ -33,6 +33,7 @@ def migrate(conn) -> None:
     from .engine import canonical_url, ensure_fts
     _add_missing_columns(conn)
     ensure_fts(conn)
+    conn.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_agentevent_profile_kind_id ON agentevent (profile_id, kind, id)')
     with Session(conn) as s:
         row = s.get(Setting, 'watchcraft_schema_version')
         version = (row.value or {}).get('version', 1) if row else 1

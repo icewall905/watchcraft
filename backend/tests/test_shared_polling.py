@@ -56,6 +56,8 @@ def test_two_curators_share_fetch_but_score_and_discover_separately(client, monk
     assert check['trigger'] == 'shared'
     first_check = client.get(f"/api/hub/sources/{first_source['id']}/checks").json()[0]
     assert check['checked_at'] == first_check['checked_at']
+    timeline = next(a['timeline'] for a in client.get('/api/hub/team', headers=headers).json()['agents'] if a['kind'] == 'curator')
+    assert any(step['step'] == 'reused' for step in timeline)
     assert client.post(f"/api/hub/sources/{second_source['id']}/test", headers=headers).json()['ok']
     assert len(calls) == 2  # An explicit test always fetches again.
 
@@ -163,3 +165,24 @@ def test_oversize_result_is_not_stored_and_query_providers_are_excluded(client, 
         assert s.exec(select(SourcePoll)).first().items == []
     with pytest.raises(ValueError, match='feed providers'):
         polling.fetch(providers.PROVIDERS['github_search'], '', str)
+
+
+def test_response_completed_while_waiting_for_db_lock_is_reused(client):
+    calls = []
+    provider = providers.Provider('rss', 'RSS', 'feed', '', lambda *_: calls.append(1) or [])
+    key = hashlib.sha256(b'rss\0https://example.org/waited').hexdigest()
+    entered = threading.Event()
+    def poll():
+        entered.set()
+        return polling.fetch(provider, 'https://example.org/waited', str)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with engine.connect() as conn:
+            conn.exec_driver_sql('BEGIN IMMEDIATE')
+            waiting = pool.submit(poll)
+            assert entered.wait(5)
+            time.sleep(0.1)  # The poller is blocked on the DB transaction.
+            conn.execute(SourcePoll.__table__.insert().values(key=key, fetched_at=time.time(),
+                         items=[{'title': 'Fetched while waiting'}], error='', lease_until=0, lease_token=''))
+            conn.commit()
+        result = waiting.result(timeout=10)
+    assert result.shared and result.items[0]['title'] == 'Fetched while waiting' and not calls

@@ -43,9 +43,10 @@ def fetch(provider, url: str, format_error, *, force: bool = False) -> Result:
     deadline = time.monotonic() + WAIT_SECONDS
     token = uuid.uuid4().hex
     while True:
-        now = time.time()
         with session() as s:
             s.exec(text('BEGIN IMMEDIATE'))
+            # A response may have completed while we waited for the DB lock.
+            now = time.time()
             row = s.get(SourcePoll, key)
             if row:
                 age = now - row.fetched_at

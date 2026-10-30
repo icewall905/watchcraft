@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 from .. import curation
 from ..access import hub_allowed
 from ..db import engine as db_engine, get_settings, session
-from . import ai, polling, slots
+from . import activity, ai, polling, slots
 from .models import (Alert, Briefing, CollectionItem, ContentItem, Curator, CuratorDiscovery, CuratorRun,
                      CuratorSource, PageRevision, Source, SourceCheck, TopicItem)
 from .providers import PROVIDERS
@@ -195,7 +195,9 @@ def run(cid: int, trigger: str = 'schedule') -> CuratorRun | None:
                 cur.next_run = schedule_after(cur.interval_hours)
                 s.add(cur)
             s.add(row); s.commit(); s.refresh(row)
-            return row
+        if cur:
+            activity.emit(cur, r.id, 'failed', 'The run stopped because of an internal error.')
+        return row
 
 
 def start(cid: int) -> None:
@@ -225,12 +227,16 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         sources = s.exec(select(Source).join(CuratorSource, CuratorSource.source_id == Source.id)
                          .where(CuratorSource.curator_id == cid, Source.enabled == True)).all()
     errors, candidates = [], []
+    activity.emit(c, r.id, 'started', f'Starting a run with {len(sources)} sources.')
     queries = [q for q in (c.queries or []) if q.strip()][:8] or ([c.subject] if c.subject else [])
     for src in sources:
+        label = (src.name or src.provider)[:100]
+        activity.emit(c, r.id, 'checking', f'Checking {label}.', source_id=src.id)
         prov = PROVIDERS.get(src.provider)
         ok, reason = prov.availability() if prov else (False, 'Unknown provider')
         if not ok:
             record_source_check(src, 'curator', 0, reason)
+            activity.emit(c, r.id, 'source_error', f'{label} is unavailable.', source_id=src.id, error=reason)
             errors.append({'source': src.name or src.provider, 'message': reason}); continue
         got, failed, checked_at, shared = 0, None, None, False
         for q in (queries if prov.mode == 'query' else ['']):
@@ -258,8 +264,14 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         record_source_check(src, 'shared' if shared else 'curator', got, failed or '', checked_at)
         if failed:
             errors.append({'source': src.name or src.provider, 'message': failed})
+            activity.emit(c, r.id, 'source_error', f'{label} returned {got} items with a check error.', source_id=src.id, error=failed)
+        else:
+            activity.emit(c, r.id, 'reused' if shared else 'checked',
+                          f'{"Reused a recent fetch from" if shared else "Received results from"} {label}: {got} items.',
+                          source_id=src.id)
 
     # Score: keywords first (cheap), then optional AI over the survivors.
+    activity.emit(c, r.id, 'reviewing', f'Reviewing {len(candidates)} source items against the mission.')
     scored = []
     seen_urls = set()
     for src, q, d in candidates:
@@ -279,12 +291,15 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         known = set(s.exec(select(ContentItem.url).join(CuratorDiscovery, CuratorDiscovery.item_id == ContentItem.id)
                                       .where(CuratorDiscovery.curator_id == cid)).all())
     fresh = [x for x in scored if canonical_url(x[2]['url']) not in known][: max(1, c.max_per_run)]
+    activity.emit(c, r.id, 'matched', f'{len(fresh)} unseen matching items are ready for review.')
     if c.ai_enabled and fresh and ai.enabled():
+        activity.emit(c, r.id, 'ranking', f'Asking the configured AI to rank {len(fresh)} items.')
         try:
             for x, (score, reason) in zip(fresh, ai.rank(c, [x[2] for x in fresh])):
                 x[3], x[4] = score, reason or x[4]
         except Exception as e:  # noqa: BLE001 — AI is optional; keep keyword scores
             errors.append({'source': 'AI relevance', 'message': f'AI scoring unavailable ({_safe_error(e)}); used keyword scores.'})
+            activity.emit(c, r.id, 'ranking_error', 'AI ranking was unavailable; kept the keyword scores.', error=_safe_error(e))
     new = 0
     with session() as s:
         c = s.get(Curator, cid)
@@ -312,11 +327,16 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         c.error = '' if status == 'ok' else '; '.join(f"{e['source']}: {e['message']}" for e in errors)[:500]
         c.next_run = time.time() + c.interval_hours * 3600 if c.interval_hours else 1e12
         s.add(r); s.add(c); s.commit(); s.refresh(r)
+    activity.emit(c, r.id, 'completed', f'Finished: {new} new items, {len(candidates)} source items checked, {len(errors)} issues.', status=status)
     if c.kind == 'research' and new and ai.enabled():
         try:
-            ai.research_report(cid)
+            activity.emit(c, r.id, 'writing_report', 'Writing a cited report from the research findings.')
+            report = ai.research_report(cid)
+            if report is not None:
+                activity.emit(c, r.id, 'report_ready', 'The research report is ready.')
         except Exception as e:  # noqa: BLE001
             log.info('report failed: %s', e)
+            activity.emit(c, r.id, 'report_error', 'The findings were saved, but report writing failed.', error=_safe_error(e))
     return r
 
 

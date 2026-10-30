@@ -176,6 +176,42 @@ def test_source_check_history_is_bounded_and_reset_on_url_change(client):
     assert not hub.record_source_check(row, 'test', 1)  # A fetch started for the old URL cannot update the new source.
 
 
+def test_curator_live_timeline_is_real_private_and_deleted_with_curator(client, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from bt.models import AgentEvent
+    entered, release = threading.Event(), threading.Event()
+    def fetch(url, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        return RSS
+    monkeypatch.setattr(curation, 'fetch', fetch)
+    curator = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/private-feed', 'name': 'Private journal'}])
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        work = pool.submit(hub.run, curator['id'])
+        try:
+            assert entered.wait(5)
+            current = next(a for a in client.get('/api/hub/team').json()['agents'] if a['kind'] == 'curator')
+            assert current['status'] == 'running'
+            assert current['doing'] == 'Checking Private journal.'
+            assert current['timeline'][-1]['step'] == 'checking'
+            other = client.post('/api/profiles', json={'name': 'Other'}).json()
+            other_team = client.get('/api/hub/team', headers={'X-Profile-Id': str(other['id'])}).json()
+            assert all(a['kind'] != 'curator' for a in other_team['agents'])
+            assert 'Private journal' not in str(other_team)
+            assert all(e['kind'] != 'hub_curator' for e in client.get('/api/agent/events').json())
+        finally:
+            release.set()
+        assert work.result(timeout=10).new_items == 2
+    current = next(a for a in client.get('/api/hub/team').json()['agents'] if a['kind'] == 'curator')
+    assert current['timeline'][-1]['step'] == 'completed'
+    assert '2 new items' in current['timeline'][-1]['message']
+    assert not any(e['step'] == 'ranking' for e in current['timeline'])  # No invented AI activity.
+    client.delete(f"/api/hub/curators/{curator['id']}")
+    with session() as s:
+        assert s.exec(select(AgentEvent).where(AgentEvent.kind == 'hub_curator')).all() == []
+
+
 def test_query_provider_alerts_and_unavailable_web_search(client, monkeypatch):
     nvd = {'vulnerabilities': [{'cve': {'id': 'CVE-2026-1234', 'published': '2026-10-01T00:00:00.000',
            'descriptions': [{'lang': 'en', 'value': 'Remote code execution in Widget Server'}],

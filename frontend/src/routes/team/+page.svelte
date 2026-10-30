@@ -63,6 +63,7 @@
 	function now_line(a: TeamAgent): string {
 		if (a.status === 'waiting') return 'Ready to go as soon as another agent finishes.';
 		if (a.status === 'running') {
+			if (a.kind === 'curator' && a.doing) return a.doing;
 			if (a.kind === 'scout') return a.doing || `Researching “${a.query}”.`;
 			if (a.kind === 'briefing') return a.doing ? `Writing “${a.doing}”.` : 'Writing a briefing.';
 			return a.role === 'research' ? 'Investigating its subject across sources.' : 'Checking its sources for new finds.';
@@ -75,6 +76,7 @@
 		}
 		if (a.kind === 'briefing') return a.last_run ? `Last briefing written ${ago(a.last_run)}.` : 'No briefing written yet.';
 		if (a.found_today) return `Brought back ${plural(a.found_today, 'find')} today.`;
+		if (a.last?.new_items) return `Last run brought back ${plural(a.last.new_items, 'new item')}.`;
 		if (a.last) return a.last.status === 'ok' || a.last.status === 'partial' ? `Last run checked ${plural(a.last.seen_items ?? 0, 'item')}; nothing new.` : 'The last run failed.';
 		return 'Has not run yet.';
 	}
@@ -137,7 +139,8 @@
 			{#each [0, 1] as i (i)}<div class="skeleton" style="height:12rem"></div>{/each}
 		{/if}
 		{#each agents as a (a.key)}
-			<a class="card" class:busy={a.status === 'running'} class:waiting={a.status === 'waiting'} style:--c={a.color} href={href(a)} use:focusable>
+			<article class="card" class:busy={a.status === 'running'} class:waiting={a.status === 'waiting'} style:--c={a.color}>
+				<a class="card-link" href={href(a)} use:focusable>
 				<div class="top">
 					<span class="avatar emoji">{a.icon}{#if a.status === 'running'}<span class="spark" aria-hidden="true"><AgentGlyph state={GLYPH[a.status]} size="1rem" /></span>{/if}</span>
 					<div class="ttl"><h2>{a.name}</h2><span class="role">{a.kind === 'scout' ? 'Source Scout' : a.kind === 'briefing' ? 'Briefings' : a.role === 'research' ? 'Researcher' : 'Watcher'}</span></div>
@@ -149,7 +152,18 @@
 					<ul class="finds">{#each a.finds as f (f.id)}<li><span class="dot" aria-hidden="true"></span>{f.title}</li>{/each}</ul>
 				{/if}
 				{#if foot(a)}<p class="foot muted small">{foot(a)}</p>{/if}
-			</a>
+				</a>
+				{#if a.timeline?.length}
+					<details class="timeline">
+						<summary use:focusable>Run timeline</summary>
+						<ol>{#each a.timeline as step}
+							<li><p>{step.message}</p><time class="small muted">{ago(step.at)}</time>
+								{#if step.detail}<details><summary use:focusable>Technical details</summary><p class="small">{step.detail}</p></details>{/if}
+							</li>
+						{/each}</ol>
+					</details>
+				{/if}
+			</article>
 		{/each}
 	</section>
 
@@ -184,11 +198,17 @@
 	.lamps { display: flex; gap: .3rem; }
 	.lamp { width: .75rem; height: .75rem; border-radius: 50%; background: var(--line-strong); transition: background .3s, box-shadow .3s; }
 	.lamp.on { background: var(--ok); box-shadow: 0 0 .6rem var(--ok); }
-	.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr)); gap: 1.1rem; }
+	.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr)); gap: 1.1rem; align-items: start; }
 	.card { position: relative; display: grid; gap: .6rem; padding: 1.1rem 1.2rem; border: 1px solid var(--line); border-top: 3px solid var(--c); border-radius: var(--r-lg); background: var(--surface); color: var(--text); align-content: start; min-width: 0; overflow: hidden; }
 	.card.busy { border-color: color-mix(in srgb, var(--c) 60%, var(--line)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--c) 35%, transparent), 0 .6rem 2rem -1rem var(--c); }
 	.card.busy::after { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 3px; background: linear-gradient(90deg, transparent, #fff8, transparent); animation: sweep 1.8s linear infinite; }
 	.card.waiting { opacity: .85; }
+	.card-link { display: grid; gap: .6rem; color: inherit; }
+	.timeline { border-top: 1px solid var(--line); padding-top: .6rem; }
+	.timeline summary { cursor: pointer; padding: .3rem 0; }
+	.timeline ol { padding-left: 1.2rem; margin: .5rem 0; }
+	.timeline li { margin: .6rem 0; overflow-wrap: anywhere; }
+	.timeline p { margin: .2rem 0; }
 	.top { display: flex; gap: .8rem; align-items: center; }
 	.avatar { position: relative; width: 3rem; height: 3rem; display: grid; place-items: center; border-radius: var(--r-md); background: color-mix(in srgb, var(--c) 26%, transparent); color: var(--c); flex: none; }
 	.avatar.emoji { font-size: 1.6rem; }

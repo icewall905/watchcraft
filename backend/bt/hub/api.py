@@ -14,7 +14,7 @@ from ..access import hub_allowed, require_hub
 from ..api.core import profile_id
 from ..db import session
 from ..models import AgentEvent
-from . import ai, engine, polling, scout, slots
+from . import activity, ai, engine, polling, scout, slots
 from .models import (Alert, Briefing, BriefingIssue, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
                      CuratorRun, CuratorSource, ItemState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, Source, SourceCheck, Topic, TopicItem)
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
@@ -596,11 +596,13 @@ def team(pid: int = Depends(profile_id)):
                       else 'paused' if not c.enabled else 'idle')
             found_today = s.exec(select(func.count()).select_from(CuratorDiscovery)
                                  .where(CuratorDiscovery.curator_id == c.id, CuratorDiscovery.found_at >= day)).one()
+            timeline = activity.recent(s, pid, c.id, last.id) if last else []
             agents.append({'key': f'curator-{c.id}', 'kind': 'curator', 'id': c.id, 'name': c.name, 'icon': c.icon,
                            'color': c.color, 'mission': c.description or c.instructions[:200], 'role': c.kind,
                            'status': status, 'since': job['since'] if job else None, 'error': c.error,
                            'enabled': c.enabled, 'next_run': c.next_run if c.enabled and c.next_run < 1e11 else None,
                            'last_run': c.last_run, 'found_today': found_today, 'finds': _finds(s, c.id),
+                           'timeline': timeline, 'doing': timeline[-1]['message'] if timeline else None,
                            'last': {'status': last.status, 'new_items': last.new_items, 'seen_items': last.seen_items,
                                     'finished_at': last.finished_at} if last else None})
         for r in s.exec(select(CuratorRun, Curator.name, Curator.icon).join(Curator, Curator.id == CuratorRun.curator_id)
@@ -621,10 +623,12 @@ def team(pid: int = Depends(profile_id)):
             ev = _scout_events(s, pid, active.id)
             doing = ev[-1]['message'] if ev else 'Starting research.'
         finished = next((r for r in runs if r.status != 'running'), None)
+        scout_timeline = _scout_events(s, pid, (active or finished).id)[-12:] if active or finished else []
         agents.append({'key': 'scout', 'kind': 'scout', 'id': None, 'name': 'Source Scout', 'icon': '🧭', 'color': '#5cc8ff',
                        'mission': 'Finds and tests new feeds and websites worth following.',
                        'status': (job['state'] if job else 'running') if active else 'idle',
                        'since': active.created_at if active else None, 'doing': doing, 'query': active.query if active else '',
+                       'timeline': [{'step': e['kind'], 'message': e['message'], 'at': e['at']} for e in scout_timeline],
                        'plans': len(plans), 'next_run': min((p.next_run for p in plans), default=None),
                        'last': {'query': finished.query, 'status': finished.status, 'suggestions': len(finished.suggestions),
                                 'finished_at': finished.finished_at, 'error': finished.error} if finished else None})
@@ -756,7 +760,7 @@ def research_run(body: ScoutInput, pid: int, scheduled: bool = False):
                 row = s.get(ScoutRun, rid)
                 if row: row.created_at = time.time(); s.add(row); s.commit()
             suggestions, sitemaps = scout.research(query, emit)
-        if sitemaps: emit('sitemaps', f'Found {len(sitemaps)} sitemap links; sitemap monitoring is not available yet.')
+        if sitemaps: emit('sitemaps', f'Found {len(sitemaps)} sitemap links; validated sitemaps appear in the suggestions.')
         emit('complete', f'Found {len(suggestions)} validated sources.')
         with session() as s:
             row = s.get(ScoutRun, rid)
@@ -970,6 +974,8 @@ def delete_curator(cid: int, pid: int = Depends(profile_id)):
         s.exec(delete(CuratorSource).where(CuratorSource.curator_id == cid))
         s.exec(delete(CuratorRun).where(CuratorRun.curator_id == cid))
         s.exec(delete(CuratorDiscovery).where(CuratorDiscovery.curator_id == cid))
+        s.exec(delete(AgentEvent).where(AgentEvent.kind == activity.KIND, AgentEvent.profile_id == pid,
+                                       AgentEvent.payload['curator_id'].as_integer() == cid))
         for a in s.exec(select(Alert).where(Alert.curator_id == cid)).all():
             a.curator_id = None; s.add(a)
         s.delete(c); s.commit()
@@ -1359,6 +1365,6 @@ def delete_profile_data(s: Session, pid: int) -> None:
     s.exec(delete(BriefingIssue).where(BriefingIssue.briefing_id.in_(bids or [0])))
     s.exec(delete(CollectionItem).where(CollectionItem.collection_id.in_(colls or [0])))
     s.exec(delete(TopicItem).where(TopicItem.topic_id.in_(tids or [0])))
-    s.exec(delete(AgentEvent).where(AgentEvent.kind == 'source_scout', AgentEvent.profile_id == pid))
+    s.exec(delete(AgentEvent).where(AgentEvent.kind.in_(['source_scout', activity.KIND]), AgentEvent.profile_id == pid))
     for model in (CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, PageRevision, SourceCheck, Source, Curator, ScoutRun, ScoutPlan):
         s.exec(delete(model).where(model.profile_id == pid))

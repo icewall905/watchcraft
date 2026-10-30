@@ -8,6 +8,8 @@ test('Agent Activity shows real agent state and the parallel-agent setting saves
 		agents: [
 			{ key: 'curator-1', kind: 'curator', id: 1, name: 'Local AI', icon: '🤖', color: '#ffb547', mission: 'Tracks local model releases.', role: 'watch',
 				status: 'running', since: now - 42, next_run: null, last_run: now - 3600, found_today: 2, error: '', enabled: true,
+				doing: 'Checking a real feed.', timeline: [{ step: 'checking', message: 'Checking a real feed.', at: now - 2 },
+					{ step: 'source_error', message: 'One source needs attention.', at: now - 1, detail: 'Source returned HTTP 503.' }],
 				finds: [{ id: 5, title: 'A new open model', found_at: now - 600 }], last: null },
 			{ key: 'curator-2', kind: 'curator', id: 2, name: 'Security', icon: '🛡️', color: '#ff6b6b', mission: '', role: 'watch',
 				status: 'waiting', since: now, next_run: null, found_today: 0, finds: [], last: null },
@@ -23,6 +25,12 @@ test('Agent Activity shows real agent state and the parallel-agent setting saves
 	await expect(page.getByText(/Working · \d+s/)).toBeVisible();
 	await expect(page.getByText('Waiting for a free slot')).toBeVisible();
 	await expect(page.getByText('A new open model')).toBeVisible();
+	const card = page.getByRole('article').filter({ hasText: 'Local AI' });
+	await expect(card.locator('.now')).toHaveText('Checking a real feed.');
+	await card.getByText('Run timeline').click();
+	await expect(card.getByText('One source needs attention.')).toBeVisible();
+	await card.getByText('Technical details').click();
+	await expect(card.getByText('Source returned HTTP 503.')).toBeVisible();
 	await expect(page.getByText('scouted “https://lwn.net/” and validated 1 source.')).toBeVisible();
 	await page.screenshot({ path: 'test-results/team.png', fullPage: true });
 
