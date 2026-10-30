@@ -14,6 +14,7 @@
 	import Row from '$lib/components/Row.svelte';
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import OfflineButton from '$lib/components/OfflineButton.svelte';
+	import ScoutReportPreview from '$lib/hub/ScoutReportPreview.svelte';
 	import LookingPlaceholder from '$lib/components/LookingPlaceholder.svelte';
 	import AgentGlyph from '$lib/components/AgentGlyph.svelte';
 
@@ -196,6 +197,8 @@
 			</ol>
 		</section>
 	{/if}
+
+	<ScoutReportPreview />
 
 	{#if failed}
 		<p class="page muted">Could not load your rows. Check that the server is running, then press OK to retry.</p>

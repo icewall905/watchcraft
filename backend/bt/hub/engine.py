@@ -115,6 +115,8 @@ def upsert(s: Session, data: dict, provider: str) -> ContentItem | None:
         for k in ('summary', 'author', 'publisher', 'image', 'published_at', 'body'):
             if data.get(k) and not getattr(item, k):
                 setattr(item, k, data[k]); changed = True
+        if data.get('enrichment') and not item.enrichment.get('summary'):
+            item.enrichment = {**item.enrichment, **data['enrichment']}; changed = True
         if data.get('meta'):
             merged = {**data['meta'], **item.meta}
             if merged != item.meta:
@@ -125,7 +127,8 @@ def upsert(s: Session, data: dict, provider: str) -> ContentItem | None:
     item = ContentItem(url=url, title=(data.get('title') or url)[:500], type=data.get('type') or PROVIDERS[provider].default_type,
                        summary=data.get('summary', ''), body=data.get('body', ''), author=data.get('author', ''),
                        publisher=data.get('publisher', ''), image=data.get('image', ''), published_at=data.get('published_at'),
-                       provider=data.get('provider') or provider, external_id=data.get('external_id', ''), meta=data.get('meta') or {})
+                       provider=data.get('provider') or provider, external_id=data.get('external_id', ''), meta=data.get('meta') or {},
+                       enrichment=data.get('enrichment') or {})
     s.add(item); s.flush(); index(s, item)
     return item
 
@@ -255,7 +258,7 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
                 if src.provider == 'page_watch':
                     record_page_revision(src, fetched[0], checked_at)
                 for d in fetched:
-                    candidates.append((src, q, d)); got += 1
+                    candidates.append((src, q, dict(d))); got += 1
             except Exception as e:  # noqa: BLE001 — one source never fails the run
                 log.info('source %s failed: %s', src.id, e)
                 failed = _safe_error(e)
@@ -300,6 +303,29 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         except Exception as e:  # noqa: BLE001 — AI is optional; keep keyword scores
             errors.append({'source': 'AI relevance', 'message': f'AI scoring unavailable ({_safe_error(e)}); used keyword scores.'})
             activity.emit(c, r.id, 'ranking_error', 'AI ranking was unavailable; kept the keyword scores.', error=_safe_error(e))
+    # Capture matching pages before opening a write transaction. A failed capture
+    # does not discard the discovery; the item can be retried from its page.
+    from .extract import extract_page
+    for src, q, d, score, reason in fresh:
+        if score < c.min_score or d.get('body') or d.get('type') in ('video', 'document'):
+            continue
+        with session() as s:
+            if not hub_allowed(s, c.profile_id):
+                raise ValueError('Hub access was restricted during the run.')
+        try:
+            payload, final, _ = curation.fetch(d['url'], kinds=curation.HTML_TYPES, limit=3_000_000, with_metadata=True)
+            d['body'] = extract_page(payload, final)['body']
+        except Exception as e:  # noqa: BLE001
+            log.info('Could not capture item: %s', _safe_error(e))
+    if c.ai_enabled and ai.enabled():
+        matched = [x for x in fresh if x[3] >= c.min_score and x[2].get('body')]
+        for start in range(0, len(matched), 5):
+            batch = matched[start:start + 5]
+            try:
+                for n, summary in ai.summarize_items([x[2] for x in batch]).items():
+                    batch[n][2]['enrichment'] = {'summary': summary}
+            except Exception as e:  # noqa: BLE001
+                log.info('Could not summarize captured items: %s', _safe_error(e))
     new = 0
     with session() as s:
         c = s.get(Curator, cid)
@@ -417,6 +443,22 @@ def dispatch_due() -> None:
             s.commit()
         if claimed.rowcount and slots.spawn(f'briefing-{b.id}', 'briefing', b.id, b.profile_id, b.name,
                                             ai.generate_briefing, b.id):
+            free -= 1
+
+    from .models import ScoutReportConfig
+    from .scout_report import scheduled
+    with session() as s:
+        reports = s.exec(select(ScoutReportConfig).where(ScoutReportConfig.frequency != 'manual',
+                         ScoutReportConfig.next_run <= now).order_by(ScoutReportConfig.next_run)).all()
+    for config in reports:
+        if free <= 0: return
+        with session() as s:
+            claimed = s.exec(update(ScoutReportConfig).where(ScoutReportConfig.profile_id == config.profile_id,
+                             ScoutReportConfig.next_run == config.next_run).values(next_run=now + LEASE_S))
+            s.commit()
+        if claimed.rowcount and slots.spawn(f'scout-report-{config.profile_id}', 'scout_report', None,
+                                            config.profile_id, 'Scout Report', scheduled,
+                                            config.profile_id, config.frequency, now + LEASE_S):
             free -= 1
 
 

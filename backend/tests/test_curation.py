@@ -799,3 +799,82 @@ def test_scheduled_scout_waiting_for_a_slot_retries_instead_of_failing(client, m
         research_run(ScoutInput(query='https://example.org/'), 1, scheduled=True)
     assert err.value.status_code == 429
     assert client.get('/api/hub/scout/runs').json() == []
+
+
+def test_scout_report_is_profile_owned_cited_and_avoids_repeats(client, monkeypatch):
+    monkeypatch.setattr(curation, 'fetch', lambda url, **k: RSS)
+    c = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}], name='Researcher')
+    assert hub.run(c['id']).new_items == 2
+    config = client.get('/api/hub/scout-report/config').json()
+    assert config['frequency'] == 'manual' and not config['show_home']
+    assert client.get('/api/hub/scout-report/preview').json() == {'enabled': False, 'issue': None}
+    first = client.post('/api/hub/scout-report/generate', json={'period': 'daily'}).json()
+    assert len(first['sections']['findings']) == 2 and first['sections']['runs']['count'] == 1
+    assert first['sections']['findings'][0]['url'].startswith('https://example.org/')
+    assert first['sections']['findings'][0]['curator_id'] == c['id']
+    second = client.post('/api/hub/scout-report/generate', json={'period': 'daily'}).json()
+    assert second['sections']['findings'] == []
+    # A curator-specific report has an independent, explicit history.
+    scoped = client.post('/api/hub/scout-report/generate', json={'period': 'weekly', 'curator_id': c['id']}).json()
+    assert len(scoped['sections']['findings']) == 2 and scoped['sections']['curator_name'] == 'Researcher'
+    updated = client.put('/api/hub/scout-report/config', json={'frequency': 'weekly', 'show_home': True}).json()
+    assert updated['show_home'] and updated['next_run']
+    assert client.get('/api/hub/scout-report/preview').json()['issue']['id'] == second['id']
+    other = client.post('/api/profiles', json={'name': 'Other'}).json()
+    headers = {'X-Profile-Id': str(other['id'])}
+    assert client.get('/api/hub/scout-report/issues', headers=headers).json() == []
+    assert client.get('/api/hub/scout-report/preview', headers=headers).json()['enabled'] is False
+    assert client.post('/api/hub/scout-report/generate', headers=headers, json={'curator_id': c['id']}).status_code == 404
+    assert client.put('/api/hub/scout-report/config', json={'frequency': 'manual'}).json()['next_run'] is None
+
+
+def test_scout_report_schedule_claim_and_completion(client, monkeypatch):
+    import time
+    from bt.hub import scout, slots
+    from bt.hub.models import ScoutReportConfig
+    monkeypatch.setattr(slots, 'free', lambda: 1)
+    monkeypatch.setattr(scout, 'run_due', lambda _free: 0)
+    def immediate(_key, _kind, _ref, _pid, _label, fn, *args, **_kwargs):
+        fn(*args)
+        return True
+    monkeypatch.setattr(slots, 'spawn', immediate)
+    client.put('/api/hub/scout-report/config', json={'frequency': 'daily'})
+    with session() as s:
+        config = s.get(ScoutReportConfig, 1); config.next_run = time.time() - 1
+        s.add(config); s.commit()
+    hub.dispatch_due(); hub.dispatch_due()
+    issues = client.get('/api/hub/scout-report/issues').json()
+    assert len(issues) == 1 and issues[0]['period'] == 'daily'
+    assert client.get('/api/hub/scout-report/config').json()['next_run'] > time.time() + 80000
+
+
+def test_capture_item_is_profile_scoped_and_searchable(client, monkeypatch):
+    monkeypatch.setattr(curation, 'fetch', lambda url, **kw: RSS)
+    c = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}])
+    hub.run(c['id'])
+    item = client.get('/api/hub/items').json()['items'][0]
+    other = client.post('/api/profiles', json={'name': 'Other'}).json()
+    headers = {'X-Profile-Id': str(other['id'])}
+    assert client.post(f"/api/hub/items/{item['id']}/capture", headers=headers).status_code == 404
+    html = b'<html><head><title>Article</title></head><body><p>Unique local capture zebrafish.</p><script>bad()</script></body></html>'
+    monkeypatch.setattr(curation, 'fetch', lambda url, **kw: (html, url, {}))
+    assert client.post(f"/api/hub/items/{item['id']}/capture").status_code == 200
+    detail = client.get(f"/api/hub/items/{item['id']}").json()
+    assert 'Unique local capture zebrafish' in detail['body'] and 'bad()' not in detail['body']
+    assert client.get('/api/hub/search?q=zebrafish').json()['total'] == 1
+
+
+def test_new_matching_pages_are_captured_and_summarized(client, monkeypatch):
+    html = b'<html><body><article>Important local evidence about Widget.</article></body></html>'
+    def fetch(url, **kw):
+        return (html, url, {}) if kw.get('with_metadata') else RSS
+    monkeypatch.setattr(curation, 'fetch', fetch)
+    monkeypatch.setattr(ai, 'enabled', lambda: True)
+    monkeypatch.setattr(ai, 'rank', lambda c, items: [(90, 'Relevant') for _ in items])
+    monkeypatch.setattr(ai, 'summarize_items', lambda items: {n: 'Summary based on captured evidence.' for n in range(len(items))})
+    c = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}], keywords=['widget'], ai_enabled=True)
+    assert hub.run(c['id']).new_items == 1
+    row = client.get('/api/hub/items').json()['items'][0]
+    detail = client.get(f"/api/hub/items/{row['id']}").json()
+    assert 'Important local evidence' in detail['body']
+    assert detail['enrichment']['summary'] == 'Summary based on captured evidence.'

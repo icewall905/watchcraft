@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
-TEXT_LIMIT = 20_000
+TEXT_LIMIT = 200_000
 CVE_RE = re.compile(r'\bCVE-\d{4}-\d{4,7}\b', re.I)
 PATTERN_WORDS = ('knit', 'crochet', 'sewing pattern', 'quilt', 'embroider', 'amigurumi', 'cross-stitch', 'cross stitch')
 SKIP = {'script', 'style', 'noscript', 'template', 'svg', 'nav', 'footer', 'header', 'form', 'iframe'}

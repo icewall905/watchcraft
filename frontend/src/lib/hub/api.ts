@@ -2,7 +2,7 @@
 import { request } from '$lib/api';
 import type {
 	Alert, Briefing, Collection, Counts, Curator, CuratorDetail, CuratorInput, Issue, Item, ItemDetail, ItemState,
-	NewsGroup, Page, Registry, SavedSearch, SearchResult, ScoutPlan, ScoutRun, Source, Team, Template, Topic, TopicDetail, WebResult
+	NewsGroup, Page, Registry, SavedSearch, SearchResult, ScoutPlan, ScoutReport, ScoutReportConfig, ScoutRun, Source, Team, Template, Topic, TopicDetail, WebResult
 } from './types';
 
 type Params = Record<string, string | number | boolean | undefined | null>;
@@ -26,6 +26,8 @@ export const hub = {
 	importUrl: (url: string) => send<Item>('POST', '/items/import', { url }),
 	news: (params: Params) => get<{ groups: NewsGroup[]; topics: Topic[] }>('/news' + qs(params)),
 
+	captureItem: (id: number) => send<{ ok: boolean }>('POST', `/items/${id}/capture`),
+
 	collections: () => get<Collection[]>('/collections'),
 	createCollection: (body: Partial<Collection>) => send<Collection>('POST', '/collections', body),
 	updateCollection: (id: number, body: Partial<Collection>) => send<Collection>('PATCH', `/collections/${id}`, body),
@@ -34,6 +36,11 @@ export const hub = {
 	removeFromCollection: (id: number, itemId: number) => send<{ ok: boolean }>('DELETE', `/collections/${id}/items/${itemId}`),
 
 	team: (signal?: AbortSignal) => get<Team>('/team', signal),
+	reportConfig: () => get<ScoutReportConfig>('/scout-report/config'),
+	updateReportConfig: (body: Partial<ScoutReportConfig>) => send<ScoutReportConfig>('PUT', '/scout-report/config', body),
+	scoutReports: () => get<ScoutReport[]>('/scout-report/issues'),
+	generateScoutReport: (period: 'daily' | 'weekly', curator_id: number | null) => send<ScoutReport>('POST', '/scout-report/generate', { period, curator_id }),
+	scoutReportPreview: () => request<{ enabled: boolean; issue: ScoutReport | null }>(H + '/scout-report/preview', { toast: false }),
 
 	scoutPlans: () => get<ScoutPlan[]>('/scout/plans'),
 	scoutPlan: (query: string, interval_hours: number) => send<ScoutPlan>('POST', '/scout/plans', { query, interval_hours }),

@@ -16,7 +16,7 @@ from ..db import session
 from ..models import AgentEvent
 from . import activity, ai, engine, polling, scout, slots
 from .models import (Alert, Briefing, BriefingIssue, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
-                     CuratorRun, CuratorSource, ItemState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, Source, SourceCheck, Topic, TopicItem)
+                     CuratorRun, CuratorSource, ItemState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, ScoutReportConfig, ScoutReportIssue, Source, SourceCheck, Topic, TopicItem)
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
 from .templates import TEMPLATES
 
@@ -210,6 +210,7 @@ def item(iid: int, pid: int = Depends(profile_id)):
         if not it or not can_see(s, pid, iid):
             raise HTTPException(404, 'Item not found')
         out = serialize(s, pid, [it])[0]
+        out['body'] = it.body
         out['curators'] = [{'id': c.id, 'name': c.name, 'found_at': d.found_at, 'score': d.score, 'reason': d.reason, 'query': d.query}
                            for d, c in s.exec(select(CuratorDiscovery, Curator).join(Curator, Curator.id == CuratorDiscovery.curator_id)
                                               .where(CuratorDiscovery.item_id == iid, CuratorDiscovery.profile_id == pid)).all()]
@@ -219,6 +220,39 @@ def item(iid: int, pid: int = Depends(profile_id)):
                                     .where(TopicItem.item_id == iid, Topic.profile_id == pid)).all())
         out['related'] = serialize(s, pid, related(s, pid, it))
         return out
+
+
+@router.post('/items/{iid}/capture')
+def capture_item(iid: int, pid: int = Depends(profile_id)):
+    """Capture readable page text for an existing, visible item."""
+    from .extract import extract_page
+    with session() as s:
+        it = s.get(ContentItem, iid)
+        if not it or not can_see(s, pid, iid):
+            raise HTTPException(404, 'Item not found')
+        url = it.url
+    try:
+        data, final, _ = curation.fetch(url, kinds=curation.HTML_TYPES, limit=3_000_000, with_metadata=True)
+        page = extract_page(data, final)
+        if not page['body']:
+            raise ValueError('No readable text was found on this page.')
+    except Exception as exc:
+        raise HTTPException(422, f'Could not capture readable content: {engine._safe_error(exc)}') from exc
+    summary = ''
+    if ai.enabled():
+        try:
+            summary = ai.summarize_items([page]).get(0, '')
+        except Exception:  # noqa: BLE001 — preserve capture if AI is unavailable
+            pass
+    with session() as s:
+        it = s.get(ContentItem, iid)
+        if not it or it.url != url or not can_see(s, pid, iid) or not hub_allowed(s, pid):
+            raise HTTPException(404, 'Item not found')
+        it.body = page['body']
+        if summary:
+            it.enrichment = {**it.enrichment, 'summary': summary}
+        s.add(it); s.flush(); engine.index(s, it); s.commit()
+    return {'ok': True}
 
 
 class StateIn(BaseModel):
@@ -1151,6 +1185,60 @@ def unlink_topic(tid: int, iid: int, pid: int = Depends(profile_id)):
         return {'ok': True}
 
 
+# ---------- Scout Report: activity digest, separate from subject briefings
+
+class ReportConfigInput(BaseModel):
+    frequency: str | None = Input(default=None, pattern='^(manual|daily|weekly)$')
+    show_home: bool | None = None
+
+
+class ReportGenerateInput(BaseModel):
+    period: str = Input(default='daily', pattern='^(daily|weekly)$')
+    curator_id: int | None = None
+
+
+@router.get('/scout-report/config')
+def report_config(pid: int = Depends(profile_id)):
+    with session() as s:
+        row = s.get(ScoutReportConfig, pid)
+        return row.model_dump() if row else {'profile_id': pid, 'frequency': 'manual', 'next_run': None, 'show_home': False}
+
+
+@router.put('/scout-report/config')
+def report_config_update(body: ReportConfigInput, pid: int = Depends(profile_id)):
+    with session() as s:
+        row = s.get(ScoutReportConfig, pid) or ScoutReportConfig(profile_id=pid)
+        if body.frequency is not None and body.frequency != row.frequency:
+            row.frequency = body.frequency
+            row.next_run = None if body.frequency == 'manual' else time.time() + (86400 if body.frequency == 'daily' else 604800)
+        if body.show_home is not None: row.show_home = body.show_home
+        s.add(row); s.commit(); s.refresh(row)
+        return row.model_dump()
+
+
+@router.get('/scout-report/issues')
+def report_issues(pid: int = Depends(profile_id)):
+    with session() as s:
+        return [i.model_dump() for i in s.exec(select(ScoutReportIssue).where(ScoutReportIssue.profile_id == pid)
+                                                .order_by(ScoutReportIssue.created_at.desc()).limit(50)).all()]
+
+
+@router.get('/scout-report/preview')
+def report_preview(pid: int = Depends(profile_id)):
+    with session() as s:
+        config = s.get(ScoutReportConfig, pid)
+        if not config or not config.show_home: return {'enabled': False, 'issue': None}
+        issue = s.exec(select(ScoutReportIssue).where(ScoutReportIssue.profile_id == pid, ScoutReportIssue.curator_id == None)
+                       .order_by(ScoutReportIssue.created_at.desc()).limit(1)).first()
+        return {'enabled': True, 'issue': issue.model_dump() if issue else None}
+
+
+@router.post('/scout-report/generate')
+def report_generate(body: ReportGenerateInput, pid: int = Depends(profile_id)):
+    from . import scout_report
+    return scout_report.generate(pid, body.period, body.curator_id)
+
+
 # ---------- briefings
 
 class BriefingIn(BaseModel):
@@ -1378,5 +1466,6 @@ def delete_profile_data(s: Session, pid: int) -> None:
     s.exec(delete(CollectionItem).where(CollectionItem.collection_id.in_(colls or [0])))
     s.exec(delete(TopicItem).where(TopicItem.topic_id.in_(tids or [0])))
     s.exec(delete(AgentEvent).where(AgentEvent.kind.in_(['source_scout', activity.KIND]), AgentEvent.profile_id == pid))
-    for model in (CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, PageRevision, SourceCheck, Source, Curator, ScoutRun, ScoutPlan):
+    s.exec(delete(ScoutReportConfig).where(ScoutReportConfig.profile_id == pid))
+    for model in (CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, PageRevision, SourceCheck, Source, Curator, ScoutRun, ScoutPlan, ScoutReportIssue):
         s.exec(delete(model).where(model.profile_id == pid))

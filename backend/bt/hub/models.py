@@ -229,6 +229,23 @@ class TopicItem(SQLModel, table=True):
     added_at: float = Field(default_factory=time.time)
 
 
+class ScoutReportConfig(SQLModel, table=True):
+    profile_id: int = Field(primary_key=True)
+    frequency: str = 'manual'
+    next_run: float | None = None
+    show_home: bool = False
+
+
+class ScoutReportIssue(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    profile_id: int = Field(index=True)
+    curator_id: int | None = None
+    period: str = 'daily'
+    created_at: float = Field(default_factory=time.time, index=True)
+    item_ids: list = J()
+    sections: dict = J({})
+
+
 class Briefing(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     profile_id: int = Field(index=True)

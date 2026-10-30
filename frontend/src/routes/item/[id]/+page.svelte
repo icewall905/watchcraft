@@ -17,6 +17,7 @@
 	let pickCol = $state('');
 	let pickTopic = $state('');
 	let msg = $state('');
+	let capturing = $state(false);
 	let seq = 0;
 
 	const id = $derived(Number(page.params.id));
@@ -52,6 +53,14 @@
 		return String(x);
 	}
 	function linkOf(x: unknown): string { return typeof x === 'string' ? safeUrl(x) : x && typeof x === 'object' ? safeUrl((x as Record<string, unknown>).url) : ''; }
+
+	async function capture() {
+		if (!item) return;
+		capturing = true; msg = '';
+		try { await hub.captureItem(item.id); item = await hub.item(item.id); }
+		catch (e) { msg = errMsg(e); }
+		finally { capturing = false; }
+	}
 
 	async function patch(p: Parameters<typeof hub.setState>[1]) {
 		if (!item) return;
@@ -111,7 +120,7 @@
 					{#if item.published_at}Published {fmtDate(item.published_at)} ({ago(item.published_at)}) · {/if}Discovered {fmtDate(item.first_seen)} ({ago(item.first_seen)})
 				</p>
 				<div class="hstack top">
-					<a class="btn primary" href={safeUrl(item.url) || undefined} target="_blank" rel="noopener noreferrer" use:focusable>Open original ↗ <span class="faint host">{host(item.url)}</span></a>
+					<a class="btn" href={safeUrl(item.url) || undefined} target="_blank" rel="noopener noreferrer" use:focusable>Open original ↗ <span class="faint host">{host(item.url)}</span></a>
 					{#if item.type === 'video' && str(m, 'video_id')}<a class="btn" href={`/watch/${encodeURIComponent(str(m, 'video_id'))}`} use:focusable>Watch in WatchCraft</a>{/if}
 					<button class="btn" aria-pressed={item.state.saved} use:focusable onclick={() => patch({ saved: !item!.state.saved })}>{item.state.saved ? '✓ Saved' : 'Save'}</button>
 					<button class="btn" aria-pressed={item.state.favorite} use:focusable onclick={() => patch({ favorite: !item!.state.favorite })}>{item.state.favorite ? '★ Favorite' : '☆ Favorite'}</button>
@@ -119,14 +128,18 @@
 				</div>
 				{#if msg}<p class="err small" role="alert">{msg}</p>{/if}
 
-				{#if item.image}<img class="hero" src={item.image} alt="" referrerpolicy="no-referrer" />{/if}
 
-				{#if item.summary}
-					<section><h2>Summary <span class="tag">From source</span></h2><p class="prose">{item.summary}</p></section>
-				{/if}
 				{#if ai}
 					<section class="aib"><h2>AI summary <span class="tag ai">AI-generated</span></h2><p class="prose">{ai}</p></section>
 				{/if}
+				{#if item.summary}
+					<section><h2>Source summary <span class="tag">From source</span></h2><p class="prose">{item.summary}</p></section>
+				{/if}
+
+				<section>
+					<h2>Read in WatchCraft</h2>
+					{#if item.body}<p class="prose">{item.body}</p>{:else}<p class="muted">Readable text has not been captured for this item yet.</p><button class="btn" disabled={capturing} use:focusable onclick={capture}>{capturing ? 'Capturing…' : 'Capture readable text'}</button>{/if}
+				</section>
 
 				{#if item.type === 'advisory'}
 					<section>

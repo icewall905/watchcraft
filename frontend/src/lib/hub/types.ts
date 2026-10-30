@@ -10,6 +10,7 @@ export type Item = {
 	state: ItemState; score: number | null; reason: string; curator_names: string[];
 };
 export type ItemDetail = Item & {
+	body: string;
 	curators: { id: number; name: string; found_at: number; score: number | null; reason: string }[];
 	collections: number[]; related: Item[];
 };
@@ -26,6 +27,8 @@ export type Source = {
 	id: number; provider: string; name: string; url: string; enabled: boolean; last_success: number | null;
 	last_error: string; last_checked: number | null; item_count: number; curator_ids: number[];
 };
+export type ScoutReportConfig = { profile_id: number; frequency: 'manual' | 'daily' | 'weekly'; next_run: number | null; show_home: boolean };
+export type ScoutReport = { id: number; profile_id: number; curator_id: number | null; period: 'daily' | 'weekly'; created_at: number; item_ids: number[]; sections: { since: number; curator_name: string; findings: { id: number; title: string; summary: string; summary_ai?: boolean; url: string; publisher: string; curator_id: number; curator_name: string; found_at: number }[]; runs: { count: number; new_items: number; failed: number }; scout: { runs: number; validated_sources: number }; alerts: { id: number; title: string; severity: string }[]; upcoming: { id: number; name: string; next_run: number; href: string }[] } };
 export type ScoutPlan = { id: number; query: string; interval_hours: number; enabled: boolean; next_run: number; created_at: number };
 export type ScoutSuggestion = { provider: 'rss' | 'html_listing' | 'sitemap' | 'page_watch'; url: string; name: string; count: number; sample: { title: string; url: string }[]; validated: boolean };
 export type ScoutRun = { id: number; query: string; status: 'running' | 'complete' | 'failed'; created_at: number; finished_at: number | null; events: { kind: string; message: string; at: number }[]; suggestions: ScoutSuggestion[]; sitemaps: string[]; error: string };

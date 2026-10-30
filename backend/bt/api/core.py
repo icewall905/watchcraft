@@ -136,7 +136,11 @@ def patch_profile(pid: int, body: ProfilePatch, request: Request, response: Resp
     if body.role == 'child':
         # Retain existing findings/configuration, but stop queued and scheduled
         # external work as soon as the profile becomes restricted.
-        from ..hub.models import Briefing, Curator, ScoutPlan
+        from ..hub.models import Briefing, Curator, ScoutPlan, ScoutReportConfig
+        report_config = s.get(ScoutReportConfig, pid)
+        if report_config:
+            report_config.frequency, report_config.next_run, report_config.show_home = 'manual', None, False
+            s.add(report_config)
         for plan in s.exec(select(ScoutPlan).where(ScoutPlan.profile_id == pid)).all():
             plan.enabled = False
             s.add(plan)

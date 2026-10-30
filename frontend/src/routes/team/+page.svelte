@@ -98,6 +98,7 @@
 <svelte:head><title>Agent Activity · WatchCraft</title></svelte:head>
 
 <div class="page team">
+	<a class="btn report-shortcut" href="/scout-report" use:focusable>Open Scout Report →</a>
 	<header class="head">
 		<div>
 			<p class="eyebrow">RESEARCH TEAM</p>
@@ -202,6 +203,7 @@
 </div>
 
 <style>
+	.report-shortcut { float: right; margin-bottom: 1rem; }
 	.head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem; flex-wrap: wrap; margin-bottom: 1.2rem; }
 	.eyebrow { font-size: .7rem; letter-spacing: .15em; color: var(--accent); font-weight: 700; margin: 0; }
 	h1 { font-size: clamp(1.8rem, 3vw, 2.8rem); margin: .2rem 0; }
