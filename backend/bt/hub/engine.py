@@ -1,5 +1,6 @@
 """Curator execution: fetch sources, dedupe into canonical items, score, route to outputs."""
 import asyncio
+import hashlib
 import logging
 import re
 import time
@@ -13,13 +14,59 @@ from ..access import hub_allowed
 from ..db import engine as db_engine, get_settings, session
 from . import ai, slots
 from .models import (Alert, Briefing, CollectionItem, ContentItem, Curator, CuratorDiscovery, CuratorRun,
-                     CuratorSource, Source, TopicItem)
+                     CuratorSource, PageRevision, Source, SourceCheck, TopicItem)
 from .providers import PROVIDERS
 
 log = logging.getLogger(__name__)
 LEASE_S = 900
 SEVERITY = ['info', 'low', 'medium', 'high', 'critical']
 TRACKING = re.compile(r'^(utm_[a-z]+|fbclid|gclid|mc_cid|mc_eid|ref|ref_src)$', re.I)
+
+
+def record_page_revision(src: Source, data: dict) -> None:
+    """Record a changed observation, serializing concurrent checks of the same source."""
+    title, body = data['title'], data['body']
+    digest = hashlib.sha256((title + '\0' + body).encode()).hexdigest()
+    with session() as s:
+        s.exec(text('BEGIN IMMEDIATE'))
+        current = s.get(Source, src.id)
+        if (not current or current.profile_id != src.profile_id or not current.enabled
+                or current.url != src.url or not hub_allowed(s, src.profile_id)):
+            return
+        last = s.exec(select(PageRevision).where(PageRevision.source_id == src.id)
+                      .order_by(PageRevision.id.desc()).limit(1)).first()
+        if last and last.digest == digest:
+            return
+        s.add(PageRevision(source_id=src.id, profile_id=src.profile_id, digest=digest, title=title, body=body))
+        s.flush()
+        old = s.exec(select(PageRevision).where(PageRevision.source_id == src.id)
+                     .order_by(PageRevision.id.desc()).offset(20)).all()
+        for revision in old:
+            s.delete(revision)
+        s.commit()
+
+
+def record_source_check(src: Source, trigger: str, count: int, error: str = '') -> bool:
+    """Record a completed check only if its source and profile still match the request."""
+    with session() as s:
+        s.exec(text('BEGIN IMMEDIATE'))
+        row = s.get(Source, src.id)
+        if not row or row.profile_id != src.profile_id or row.url != src.url or not hub_allowed(s, src.profile_id):
+            return False
+        now = time.time()
+        status = 'partial' if error and count else 'failed' if error else 'ok'
+        row.last_checked, row.last_error = now, error
+        if status != 'failed':
+            row.last_success, row.item_count = now, count
+        s.add(row)
+        s.add(SourceCheck(source_id=src.id, profile_id=src.profile_id, checked_at=now, trigger=trigger,
+                          status=status, item_count=count, error=error))
+        s.flush()
+        for old in s.exec(select(SourceCheck).where(SourceCheck.source_id == src.id)
+                          .order_by(SourceCheck.id.desc()).offset(20)).all():
+            s.delete(old)
+        s.commit()
+        return True
 
 
 # ---------- full-text index (FTS5, rowid = content item id)
@@ -57,6 +104,9 @@ def upsert(s: Session, data: dict, provider: str) -> ContentItem | None:
     if item:
         # Fill gaps from richer sources; never overwrite established facts.
         changed = False
+        # A sitemap supplies no title, so its URL placeholder is not an established fact.
+        if item.provider == 'sitemap' and item.title == item.url and data.get('title') and data['title'] != item.url:
+            item.title = data['title'][:500]; changed = True
         for k in ('summary', 'author', 'publisher', 'image', 'published_at', 'body'):
             if data.get(k) and not getattr(item, k):
                 setattr(item, k, data[k]); changed = True
@@ -175,6 +225,7 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         prov = PROVIDERS.get(src.provider)
         ok, reason = prov.availability() if prov else (False, 'Unknown provider')
         if not ok:
+            record_source_check(src, 'curator', 0, reason)
             errors.append({'source': src.name or src.provider, 'message': reason}); continue
         got, failed = 0, None
         for q in (queries if prov.mode == 'query' else ['']):
@@ -182,23 +233,19 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
                 if not hub_allowed(s, c.profile_id):
                     raise ValueError('Hub access was restricted during the run.')
             try:
-                for d in prov.fetch(src.url, q):
+                fetched = prov.fetch(src.url, q)
+                if src.provider == 'page_watch':
+                    record_page_revision(src, fetched[0])
+                for d in fetched:
                     candidates.append((src, q, d)); got += 1
             except Exception as e:  # noqa: BLE001 — one source never fails the run
                 log.info('source %s failed: %s', src.id, e)
                 failed = _safe_error(e)
         if prov.mode == 'query' and not queries:
             failed = 'No search queries configured.'
-        with session() as s:
-            row = s.get(Source, src.id)
-            row.last_checked = time.time()
-            if failed and not got:
-                row.last_error = failed
-                errors.append({'source': src.name or src.provider, 'message': failed})
-            else:
-                row.last_success, row.last_error = time.time(), ''
-                row.item_count = got
-            s.add(row); s.commit()
+        record_source_check(src, 'curator', got, failed or '')
+        if failed:
+            errors.append({'source': src.name or src.provider, 'message': failed})
 
     # Score: keywords first (cheap), then optional AI over the survivors.
     scored = []

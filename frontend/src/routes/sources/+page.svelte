@@ -23,11 +23,28 @@
 	let confirm = $state<Source | null>(null);
 	let testing = $state<number | null>(null);
 	let results = $state<Record<number, { ok: boolean; count: number; sample: { title: string; url: string }[]; error: string }>>({});
+	let revisions = $state<Record<number, Awaited<ReturnType<typeof hub.sourceRevisions>>>>({});
+	let loadingHistory = $state<number | null>(null);
+	let checks = $state<Record<number, Awaited<ReturnType<typeof hub.sourceChecks>>>>({});
+	let loadingChecks = $state<number | null>(null);
 
 	const providers = $derived(registry?.providers ?? []);
 	const chosen = $derived(providers.find((p) => p.key === provider));
 	const addable = $derived(providers.filter((p) => p.available).map((p) => ({ value: p.key, label: p.label, hint: p.description })));
 	const label = (k: string) => providers.find((p) => p.key === k)?.label ?? k;
+
+	// Show the smallest span containing all changes, without implying that every word in it changed.
+	function changedSpan(before: string, after: string) {
+		const a = before.split(' '), b = after.split(' ');
+		let start = 0, endA = a.length, endB = b.length;
+		while (start < endA && start < endB && a[start] === b[start]) start++;
+		while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) { endA--; endB--; }
+		const excerpt = (words: string[]) => {
+			const text = words.join(' ');
+			return text.length > 700 ? text.slice(0, 700) + '…' : text;
+		};
+		return { before: excerpt(a.slice(start, endA)), after: excerpt(b.slice(start, endB)) };
+	}
 
 	async function load() {
 		try { [registry, sources] = await Promise.all([hub.registry(), hub.sources()]); error = ''; if (!providers.find((p) => p.key === provider && p.available)) provider = providers.find((p) => p.available)?.key ?? provider; }
@@ -49,7 +66,15 @@
 	}
 	async function test(s: Source) {
 		testing = s.id;
-		try { results[s.id] = await hub.testSource(s.id); await load(); } catch (e) { results[s.id] = { ok: false, count: 0, sample: [], error: errMsg(e) }; } finally { testing = null; }
+		try { results[s.id] = await hub.testSource(s.id); await load(); if (checks[s.id]) await checkHistory(s); } catch (e) { results[s.id] = { ok: false, count: 0, sample: [], error: errMsg(e) }; } finally { testing = null; }
+	}
+	async function history(s: Source) {
+		loadingHistory = s.id;
+		try { revisions[s.id] = await hub.sourceRevisions(s.id); } catch (e) { error = errMsg(e); } finally { loadingHistory = null; }
+	}
+	async function checkHistory(s: Source) {
+		loadingChecks = s.id;
+		try { checks[s.id] = await hub.sourceChecks(s.id); } catch (e) { error = errMsg(e); } finally { loadingChecks = null; }
 	}
 	async function remove() {
 		if (!confirm) return;
@@ -94,6 +119,7 @@
 			<form class="add panel" onsubmit={add}>
 				<Select label="Provider" bind:value={provider} options={addable} group="src-add" />
 				{#if chosen?.needs_url}<TextField type="url" label="URL" bind:value={url} placeholder={provider === 'github_releases' ? 'https://github.com/owner/repository' : 'https://example.org/feed.xml'} group="src-add" />{/if}
+				{#if provider === 'page_watch'}<p class="small muted">Attach this source to a curator to check it on that curator’s schedule. The first successful run establishes a baseline; later text changes appear in the source history.</p>{/if}
 				<TextField label="Name (optional)" bind:value={name} placeholder="Shown in lists" group="src-add" />
 				{#if formErr}<div class="err" role="alert">{formErr}</div>{/if}
 				<div><button class="btn primary" type="submit" disabled={adding} use:focusable>{adding ? 'Adding…' : 'Add source'}</button></div>
@@ -125,10 +151,40 @@
 										{:else}<b class="bad">Test failed: {r.error || 'unknown error'}</b>{/if}
 									</div>
 								{/if}
+								{#if s.provider === 'page_watch' && revisions[s.id]}
+									<div class="test"><b>Page history</b>
+										{#if !revisions[s.id].length}<span class="small muted">No observations yet. Run a curator that follows this source.</span>{/if}
+										{#each revisions[s.id] as revision, i (revision.id)}
+											<details>
+												<summary use:focusable>{i === revisions[s.id].length - 1 ? 'Earliest retained observation' : 'Page changed'} · {ago(revision.observed_at)}</summary>
+												{#if i < revisions[s.id].length - 1}
+													{@const previous = revisions[s.id][i + 1]}
+													{#if previous.title !== revision.title}<p class="small"><b>Title before:</b> {previous.title}<br /><b>Title after:</b> {revision.title}</p>{/if}
+													{#if previous.body !== revision.body}
+														{@const change = changedSpan(previous.body, revision.body)}
+														<p class="small muted">Text between the first and last change; excerpts may include unchanged words and are limited to 700 characters.</p>
+														<p class="small"><b>Before:</b> {change.before || '(nothing)'}</p><p class="small"><b>After:</b> {change.after || '(nothing)'}</p>
+													{/if}
+												{/if}
+												<details><summary use:focusable>Full observed text</summary><b>{revision.title}</b><p class="small">{revision.body}</p></details>
+											</details>
+										{/each}
+									</div>
+								{/if}
+								{#if checks[s.id]}
+									<div class="test"><b>Recent checks</b>
+										{#if !checks[s.id].length}<span class="small muted">No recorded checks yet.</span>{/if}
+										{#each checks[s.id] as check (check.id)}
+											<span class="small" class:bad={check.status !== 'ok'}>{check.status === 'ok' ? 'Succeeded' : check.status === 'partial' ? 'Partially succeeded' : 'Failed'} · {check.trigger === 'test' ? 'connection test' : check.trigger === 'validation' ? 'Scout validation' : 'curator run'} · {ago(check.checked_at)} · {check.item_count} items{check.error ? ` · ${check.error}` : ''}</span>
+										{/each}
+									</div>
+								{/if}
 							</div>
 							<div class="acts">
 								<button class="btn" role="switch" aria-checked={s.enabled} use:focusable onclick={() => toggle(s)}>{s.enabled ? 'Enabled' : 'Disabled'}</button>
 								<button class="btn" disabled={testing === s.id} use:focusable onclick={() => test(s)}>{testing === s.id ? 'Testing…' : 'Test connection'}</button>
+								<button class="btn" disabled={loadingChecks === s.id} use:focusable onclick={() => checkHistory(s)}>{loadingChecks === s.id ? 'Loading…' : 'Check history'}</button>
+								{#if s.provider === 'page_watch'}<button class="btn" disabled={loadingHistory === s.id} use:focusable onclick={() => history(s)}>{loadingHistory === s.id ? 'Loading…' : 'View history'}</button>{/if}
 								<button class="btn ghost danger" use:focusable onclick={() => (confirm = s)}>Delete</button>
 							</div>
 						</li>

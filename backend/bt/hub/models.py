@@ -71,6 +71,29 @@ class Source(SQLModel, table=True):
     created_at: float = Field(default_factory=time.time)
 
 
+class PageRevision(SQLModel, table=True):
+    """Profile-scoped observations of a monitored page, oldest first."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source_id: int = Field(index=True)
+    profile_id: int = Field(index=True)
+    observed_at: float = Field(default_factory=time.time)
+    digest: str
+    title: str = ''
+    body: str = T()
+
+
+class SourceCheck(SQLModel, table=True):
+    """A bounded history of actual source checks, scoped to the owning profile."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source_id: int = Field(index=True)
+    profile_id: int = Field(index=True)
+    checked_at: float = Field(default_factory=time.time)
+    trigger: str = ''
+    status: str = ''
+    item_count: int = 0
+    error: str = ''
+
+
 class ScoutPlan(SQLModel, table=True):
     __table_args__ = (UniqueConstraint('profile_id', 'query'),)
     id: Optional[int] = Field(default=None, primary_key=True)

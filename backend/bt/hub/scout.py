@@ -54,8 +54,12 @@ def inspect_site(url, emit):
                                        limit=2_000_000, with_metadata=True)
     emit('inspected', 'Inspected a public site.')
     if meta['content_type'] not in curation.HTML_TYPES:
-        items = providers.parse_feed(data, final)
-        return [suggestion(final, '', items)], []
+        try:
+            items = providers.parse_feed(data, final)
+            return [suggestion(final, '', items)], []
+        except ValueError:
+            items = providers.sitemap(final)
+            return [{**suggestion(final, '', items), 'provider': 'sitemap'}], [final]
     parser = Links()
     parser.feed(data.decode('utf-8', errors='replace'))
     candidates = list(parser.feeds)
@@ -94,6 +98,18 @@ def inspect_site(url, emit):
     except Exception:
         pass  # Robots is optional; a missing or inaccessible file is not a failed run.
     sitemaps = list(dict.fromkeys(u for href in sitemap_refs if (u := safe_url(final, href))))[:5]
+    for candidate in sitemaps:
+        try:
+            items = providers.sitemap(candidate)
+            found.append({**suggestion(candidate, clean(parser.title, 100), items), 'provider': 'sitemap'})
+            emit('validated', f'Tested a sitemap with {len(items)} sample URLs.')
+        except Exception:
+            emit('rejected', 'A candidate sitemap could not be validated.')
+    if not found:
+        item = providers.extract_page(data, final)
+        if item['body']:
+            found.append({**suggestion(final, clean(parser.title, 100), [item]), 'provider': 'page_watch'})
+            emit('validated', 'Extracted readable page text for change monitoring.')
     return found, sitemaps
 
 

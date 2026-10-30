@@ -16,7 +16,7 @@ from ..db import session
 from ..models import AgentEvent
 from . import ai, engine, scout, slots
 from .models import (Alert, Briefing, BriefingIssue, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
-                     CuratorRun, CuratorSource, ItemState, SavedSearch, ScoutPlan, ScoutRun, Source, Topic, TopicItem)
+                     CuratorRun, CuratorSource, ItemState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, Source, SourceCheck, Topic, TopicItem)
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
 from .templates import TEMPLATES
 
@@ -456,7 +456,10 @@ def update_source(sid: int, body: SourceIn, pid: int = Depends(profile_id)):
             url = _norm_source(src.provider, body.url)
             if s.exec(select(Source).where(Source.profile_id == pid, Source.provider == src.provider, Source.url == url, Source.id != sid)).first():
                 raise HTTPException(409, 'That source already exists.')
+            s.exec(delete(PageRevision).where(PageRevision.source_id == sid))
+            s.exec(delete(SourceCheck).where(SourceCheck.source_id == sid))
             src.url = url
+            src.last_checked = src.last_success = None; src.last_error = ''; src.item_count = 0
         s.add(src); s.commit(); s.refresh(src)
         return source_dict(s, src)
 
@@ -466,8 +469,30 @@ def delete_source(sid: int, pid: int = Depends(profile_id)):
     with session() as s:
         src = owned(s, Source, sid, pid)
         s.exec(delete(CuratorSource).where(CuratorSource.source_id == sid))
+        s.exec(delete(PageRevision).where(PageRevision.source_id == sid))
+        s.exec(delete(SourceCheck).where(SourceCheck.source_id == sid))
         s.delete(src); s.commit()
         return {'ok': True}
+
+
+@router.get('/sources/{sid}/revisions')
+def source_revisions(sid: int, pid: int = Depends(profile_id)):
+    with session() as s:
+        src = owned(s, Source, sid, pid)
+        if src.provider != 'page_watch':
+            raise HTTPException(422, 'This source is not a page change watcher.')
+        return [r.model_dump(exclude={'digest', 'profile_id'}) for r in
+                s.exec(select(PageRevision).where(PageRevision.source_id == sid, PageRevision.profile_id == pid)
+                       .order_by(PageRevision.id.desc()).limit(20)).all()]
+
+
+@router.get('/sources/{sid}/checks')
+def source_checks(sid: int, pid: int = Depends(profile_id)):
+    with session() as s:
+        owned(s, Source, sid, pid)
+        return [r.model_dump(exclude={'profile_id'}) for r in
+                s.exec(select(SourceCheck).where(SourceCheck.source_id == sid, SourceCheck.profile_id == pid)
+                       .order_by(SourceCheck.id.desc()).limit(20)).all()]
 
 
 @router.post('/sources/{sid}/test')
@@ -477,16 +502,15 @@ def test_source(sid: int, pid: int = Depends(profile_id)):
     p = PROVIDERS[src.provider]
     ok, reason = p.availability()
     if not ok:
+        engine.record_source_check(src, 'test', 0, reason)
         return {'ok': False, 'count': 0, 'sample': [], 'error': reason}
     try:
         got = p.fetch(src.url, 'open source' if p.mode == 'query' else '')
     except Exception as e:  # noqa: BLE001
         err = engine._safe_error(e)
-        with session() as s:
-            row = s.get(Source, sid); row.last_checked, row.last_error = time.time(), err; s.add(row); s.commit()
+        engine.record_source_check(src, 'test', 0, err)
         return {'ok': False, 'count': 0, 'sample': [], 'error': err}
-    with session() as s:
-        row = s.get(Source, sid); row.last_checked = row.last_success = time.time(); row.last_error = ''; s.add(row); s.commit()
+    engine.record_source_check(src, 'test', len(got))
     return {'ok': True, 'count': len(got), 'sample': [{'title': d.get('title', ''), 'url': d.get('url', '')} for d in got[:5]], 'error': ''}
 
 
@@ -759,8 +783,8 @@ def scout_accept(rid: int, body: ScoutAccept, pid: int = Depends(profile_id)):
         if run.status != 'complete' or body.index >= len(run.suggestions):
             raise HTTPException(422, 'No validated suggestion at that position.')
         suggestion = run.suggestions[body.index]
-        if suggestion.get('provider') not in ('rss', 'html_listing') or suggestion.get('validated') is not True:
-            raise HTTPException(422, 'This suggestion is not a validated feed.')
+        if suggestion.get('provider') not in ('rss', 'html_listing', 'sitemap', 'page_watch') or suggestion.get('validated') is not True:
+            raise HTTPException(422, 'This suggestion is not a validated source.')
         if body.curator_id is not None: owned(s, Curator, body.curator_id, pid)
         url = suggestion['url']
         provider = suggestion['provider']
@@ -778,7 +802,9 @@ def scout_accept(rid: int, body: ScoutAccept, pid: int = Depends(profile_id)):
         if curator and not s.get(CuratorSource, (curator.id, src.id)):
             s.add(CuratorSource(curator_id=curator.id, source_id=src.id))
         s.add(src); s.commit(); s.refresh(src)
-        return source_dict(s, src)
+        result = source_dict(s, src)
+    engine.record_source_check(src, 'validation', len(items))
+    return result
 
 
 @router.delete('/scout/runs/{rid}')
@@ -1323,5 +1349,5 @@ def delete_profile_data(s: Session, pid: int) -> None:
     s.exec(delete(CollectionItem).where(CollectionItem.collection_id.in_(colls or [0])))
     s.exec(delete(TopicItem).where(TopicItem.topic_id.in_(tids or [0])))
     s.exec(delete(AgentEvent).where(AgentEvent.kind == 'source_scout', AgentEvent.profile_id == pid))
-    for model in (CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, Source, Curator, ScoutRun, ScoutPlan):
+    for model in (CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, PageRevision, SourceCheck, Source, Curator, ScoutRun, ScoutPlan):
         s.exec(delete(model).where(model.profile_id == pid))

@@ -96,16 +96,42 @@ Under Sources, research a public HTTPS website or a topic (topic search requires
 Scout checks RSS, Atom and JSON Feeds advertised by the page or HTTP Link header, and tries a few common feed paths
 when none are advertised. It validates each candidate using the same public-address, HTTPS, redirect and size checks
 as the Hub. When no valid feed is available, it can test same-host links inside semantic HTML `article` elements as a
-simple article-listing watcher. Sitemaps found in page metadata or robots.txt are displayed as unverified leads;
-they are not currently monitored. Preview samples before explicitly adding a source, optionally to a curator. Adding
+simple article-listing watcher. It also tests up to five advertised or robots.txt XML URL sitemaps. Validated sitemaps
+can be added as sources. Sitemap indexes can follow their first three same-host URL sitemaps; nested indexes are not supported.
+Preview samples before explicitly adding a source, optionally to a curator. Adding
 rechecks the source; the ordinary curator scheduler performs subsequent monitoring.
 
 Runs and milestones are profile-owned and persisted in the existing activity store. Research may be repeated manually
-or scheduled daily/weekly with pause/resume; scheduled runs only suggest sources. The scheduler claims due work atomically,
+or scheduled daily/weekly with pause/resume; scheduled runs only suggest sources. A sitemap source returns up to 50
+same-host HTTPS URLs, ordered by last-modified date when present. Entries use URLs as titles, do not fetch article text,
+and do not track changes to existing entries; large undated sitemaps may omit new entries. The scheduler claims due work atomically,
 limits concurrent jobs, and disables plans when a profile becomes child-restricted. A run examines at most three search
 results and five feed candidates per site; results can miss relevant sources. AI-generated watcher rules, automatic
-source adoption, sitemap/page-change/browser watchers, repair, shared polling and automated relevance scoring remain
+source adoption, complete sitemap index traversal, advanced page-change/browser watchers, repair, shared polling and automated relevance scoring remain
 planned. This is a foundation, not the full autonomous research-team roadmap.
+
+### Page change watcher
+
+Add a **Page change watcher** under Sources and attach it to a curator. Scout can also suggest one when a site has
+readable text but no usable feed, listing or sitemap; adding it rechecks the page. Successful curator runs fetch the public
+HTTPS page and retain the first observation as a baseline, then save a revision when its extracted title or readable
+text changes. Open **View history** on the source to compare up to 20 retained observations. The before/after excerpt
+spans the first through last change and can include unchanged words; full observed text remains available. Connection tests do not
+create a baseline. Revisions belong to the source's profile and are removed when the source or profile is deleted,
+or when the source URL changes. Pausing the source or detaching it from curators stops checks.
+
+This is basic text comparison, not a semantic change detector: dynamic page content may cause noise, navigation and
+scripts are excluded, only the first 20,000 extracted characters are compared, and JavaScript rendering is not
+supported. Changes appear in source history, not as new Discover items or notifications. Polling is per curator;
+shared polling and configurable extraction rules remain planned. The revision table is additive and is created at
+startup, so follow the backup and restore procedure before deploying.
+
+### Source check history
+
+Each source can show its latest 20 recorded checks, including curator runs, connection tests and successful Scout
+validation. A multi-query run that returns results but also fails a query is marked partial, with the error retained.
+Older checks from before this feature are not reconstructed. History belongs to the source's profile and is removed
+with the source or profile, or when its URL changes. This history does not yet diagnose trends or repair sources.
 
 ## Agent Activity and parallel agents
 

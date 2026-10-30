@@ -6,7 +6,7 @@ os.environ.setdefault('BT_DATA_DIR', tempfile.mkdtemp(prefix='wc-tests-'))
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import text
-from sqlmodel import SQLModel
+from sqlmodel import SQLModel, select
 from bt import curation
 from bt.db import engine, init_db, session
 from bt.hub import ai, engine as hub, migrate, providers
@@ -132,6 +132,48 @@ def test_partial_failure_history_and_curator_crud(client, monkeypatch):
     assert client.get('/api/hub/items?section=library').json()['total'] == 1  # saved survives curator deletion
     export = client.get(f"/api/hub/curators/{dup['id']}/export").json()
     assert export['watchcraft_curator'] == 1 and len(export['sources']) == 2
+
+
+def test_source_check_history_preserves_partial_failures_and_is_private(client, monkeypatch):
+    def fetch(_url, query):
+        if query == 'broken':
+            raise ValueError('Provider temporarily unavailable.')
+        return [{'url': 'https://example.org/result', 'title': 'A result', 'type': 'project'}]
+    monkeypatch.setattr(providers.PROVIDERS['github_search'], 'fetch', fetch)
+    curator = make_curator(client, [{'provider': 'github_search'}], queries=['works', 'broken'])
+    source = client.get('/api/hub/sources').json()[0]
+    sid = source['id']
+    run = hub.run(curator['id'])
+    assert run.status == 'partial' and run.new_items == 1
+    check = client.get(f'/api/hub/sources/{sid}/checks').json()[0]
+    assert check['status'] == 'partial' and check['item_count'] == 1 and check['trigger'] == 'curator'
+    assert check['error'] == 'Provider temporarily unavailable.'
+    assert client.get('/api/hub/sources').json()[0]['last_error'] == check['error']
+    result = client.post(f'/api/hub/sources/{sid}/test').json()
+    assert result['ok'] and result['count'] == 1
+    checks = client.get(f'/api/hub/sources/{sid}/checks').json()
+    assert [c['status'] for c in checks] == ['ok', 'partial'] and checks[0]['trigger'] == 'test'
+    other = client.post('/api/profiles', json={'name': 'Other'}).json()
+    assert client.get(f'/api/hub/sources/{sid}/checks', headers={'X-Profile-Id': str(other['id'])}).status_code == 404
+    assert client.delete(f'/api/hub/sources/{sid}').status_code == 200
+    from bt.hub.models import SourceCheck
+    with session() as s:
+        assert s.exec(select(SourceCheck).where(SourceCheck.source_id == sid)).all() == []
+
+
+def test_source_check_history_is_bounded_and_reset_on_url_change(client):
+    from bt.hub.models import Source
+    source = client.post('/api/hub/sources', json={'provider': 'rss', 'url': 'https://example.org/feed'}).json()
+    sid = source['id']
+    with session() as s:
+        row = s.get(Source, sid)
+    for i in range(22):
+        assert hub.record_source_check(row, 'test', i)
+    checks = client.get(f'/api/hub/sources/{sid}/checks').json()
+    assert len(checks) == 20 and checks[0]['item_count'] == 21 and checks[-1]['item_count'] == 2
+    assert client.patch(f'/api/hub/sources/{sid}', json={'url': 'https://example.org/new'}).status_code == 200
+    assert client.get(f'/api/hub/sources/{sid}/checks').json() == []
+    assert not hub.record_source_check(row, 'test', 1)  # A fetch started for the old URL cannot update the new source.
 
 
 def test_query_provider_alerts_and_unavailable_web_search(client, monkeypatch):
@@ -344,6 +386,155 @@ def test_source_scout_listing_fallback_and_curator_monitoring(client, monkeypatc
     assert hub.run(curator['id']).new_items == 2
     client.post(f"/api/hub/curators/{curator['id']}/run")
     assert hub.run(curator['id']).new_items == 0
+
+
+def test_scout_sitemap_validation_and_monitoring(client, monkeypatch):
+    page = b'<html><head><title>Journal</title><link rel="sitemap" href="/sitemap.xml"></head></html>'
+    content = {'xml': b'''<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+        <url><loc>https://example.org/older</loc><lastmod>2025-01-01</lastmod></url>
+        <url><loc>https://example.org/newer</loc><lastmod>2026-01-01</lastmod></url>
+        <url><loc>https://elsewhere.test/ignored</loc></url>
+        <url><loc>http://example.org/insecure</loc></url>
+    </urlset>'''}
+    def fetch(url, **kwargs):
+        if url == 'https://example.org/': data, kind = page, 'text/html'
+        elif url == 'https://example.org/sitemap.xml': data, kind = content['xml'], 'application/xml'
+        else: raise ValueError('not found')
+        return (data, url, {'content_type': kind, 'link': ''}) if kwargs.get('with_metadata') else data
+    monkeypatch.setattr(curation, 'fetch', fetch)
+    run = client.post('/api/hub/scout/runs', json={'query': 'https://example.org/'}).json()
+    result = run['suggestions'][0]
+    assert result['provider'] == 'sitemap' and result['count'] == 2
+    assert result['sample'][0]['url'] == 'https://example.org/newer'
+    curator = make_curator(client, [], name='Sitemap')
+    content['xml'] = b'<sitemapindex></sitemapindex>'
+    assert client.post(f"/api/hub/scout/runs/{run['id']}/accept", json={'index': 0}).status_code == 422
+    content['xml'] = b'<urlset><url><loc>https://example.org/newer</loc></url></urlset>'
+    assert client.post(f"/api/hub/scout/runs/{run['id']}/accept", json={'index': 0, 'curator_id': curator['id']}).status_code == 200
+    assert hub.run(curator['id']).new_items == 1
+    client.post(f"/api/hub/curators/{curator['id']}/run")
+    assert hub.run(curator['id']).new_items == 0
+
+
+def test_sitemap_index_is_bounded_and_rejects_nested_indexes(monkeypatch):
+    index = b'''<sitemapindex><sitemap><loc>https://example.org/one.xml</loc></sitemap>
+      <sitemap><loc>https://other.test/evil.xml</loc></sitemap>
+      <sitemap><loc>https://example.org/two.xml</loc></sitemap></sitemapindex>'''
+    responses = {'https://example.org/index.xml': index,
+                 'https://example.org/one.xml': b'<urlset><url><loc>https://example.org/a</loc></url></urlset>',
+                 'https://example.org/two.xml': b'<urlset><url><loc>https://example.org/b</loc></url></urlset>'}
+    calls = []
+    def fetch(url, **kwargs):
+        calls.append(url)
+        return responses[url], url, {'content_type': 'application/xml', 'link': ''}
+    monkeypatch.setattr(curation, 'fetch', fetch)
+    assert {x['url'] for x in providers.sitemap('https://example.org/index.xml')} == {'https://example.org/a', 'https://example.org/b'}
+    assert 'https://other.test/evil.xml' not in calls
+    responses['https://example.org/two.xml'] = b'<sitemapindex/>'
+    with pytest.raises(ValueError):
+        providers.sitemap('https://example.org/index.xml')
+
+
+def test_sitemap_index_checks_no_more_than_three_children(monkeypatch):
+    index = ('<sitemapindex>' + ''.join(f'<sitemap><loc>https://example.org/{i}.xml</loc></sitemap>'
+                                       for i in range(5)) + '</sitemapindex>').encode()
+    calls = []
+    def fetch(url, **kwargs):
+        calls.append(url)
+        data = index if url.endswith('/index.xml') else f'<urlset><url><loc>{url}/page</loc></url></urlset>'.encode()
+        return data, url, {'content_type': 'application/xml', 'link': ''}
+    monkeypatch.setattr(curation, 'fetch', fetch)
+    assert len(providers.sitemap('https://example.org/index.xml')) == 3
+    assert calls == ['https://example.org/index.xml', 'https://example.org/0.xml',
+                     'https://example.org/1.xml', 'https://example.org/2.xml']
+
+
+def test_scout_accepts_direct_sitemap_url(client, monkeypatch):
+    data = b'<urlset><url><loc>https://example.org/article</loc></url></urlset>'
+    def fetch(url, **kwargs):
+        assert url == 'https://example.org/sitemap.xml'
+        return (data, url, {'content_type': 'application/xml', 'link': ''}) if kwargs.get('with_metadata') else data
+    monkeypatch.setattr(curation, 'fetch', fetch)
+    run = client.post('/api/hub/scout/runs', json={'query': 'https://example.org/sitemap.xml'}).json()
+    assert run['status'] == 'complete'
+    assert run['suggestions'][0]['provider'] == 'sitemap'
+    assert run['suggestions'][0]['sample'][0]['url'] == 'https://example.org/article'
+
+
+def test_sitemap_url_title_is_replaced_by_a_real_title(client):
+    with session() as s:
+        item = hub.upsert(s, {'url': 'https://example.org/story', 'title': 'https://example.org/story',
+                              'provider': 'sitemap'}, 'sitemap')
+        assert item.title == item.url
+        item = hub.upsert(s, {'url': item.url, 'title': 'A real article title', 'provider': 'rss'}, 'rss')
+        assert item.title == 'A real article title'
+        item = hub.upsert(s, {'url': item.url, 'title': 'Another title', 'provider': 'rss'}, 'rss')
+        assert item.title == 'A real article title'
+
+
+def test_page_watcher_records_changes_and_is_profile_scoped(client, monkeypatch):
+    html = {'body': b'<html><title>Release notes</title><main>Version one</main><footer>Ignore me</footer></html>'}
+    def fetch(url, **kwargs):
+        return html['body'], url, {'content_type': 'text/html', 'link': ''}
+    monkeypatch.setattr(curation, 'fetch', fetch)
+    curator = make_curator(client, [{'provider': 'page_watch', 'url': 'https://example.org/notes'}])
+    source = client.get('/api/hub/sources').json()[0]
+    sid = source['id']
+    assert client.post(f'/api/hub/sources/{sid}/test').json()['ok']
+    assert client.get(f'/api/hub/sources/{sid}/revisions').json() == []
+    assert hub.run(curator['id']).new_items == 1
+    revisions = client.get(f'/api/hub/sources/{sid}/revisions').json()
+    assert len(revisions) == 1 and 'Version one' in revisions[0]['body'] and 'Ignore me' not in revisions[0]['body']
+    client.post(f"/api/hub/curators/{curator['id']}/run")
+    assert hub.run(curator['id']).new_items == 0
+    assert len(client.get(f'/api/hub/sources/{sid}/revisions').json()) == 1
+    html['body'] = b'<html><title>Release notes</title><main>Version two</main></html>'
+    client.post(f"/api/hub/curators/{curator['id']}/run")
+    assert hub.run(curator['id']).new_items == 0
+    revisions = client.get(f'/api/hub/sources/{sid}/revisions').json()
+    assert len(revisions) == 2 and 'Version two' in revisions[0]['body']
+    html['body'] = b'<html><script>unreadable</script></html>'
+    client.post(f"/api/hub/curators/{curator['id']}/run")
+    assert hub.run(curator['id']).status == 'failed'
+    assert len(client.get(f'/api/hub/sources/{sid}/revisions').json()) == 2
+    other = client.post('/api/profiles', json={'name': 'Other'}).json()
+    assert client.get(f'/api/hub/sources/{sid}/revisions', headers={'X-Profile-Id': str(other['id'])}).status_code == 404
+    assert client.patch(f'/api/hub/sources/{sid}', json={'url': 'https://example.org/new'}).status_code == 200
+    assert client.get(f'/api/hub/sources/{sid}/revisions').json() == []
+
+
+def test_page_watcher_retains_twenty_observations_and_cleans_up(client):
+    source = client.post('/api/hub/sources', json={'provider': 'page_watch', 'url': 'https://example.org/watch'}).json()
+    from bt.hub.models import PageRevision, Source
+    with session() as s:
+        src = s.get(Source, source['id'])
+    for i in range(22):
+        hub.record_page_revision(src, {'title': 'Page', 'body': f'Version {i}'})
+    revisions = client.get(f"/api/hub/sources/{source['id']}/revisions").json()
+    assert len(revisions) == 20 and revisions[0]['body'] == 'Version 21' and revisions[-1]['body'] == 'Version 2'
+    assert client.delete(f"/api/hub/sources/{source['id']}").status_code == 200
+    with session() as s:
+        assert s.exec(select(PageRevision).where(PageRevision.source_id == source['id'])).all() == []
+
+
+def test_scout_suggests_page_watcher_only_after_testing_text(client, monkeypatch):
+    page = {'data': b'<html><title>Changelog</title><main>Version one is available</main></html>'}
+    def fetch(url, **kwargs):
+        if url != 'https://example.org/':
+            raise ValueError('No feeds or sitemap')
+        data = page['data']
+        return (data, url, {'content_type': 'text/html', 'link': ''}) if kwargs.get('with_metadata') else data
+    monkeypatch.setattr(curation, 'fetch', fetch)
+    run = client.post('/api/hub/scout/runs', json={'query': 'https://example.org/'}).json()
+    assert [x['provider'] for x in run['suggestions']] == ['page_watch']
+    page['data'] = b'<html><script>no readable text</script></html>'
+    assert client.post(f"/api/hub/scout/runs/{run['id']}/accept", json={'index': 0}).status_code == 422
+    page['data'] = b'<html><main>Version one is available</main></html>'
+    curator = make_curator(client, [], name='Release notes')
+    result = client.post(f"/api/hub/scout/runs/{run['id']}/accept", json={'index': 0, 'curator_id': curator['id']})
+    assert result.status_code == 200 and result.json()['provider'] == 'page_watch'
+    assert hub.run(curator['id']).new_items == 1
+    assert len(client.get(f"/api/hub/sources/{result.json()['id']}/revisions").json()) == 1
 
 
 def test_scout_detects_link_header_and_search_requires_configuration(client, monkeypatch):

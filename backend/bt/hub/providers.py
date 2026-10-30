@@ -277,6 +277,15 @@ def page(url: str, _q: str = '') -> list[dict]:
     return [item]
 
 
+def page_watch(url: str, _q: str = '') -> list[dict]:
+    data, final, _ = curation.fetch(url, kinds=curation.HTML_TYPES, limit=3_000_000, with_metadata=True)
+    item = extract_page(data, final)
+    if not item['body']:
+        raise ValueError('No readable page text was extracted.')
+    item['provider'] = 'page_watch'
+    return [item]
+
+
 class _ArticleLinks(HTMLParser):
     """Conservative declarative listing: links inside article elements on the same host."""
     def __init__(self, base):
@@ -324,6 +333,65 @@ def html_listing(url: str, _q: str = '') -> list[dict]:
     if not items:
         raise ValueError('No article links were found in the listing.')
     return items
+
+
+def parse_sitemap(data: bytes, url: str) -> list[dict]:
+    """Read a single URL sitemap; never crawl sitemap indexes or foreign hosts."""
+    root = _xml(data)
+    if _local(root.tag) != 'urlset':
+        raise ValueError('Expected a URL sitemap (sitemap indexes are not supported).')
+    items, seen = [], set()
+    for entry in root:
+        if _local(entry.tag) != 'url':
+            continue
+        fields = {_local(child.tag): (child.text or '').strip() for child in entry}
+        try:
+            target = curation.canonical(fields.get('loc', ''))
+        except (ValueError, TypeError):
+            continue
+        if urlsplit(target).hostname != urlsplit(url).hostname or target in seen:
+            continue
+        seen.add(target)
+        items.append({'url': target, 'title': target, 'type': 'web', 'provider': 'sitemap',
+                      'publisher': urlsplit(url).hostname or '',
+                      'meta': {'updated_at': ts(fields.get('lastmod'))}})
+    items.sort(key=lambda item: item['meta']['updated_at'] or 0, reverse=True)
+    if not items:
+        raise ValueError('No same-host HTTPS URLs found in the sitemap.')
+    return items[:50]
+
+
+def sitemap(url: str, _q: str = '') -> list[dict]:
+    data, final, _ = curation.fetch(url, kinds=('application/xml', 'text/xml'), with_metadata=True)
+    root = _xml(data)
+    if _local(root.tag) != 'sitemapindex':
+        return parse_sitemap(data, final)
+    # Follow a small, explicit number of same-host children, never nested indexes.
+    children = []
+    for entry in root:
+        if _local(entry.tag) != 'sitemap':
+            continue
+        loc = next(((child.text or '').strip() for child in entry if _local(child.tag) == 'loc'), '')
+        try:
+            candidate = curation.canonical(loc)
+        except (ValueError, TypeError):
+            continue
+        if urlsplit(candidate).hostname == urlsplit(final).hostname and candidate not in children:
+            children.append(candidate)
+        if len(children) == 3:
+            break
+    items, seen = [], set()
+    for child in children:
+        payload, resolved, _ = curation.fetch(child, kinds=('application/xml', 'text/xml'), with_metadata=True)
+        if urlsplit(resolved).hostname != urlsplit(final).hostname:
+            raise ValueError('Sitemap child redirected to another host.')
+        for item in parse_sitemap(payload, resolved):
+            if item['url'] not in seen:
+                seen.add(item['url']); items.append(item)
+    if not items:
+        raise ValueError('No usable URL sitemaps found in this index.')
+    items.sort(key=lambda item: item['meta']['updated_at'] or 0, reverse=True)
+    return items[:50]
 
 
 def web_search(_url: str, q: str) -> list[dict]:
@@ -377,6 +445,10 @@ PROVIDERS = {p.key: p for p in [
              ['structured-metadata'], default_type='domain'),
     Provider('html_listing', 'Article listing', 'feed', 'Article links from semantic article elements on a public page.', html_listing,
              ['update-monitoring', 'article-links'], needs_url=True, default_type='news'),
+    Provider('sitemap', 'XML sitemap', 'feed', 'Recent URLs from a public XML sitemap or a small sitemap index.', sitemap,
+             ['update-monitoring', 'structured-metadata'], needs_url=True, default_type='web'),
     Provider('page', 'Web page', 'url', 'Extract one page (OpenGraph, JSON-LD recipes/articles).', page,
              ['url-extraction', 'structured-metadata'], needs_url=True, default_type='web'),
+    Provider('page_watch', 'Page change watcher', 'feed', 'Track extracted text changes on one public page.', page_watch,
+             ['update-monitoring', 'page-changes'], needs_url=True, default_type='web'),
 ]}

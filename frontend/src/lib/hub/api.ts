@@ -48,6 +48,8 @@ export const hub = {
 	updateSource: (id: number, body: Partial<Source>) => send<Source>('PATCH', `/sources/${id}`, body),
 	deleteSource: (id: number) => send<{ ok: boolean }>('DELETE', `/sources/${id}`),
 	testSource: (id: number) => send<{ ok: boolean; count: number; sample: { title: string; url: string }[]; error: string }>('POST', `/sources/${id}/test`),
+	sourceRevisions: (id: number) => get<{ id: number; source_id: number; observed_at: number; title: string; body: string }[]>(`/sources/${id}/revisions`),
+	sourceChecks: (id: number) => get<{ id: number; checked_at: number; trigger: string; status: 'ok' | 'partial' | 'failed'; item_count: number; error: string }[]>(`/sources/${id}/checks`),
 
 	curators: (kind?: 'watch' | 'research') => get<Curator[]>('/curators' + qs({ kind })),
 	curator: (id: number) => get<CuratorDetail>(`/curators/${id}`),

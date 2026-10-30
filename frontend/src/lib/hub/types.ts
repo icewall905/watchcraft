@@ -27,7 +27,7 @@ export type Source = {
 	last_error: string; last_checked: number | null; item_count: number; curator_ids: number[];
 };
 export type ScoutPlan = { id: number; query: string; interval_hours: number; enabled: boolean; next_run: number; created_at: number };
-export type ScoutSuggestion = { provider: 'rss' | 'html_listing'; url: string; name: string; count: number; sample: { title: string; url: string }[]; validated: boolean };
+export type ScoutSuggestion = { provider: 'rss' | 'html_listing' | 'sitemap' | 'page_watch'; url: string; name: string; count: number; sample: { title: string; url: string }[]; validated: boolean };
 export type ScoutRun = { id: number; query: string; status: 'running' | 'complete' | 'failed'; created_at: number; finished_at: number | null; events: { kind: string; message: string; at: number }[]; suggestions: ScoutSuggestion[]; sitemaps: string[]; error: string };
 export type Run = { id: number; started_at: number; finished_at: number | null; status: string; trigger: string; new_items: number; seen_items: number; errors: { source: string; message: string }[] };
 export type Curator = {

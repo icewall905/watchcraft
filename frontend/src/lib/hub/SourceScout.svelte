@@ -73,7 +73,7 @@
 
 <section class="scout" aria-labelledby="scout-title">
 	<div class="intro">
-		<div><p class="eyebrow">SOURCE SCOUT</p><h2 id="scout-title">Find places worth following</h2><p class="muted">Give Scout a public website or a topic. It finds and tests feeds or article listings; you decide what to follow.</p></div>
+		<div><p class="eyebrow">SOURCE SCOUT</p><h2 id="scout-title">Find places worth following</h2><p class="muted">Give Scout a public website or a topic. It tests feeds, article listings, sitemaps and page monitoring; you decide what to follow.</p></div>
 		<span class="mark" aria-hidden="true">✧</span>
 	</div>
 	<form onsubmit={research} class="research">
@@ -110,10 +110,10 @@
 			{#each run.events as event}<p class="event"><span aria-hidden="true">✦</span> {event.message}</p>{/each}
 			{#if run.status === 'running'}<p class="muted">Research is in progress…</p>{/if}
 			{#if run.error}<p class="err">{run.error}</p>{/if}
-			{#if run.status === 'complete' && !run.suggestions.length}<p class="muted">No working feeds or article listings found. Try another site or topic.</p>{/if}
+			{#if run.status === 'complete' && !run.suggestions.length}<p class="muted">No working sources found. Try another site or topic.</p>{/if}
 			{#if run.sitemaps.length}
 				<details><summary use:focusable>Sitemaps found ({run.sitemaps.length})</summary>
-					<p class="small muted">These links are discovered, not validated for monitoring.</p>
+					<p class="small muted">Validated sitemaps appear below. Sitemap indexes are limited to their first three same-host URL sitemaps.</p>
 					<ul>{#each run.sitemaps as sitemap}<li><a href={sitemap} target="_blank" rel="noopener noreferrer" use:focusable>{sitemap}</a></li>{/each}</ul>
 				</details>
 			{/if}
@@ -125,9 +125,11 @@
 				<div class="results">
 					{#each run.suggestions as suggestion, index}
 						<article class="result">
-							<div class="hstack"><b>{suggestion.name}</b><span class="spacer"></span><span class="verified">✓ {suggestion.provider === 'rss' ? 'Feed validated' : 'Article listing tested'}</span></div>
+							<div class="hstack"><b>{suggestion.name}</b><span class="spacer"></span><span class="verified">✓ {suggestion.provider === 'rss' ? 'Feed validated' : suggestion.provider === 'sitemap' ? 'Sitemap tested' : suggestion.provider === 'page_watch' ? 'Page text extracted' : 'Article listing tested'}</span></div>
 							<a href={suggestion.url} target="_blank" rel="noopener noreferrer" use:focusable>{suggestion.url}</a>
 							<p class="small muted">{suggestion.count} items found{suggestion.count === 0 ? ' — valid feed, currently empty' : ''}</p>
+							{#if suggestion.provider === 'sitemap'}<p class="small muted">Up to 50 URLs per check; sitemap indexes use at most three same-host files. Existing-page changes are not tracked.</p>{/if}
+							{#if suggestion.provider === 'page_watch'}<p class="small muted">Follows changes to this page’s extracted text, not new articles. Attach to a curator to check it regularly.</p>{/if}
 							{#if suggestion.sample.length}<ul>{#each suggestion.sample as item}<li>{item.title}</li>{/each}</ul>{/if}
 							<button class="btn" disabled={accepting !== null} use:focusable={{ group: 'scout-actions', onSelect: () => accept(index) }}>{accepting === index ? 'Checking…' : 'Add source'}</button>
 						</article>

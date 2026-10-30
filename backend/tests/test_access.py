@@ -25,8 +25,9 @@ def client():
         conn.exec_driver_sql('DROP TABLE IF EXISTS content_fts')
     SQLModel.metadata.drop_all(db.engine)
     init_db()
-    with TestClient(app, raise_server_exceptions=True) as c:
-        yield c
+    # These tests invoke background entry points directly. Do not start the live
+    # scheduler while they create and drop their isolated database tables.
+    yield TestClient(app, raise_server_exceptions=True)
     SQLModel.metadata.drop_all(db.engine)
     init_db()
 
