@@ -194,3 +194,31 @@ in the local `todo.md` (which is intentionally ignored by Git).
   these events exist; the earlier image-only instructions describe historical releases.
 - Disposable validation container/data were removed after acceptance. Roadmap items still open include detailed
   briefing milestones, richer finding previews, narration modes, optional home shelves, Scout Report and Meme Radar.
+
+## Deployment record — discovery previews and briefing progress (`3f91e6d`, 2026-10-30)
+
+- Recent discoveries now expand into a bounded source summary, source/publisher and timestamps, the curator's separate
+  note, an internal finding link and the canonical original URL. Missing summaries are labeled; no new summary is
+  generated. The API retains profile-owned discovery provenance and source ownership in the join.
+- Briefing Writer records gathering/selection, actual AI-writing attempts or source-linked fallback, saving and completion
+  in the existing private event store, retaining 80 events per briefing and displaying the latest 12 for its selected run.
+  Progress is visible while generation runs, completion follows the issue commit, and deletion removes briefing events.
+  AI writing now occurs outside the database session; profile access is checked again before saving. Failure narration
+  does not assume an issue was never saved. Existing private event classification is retained for rollback compatibility.
+- Verification: 286 backend tests passed, six skipped; frontend check/build clean. Ten browser checks passed across the
+  acceptance batch and corrected team-test rerun; final expanded previews/progress screenshot visually inspected.
+  Blocked-writer integration coverage verifies live progress before saving, exact source references afterwards, other-
+  profile isolation and omission from shared streams. AI-disabled generation records fallback, with no invented AI step.
+- Backup: `/root/compose/watchcraft-backups/20261030T130141Z-pre-previews`; rollback image:
+  `watchcraft:rollback-20261030T130141Z-pre-previews` (previous application `e37d0e2`). Includes verified online and final
+  stopped-service databases, protected data extras/config and source. Media was unchanged and not copied.
+- Restored-copy initialization passed twice with all original counts, profile checksum and PIN records preserved.
+  Real page/RSS/sitemap, shared-fetch reuse, evidence preview, source-linked briefing fallback/saved issue and milestone
+  isolation checks passed on the final image. AI was disabled on the disposable copy only, leaving production settings
+  untouched. The disposable container/data were removed after acceptance.
+- API/worker/downloader run `watchcraft:3f91e6d`. Production health, monitoring APIs and deployed preview/timeline assets
+  passed; saved media returned HTTP 206 and decoded 180 changing frames. Six profiles, 4,822 videos, 115 history rows,
+  17 categories/playlists and profile checksum were preserved; host GPU override retained.
+- Rollback to the retained `e37d0e2` image is compatible with the private event classification: tag the rollback image as
+  `watchcraft:latest`, then run the existing three-file Compose command with `up -d --no-build --wait`. Reverting to a
+  pre-timeline image still requires the private-event cleanup described in the earlier timeline deployment record.

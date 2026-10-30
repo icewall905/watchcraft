@@ -252,3 +252,9 @@ shared-poll freshness race under lock contention. Full backend suite: 284 passed
 checks passed. Restored-copy migration/real-source tests and production data, API/assets and saved-video acceptance
 passed. See `docs/SOURCE_SCOUT_HANDOVER.md` for the verified backup and the privacy-preserving rollback helper required
 when reverting to an older image that does not filter the new private event kind.
+
+PREVIEWS AND BRIEFING PROGRESS DEPLOYED — 2026-10-30: release `3f91e6d` is live. Recent findings expose source
+summaries/metadata, original links and separate curator notes. Briefing Writer shows real selection, writing/fallback,
+saving and completion milestones. Backend 286 passed/six skipped; frontend checks/build and ten browser checks passed.
+Restored-copy and real-source briefing-fallback acceptance, production health/assets/APIs and saved-video delivery/decode
+passed with original profile/PIN data and checked counts preserved. Backup and rollback are in the handover document.
