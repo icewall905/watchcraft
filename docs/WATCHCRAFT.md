@@ -159,7 +159,8 @@ Curator cards and Source Scout expose an expandable run timeline. Curator milest
 reused fetches, matching, optional AI ranking, completion and report-writing steps as those operations occur. Source
 errors have expandable technical details. The existing event store retains up to 80 milestones per curator and shows
 the latest 12 from its latest run. Events belong to the profile and are excluded from the shared video-agent event/SSE
-feeds; deleting the curator/profile removes them. Detailed briefing-writer steps and narration modes remain planned.
+feeds; deleting the curator/profile removes them. New runs gain milestones; earlier runs keep their existing summaries.
+Detailed briefing-writer steps and narration modes remain planned.
 
 ## Not implemented yet (honest list)
 
@@ -236,3 +237,9 @@ initialized twice; real source-fetch acceptance confirmed one fetch reused by a 
 production health, schema, monitoring APIs/assets and cached-video delivery/decode passed. Backup and rollback are in
 `docs/SOURCE_SCOUT_HANDOVER.md`. P2's existing cards, narration, run journals and Scout progress were audited; unified
 curator step timelines and the optional home experience remain, followed by Scout Report and the larger roadmap.
+
+CURATOR TIMELINES DEPLOYED — 2026-10-30: release `e37d0e2` adds real private curator milestones and fixes the
+shared-poll freshness race under lock contention. Full backend suite: 284 passed, six skipped; ten release browser
+checks passed. Restored-copy migration/real-source tests and production data, API/assets and saved-video acceptance
+passed. See `docs/SOURCE_SCOUT_HANDOVER.md` for the verified backup and the privacy-preserving rollback helper required
+when reverting to an older image that does not filter the new private event kind.

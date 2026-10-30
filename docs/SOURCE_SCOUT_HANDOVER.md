@@ -167,3 +167,30 @@ in the local `todo.md` (which is intentionally ignored by Git).
 - P2 audit: existing team cards, deterministic narration, journals, Scout milestones, completed-run summaries and idle
   recent discoveries are implemented. Unified curator step timelines, richer preview/diagnostic UI, narration modes and
   the optional home shelf remain open, followed by Scout Report, Meme Radar and the rest of P3–P7.
+
+## Deployment record — curator timelines and polling race fix (`e37d0e2`, 2026-10-30)
+
+- Curator runs now emit real milestones into the existing profile-owned event store for source checks, shared-fetch reuse,
+  mission matching, optional ranking/report writing and completion. Agent Activity expands the latest 12 milestones,
+  including technical errors; up to 80 are retained per curator. Existing runs are not backfilled. Scout events use the
+  same presentation. Curator/profile deletion removes private events, and both global video-event routes exclude them.
+- Corrected a concurrent-poll edge case: freshness was calculated before obtaining the DB lock, so a response completed
+  during the lock wait could look newer than the clock sample and trigger another fetch. Freshness now uses time read
+  after locking. Regression coverage holds the lock while a response is published, then verifies that waiting reuses it.
+- Full backend suite: 284 passed, 6 skipped. Ten release browser checks passed, plus a final team-layout check and seven
+  focused polling tests. The team screenshot was visually inspected with expanded diagnostics. A live blocked-fetch
+  test checks current progress, other-profile/global-stream isolation and true completion after the source returns.
+- Backup: `/root/compose/watchcraft-backups/20261030T124046Z-pre-timelines`; previous image:
+  `watchcraft:rollback-20261030T124046Z-pre-timelines`. Original counts/profile/PIN records survived two isolated
+  initializations. Real page/RSS/sitemap checks, shared reuse and actual curator timeline/privacy acceptance passed.
+- Production API/worker/downloader run `watchcraft:e37d0e2` (`09b759193f1f…`). Six profiles, 4,822 videos, 115 history
+  records, 17 categories and the profile checksum were preserved. Public health, provider/history APIs, deployed
+  monitoring/timeline assets and saved-video HTTP 206 with 180 changing decoded frames passed. GPU override retained.
+- **Rollback compatibility:** previous images do not filter the new `hub_curator` event kind. Use the protected helper
+  `python3 /root/compose/watchcraft-backups/20261030T124046Z-pre-timelines/rollback.py` for this rollback. It stops the
+  application services, archives the entire current DB as `before-rollback.sqlite3`, removes private curator events
+  before starting the old image, and restores the deployed-revision marker. Discoveries and profile state are retained.
+  Automatic rollout failure uses the same privacy cleanup. Avoid an image-only rollback to pre-timeline releases once
+  these events exist; the earlier image-only instructions describe historical releases.
+- Disposable validation container/data were removed after acceptance. Roadmap items still open include detailed
+  briefing milestones, richer finding previews, narration modes, optional home shelves, Scout Report and Meme Radar.
