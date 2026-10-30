@@ -3,7 +3,7 @@ profile-specific (discoveries, state, collections, topics, alerts) is a relation
 import time
 from typing import Optional
 
-from sqlalchemy import JSON, Column, Text, UniqueConstraint
+from sqlalchemy import JSON, Column, LargeBinary, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -149,6 +149,34 @@ class ContentItem(SQLModel, table=True):
     external_id: str = Field(default='', index=True)
     meta: dict = J({})  # type-specific source metadata
     enrichment: dict = J({})  # AI output, kept apart from source facts
+
+
+class CaptureJob(SQLModel, table=True):
+    profile_id: int = Field(primary_key=True)
+    item_id: int = Field(primary_key=True)
+    status: str = Field(default='queued', index=True)
+    attempts: int = 0
+    next_run: float = Field(default=0, index=True)
+    lease: float = 0
+    error: str = ''
+    summary_status: str = 'pending'
+    updated_at: float = Field(default_factory=time.time)
+
+
+class CapturedAsset(SQLModel, table=True):
+    item_id: int = Field(primary_key=True)
+    kind: str = Field(primary_key=True)  # image | document
+    mime: str
+    data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+    size: int = 0
+    source_url: str = ''
+
+
+class CapturedPage(SQLModel, table=True):
+    item_id: int = Field(primary_key=True)
+    links: list = J()
+    captured_at: float = Field(default_factory=time.time)
+    truncated: bool = False
 
 
 class CuratorRun(SQLModel, table=True):

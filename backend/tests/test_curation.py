@@ -867,7 +867,7 @@ def test_capture_item_is_profile_scoped_and_searchable(client, monkeypatch):
 def test_new_matching_pages_are_captured_and_summarized(client, monkeypatch):
     html = b'<html><body><article>Important local evidence about Widget.</article></body></html>'
     def fetch(url, **kw):
-        return (html, url, {}) if kw.get('with_metadata') else RSS
+        return (html, url, {'content_type': 'text/html'}) if kw.get('with_metadata') else RSS
     monkeypatch.setattr(curation, 'fetch', fetch)
     monkeypatch.setattr(ai, 'enabled', lambda: True)
     monkeypatch.setattr(ai, 'rank', lambda c, items: [(90, 'Relevant') for _ in items])
@@ -875,6 +875,139 @@ def test_new_matching_pages_are_captured_and_summarized(client, monkeypatch):
     c = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}], keywords=['widget'], ai_enabled=True)
     assert hub.run(c['id']).new_items == 1
     row = client.get('/api/hub/items').json()['items'][0]
+    from bt.hub.capture import run
+    run(1, row['id'], 0)
     detail = client.get(f"/api/hub/items/{row['id']}").json()
     assert 'Important local evidence' in detail['body']
     assert detail['enrichment']['summary'] == 'Summary based on captured evidence.'
+
+
+def test_local_capture_backfill_assets_and_profile_isolation(client, monkeypatch):
+    from bt.hub import capture
+    from bt.hub.models import CaptureJob, CapturedAsset
+    image = b'\x89PNG\r\n\x1a\n' + b'example-image'
+    html = b'<html><head><meta property="og:image" content="https://example.org/photo.png"></head><body><p>First paragraph.</p><p>Second paragraph.</p></body></html>'
+    def fetch(url, **kw):
+        if url.endswith('feed'): return RSS
+        if url.endswith('photo.png'): return image, url, {'content_type': 'image/png'}
+        return html, url, {'content_type': 'text/html'}
+    monkeypatch.setattr(curation, 'fetch', fetch)
+    c = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}], keywords=['widget'])
+    hub.run(c['id'])
+    iid = client.get('/api/hub/items').json()['items'][0]['id']
+    with session() as s:
+        job = s.get(CaptureJob, (1, iid)); s.delete(job); s.commit()
+    capture.refill()
+    with session() as s:
+        assert s.get(CaptureJob, (1, iid)).status == 'queued'
+    capture.run(1, iid, 0)
+    detail = client.get(f'/api/hub/items/{iid}').json()
+    assert detail['capture']['status'] == 'complete'
+    assert detail['body'] == 'First paragraph.\n\nSecond paragraph.'
+    assert detail['local_assets'] == ['image']
+    assert client.get(f'/api/hub/items/{iid}/assets/image').content == image
+    assert client.get('/api/hub/items').json()['items'][0]['local_image']
+    other = client.post('/api/profiles', json={'name': 'Other'}).json()
+    headers = {'X-Profile-Id': str(other['id'])}
+    assert client.get(f'/api/hub/items/{iid}/assets/image', headers=headers).status_code == 404
+    assert client.post(f'/api/hub/items/{iid}/capture/queue', headers=headers).status_code == 404
+    with session() as s: assert s.get(CapturedAsset, (iid, 'image')).size == len(image)
+
+
+def test_capture_retry_and_asset_validation(client, monkeypatch):
+    from bt.hub import capture
+    from bt.hub.models import CaptureJob
+    monkeypatch.setattr(curation, 'fetch', lambda url, **kw: RSS)
+    c = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}], keywords=['widget'])
+    hub.run(c['id'])
+    iid = client.get('/api/hub/items').json()['items'][0]['id']
+    def fail(*args, **kwargs): raise ValueError('Offline')
+    monkeypatch.setattr(curation, 'fetch', fail)
+    with session() as s:
+        job = s.get(CaptureJob, (1, iid)); job.attempts = 1; s.add(job); s.commit()
+    capture.run(1, iid, 0)
+    with session() as s:
+        job = s.get(CaptureJob, (1, iid))
+        assert job.status == 'queued' and job.next_run > time.time() and 'Offline' in job.error
+    assert client.post(f'/api/hub/items/{iid}/capture/queue').json()['attempts'] == 0
+    with pytest.raises(ValueError): capture.save_asset(1, iid, 'image', 'https://example.org/x', b'<script>', 'image/png')
+
+
+def test_long_summary_covers_every_chunk(monkeypatch):
+    from bt.hub import capture
+    seen = []
+    def summarize(rows):
+        seen.extend(row['body'] for row in rows)
+        return {i: f'part {i}' for i in range(len(rows))}
+    monkeypatch.setattr(ai, 'summarize_items', summarize)
+    assert capture.full_summary('Long article', 'a' * 12000 + 'b' * 12000 + 'END')
+    assert any('END' in chunk for chunk in seen)
+
+
+def test_local_video_uses_existing_download_queue(client, monkeypatch):
+    from bt.hub import capture
+    from bt.hub.models import CaptureJob, ContentItem, ItemState
+    from bt.models import Download
+    with session() as s:
+        item = ContentItem(url='https://www.youtube.com/watch?v=abcdefghijk', title='Video', type='video',
+                           meta={'video_id': 'abcdefghijk'})
+        s.add(item); s.flush(); iid = item.id
+        s.add(ItemState(profile_id=1, item_id=iid)); s.add(CaptureJob(profile_id=1, item_id=iid)); s.commit()
+    capture.run(1, iid, 0)
+    with session() as s:
+        download = s.get(Download, 'abcdefghijk')
+        assert download and download.status == 'queued' and download.pinned
+        assert s.get(CaptureJob, (1, iid)).summary_status == 'unavailable'
+
+
+def test_pdf_saved_and_its_text_summarized(client, monkeypatch):
+    from bt.hub import capture
+    from bt.hub.models import CaptureJob, ContentItem, ItemState
+    pdf = b'%PDF-1.4\nexample'
+    monkeypatch.setattr(curation, 'fetch', lambda url, **kw: (pdf, url, {'content_type': 'application/pdf'}))
+    class Result: stdout = b'Document evidence from the full PDF.'
+    monkeypatch.setattr(capture.subprocess, 'run', lambda *args, **kwargs: Result())
+    monkeypatch.setattr(ai, 'enabled', lambda: True)
+    monkeypatch.setattr(ai, 'summarize_items', lambda items: {0: 'Document summary.'})
+    with session() as s:
+        item = ContentItem(url='https://example.org/paper.pdf', title='Paper', type='document')
+        s.add(item); s.flush(); iid = item.id
+        s.add(ItemState(profile_id=1, item_id=iid)); s.add(CaptureJob(profile_id=1, item_id=iid)); s.commit()
+    capture.run(1, iid, 0)
+    detail = client.get(f'/api/hub/items/{iid}').json()
+    assert detail['body'] == 'Document evidence from the full PDF.'
+    assert detail['enrichment']['summary'] == 'Document summary.'
+    assert client.get(f'/api/hub/items/{iid}/assets/document').content == pdf
+
+
+def test_local_capture_settings_are_admin_only_and_pause_dispatch(client):
+    from bt.hub import capture
+    other = client.post('/api/profiles', json={'name': 'Other'}).json()
+    headers = {'X-Profile-Id': str(other['id'])}
+    assert client.put('/api/hub/capture/settings', headers=headers,
+                      json={'enabled': False, 'asset_max_mb': 100}).status_code == 403
+    assert client.put('/api/hub/capture/settings', json={'enabled': False, 'asset_max_mb': 100}).status_code == 200
+    status = client.get('/api/hub/capture/status').json()
+    assert status['enabled'] is False and status['asset_limit'] == 100_000_000
+    assert capture.dispatch() is False
+    assert client.put('/api/hub/capture/settings', json={'enabled': True, 'asset_max_mb': 1}).status_code == 422
+
+
+def test_capture_claim_recovers_expired_lease(client, monkeypatch):
+    from bt.hub import capture
+    from bt.hub.models import CaptureJob, ContentItem, ItemState
+    with session() as s:
+        item = ContentItem(url='https://example.org/expired', title='Expired job')
+        s.add(item); s.flush(); iid = item.id
+        s.add(ItemState(profile_id=1, item_id=iid))
+        s.add(CaptureJob(profile_id=1, item_id=iid, status='running', lease=time.time() - 1, attempts=1))
+        s.commit()
+    calls = []
+    monkeypatch.setattr(capture.slots, 'spawn', lambda *args: calls.append(args) or True)
+    assert capture.dispatch()
+    assert len(calls) == 1
+    with session() as s:
+        job = s.get(CaptureJob, (1, iid))
+        assert job.status == 'running' and job.lease > time.time() and job.attempts == 2
+    assert capture.dispatch() is False
+    assert len(calls) == 1

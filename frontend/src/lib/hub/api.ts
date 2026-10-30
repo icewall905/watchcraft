@@ -26,6 +26,10 @@ export const hub = {
 	importUrl: (url: string) => send<Item>('POST', '/items/import', { url }),
 	news: (params: Params) => get<{ groups: NewsGroup[]; topics: Topic[] }>('/news' + qs(params)),
 
+	captureStatus: () => get<{ counts: Record<string, number>; asset_bytes: number; asset_limit: number; enabled: boolean; asset_max_mb: number }>('/capture/status'),
+	setCaptureSettings: (enabled: boolean, asset_max_mb: number) => send<{ enabled: boolean; asset_max_mb: number }>('PUT', '/capture/settings', { enabled, asset_max_mb }),
+	retryCaptures: () => send<{ queued: number }>('POST', '/capture/retry-failed'),
+	queueCapture: (id: number) => send<{ status: string }>('POST', `/items/${id}/capture/queue`),
 	captureItem: (id: number) => send<{ ok: boolean }>('POST', `/items/${id}/capture`),
 
 	collections: () => get<Collection[]>('/collections'),

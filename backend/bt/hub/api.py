@@ -10,12 +10,12 @@ from sqlalchemy import func, or_, text
 from sqlmodel import Session, delete, select
 
 from .. import curation
-from ..access import hub_allowed, require_hub
+from ..access import hub_allowed, require_admin, require_hub
 from ..api.core import profile_id
-from ..db import session
-from ..models import AgentEvent
+from ..db import get_settings, save_setting, session
+from ..models import AgentEvent, Download
 from . import activity, ai, engine, polling, scout, slots
-from .models import (Alert, Briefing, BriefingIssue, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
+from .models import (Alert, Briefing, BriefingIssue, CaptureJob, CapturedAsset, CapturedPage, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
                      CuratorRun, CuratorSource, ItemState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, ScoutReportConfig, ScoutReportIssue, Source, SourceCheck, Topic, TopicItem)
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
 from .templates import TEMPLATES
@@ -60,12 +60,13 @@ def serialize(s: Session, pid: int, items: list[ContentItem]) -> list[dict]:
     for d, name in s.exec(select(CuratorDiscovery, Curator.name).join(Curator, Curator.id == CuratorDiscovery.curator_id)
                           .where(CuratorDiscovery.profile_id == pid, CuratorDiscovery.item_id.in_(ids))).all():
         finds.setdefault(d.item_id, []).append((d, name))
+    images = set(s.exec(select(CapturedAsset.item_id).where(CapturedAsset.kind == 'image', CapturedAsset.item_id.in_(ids))).all())
     out = []
     for i in items:
         f = sorted(finds.get(i.id, []), key=lambda x: -(x[0].score or 0))
         out.append({**i.model_dump(exclude={'body'}), 'state': state_dict(states.get(i.id)),
                     'score': f[0][0].score if f else None, 'reason': f[0][0].reason if f else '',
-                    'curator_names': list(dict.fromkeys(n for _, n in f))})
+                    'curator_names': list(dict.fromkeys(n for _, n in f)), 'local_image': i.id in images})
     return out
 
 
@@ -211,6 +212,26 @@ def item(iid: int, pid: int = Depends(profile_id)):
             raise HTTPException(404, 'Item not found')
         out = serialize(s, pid, [it])[0]
         out['body'] = it.body
+        job = s.get(CaptureJob, (pid, iid))
+        out['capture'] = job.model_dump() if job else None
+        video_id = it.meta.get('video_id') if it.type == 'video' else None
+        download = s.get(Download, video_id) if video_id else None
+        out['media_status'] = download.status if download else None
+        out['local_assets'] = list(s.exec(select(CapturedAsset.kind).where(CapturedAsset.item_id == iid)).all())
+        snapshot = s.get(CapturedPage, iid)
+        out['capture_truncated'] = bool(snapshot and snapshot.truncated)
+        out['local_links'] = []
+        if snapshot:
+            links = []
+            for link in snapshot.links:
+                try:
+                    links.append((engine.canonical_url(link['url']), link['label']))
+                except (ValueError, KeyError):
+                    continue
+            targets = {row.url: row.id for row in s.exec(select(ContentItem).where(
+                ContentItem.url.in_([url for url, _ in links]), ContentItem.id.in_(visible_ids(pid)))).all()}
+            out['local_links'] = [{'id': targets[url], 'label': label} for url, label in links
+                                  if url in targets and targets[url] != iid]
         out['curators'] = [{'id': c.id, 'name': c.name, 'found_at': d.found_at, 'score': d.score, 'reason': d.reason, 'query': d.query}
                            for d, c in s.exec(select(CuratorDiscovery, Curator).join(Curator, Curator.id == CuratorDiscovery.curator_id)
                                               .where(CuratorDiscovery.item_id == iid, CuratorDiscovery.profile_id == pid)).all()]
@@ -220,6 +241,68 @@ def item(iid: int, pid: int = Depends(profile_id)):
                                     .where(TopicItem.item_id == iid, Topic.profile_id == pid)).all())
         out['related'] = serialize(s, pid, related(s, pid, it))
         return out
+
+
+@router.get('/capture/status')
+def capture_status(pid: int = Depends(profile_id)):
+    with session() as s:
+        rows = s.exec(select(CaptureJob.status, func.count()).where(CaptureJob.profile_id == pid)
+                      .group_by(CaptureJob.status)).all()
+        used = s.exec(select(func.coalesce(func.sum(CapturedAsset.size), 0))).one()
+        from .capture import asset_cap
+        config = get_settings(s)['local_library']
+        return {'counts': dict(rows), 'asset_bytes': used, 'asset_limit': asset_cap(s), **config}
+
+
+class CaptureSettingsIn(BaseModel):
+    enabled: bool
+    asset_max_mb: int = Input(ge=50, le=10000)
+
+
+@router.put('/capture/settings', dependencies=[Depends(require_admin)])
+def set_capture_settings(body: CaptureSettingsIn):
+    save_setting('local_library', body.model_dump())
+    return body.model_dump()
+
+
+@router.post('/capture/retry-failed')
+def retry_failed_captures(pid: int = Depends(profile_id)):
+    with session() as s:
+        rows = s.exec(select(CaptureJob).where(CaptureJob.profile_id == pid,
+                      CaptureJob.status.in_(['failed', 'partial']))).all()
+        queued = 0
+        for job in rows:
+            if can_see(s, pid, job.item_id):
+                job.status, job.attempts, job.next_run, job.error = 'queued', 0, 0, ''
+                s.add(job)
+                queued += 1
+        s.commit()
+        return {'queued': queued}
+
+
+@router.get('/items/{iid}/assets/{kind}')
+def item_asset(iid: int, kind: str, pid: int = Depends(profile_id)):
+    if kind not in ('image', 'document'):
+        raise HTTPException(404, 'Asset not found')
+    with session() as s:
+        asset = s.get(CapturedAsset, (iid, kind))
+        if not asset or not can_see(s, pid, iid):
+            raise HTTPException(404, 'Asset not found')
+        return Response(content=asset.data, media_type=asset.mime, headers={
+            'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox',
+            'Cache-Control': 'private, no-store'})
+
+
+@router.post('/items/{iid}/capture/queue')
+def queue_item_capture(iid: int, pid: int = Depends(profile_id)):
+    from .capture import enqueue
+    with session() as s:
+        s.exec(text('BEGIN IMMEDIATE'))
+        if not s.get(ContentItem, iid) or not can_see(s, pid, iid):
+            raise HTTPException(404, 'Item not found')
+        job = enqueue(s, pid, iid, retry=True)
+        s.commit(); s.refresh(job)
+        return job.model_dump()
 
 
 @router.post('/items/{iid}/capture')
@@ -1467,5 +1550,5 @@ def delete_profile_data(s: Session, pid: int) -> None:
     s.exec(delete(TopicItem).where(TopicItem.topic_id.in_(tids or [0])))
     s.exec(delete(AgentEvent).where(AgentEvent.kind.in_(['source_scout', activity.KIND]), AgentEvent.profile_id == pid))
     s.exec(delete(ScoutReportConfig).where(ScoutReportConfig.profile_id == pid))
-    for model in (CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, PageRevision, SourceCheck, Source, Curator, ScoutRun, ScoutPlan, ScoutReportIssue):
+    for model in (CaptureJob, CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, PageRevision, SourceCheck, Source, Curator, ScoutRun, ScoutPlan, ScoutReportIssue):
         s.exec(delete(model).where(model.profile_id == pid))

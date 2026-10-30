@@ -27,6 +27,7 @@ POT_URL = os.environ.get("BT_POT_URL", "http://pot:4416")
 
 # Global settings (key -> default). Stored in Setting table, merged over these.
 DEFAULT_SETTINGS: dict = {
+    "local_library": {"enabled": True, "asset_max_mb": 512},
     # Older databases remain ready; init_db opts new installations into the guide.
     "setup": {"completed": True},
     # Hub web search: "none" | "searxng" (self-hosted, trusted URL) | "brave" (API key).

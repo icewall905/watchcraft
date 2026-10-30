@@ -1,5 +1,6 @@
 <script lang="ts">
 	// Shared content card. Props are a stable contract (docs/HUB.md); visuals may evolve.
+	import LocalImage from './LocalImage.svelte';
 	import type { Snippet } from 'svelte';
 	import { focusable } from '$lib/nav';
 	import { hub, ago, host } from './api';
@@ -30,7 +31,7 @@
 
 	const m = $derived(item.meta ?? {});
 	const videoId = $derived(str(m, 'video_id'));
-	const href = $derived(item.type === 'video' && videoId ? `/watch/${encodeURIComponent(videoId)}` : `/item/${item.id}`);
+	const href = $derived(`/item/${item.id}`);
 	const isNews = $derived(item.type === 'news' || item.type === 'article');
 	const entity = $derived(['person', 'organization', 'domain'].includes(item.type));
 	const cvss = $derived(num(m, 'cvss_score'));
@@ -43,9 +44,9 @@
 </script>
 
 <article class="cc {layout}" class:unread class:dim={item.state.dismissed} data-type={item.type}>
-	{#if item.image && layout !== 'compact'}
+	{#if item.local_image && layout !== 'compact'}
 		<a class="thumb" href={href} tabindex="-1" aria-hidden="true" onclick={opened}>
-			<img src={item.image} alt="" loading="lazy" referrerpolicy="no-referrer" />
+			<LocalImage id={item.id} />
 			{#if item.type === 'video' && dur}<span class="dur">{dur}</span>{/if}
 		</a>
 	{/if}
@@ -83,7 +84,7 @@
 			{#if item.score !== null && item.score !== undefined}<span class="score" title="Relevance to your curators">{Math.round(item.score <= 1 ? item.score * 100 : item.score)}</span>{/if}
 		</div>
 
-		{#if item.summary && layout !== 'compact'}<p class="summary">{item.summary}</p>{/if}
+		{#if layout !== 'compact' && (item.enrichment?.summary || item.summary)}<p class="summary">{#if item.enrichment?.summary}<span class="muted">AI summary · </span>{String(item.enrichment.summary)}{:else}{item.summary}{/if}</p>{/if}
 		{#if item.state.tags.length && layout === 'card'}<p class="tags">{#each item.state.tags as t}<span>#{t}</span>{/each}</p>{/if}
 
 		<div class="actions">
@@ -116,9 +117,9 @@
 	.cc.compact { border-radius: var(--r-md); }
 	.thumb { position: relative; display: block; background: var(--bg-2); }
 	.cc.row .thumb { height: 100%; }
-	.cc img { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: var(--bg-2); }
-	.cc.row img { height: 100%; aspect-ratio: auto; min-height: 7rem; }
-	.cc[data-type='recipe'] img, .cc[data-type='pattern'] img { aspect-ratio: 4/3; }
+	.cc :global(img) { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: var(--bg-2); }
+	.cc.row :global(img) { height: 100%; aspect-ratio: auto; min-height: 7rem; }
+	.cc[data-type='recipe'] :global(img), .cc[data-type='pattern'] :global(img) { aspect-ratio: 4/3; }
 	.dur { position: absolute; right: .4rem; bottom: .4rem; background: rgba(0,0,0,.75); color: #fff; font-size: .72rem; font-weight: 700; padding: .1rem .4rem; border-radius: .3rem; font-variant-numeric: tabular-nums; }
 	.body { padding: .9rem 1.05rem 1rem; min-width: 0; }
 	.compact .body { padding: .6rem .85rem; }

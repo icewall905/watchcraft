@@ -5,6 +5,8 @@
 	import { str, num, list, bool, fmtDate, label, safeUrl, sevClass, duration, errMsg } from '$lib/hub/util';
 	import type { ItemDetail, Collection, Topic } from '$lib/hub/types';
 	import ContentCard from '$lib/hub/ContentCard.svelte';
+	import LocalImage from '$lib/hub/LocalImage.svelte';
+	import { currentProfileId } from '$lib/api';
 
 	let item = $state<ItemDetail | null>(null);
 	let loading = $state(true);
@@ -36,6 +38,11 @@
 		finally { if (my === seq) loading = false; }
 	}
 	$effect(() => { void id; load(); });
+	$effect(() => {
+		if (!item?.capture || !['queued', 'running'].includes(item.capture.status)) return;
+		const timer = setTimeout(() => { if (item) hub.item(item.id).then((updated) => { item = updated; }).catch(() => {}); }, 10000);
+		return () => clearTimeout(timer);
+	});
 
 	const m = $derived(item?.meta ?? {});
 	const ai = $derived(item && typeof item.enrichment?.summary === 'string' ? (item.enrichment.summary as string) : '');
@@ -57,9 +64,23 @@
 	async function capture() {
 		if (!item) return;
 		capturing = true; msg = '';
-		try { await hub.captureItem(item.id); item = await hub.item(item.id); }
+		try { await hub.queueCapture(item.id); item = await hub.item(item.id); }
 		catch (e) { msg = errMsg(e); }
 		finally { capturing = false; }
+	}
+
+	async function openDocument() {
+		if (!item) return;
+		const headers: Record<string, string> = {};
+		const profile = currentProfileId();
+		if (profile) headers['X-Profile-Id'] = profile;
+		try {
+			const response = await fetch(`/api/hub/items/${item.id}/assets/document`, { headers, credentials: 'same-origin' });
+			if (!response.ok) throw new Error('Could not open the local document.');
+			const url = URL.createObjectURL(await response.blob());
+			const a = document.createElement('a'); a.href = url; a.target = '_blank'; a.rel = 'noopener'; a.click();
+			setTimeout(() => URL.revokeObjectURL(url), 60000);
+		} catch (e) { msg = errMsg(e); }
 	}
 
 	async function patch(p: Parameters<typeof hub.setState>[1]) {
@@ -132,14 +153,23 @@
 				{#if ai}
 					<section class="aib"><h2>AI summary <span class="tag ai">AI-generated</span></h2><p class="prose">{ai}</p></section>
 				{/if}
+				{#if item.local_assets?.includes('image')}<LocalImage id={item.id} loading="eager" />{/if}
+				{#if item.local_assets?.includes('document')}<button class="btn" use:focusable onclick={openDocument}>Open local PDF</button>{/if}
+
 				{#if item.summary}
 					<section><h2>Source summary <span class="tag">From source</span></h2><p class="prose">{item.summary}</p></section>
 				{/if}
 
 				<section>
 					<h2>Read in WatchCraft</h2>
-					{#if item.body}<p class="prose">{item.body}</p>{:else}<p class="muted">Readable text has not been captured for this item yet.</p><button class="btn" disabled={capturing} use:focusable onclick={capture}>{capturing ? 'Capturing…' : 'Capture readable text'}</button>{/if}
+					{#if item.capture}<p class="small muted">Local capture: {item.capture.status} · Summary: {item.capture.summary_status}{item.capture.error ? ` · ${item.capture.error}` : ''}</p>{/if}
+					{#if item.type === 'video'}<p class="small muted">Video download: {item.media_status || 'not queued'}</p>{/if}
+					{#if item.capture_truncated}<p class="small muted">This page was longer than the local text limit; the saved text is partial.</p>{/if}
+					{#if item.body}<p class="prose captured-text">{item.body}</p>{:else}<p class="muted">Readable text is not available locally yet.</p>{/if}
+					{#if !item.capture || ['failed', 'partial'].includes(item.capture.status)}<button class="btn" disabled={capturing} use:focusable onclick={capture}>{capturing ? 'Queuing…' : 'Queue local capture'}</button>{/if}
 				</section>
+
+				{#if item.local_links?.length}<section><h2>Linked pages in your library</h2><ul>{#each item.local_links as link}<li><a href={`/item/${link.id}`} use:focusable>{link.label}</a></li>{/each}</ul></section>{/if}
 
 				{#if item.type === 'advisory'}
 					<section>
@@ -245,6 +275,7 @@
 </div>
 
 <style>
+	.captured-text { white-space: pre-wrap; }
 	.page { display: grid; gap: 1rem; align-content: start; }
 	.back { display: inline-block; min-height: 2.75rem; line-height: 2.75rem; }
 	.layout { display: grid; grid-template-columns: minmax(0, 1fr) 22rem; gap: 2rem; align-items: start; }

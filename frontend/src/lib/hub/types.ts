@@ -5,12 +5,12 @@ export type ItemState = {
 };
 export type Item = {
 	id: number; url: string; type: string; title: string; summary: string; author: string; publisher: string;
-	image: string; published_at: number | null; first_seen: number; provider: string;
+	image: string; local_image: boolean; published_at: number | null; first_seen: number; provider: string;
 	meta: Record<string, unknown>; enrichment: Record<string, unknown>;
 	state: ItemState; score: number | null; reason: string; curator_names: string[];
 };
 export type ItemDetail = Item & {
-	body: string;
+	body: string; media_status: string | null; local_assets: string[]; capture_truncated: boolean; local_links: { id: number; label: string }[]; capture: { status: string; summary_status: string; error: string; attempts: number } | null;
 	curators: { id: number; name: string; found_at: number; score: number | null; reason: string }[];
 	collections: number[]; related: Item[];
 };

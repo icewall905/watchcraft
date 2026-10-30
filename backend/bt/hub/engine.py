@@ -303,29 +303,6 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         except Exception as e:  # noqa: BLE001 — AI is optional; keep keyword scores
             errors.append({'source': 'AI relevance', 'message': f'AI scoring unavailable ({_safe_error(e)}); used keyword scores.'})
             activity.emit(c, r.id, 'ranking_error', 'AI ranking was unavailable; kept the keyword scores.', error=_safe_error(e))
-    # Capture matching pages before opening a write transaction. A failed capture
-    # does not discard the discovery; the item can be retried from its page.
-    from .extract import extract_page
-    for src, q, d, score, reason in fresh:
-        if score < c.min_score or d.get('body') or d.get('type') in ('video', 'document'):
-            continue
-        with session() as s:
-            if not hub_allowed(s, c.profile_id):
-                raise ValueError('Hub access was restricted during the run.')
-        try:
-            payload, final, _ = curation.fetch(d['url'], kinds=curation.HTML_TYPES, limit=3_000_000, with_metadata=True)
-            d['body'] = extract_page(payload, final)['body']
-        except Exception as e:  # noqa: BLE001
-            log.info('Could not capture item: %s', _safe_error(e))
-    if c.ai_enabled and ai.enabled():
-        matched = [x for x in fresh if x[3] >= c.min_score and x[2].get('body')]
-        for start in range(0, len(matched), 5):
-            batch = matched[start:start + 5]
-            try:
-                for n, summary in ai.summarize_items([x[2] for x in batch]).items():
-                    batch[n][2]['enrichment'] = {'summary': summary}
-            except Exception as e:  # noqa: BLE001
-                log.info('Could not summarize captured items: %s', _safe_error(e))
     new = 0
     with session() as s:
         c = s.get(Curator, cid)
@@ -339,6 +316,8 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
                 continue
             s.add(CuratorDiscovery(curator_id=cid, item_id=item.id, profile_id=c.profile_id, source_id=src.id,
                                    query=q, score=score, reason=reason))
+            from .capture import enqueue
+            enqueue(s, c.profile_id, item.id)
             new += 1
             route(s, c, item, reason)
         status = 'ok' if not errors else ('failed' if sources and len(errors) >= len(sources) and not candidates else 'partial')
@@ -460,6 +439,10 @@ def dispatch_due() -> None:
                                             config.profile_id, 'Scout Report', scheduled,
                                             config.profile_id, config.frequency, now + LEASE_S):
             free -= 1
+
+    if free > 0:
+        from . import capture
+        capture.dispatch()
 
 
 slots.after_release = dispatch_due

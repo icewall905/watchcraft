@@ -80,6 +80,8 @@ class _Page(_Text):
             self._in_ld = True
             self.ld.append('')
             return
+        if tag in {'p', 'h1', 'h2', 'h3', 'h4', 'li', 'blockquote', 'pre', 'br'} and not self.skip:
+            self.parts.append('\n')
         super().handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag):
@@ -89,6 +91,8 @@ class _Page(_Text):
             self._in_ld = False
             return
         super().handle_endtag(tag)
+        if tag in {'p', 'h1', 'h2', 'h3', 'h4', 'li', 'blockquote', 'pre'} and not self.skip:
+            self.parts.append('\n')
 
     def handle_data(self, data):
         if self._in_title:
@@ -97,6 +101,42 @@ class _Page(_Text):
             self.ld[-1] += data
         else:
             super().handle_data(data)
+
+
+class _Links(HTMLParser):
+    """Keep link labels and destinations as inert data; never persist executable markup."""
+    def __init__(self, base):
+        super().__init__(convert_charrefs=True)
+        self.base, self.skip, self.current, self.links = base, 0, None, []
+
+    def handle_starttag(self, tag, attrs):
+        if tag in SKIP:
+            self.skip += 1
+        if tag == 'a' and not self.skip and len(self.links) < 100:
+            href = dict(attrs).get('href', '')
+            self.current = [urljoin(self.base, href), []] if href else None
+
+    def handle_data(self, data):
+        if self.current and not self.skip:
+            self.current[1].append(data)
+
+    def handle_endtag(self, tag):
+        if tag == 'a' and self.current:
+            url, parts = self.current
+            label = clean(' '.join(parts), 200)
+            if label and urlsplit(url).scheme == 'https':
+                self.links.append({'url': url[:2000], 'label': label})
+            self.current = None
+        if tag in SKIP and self.skip: self.skip -= 1
+
+
+def page_links(html: bytes, base: str) -> list[dict]:
+    parser = _Links(base)
+    try:
+        parser.feed(html.decode('utf-8', 'replace'))
+    except Exception:
+        pass
+    return parser.links
 
 
 def _ld_nodes(raw: list[str]):
@@ -167,7 +207,7 @@ def extract_page(html: bytes, url: str) -> dict:
         'publisher': clean(m.get('og:site_name'), 200),
         'author': clean(m.get('author') or m.get('article:author'), 200),
         'published_at': ts(m.get('article:published_time') or m.get('date') or m.get('dc.date')),
-        'body': clean(' '.join(p.parts), TEXT_LIMIT),
+        'body': '\n\n'.join(line for raw in ' '.join(p.parts).split('\n') if (line := clean(raw, TEXT_LIMIT)))[:TEXT_LIMIT],
         'meta': {},
         'type': 'web',
     }
