@@ -32,3 +32,13 @@ DNS, reverse proxy and the running server are not modified by repository changes
 ## Next priorities
 
 Add provider fixtures, execution history and explicit cancellation; implement shared content/provenance models and a versioned migration runner with automated backup checks; then add AI relevance scoring and curator editing. Preserve and expand remote-navigation browser tests before changing the television shell. Add security advisories and public article extraction only behind the same network boundary. Build briefings and alerts when source provenance and factual enrichment are established.
+
+## Verification of this increment
+
+- Frontend Svelte check: zero errors and warnings; production build passed; regenerated all PWA icons from the new SVG crest.
+- Backend regression suite: 217 passed, 6 skipped. After the final profile-deletion cleanup, targeted curator/core/PIN tests: 27 passed.
+- Chrome TV regression: `watch-back.spec.ts` passed (Back returns from a watch session to its originating playlist).
+- Compose base plus WatchCraft override: configuration validation passed.
+- No real-provider network acceptance tests, full TV remote acceptance pass, live migration/restore rehearsal, Docker image build or server deployment were performed. One existing Starlette/httpx deprecation warning remains.
+
+The initial commit also preserves the pre-existing, uncommitted TV Back-navigation changes and their regression test from the BetterTube working tree. The original checkout was left untouched.
