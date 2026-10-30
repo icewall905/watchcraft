@@ -223,3 +223,10 @@ Backup and practical rollback details are recorded in `docs/SOURCE_SCOUT_HANDOVE
 real page/feed/sitemap acceptance, public health, monitoring APIs, deployed assets and cached-video delivery/decode
 passed. Original profile data, PIN records and checked content counts were preserved. Remaining roadmap items include
 shared source polling, configurable extraction, automatic repair, notifications and the broader Scout Report experience.
+
+SHARED POLLING DEPLOYED — 2026-10-30: release `96ec4de` is live across the application services. The complete backend
+suite passed 282 tests (six live tests skipped), and ten browser checks passed. A production backup was restored and
+initialized twice; real source-fetch acceptance confirmed one fetch reused by a second request. Data preservation,
+production health, schema, monitoring APIs/assets and cached-video delivery/decode passed. Backup and rollback are in
+`docs/SOURCE_SCOUT_HANDOVER.md`. P2's existing cards, narration, run journals and Scout progress were audited; unified
+curator step timelines and the optional home experience remain, followed by Scout Report and the larger roadmap.

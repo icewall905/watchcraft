@@ -142,3 +142,28 @@ in the local `todo.md` (which is intentionally ignored by Git).
   from `/root/compose/watchcraft`. New tables are additive. Restore the stopped-service backup only if reverting data is
   necessary, with all application services stopped first.
 - Physical TV remote acceptance and topic search with a configured SearXNG/Brave provider remain unverified.
+
+## Deployment record — shared polling (`96ec4de`, 2026-10-30)
+
+- Scheduled feed providers now share a persisted raw response for five minutes across curators/profiles, with each
+  curator's scoring and discoveries separate. Query providers are excluded. Manual runs, tests and Scout acceptance
+  force freshness. Thirty-second failed-response reuse prevents retry storms; history labels reuse with the original
+  fetch time. Capacity: 256 completed endpoints, two MB each, plus active leases. Slow checks renew their database
+  lease; abandoned leases expire after three minutes. Waiting checks stop after 190 seconds.
+- Backend: 282 passed, 6 skipped; frontend check/build passed; ten browser checks passed. Coverage includes independent
+  cross-profile scoring, concurrent one-fetch behavior, persisted reuse in another interpreter, forced refresh, expired
+  success/failure handling, lease renewal/interruption/recovery and storage bounds.
+- Backup and rollback: `/root/compose/watchcraft-backups/20261030T123107Z-pre-shared-polling`, rollback image
+  `watchcraft:rollback-20261030T123107Z-pre-shared-polling`. Includes verified online backup and final stopped-service
+  backup `final-before-rollout.sqlite3`, configuration, data extras and previous source. Media was unchanged and not copied.
+- Isolated restore initialized twice: all original table counts, profiles and PIN records preserved; `sourcepoll` created.
+  Real public page/RSS/sitemap checks passed. Two real feed requests performed one network fetch with equal original
+  timestamps. The disposable copy received QA profiles; production profile/PIN data was unchanged.
+- API, worker and downloader deployed as `watchcraft:96ec4de`; six profiles, 4,822 videos, 115 history rows, 17 categories
+  and profile checksum preserved. Host GPU override retained. Production health, new schema, source APIs/assets and
+  saved-video HTTP/decode acceptance verified after rollout.
+- Rollback: tag the rollback image as `watchcraft:latest` and run the existing three-file WatchCraft Compose command
+  above with `up -d --no-build --wait`. Restore the stopped-service backup only when reverting data is necessary.
+- P2 audit: existing team cards, deterministic narration, journals, Scout milestones, completed-run summaries and idle
+  recent discoveries are implemented. Unified curator step timelines, richer preview/diagnostic UI, narration modes and
+  the optional home shelf remain open, followed by Scout Report, Meme Radar and the rest of P3–P7.
