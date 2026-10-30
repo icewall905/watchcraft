@@ -134,10 +134,21 @@ generated local media on a browser receiver. `tests/test_access.py` now has 24 p
 backup/restore followed by application initialization and checks of roles, PIN records, discoveries and the FTS index.
 The complete backend run before adding that final restore case passed 252 tests with 6 skipped.
 
-PARTIAL: end-to-end deployed acceptance. Hardware TV and deployed playback remain outstanding.
+DEPLOYED: on 2026-10-30, revision `43f6230` was migrated and deployed at `10.0.10.73:6646`, followed by
+frontend navigation fix `880f732`. The previous image, source archive and pre-migration backup are retained under
+`/root/compose/watchcraft-backups/20261030T090143Z-43f6230`; that backup excludes the separate media volume. A
+restored copy was migrated twice and checked for integrity, matching profile preferences and preserved profiles,
+playlists, video records, history and legacy discoveries. The existing NVIDIA Compose override was retained.
+
+VERIFIED ON SERVER: API health and the public `https://wc.tdgs.org` health endpoint; eleven Hub/TV routes; adult
+authorization and cross-profile isolation; and a saved video playing at 1920×1080 with decoded, changing frames.
+A disposable container on the same server passed the child-profile, administrator PIN and player-error browser
+checks without changing production PINs or child profiles. The live acceptance test removed its temporary profile.
+The navigation fix also passed local player-error and playlist Back tests. Physical TV remote acceptance and live
+external-provider acceptance are still outstanding.
 
 PLANNED: Source Scout, declarative watchers, shared source polling, persistent team activity, Scout Report, home layout
 presets, Meme Radar and the remaining advanced capabilities in `todo.md`. Existing item pages, collections, News
 grouping, cited reports and search filters already provide parts of the P4 experience; they must be extended in place.
 
-No production database has been opened or deployment changed during this work. Tests use temporary databases.
+Production acceptance used a temporary profile, which was removed, and a disposable server-side database for child-profile checks. The remaining roadmap begins with Source Scout.
