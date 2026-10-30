@@ -67,7 +67,8 @@ test('keyboard-only smoke', async ({ page, request }) => {
 	await expect(page.getByRole('heading', { name: "Who's watching?" })).toHaveCount(0);
 
 	// --- category via Settings.
-	await moveUntil(page, 'ArrowLeft', /Settings/);
+	await moveUntil(page, 'ArrowLeft', /^(TV|Subscriptions|Discover|Settings)(?:\s|$)/);
+	await moveUntil(page, 'ArrowDown', /^Settings(?: Settings)?$/);
 	await page.keyboard.press('Enter');
 	await expect(page).toHaveURL(/\/settings/);
 	await page.waitForTimeout(300);
@@ -92,10 +93,9 @@ test('keyboard-only smoke', async ({ page, request }) => {
 	await page.screenshot({ path: 'screenshots/settings-categories-1920.png' });
 
 	// --- Agent page, toggle pause.
-	await moveUntil(page, 'ArrowUp', /Settings$|Playlists/, 10);
-	await moveUntil(page, 'ArrowUp', /^Settings$|Home|Search|Subscriptions|Agent/, 10);
-	await moveUntil(page, 'ArrowLeft', /^Home$/);
-	await moveUntil(page, 'ArrowRight', /^Agent$/);
+	await moveUntil(page, 'ArrowLeft', /^(TV|Subscriptions|Discover|News|Knowledge|Library|Briefings|Alerts|Research|Curators|Sources|Video AI|Statistics|Settings)(?:\s|$)/);
+	await moveUntil(page, 'ArrowUp', /^TV(?: TV)?$/);
+	await moveUntil(page, 'ArrowDown', /^Video AI(?: Video AI)?$/);
 	await page.keyboard.press('Enter');
 	await expect(page).toHaveURL(/\/agent/);
 	await page.waitForTimeout(400);

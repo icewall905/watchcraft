@@ -10,6 +10,7 @@ from sqlalchemy import func, or_, text
 from sqlmodel import Session, delete, select
 
 from .. import curation
+from ..access import require_hub
 from ..api.core import profile_id
 from ..db import session
 from . import ai, engine
@@ -18,7 +19,7 @@ from .models import (Alert, Briefing, BriefingIssue, Collection, CollectionItem,
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
 from .templates import TEMPLATES
 
-router = APIRouter(prefix='/hub', tags=['WatchCraft Hub'])
+router = APIRouter(prefix='/hub', tags=['WatchCraft Hub'], dependencies=[Depends(require_hub)])
 MAX_CURATORS = 50
 
 
@@ -286,6 +287,8 @@ def news(days: int = 1, topic: int | None = None, pid: int = Depends(profile_id)
     """Recent articles grouped into stories by title overlap. Uses publication time, not discovery time."""
     since = time.time() - max(1, min(days, 90)) * 86400
     with session() as s:
+        if topic is not None:
+            owned(s, Topic, topic, pid)
         topics = s.exec(select(Topic).where(Topic.profile_id == pid, Topic.kind == 'news')).all()
         stmt = item_query(pid, section='news', topic=None)
         when = func.coalesce(ContentItem.published_at, ContentItem.first_seen)

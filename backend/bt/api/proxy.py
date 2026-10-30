@@ -11,7 +11,8 @@ import time
 import urllib.parse as up
 
 import httpx
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from ..access import require_admin
 from pydantic import BaseModel
 from sqlmodel import select
 
@@ -73,7 +74,7 @@ def _err_hint(e: Exception) -> str:
     return ""
 
 
-@router.post("/proxy/test")
+@router.post("/proxy/test", dependencies=[Depends(require_admin)])
 def proxy_test(body: ProxyTestBody) -> dict:
     url = (body.url or "").strip()
     if "://" not in url:

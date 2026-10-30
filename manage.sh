@@ -59,9 +59,10 @@ case "$action" in
   6|stop) docker compose stop ;;
   7|reset-pin)
     helper bt-api - list-profiles
-    read -r -p 'Profile ID to remove the PIN from: ' pid
+    read -r -p 'Profile ID to reset the PIN for: ' pid
     [[ "$pid" =~ ^[0-9]+$ ]] || fail 'Enter the profile ID shown above.'
-    read -r -p 'Remove this profile PIN? [y/N]: ' confirm
+    echo 'When child profiles are enabled, adult PINs are replaced with a new PIN shown here.'
+    read -r -p 'Reset this profile PIN? [y/N]: ' confirm
     case "$confirm" in y|Y|yes|YES) helper bt-api - reset-pin "$pid" ;; esac ;;
   *) fail 'Choose start, update, backup, restore, status, stop or reset-pin.' ;;
 esac

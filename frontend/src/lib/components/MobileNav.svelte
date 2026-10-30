@@ -1,13 +1,15 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { deviceMode } from '$lib/stores/deviceMode.svelte';
-	import { ALL_ENTRIES, MOBILE_PRIMARY, MOBILE_MORE, FIND } from '$lib/navigation';
+	import { ALL_ENTRIES, MOBILE_PRIMARY, MOBILE_MORE, FIND, isHubPath } from '$lib/navigation';
+	import { session } from '$lib/stores/session.svelte';
 	import Icon from './Icon.svelte';
 
 	let more = $state(false);
 	let narrow = $state(false);
 	const path = $derived(page.url.pathname);
-	const rest = $derived(ALL_ENTRIES.filter((e) => !MOBILE_PRIMARY.includes(e)));
+	const primary = $derived(MOBILE_PRIMARY.filter(e => session.hubAllowed || !isHubPath(e.href)));
+	const rest = $derived(ALL_ENTRIES.filter((e) => !MOBILE_PRIMARY.includes(e) && (session.hubAllowed || !isHubPath(e.href))));
 	const moreActive = $derived(rest.some((e) => e.active(path)));
 
 	$effect(() => {
@@ -27,7 +29,7 @@
 	{#if more}
 		<button class="backdrop" aria-label="Close menu" tabindex="-1" onclick={() => (more = false)}></button>
 		<div class="sheet" role="dialog" aria-label="More navigation">
-			<a href={FIND.href} class="find"><Icon name={FIND.icon} /><span>{FIND.label}</span></a>
+			<a href={session.hubAllowed ? FIND.href : '/search'} class="find"><Icon name={FIND.icon} /><span>{session.hubAllowed ? FIND.label : 'Video search'}</span></a>
 			<div class="grid">
 				{#each rest as it}
 					{@const on = it.active(path)}
@@ -36,8 +38,8 @@
 			</div>
 		</div>
 	{/if}
-	<nav class="bar glass" aria-label="Primary">
-		{#each MOBILE_PRIMARY as it}
+	<nav class="bar glass" aria-label="Primary" style:grid-template-columns={`repeat(${primary.length + 1}, 1fr)`}>
+		{#each primary as it}
 			{@const on = it.active(path)}
 			<a href={it.href} aria-current={on ? 'page' : undefined} class:active={on}><Icon name={it.icon} size="1.45em" /><span>{it.label}</span></a>
 		{/each}

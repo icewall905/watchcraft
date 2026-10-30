@@ -352,7 +352,7 @@
 	}
 	.table {
 		width: 100%;
-        min-width: 52rem;
+        min-width: 40rem;
         table-layout: fixed;
 		border-collapse: collapse;
 		font-size: 0.92rem;

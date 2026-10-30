@@ -16,7 +16,7 @@ from bt.models import Candidate, Category, Download, Feedback, Profile, Reencode
 init_db()
 with session() as s:
     if not s.exec(select(Profile)).first():
-        s.add(Profile(name="Family"))
+        s.add(Profile(name="Family", role="admin"))
     s.commit()
     pid = s.exec(select(Profile)).first().id
     cat = s.exec(select(Category).where(Category.name == "Stats test")).first()
@@ -33,21 +33,29 @@ with session() as s:
         s.add(WatchHistory(profile_id=pid, video_id="statvid00001", category_id=cat.id,
                            finished=True, duration_s=600, position_s=600))
     s.merge(Video(id="statvid00003", title="A rejected stats video", channel_name="Stats channel", duration_s=300))
-    s.add(Candidate(category_id=cat.id, video_id="statvid00003", status="rejected", score=12,
-                    summary="Too much sensationalism for this category", red_flags=["Sensationalism"], judged_at=now()))
+    if not s.exec(select(Candidate).where(Candidate.category_id == cat.id, Candidate.video_id == "statvid00003")).first():
+        s.add(Candidate(category_id=cat.id, video_id="statvid00003", status="rejected", score=12,
+                        summary="Too much sensationalism for this category", red_flags=["Sensationalism"], judged_at=now()))
     s.merge(Download(video_id="statvid00002", status="done", height=720, size_bytes=80_000_000, vcodec="h264 (NVENC)"))
-    s.add(ReencodeResult(video_id="statvid00002", outcome="saved", original_bytes=120_000_000, output_bytes=80_000_000))
+    if not s.exec(select(ReencodeResult).where(ReencodeResult.video_id == "statvid00002")).first():
+        s.add(ReencodeResult(video_id="statvid00002", outcome="saved", original_bytes=120_000_000, output_bytes=80_000_000))
     for i in range(45):
         vid = f"statpage{i:03}"
         s.merge(Video(id=vid, title=f"Pending stats pick {i:02}", duration_s=180))
-        s.add(Candidate(category_id=cat.id, video_id=vid, status="found"))
-    other = Profile(name="Another stats profile")
-    s.add(other)
+        if not s.exec(select(Candidate).where(Candidate.category_id == cat.id, Candidate.video_id == vid)).first():
+            s.add(Candidate(category_id=cat.id, video_id=vid, status="found"))
+    other = s.exec(select(Profile).where(Profile.name == "Another stats profile")).first()
+    if not other:
+        other = Profile(name="Another stats profile")
+        s.add(other)
     s.commit()
-    second = Category(profile_id=other.id, name="Another profile category with a deliberately long descriptive name that must stay inside the panel", brief="b")
-    s.add(second)
+    second = s.exec(select(Category).where(Category.profile_id == other.id)).first()
+    if not second:
+        second = Category(profile_id=other.id, name="Another profile category with a deliberately long descriptive name that must stay inside the panel", brief="b")
+        s.add(second)
     s.commit()
-    s.add(Candidate(category_id=second.id, video_id="statvid00001", status="accepted", score=75, judged_at=now()))
+    if not s.exec(select(Candidate).where(Candidate.category_id == second.id, Candidate.video_id == "statvid00001")).first():
+        s.add(Candidate(category_id=second.id, video_id="statvid00001", status="accepted", score=75, judged_at=now()))
     s.commit()
 `], { cwd: BACKEND, env: { ...process.env, BT_DATA_DIR: DATA! } });
 });

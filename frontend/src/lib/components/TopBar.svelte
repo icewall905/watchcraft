@@ -32,6 +32,7 @@
 	<div class="right">
 		<PlaybackPicker />
 		<StatusPill />
+		{#if session.isAdmin}
 		<button
 			class="btn pause"
 			class:paused={agent.control.paused}
@@ -41,6 +42,7 @@
 			<Icon name={agent.control.paused ? 'play' : 'pause'} size="1.05em" />
 			<span class="pl">{agent.control.paused ? 'Resume AI' : 'Pause AI'}</span>
 		</button>
+		{/if}
 		{#if session.profile}
 			<button class="who" aria-label="Switch profile ({session.profile.name})" use:focusable={{ group: 'topbar', id: 'profile', scroll: 'none', onSelect: () => (picker = true) }}>
 				<Avatar emoji={session.profile.emoji} color={session.profile.color} size="2.5rem" />

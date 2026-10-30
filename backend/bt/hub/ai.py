@@ -159,9 +159,12 @@ def fallback_digest(items: list[ContentItem]) -> str:
     return '\n\n'.join(f'{t.capitalize()}:\n' + '\n'.join(lines) for t, lines in by_type.items())
 
 
-def research_report(cid: int) -> Curator:
+def research_report(cid: int) -> Curator | None:
     with session() as s:
+        from ..access import hub_allowed
         c = s.get(Curator, cid)
+        if not c or not hub_allowed(s, c.profile_id):
+            return None
         items = s.exec(select(ContentItem).join(CuratorDiscovery, CuratorDiscovery.item_id == ContentItem.id)
                        .where(CuratorDiscovery.curator_id == cid).order_by(CuratorDiscovery.score.desc(), CuratorDiscovery.found_at.desc()).limit(40)).all()
         if not items:
@@ -185,8 +188,9 @@ def research_report(cid: int) -> Curator:
 
 def generate_briefing(bid: int) -> BriefingIssue | None:
     with session() as s:
+        from ..access import hub_allowed
         b = s.get(Briefing, bid)
-        if not b:
+        if not b or not hub_allowed(s, b.profile_id):
             return None
         window = 7 * 86400 if b.frequency == 'weekly' else 86400 if b.frequency == 'daily' else 7 * 86400
         since = max(b.last_generated or 0, time.time() - window)

@@ -4,7 +4,7 @@ import re
 from datetime import date, datetime, timedelta
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from sqlmodel import Session, col, delete, func, select
 from sqlalchemy import update
@@ -12,6 +12,7 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import load_only
 
 from .. import profile_pins
+from ..access import profile_id, require_admin, validate_household
 from ..config import COOKIES_PATH, DEFAULT_SETTINGS
 from ..db import emit, get_session, get_settings, save_setting, session, yt_request_counts
 from ..downloader.service import drop_unwanted
@@ -23,17 +24,6 @@ router = APIRouter()
 
 
 # ---------- helpers
-
-def profile_id(request: Request, x_profile_id: Optional[int] = Header(default=None)) -> int:
-    """Active profile from X-Profile-Id header; falls back to first profile."""
-    with session() as s:
-        p = s.get(Profile, x_profile_id) if x_profile_id else None
-        p = p or s.exec(select(Profile).order_by(Profile.id)).first()
-        if not p:
-            raise HTTPException(400, "no profiles")
-        profile_pins.require(s, p.id, request)
-        return p.id
-
 
 def _offline_ids(ids: list[str], s: Session | None = None) -> set[str]:
     from ..models import Download
@@ -92,6 +82,7 @@ class ProfileIn(BaseModel):
     color: str = "#7c5cff"
     prefs: dict = {}
     pin: Optional[str] = None
+    role: Literal['admin', 'adult', 'child'] = 'adult'
 
 
 class ProfilePatch(BaseModel):
@@ -100,6 +91,7 @@ class ProfilePatch(BaseModel):
     color: Optional[str] = None
     prefs: Optional[dict] = None
     pin: Optional[str] = None
+    role: Optional[Literal['admin', 'adult', 'child']] = None
 
 
 def profile_out(p: Profile, s: Session, request: Request):
@@ -112,7 +104,7 @@ def list_profiles(request: Request, s: Session = Depends(get_session)):
     return [profile_out(p, s, request) for p in s.exec(select(Profile).order_by(Profile.id)).all()]
 
 
-@router.post("/profiles")
+@router.post("/profiles", dependencies=[Depends(require_admin)])
 def create_profile(body: ProfileIn, request: Request, s: Session = Depends(get_session)):
     profile_pins.validate(body.pin)
     p = Profile(**body.model_dump(exclude={"pin"}))
@@ -120,20 +112,37 @@ def create_profile(body: ProfileIn, request: Request, s: Session = Depends(get_s
     s.flush()
     if body.pin:
         profile_pins.set_pin(s, p.id, body.pin)
+    s.flush()
+    validate_household(s)
     s.commit()
     s.refresh(p)
     return profile_out(p, s, request)
 
 
 @router.patch("/profiles/{pid}")
-def patch_profile(pid: int, body: ProfilePatch, request: Request, response: Response, s: Session = Depends(get_session)):
+def patch_profile(pid: int, body: ProfilePatch, request: Request, response: Response, s: Session = Depends(get_session),
+                  actor: int = Depends(profile_id)):
     p = s.get(Profile, pid) or _404()
+    if actor != pid or body.role is not None:
+        require_admin(actor)
     profile_pins.require(s, pid, request)
     profile_pins.validate(body.pin)
     _apply(p, body.model_dump(exclude_none=True, exclude={"pin"}))
     s.add(p)
     if body.pin is not None:
         profile_pins.set_pin(s, pid, body.pin)
+    s.flush()
+    validate_household(s)
+    if body.role == 'child':
+        # Retain existing findings/configuration, but stop queued and scheduled
+        # external work as soon as the profile becomes restricted.
+        from ..hub.models import Briefing, Curator
+        for curator in s.exec(select(Curator).where(Curator.profile_id == pid)).all():
+            curator.enabled, curator.next_run = False, 1e12
+            s.add(curator)
+        for briefing in s.exec(select(Briefing).where(Briefing.profile_id == pid)).all():
+            briefing.frequency, briefing.next_run = 'manual', None
+            s.add(briefing)
     s.commit()
     if body.pin is not None:
         first_id = s.exec(select(Profile.id).order_by(Profile.id)).first()
@@ -166,12 +175,14 @@ def lock_profile(pid: int, response: Response):
     return {"ok": True}
 
 
-@router.delete("/profiles/{pid}")
+@router.delete("/profiles/{pid}", dependencies=[Depends(require_admin)])
 def delete_profile(pid: int, request: Request, s: Session = Depends(get_session)):
     if s.exec(select(func.count()).select_from(Profile)).one() <= 1:
         raise HTTPException(400, "cannot delete the last profile")
     p = s.get(Profile, pid) or _404()
     profile_pins.require(s, pid, request)
+    if p.role == 'admin' and s.exec(select(func.count()).select_from(Profile).where(Profile.role == 'admin')).one() <= 1:
+        raise HTTPException(400, 'Keep at least one administrator profile.')
     cats = [c.id for c in s.exec(select(Category).where(Category.profile_id == pid)).all()]
     if cats:
         s.exec(delete(Candidate).where(col(Candidate.category_id).in_(cats)))
@@ -790,7 +801,7 @@ def read_settings(s: Session = Depends(get_session)):
     return st
 
 
-@router.put("/settings/{key}")
+@router.put("/settings/{key}", dependencies=[Depends(require_admin)])
 def write_settings(key: str, value: dict, s: Session = Depends(get_session)):
     if key not in DEFAULT_SETTINGS:
         raise HTTPException(404, "unknown settings key")
@@ -831,7 +842,7 @@ def write_settings(key: str, value: dict, s: Session = Depends(get_session)):
     return _redact(get_settings(s))[key]
 
 
-@router.put("/cookies")
+@router.put("/cookies", dependencies=[Depends(require_admin)])
 async def upload_cookies(request: Request):
     """Body: raw Netscape cookies.txt content."""
     body = (await request.body()).decode("utf-8", "replace")
@@ -842,13 +853,13 @@ async def upload_cookies(request: Request):
     return {"present": True}
 
 
-@router.delete("/cookies")
+@router.delete("/cookies", dependencies=[Depends(require_admin)])
 def delete_cookies():
     COOKIES_PATH.unlink(missing_ok=True)
     return {"present": False}
 
 
-@router.post("/cookies/test")
+@router.post("/cookies/test", dependencies=[Depends(require_admin)])
 def test_cookies():
     """Does the installed cookies.txt still carry a signed-in YouTube session?"""
     from .. import ytdl

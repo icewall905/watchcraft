@@ -4,6 +4,11 @@ import { freshPage } from './helpers';
 // Every hub section renders a real state (empty or populated) without page errors.
 const ROUTES = ['/discover', '/news', '/knowledge', '/library', '/briefings', '/alerts', '/research', '/curators', '/curators/new', '/sources', '/find?q=test', '/tv', '/settings?tab=search'];
 
+test.beforeEach(async ({ request }) => {
+	// These are browsing/fallback checks, independent of a configured AI server.
+	await request.put('/api/settings/search', { data: { hub_ai: false } });
+});
+
 test('hub sections render without errors', async ({ page, request }) => {
 	const errors: string[] = [];
 	page.on('pageerror', (e) => errors.push(page.url() + ' ' + e.message));

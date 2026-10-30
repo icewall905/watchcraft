@@ -15,6 +15,7 @@ from sqlmodel import Session, col, select
 from ..db import (get_agent_control, get_agent_state, get_kv, get_session, get_settings, session, update_agent_control,
                   yt_request_counts)
 from ..models import AgentEvent, Candidate, Category, Profile, now
+from ..access import require_admin
 from .core import _offline_ids, profile_id
 
 router = APIRouter()
@@ -38,7 +39,7 @@ def memory_status(pid: int = Depends(profile_id), s: Session = Depends(get_sessi
             "active_rules": len(lessons), "corrections": len(corrections), "context": overview(s)}
 
 
-@router.post("/agent/memory/run")
+@router.post("/agent/memory/run", dependencies=[Depends(require_admin)])
 def memory_run():
     if get_kv("memory_run").get("state") == "running":
         return {"queued": False}
@@ -131,17 +132,17 @@ async def agent_stream(request: Request, after_id: int = 0):
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-@router.post("/agent/pause")
+@router.post("/agent/pause", dependencies=[Depends(require_admin)])
 def pause():
     return update_agent_control(paused=True)
 
 
-@router.post("/agent/resume")
+@router.post("/agent/resume", dependencies=[Depends(require_admin)])
 def resume():
     return update_agent_control(paused=False)
 
 
-@router.post("/agent/reset-backoff")
+@router.post("/agent/reset-backoff", dependencies=[Depends(require_admin)])
 def reset_backoff():
     """Manually clear a YouTube bot-check backoff (risky: may get blocked again)."""
     return update_agent_control(backoff_reset=True)
@@ -151,7 +152,7 @@ class RunNow(BaseModel):
     category_id: Optional[int] = None
 
 
-@router.post("/agent/run")
+@router.post("/agent/run", dependencies=[Depends(require_admin)])
 def run_now(body: RunNow):
     """Wake the worker now (skip remaining sleep), optionally focusing one category."""
     return update_agent_control(run_now={"category_id": body.category_id, "at": now().isoformat()})
@@ -230,7 +231,7 @@ async def _list_llm_models(client: httpx.AsyncClient, base: str, headers: dict) 
                    if isinstance(entry, dict) and isinstance(entry.get("id"), str) and entry["id"]})
 
 
-@router.post("/agent/llm-models")
+@router.post("/agent/llm-models", dependencies=[Depends(require_admin)])
 async def llm_models(body: LlmTest):
     cfg = (await run_in_threadpool(get_settings))["llm"]
     base, headers = _llm_connection(body, cfg)
@@ -241,7 +242,7 @@ async def llm_models(body: LlmTest):
         return {"ok": False, "models": [], "error": str(e)}
 
 
-@router.post("/agent/llm-test")
+@router.post("/agent/llm-test", dependencies=[Depends(require_admin)])
 async def llm_test(body: LlmTest):
     cfg = (await run_in_threadpool(get_settings))["llm"]
     base, headers = _llm_connection(body, cfg)

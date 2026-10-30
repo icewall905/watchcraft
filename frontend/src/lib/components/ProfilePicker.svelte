@@ -11,6 +11,7 @@
 
 	async function pick(p: Profile) {
 		if (manage) {
+			if (!session.isAdmin && p.id !== session.profileId) return;
 			if (await session.ensureUnlocked(p.id)) editing = p;
 			return;
 		}
@@ -33,14 +34,14 @@
 					{#if manage}<span class="edit">✎ Edit</span>{/if}
 				</button>
 			{/each}
-			<button class="person add" use:focusable={{ group: 'people', id: 'person-add', onSelect: () => (editing = null) }}>
+			{#if session.isAdmin}<button class="person add" use:focusable={{ group: 'people', id: 'person-add', onSelect: () => (editing = null) }}>
 				<span class="plus">+</span>
 				<span class="name">Add person</span>
-			</button>
+			</button>{/if}
 		</div>
 		<div class="hstack actions">
 			{#if session.profile?.pin_required && !session.profile?.pin_locked}<button class="btn" use:focusable={{ onSelect: () => session.lockProfile() }}>Lock profile</button>{/if}
-			<button class="btn" use:focusable={{ id: 'manage', onSelect: () => (manage = !manage) }}>{manage ? 'Done' : 'Manage profiles'}</button>
+			{#if session.isAdmin}<button class="btn" use:focusable={{ id: 'manage', onSelect: () => (manage = !manage) }}>{manage ? 'Done' : 'Manage profiles'}</button>{/if}
 			{#if !fullscreen}<button class="btn ghost" use:focusable={{ onSelect: onClose }}>Close</button>{/if}
 		</div>
 	</div>

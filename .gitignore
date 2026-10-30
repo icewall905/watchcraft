@@ -10,3 +10,6 @@ backend/by/static/
 
 media/
 backups/
+
+# Local notes and Markdown documents
+*.md

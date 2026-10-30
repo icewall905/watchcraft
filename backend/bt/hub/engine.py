@@ -10,6 +10,7 @@ from sqlalchemy import text, update
 from sqlmodel import Session, select
 
 from .. import curation
+from ..access import hub_allowed
 from ..db import engine as db_engine, get_settings, session
 from . import ai
 from .models import (Alert, Briefing, CollectionItem, ContentItem, Curator, CuratorDiscovery, CuratorRun,
@@ -106,6 +107,9 @@ def _feed_needs_keywords(provider: str) -> bool:
 
 def claim(cid: int) -> bool:
     with session() as s:
+        curator = s.get(Curator, cid)
+        if not curator or not hub_allowed(s, curator.profile_id):
+            return False
         res = s.exec(update(Curator).where(Curator.id == cid, Curator.next_run <= time.time())
                      .values(next_run=time.time() + LEASE_S, last_status='running'))
         s.commit()
@@ -169,6 +173,9 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
             errors.append({'source': src.name or src.provider, 'message': reason}); continue
         got, failed = 0, None
         for q in (queries if prov.mode == 'query' else ['']):
+            with session() as s:
+                if not hub_allowed(s, c.profile_id):
+                    raise ValueError('Hub access was restricted during the run.')
             try:
                 for d in prov.fetch(src.url, q):
                     candidates.append((src, q, d)); got += 1
@@ -217,6 +224,8 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
     new = 0
     with session() as s:
         c = s.get(Curator, cid)
+        if not c or not hub_allowed(s, c.profile_id):
+            raise ValueError('Hub access was restricted during the run.')
         for src, q, d, score, reason in fresh:
             if score < c.min_score:
                 continue

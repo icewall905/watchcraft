@@ -2,6 +2,7 @@
 
 export interface Profile {
 	id: number;
+	role: 'admin' | 'adult' | 'child';
 	name: string;
 	emoji: string;
 	color: string;

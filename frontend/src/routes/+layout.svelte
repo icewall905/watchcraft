@@ -4,7 +4,7 @@
 	import { onMount, type Snippet } from 'svelte';
 	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { nav } from '$lib/nav';
+	import { nav, focusable } from '$lib/nav';
 	import { session } from '$lib/stores/session.svelte';
 	import { agent } from '$lib/stores/agent.svelte';
 	import { dialogs } from '$lib/stores/dialogs.svelte';
@@ -24,6 +24,7 @@
 	import { applyTheme } from '$lib/themes';
 	import PlaybackPicker from '$lib/components/PlaybackPicker.svelte';
 	import { playback } from '$lib/stores/playback.svelte';
+	import { isHubPath } from '$lib/navigation';
 
 	let { children }: { children: Snippet } = $props();
 	// SvelteKit keeps a history index in history.state; back only pops entries this app created.
@@ -88,9 +89,11 @@
 		<div class:desktop={!fullscreen && deviceMode.mode === 'desktop'}>
 		{#if !fullscreen}<TopBar />{:else}<PlaybackPicker floating />{/if}
 		<main class:fullscreen>
-			{#key session.version}
+			{#if !session.hubAllowed && isHubPath(page.url.pathname)}
+				<div class="page"><h1>Hub is unavailable for this profile</h1><p>Discovery, external sources and research are disabled. Switch to an adult profile to use the Hub.</p><a class="btn primary" href="/tv" use:focusable>Back to TV</a></div>
+			{:else}{#key session.version}
 				{@render children()}
-			{/key}
+			{/key}{/if}
 		</main>
 		</div>
 	{/if}

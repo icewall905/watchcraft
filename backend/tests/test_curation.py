@@ -39,6 +39,24 @@ def make_curator(client, sources, **kw):
     return client.post('/api/hub/curators', json=body).json()
 
 
+def test_unknown_profile_does_not_fall_back_to_default(client):
+    assert client.get('/api/hub/counts').status_code == 200
+    for profile in ('0', '-1', '99999999'):
+        headers = {'X-Profile-Id': profile}
+        assert client.get('/api/hub/counts', headers=headers).status_code == 404
+        assert client.post('/api/hub/sources', headers=headers,
+                           json={'provider': 'rss', 'url': 'https://example.org/feed'}).status_code == 404
+    assert client.get('/api/hub/sources').json() == []
+
+
+def test_news_rejects_another_profiles_topic(client):
+    topic = client.post('/api/hub/topics', json={'name': 'Private topic', 'kind': 'news'}).json()
+    other = client.post('/api/profiles', json={'name': 'Other'}).json()
+    headers = {'X-Profile-Id': str(other['id'])}
+    assert client.get('/api/hub/news', params={'topic': topic['id']}, headers=headers).status_code == 404
+    assert client.get('/api/hub/news', params={'topic': topic['id']}).status_code == 200
+
+
 def test_discovery_save_and_profile_isolation(client, monkeypatch):
     monkeypatch.setattr(curation, 'fetch', lambda url, **k: RSS)
     c = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}])

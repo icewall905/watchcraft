@@ -57,9 +57,9 @@
 			<p class="small muted">⤓ Saving offline: {dl.title} ({Math.round((dl.progress ?? 0) * 100)}%{dl.speed ? `, ${fmtBytes(dl.speed)}/s` : ''})</p>
 		{/if}
 		{#if !agent.connected}<p class="small muted">The live connection to the server dropped. Reconnecting…</p>{/if}
-		<div class="hstack">
+		{#if session.isAdmin}<div class="hstack">
 			<button class="btn" use:focusable={{ scroll: 'none', onSelect: () => agent.toggle() }}>{agent.control.paused ? 'Resume AI' : 'Pause AI'}</button>
-		</div>
+		</div>{/if}
 	</div>
 </div>
 

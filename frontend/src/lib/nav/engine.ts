@@ -501,7 +501,9 @@ class NavEngine {
 		if (!horizontal && tg && tg !== group && best.e.opts.memory !== false) {
 			const memId = this.groupMemory.get(`${this.routeKey}|${tg}`);
 			const mem = memId ? this.findById(memId, cands) : null;
-			if (mem) target = mem;
+			// A group can span multiple visual rows (e.g. form autofill
+			// buttons). Restoring one above us on Down creates a focus loop.
+			if (mem && inDir(mem.getBoundingClientRect())) target = mem;
 		}
 		this.userMoved = true;
 		this.pendingRestore = null;

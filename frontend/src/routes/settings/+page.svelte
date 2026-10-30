@@ -61,7 +61,9 @@
 		{:else}
 			{#key tab}
 				<div class="pane">
-					{#if tab === 'categories'}<CategoriesTab />
+					{#if !session.isAdmin && !['categories', 'profiles', 'keys', 'appearance'].includes(tab)}
+						<h2>Administrator access required</h2><p class="muted">Switch to an administrator profile to change shared server settings.</p>
+					{:else if tab === 'categories'}<CategoriesTab />
 					{:else if tab === 'memory'}<MemoryTab />
 					{:else if tab === 'ai'}<AiTab />
 					{:else if tab === 'search'}<SearchTab />

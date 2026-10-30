@@ -154,7 +154,7 @@
 			</div>
 			<div class="hero-body">
 				<p class="eyebrow"><span class="dot"></span>{hero.row.emoji} {hero.row.title}: top pick</p>
-				<h1>{hero.video.title}</h1>
+				<h1>{hero.video.title || 'Untitled video'}</h1>
 				<p class="meta muted">
 					{hero.video.channel_name}
 					{#if hero.video.duration_s}<span class="sep"></span>{fmtDuration(hero.video.duration_s)}{/if}

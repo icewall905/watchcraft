@@ -41,7 +41,7 @@
 	<div class="themes" aria-label="Themes">
 		{#each THEMES as theme (theme.id)}
 			<button class="theme-card" class:selected={selected === theme.id} aria-pressed={selected === theme.id}
-				disabled={saving} use:focusable={{ group: 'appearance-themes', id: `theme-${theme.id}`, onSelect: () => select(theme.id) }}>
+				disabled={saving || !session.isAdmin} use:focusable={{ group: 'appearance-themes', id: `theme-${theme.id}`, onSelect: () => select(theme.id) }}>
 				<span class="preview" aria-hidden="true" style:--preview-bg={theme.bg1} style:--preview-surface={theme.surface} style:--preview-accent={theme.accent} style:--preview-ai={theme.ai} style:--preview-text={theme.text}>
 					<span class="preview-header"><span></span><span></span><span></span></span>
 					<span class="preview-content"><span class="preview-lines"><b>Aa</b><i></i><i></i></span><span class="preview-art"></span></span>
@@ -51,7 +51,7 @@
 			</button>
 		{/each}
 	</div>
-	<p class="small muted note" aria-live="polite">{saving ? 'Saving theme…' : 'Changes appear on other devices when they reload. Select Projector to return to the original look.'}</p>
+	<p class="small muted note" aria-live="polite">{!session.isAdmin ? 'An administrator can change the shared theme.' : saving ? 'Saving theme…' : 'Changes appear on other devices when they reload. Select Projector to return to the original look.'}</p>
 </Section>
 
 <style>

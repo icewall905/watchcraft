@@ -8,6 +8,7 @@ the default and is unchanged. Design, route map, provider registry and API contr
 | Section | Route | What works |
 |---|---|---|
 | TV | `/`, `/tv`, `/tv?mode=tv` | Existing video home. `?mode=tv` switches the browser to TV mode for media-center launch. |
+| Play on | Header → Play on | Persistent browser receivers, short-lived acknowledged commands, and phone play/pause/resume/stop; receiver credentials are hashed. Browser flow verified using generated local test media. |
 | Discover | `/discover` | Unified feed of curator finds: unread / new since last visit / saved, type/provider/curator/score/date filters, sort, save, favorite, read later, dismiss, "Why?" provenance. |
 | News | `/news` | News/article items by **publication** time (discovery time shown separately), grouped into stories by title overlap, follow/mute topics. |
 | Knowledge | `/knowledge` | Long-lived topics: overview, user notes, linked items, recent matching finds (FTS), relevant curators, related topics. |
@@ -52,8 +53,20 @@ drafts, cited research reports and briefings. Without AI: keyword relevance, heu
 - Prompts mark retrieved content as untrusted data; outputs are schema-checked; summaries carry `[n]` citations.
 - Every `/api/hub` endpoint scopes by the active profile (existing PIN rules). Items are visible to a profile only if its
   curators found them or it saved/touched them. Brave API key is redacted in settings responses.
-- OSINT is limited to public sources; the UI states lawful/ethical use. Not enabled-by-default for restricted child profiles —
-  child restrictions for hub content are **not implemented yet**; do not give children unsupervised hub access.
+- Household access is implemented in `bt/access.py`, using the existing signed, server-verified profile PIN sessions.
+  Profiles have `admin`, `adult`, or `child` access. Only administrators can change shared settings, credentials,
+  proxy/AI connection tests, global worker controls, profile roles, or create/delete profiles. Adults can still edit
+  their own preferences and manage their own Hub resources. Keep at least one administrator.
+- An administrator without a PIN is intentionally an open household administrator: anyone can select that profile.
+  Set a PIN to protect shared settings. The shared application password remains separate from household roles.
+- Child profiles are conservatively blocked from **all** Hub APIs and pages, including registry/templates, local
+  search, import, external search, source tests, custom prompts, reports and alerts. Child-safe Hub curation is not
+  available yet. Child mode does not claim to filter arbitrary video playback; existing playlist kid-safe AI checks remain.
+- Enabling a child profile requires PINs on **every** adult/administrator profile. Missing headers, guessed IDs,
+  arbitrary preferences, profile creation and role edits cannot bypass the policy. Converting an existing profile to
+  child pauses its curator and briefing schedules while retaining data. Workers also check the profile policy.
+- Local PIN recovery generates a replacement adult PIN when child profiles exist; it never leaves a parent
+  profile unprotected. Old PIN sessions are revoked. Without child profiles, the existing remove-PIN behavior remains.
 
 ## Migration and rollback
 
@@ -61,6 +74,11 @@ drafts, cited research reports and briefings. Without AI: keyword relevance, heu
 sources from each v1 curator, and copies v1 discoveries into items, provenance and saved state. The v1 `discovery`
 table is kept untouched. Video tables are not modified. Back up first (maintenance menu); roll back by restoring the backup
 with the previous checkout. Tested by `tests/test_curation.py::test_v1_database_migrates_to_v2`.
+
+The household-access migration adds `profile.role` before querying profiles. It preserves IDs, preferences and PINs,
+makes the first existing profile the administrator, and leaves other existing profiles as adults. It is additive and
+idempotent; `tests/test_access.py` tests an actual legacy database copy. Back up before upgrading. An old application
+does not enforce the new roles, so rolling back must also restrict access until household protections are restored.
 
 ## Deploy on 10.0.10.73
 
@@ -74,12 +92,12 @@ with the previous checkout. Tested by `tests/test_curation.py::test_v1_database_
 
 ## Not implemented yet (honest list)
 
-Admin-only gating of settings writes (any unlocked profile can change the search provider, as with the LLM URL today), semantic search/embeddings, child-profile restrictions for hub content, advanced cron schedules and explicit run
-cancellation, notification channels and quiet hours, phone→TV handoff, custom sidebar ordering (only pinned
+Semantic search/embeddings, child-approved Hub content (child profiles currently have no Hub access), advanced cron schedules and explicit run
+cancellation, notification channels and quiet hours, additional phone→TV pairing/authorization hardening, custom sidebar ordering (only pinned
 collections/topics), curator config import (export exists), Reddit/Mastodon/Stack Exchange/OSV/vendor advisories,
 recipe/pattern site-specific adapters beyond JSON-LD, offline reading, per-task AI model selection.
 
-## Verification of this iteration
+## Prior submitted baseline
 
 - Backend: full pytest suite green (hub tests in `tests/test_curation.py`: isolation, multi-curator provenance,
   FTS, partial failures, crash recovery, alerts, briefings, research fallback, page extraction, v1→v2 migration).
@@ -87,3 +105,39 @@ recipe/pattern site-specific adapters beyond JSON-LD, offline reading, per-task 
 - Playwright (`npm run test:e2e`): all pass except 4 specs that also fail on the previous commit
   (`smoke` keyboard-only, `stats` viewport ×2, `status-pill` hover). New: `navigation.spec.ts`, `hub.spec.ts`.
 - Not done: live-provider network tests, real SearXNG/Brave, TV remote pass on hardware, Docker build, deployment.
+
+## October 30 P0 implementation
+
+IMPLEMENTED: household roles and server authorization; conservative child Hub restrictions; PIN-safe local recovery;
+invalid-profile rejection; News topic ownership checks; regression coverage across Hub owned resources and relation writes.
+The TV hero now displays "Untitled video" for incomplete video metadata rather than rendering an empty heading.
+Hub fallback browser tests explicitly disable AI so they remain independent of an external model server.
+
+IMPLEMENTED: browser baseline repair. Statistics tables fit desktop viewports including 1024 px. Statistics fixtures
+are idempotent when a worker restarts. The status-preview test explicitly selects a profile instead of being blocked
+by the initial picker. The keyboard smoke test follows the current sidebar navigation. Spatial navigation no longer
+restores a remembered control in the opposite direction, fixing a playlist-form D-pad focus loop.
+
+VERIFIED: 252 backend tests passed, 6 skipped; 11 deployment/recovery tests passed; frontend type check (zero errors or
+warnings) and production build passed. Focused browser runs passed for Hub, profile PINs, child/admin access, News/
+Library/navigation rendering, desktop/sidebar/TV/mobile behavior, keyboard-only smoke, home focus, all five Statistics
+viewports plus drilldowns, and the status preview. Screenshots of child blocking and Statistics were inspected.
+
+P0 baseline audit COMPLETE: the reported navigation, routes, Hub models/providers, optional AI, scheduling and v2
+migration are present in this checkout. Source facts, per-profile state and provenance reuse the existing implementation.
+Provider adapters are present, but live external-provider availability has not been verified. Browser handoff is already
+implemented; additional pairing/authorization hardening remains planned. No Source Scout, programmable website watchers,
+mixed home layout system, team activity, Scout Report or Meme Radar implementation was found.
+
+Additional verification: six browser playback/offline/error/back-navigation tests passed, including actual playback of
+generated local media on a browser receiver. `tests/test_access.py` now has 24 passing cases, including a real SQLite
+backup/restore followed by application initialization and checks of roles, PIN records, discoveries and the FTS index.
+The complete backend run before adding that final restore case passed 252 tests with 6 skipped.
+
+PARTIAL: end-to-end deployed acceptance. Hardware TV and deployed playback remain outstanding.
+
+PLANNED: Source Scout, declarative watchers, shared source polling, persistent team activity, Scout Report, home layout
+presets, Meme Radar and the remaining advanced capabilities in `todo.md`. Existing item pages, collections, News
+grouping, cited reports and search filters already provide parts of the P4 experience; they must be extended in place.
+
+No production database has been opened or deployment changed during this work. Tests use temporary databases.

@@ -25,6 +25,7 @@ class Profile(SQLModel, table=True):
     name: str
     emoji: str = "🙂"
     color: str = "#7c5cff"
+    role: str = "adult"  # admin, adult, child; changed only by an administrator
     prefs: dict = J({})  # per-profile overrides (e.g. sponsorblock, player)
     created_at: datetime = Field(default_factory=now)
 

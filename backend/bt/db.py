@@ -4,7 +4,7 @@ import json
 from contextlib import contextmanager
 from datetime import timedelta
 
-from sqlalchemy import event
+from sqlalchemy import event, inspect
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from .config import DB_PATH, DEFAULT_SETTINGS
@@ -31,6 +31,11 @@ def init_db() -> None:
         from . import curation  # noqa: F401  (registers v1 + hub tables)
         from .hub import migrate, models as _hub_models  # noqa: F401
         SQLModel.metadata.create_all(connection)
+        # Additive household-access migration, before querying the updated Profile model.
+        # Existing households retain one administrator: their first profile.
+        if 'role' not in {c['name'] for c in inspect(connection).get_columns('profile')}:
+            connection.exec_driver_sql("ALTER TABLE profile ADD COLUMN role VARCHAR NOT NULL DEFAULT 'adult'")
+            connection.exec_driver_sql("UPDATE profile SET role = 'admin' WHERE id = (SELECT MIN(id) FROM profile)")
         with Session(connection) as s:
             fresh = not s.exec(select(Profile)).first()
             if not s.get(Setting, "watchcraft_schema_version"):
@@ -39,7 +44,7 @@ def init_db() -> None:
         migrate.migrate(connection)
         with Session(connection) as s:
             if not s.exec(select(Profile)).first():
-                s.add(Profile(name="Family", emoji="🏠", color="#7c5cff"))
+                s.add(Profile(name="Family", emoji="🏠", color="#7c5cff", role="admin"))
                 s.merge(Setting(key="setup", value={"completed": False}))
                 s.merge(Setting(key="agent", value={"enabled": False}))
                 s.commit()

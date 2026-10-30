@@ -35,3 +35,8 @@ export const TV_DRAWER: DrawerEntry[] = [
 export const MOBILE_PRIMARY: NavEntry[] = [TV, DISCOVER, LIBRARY, ALERTS];
 export const MOBILE_MORE = { label: 'More', icon: 'more' };
 export const FIND = { href: '/find', label: 'Find', icon: 'search' };
+
+export function isHubPath(path: string): boolean {
+	return ['/discover', '/news', '/knowledge', '/library', '/briefings', '/alerts', '/research', '/curators', '/sources', '/find', '/item']
+		.some((p) => path === p || path.startsWith(p + '/'));
+}

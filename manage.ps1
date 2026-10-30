@@ -59,9 +59,9 @@ try {
         '^(6|stop)$' { Invoke-Compose @('stop'); break }
         '^(7|reset-pin)$' {
             Invoke-StorageHelper @('bt-api', '-', 'list-profiles')
-            $profileId = Read-Host 'Profile ID to remove the PIN from'
+            $profileId = Read-Host 'Profile ID to reset the PIN for'
             if ($profileId -notmatch '^[0-9]+$') { throw 'Enter the profile ID shown above.' }
-            if ((Read-Host 'Remove this profile PIN? [y/N]') -match '^(y|yes)$') { Invoke-StorageHelper @('bt-api', '-', 'reset-pin', $profileId) }
+            if ((Read-Host 'Reset this profile PIN? Adult PINs are replaced when child profiles are enabled [y/N]') -match '^(y|yes)$') { Invoke-StorageHelper @('bt-api', '-', 'reset-pin', $profileId) }
             break
         }
         default { throw 'Choose start, update, backup, restore, status, stop or reset-pin.' }

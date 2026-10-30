@@ -1,10 +1,12 @@
 """Container-side deployment checks and portable backups. No extra host dependencies."""
 import datetime
+import hashlib
 import json
 import os
 from pathlib import Path, PurePosixPath
 import sys
 import sqlite3
+import secrets
 import tarfile
 import tempfile
 
@@ -120,6 +122,20 @@ def profile_pin(data, pid=None):
         else:
             if not connection.execute('SELECT id FROM profile WHERE id = ?', (pid,)).fetchone():
                 raise ValueError('No profile has that ID.')
+            has_roles = any(row[1] == 'role' for row in connection.execute('PRAGMA table_info(profile)'))
+            if has_roles and connection.execute("SELECT 1 FROM profile WHERE role = 'child' LIMIT 1").fetchone():
+                role = connection.execute('SELECT role FROM profile WHERE id = ?', (pid,)).fetchone()[0]
+                if role != 'child':
+                    # Removing a parent's PIN would bypass child restrictions. A local
+                    # operator can recover access with a new PIN instead; old sessions revoke.
+                    pin = f'{secrets.randbelow(100_000_000):08d}'
+                    salt = secrets.token_hex(16)
+                    digest = hashlib.pbkdf2_hmac('sha256', pin.encode(), bytes.fromhex(salt), 260_000).hex()
+                    value = json.dumps({'salt': salt, 'hash': digest, 'failures': 0, 'retry_at': 0})
+                    connection.execute('INSERT INTO setting (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+                                       (f'profile_pin_{pid}', value))
+                    print(f'Profile PIN reset to: {pin}. Unlock the profile, then change it in Settings → Profiles.')
+                    return
             connection.execute('DELETE FROM setting WHERE key = ?', (f'profile_pin_{pid}',))
             print('Profile PIN removed. Reopen the profile in BetterTube to continue.')
 

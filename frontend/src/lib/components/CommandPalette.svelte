@@ -5,7 +5,8 @@
 	import { palette } from '$lib/stores/palette.svelte';
 	import { nav, navScope, focusable } from '$lib/nav';
 	import { onMount } from 'svelte';
-	import { ALL_ENTRIES, FIND } from '$lib/navigation';
+	import { ALL_ENTRIES, FIND, isHubPath } from '$lib/navigation';
+	import { session } from '$lib/stores/session.svelte';
 	import Icon from './Icon.svelte';
 
 	let q = $state('');
@@ -13,7 +14,7 @@
 	let input = $state<HTMLInputElement>();
 	let restore: HTMLElement | null = null;
 
-	const results = $derived(ALL_ENTRIES.filter((e) => e.label.toLowerCase().includes(q.trim().toLowerCase())));
+	const results = $derived(ALL_ENTRIES.filter((e) => (session.hubAllowed || !isHubPath(e.href)) && e.label.toLowerCase().includes(q.trim().toLowerCase())));
 
 	$effect(() => { void q; idx = -1; });
 	$effect(() => {
@@ -27,7 +28,8 @@
 	function submit() {
 		if (idx >= 0 && results[idx]) return go(results[idx].href);
 		const t = q.trim();
-		go(t ? `${FIND.href}?q=${encodeURIComponent(t)}` : FIND.href);
+		const href = session.hubAllowed ? FIND.href : '/search';
+		go(t ? `${href}?q=${encodeURIComponent(t)}` : href);
 	}
 	function onkey(e: KeyboardEvent) {
 		if (deviceMode.mode !== 'desktop') return;

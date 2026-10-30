@@ -144,7 +144,7 @@ export const api = {
 
 	// profiles
 	profiles: () => get<Profile[]>('/profiles'),
-	createProfile: (p: Pick<Profile, 'name' | 'emoji' | 'color'> & { pin?: string }) => post<Profile>('/profiles', p),
+	createProfile: (p: Pick<Profile, 'name' | 'emoji' | 'color'> & { pin?: string; role?: Profile['role'] }) => post<Profile>('/profiles', p),
 	updateProfile: (id: number, p: Partial<Profile> & { pin?: string }) => patch<Profile>(`/profiles/${id}`, p),
 	unlockProfile: (id: number, pin: string) => post<{ ok: boolean }>(`/profiles/${id}/unlock`, { pin }, { toast: false }),
 	lockProfile: (id: number) => post<{ ok: boolean }>(`/profiles/${id}/lock`),

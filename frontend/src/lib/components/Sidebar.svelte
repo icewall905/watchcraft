@@ -6,7 +6,7 @@
 	import { hub } from '$lib/hub/api';
 	import { session } from '$lib/stores/session.svelte';
 	import type { Counts, Collection, Topic } from '$lib/hub/types';
-	import { SECTIONS, SETTINGS, TV_DRAWER } from '$lib/navigation';
+	import { SECTIONS, SETTINGS, TV_DRAWER, isHubPath } from '$lib/navigation';
 	import Icon from './Icon.svelte';
 
 	const store = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -22,6 +22,8 @@
 	const path = $derived(page.url.pathname);
 	const search = $derived(page.url.search);
 	const isTv = $derived(deviceMode.mode === 'tv');
+	const sections = $derived(SECTIONS.map(s => ({ ...s, items: s.items.filter(it => session.hubAllowed || !isHubPath(it.href)) })).filter(s => s.items.length));
+	const drawer = $derived(TV_DRAWER.filter(it => session.hubAllowed || !isHubPath(it.href)));
 
 	$effect(() => {
 		document.documentElement.style.setProperty('--sidebar-width', isTv ? '0rem' : compact ? '4.5rem' : '15rem');
@@ -40,12 +42,18 @@
 		if (link) nav.focus(link, { scroll: false });
 	}
 
-	async function loadCounts() { try { counts = await hub.counts(); } catch { /* endpoint may not exist yet */ } }
+	async function loadCounts() {
+		if (!session.hubAllowed) { counts = {}; return; }
+		const pid = session.profileId;
+		try { const result = await hub.counts(); if (session.hubAllowed && session.profileId === pid) counts = result; } catch { /* optional */ }
+	}
 	async function loadPinned() {
+		if (!session.hubAllowed) { pinned = []; return; }
+		const pid = session.profileId;
 		const out: typeof pinned = [];
 		try { (await hub.collections() as Collection[]).filter((c) => c.pinned).forEach((c) => out.push({ href: `/library?collection=${c.id}`, label: c.name, icon: 'collection' })); } catch { /* optional */ }
 		try { (await hub.topics() as Topic[]).filter((t) => t.pinned).forEach((t) => out.push({ href: `/knowledge/${t.id}`, label: t.name, icon: 'pin' })); } catch { /* optional */ }
-		pinned = out;
+		if (session.hubAllowed && session.profileId === pid) pinned = out;
 	}
 
 	$effect(() => { void session.version; void session.profile?.id; void loadCounts(); void loadPinned(); });
@@ -80,7 +88,7 @@
 			{#if !compact}<span class="bt"><b>WatchCraft</b><small>Watching the Internet for you.</small></span>{/if}
 		</a>
 		<nav aria-label="Main" data-nav-skip-initial>
-			{#each SECTIONS as sec}
+			{#each sections as sec}
 				<section>
 					{#if !compact}
 						<button class="sec-head" aria-expanded={!collapsed.includes(sec.key)} onclick={() => toggleGroup(sec.key)}>
@@ -136,7 +144,7 @@
 			<aside id="tv-navigation" class="sidebar tv" aria-label="Navigation drawer">
 				<div class="brand"><img src="/favicon.svg" alt="" width="40" height="40" /><span class="bt"><b>WatchCraft</b></span></div>
 				<nav aria-label="Main" data-nav-zone="main-navigation" data-nav-skip-initial>
-					{#each TV_DRAWER as it}
+					{#each drawer as it}
 						{@const on = it.active(path, search)}
 						<a href={it.href} aria-label={it.label} aria-current={on ? 'page' : undefined} class:active={on} onclick={() => close()}
 							use:focusable={{ group: 'sidebar', id: `sidebar-${it.label}`, scroll: 'nearest' }}>
