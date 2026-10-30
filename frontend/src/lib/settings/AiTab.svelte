@@ -18,6 +18,7 @@
 
 	const llm = new SettingsDraft('llm');
 	const ag = new SettingsDraft('agent');
+	const team = new SettingsDraft('team');
 	const th = new SettingsDraft('throttle');
 
 	const LLM_PROVIDERS = [
@@ -300,6 +301,13 @@
 	<div class="status small muted">Right now: <strong>{STATE_LABEL[agent.effective] ?? agent.effective}</strong>{agent.state.detail ? `, ${agent.state.detail}` : ''}</div>
 	<Toggle label="Curator enabled" hint="Off stops all background searching. Search and playback keep working. For a short break use Pause AI in the top bar instead." bind:checked={ag.value.enabled} />
 	<SaveBar dirty={ag.dirty} busy={ag.busy} onsave={() => ag.save(ag.value.enabled ? 'Curator enabled' : 'Curator disabled')} onreset={() => ag.reset()} />
+</Section>
+
+<div class="gap"></div>
+
+<Section title="Agent team" intro="Scheduled curators, Source Scout searches and briefings share these slots and wait their turn. Anything you start yourself begins right away. The video curator above always runs on its own.">
+	<Stepper label="Parallel agents" hint="How many may work at the same time. AI calls still go to your model one at a time, so more agents mostly speeds up fetching." bind:value={team.value.max_parallel} min={1} max={8} step={1} format={(v) => (v === 1 ? '1 agent' : `${v} agents`)} />
+	<SaveBar dirty={team.dirty} busy={team.busy} onsave={() => team.save(`Up to ${team.value.max_parallel} agent${team.value.max_parallel === 1 ? '' : 's'} at once`)} onreset={() => team.reset()} />
 </Section>
 
 <div class="gap"></div>

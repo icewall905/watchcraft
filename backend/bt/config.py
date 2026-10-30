@@ -61,6 +61,8 @@ DEFAULT_SETTINGS: dict = {
         "proxy": "",  # route YouTube traffic through this proxy, e.g. socks5://user:pass@host:1080
     },
     "agent": {"enabled": True},
+    # Hub agents (curators, Source Scout, briefings) allowed to work at the same time.
+    "team": {"max_parallel": 1},
     "appearance": {"theme": "projector"},
     "memory": {"enabled": True, "time": "03:00", "timezone": "Europe/Copenhagen", "max_core_tokens": 15000},
     "player": {

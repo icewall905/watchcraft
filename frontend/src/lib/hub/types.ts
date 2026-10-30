@@ -56,3 +56,17 @@ export type SearchResult = Page<Item> & {
 };
 export type WebResult = { title: string; url: string; snippet: string; provider: string; type: string };
 export type SavedSearch = { id: number; name: string; query: string; filters: Record<string, string>; pinned: boolean };
+
+export type TeamStatus = 'running' | 'waiting' | 'idle' | 'attention' | 'paused';
+export type TeamAgent = {
+	key: string; kind: 'curator' | 'scout' | 'briefing'; id: number | null; name: string; icon: string; color: string; mission: string;
+	status: TeamStatus; since: number | null; next_run: number | null; last_run?: number | null; doing?: string | null; query?: string;
+	role?: 'watch' | 'research'; error?: string; enabled?: boolean; found_today?: number; plans?: number;
+	finds?: { id: number; title: string; found_at: number }[];
+	last?: { status: string; new_items?: number; seen_items?: number; suggestions?: number; query?: string; error?: string; finished_at: number | null } | null;
+};
+export type TeamEntry = {
+	at: number; agent: string; name: string; icon: string; kind: 'curator_run' | 'scout_run' | 'briefing'; status: string;
+	new_items?: number; seen_items?: number; errors?: number; query?: string; suggestions?: number; title?: string; briefing_id?: number;
+};
+export type Team = { limit: number; running: number; waiting: number; agents: TeamAgent[]; journal: TeamEntry[] };

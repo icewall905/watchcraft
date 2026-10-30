@@ -1,4 +1,5 @@
 import os
+import time
 import sqlite3
 import tempfile
 os.environ.setdefault('BT_DATA_DIR', tempfile.mkdtemp(prefix='wc-tests-'))
@@ -436,3 +437,83 @@ def test_scout_approval_rechecks_access_after_network_fetch(client, monkeypatch)
     response = client.post(f"/api/hub/scout/runs/{run['id']}/accept", json={'index': 0})
     assert response.status_code == 403
     assert client.get('/api/hub/sources').json() == []
+
+
+def test_agent_slots_respect_live_limit_and_team_setting(client):
+    import threading
+    from bt.hub import slots
+    assert client.get('/api/settings').json()['team'] == {'max_parallel': 1}
+    assert client.put('/api/settings/team', json={'max_parallel': 0}).status_code == 400
+    assert client.put('/api/settings/team', json={'max_parallel': 9}).status_code == 400
+    assert slots.limit() == 1 and slots.free() == 1
+    release, entered = threading.Event(), []
+    def work(n):
+        entered.append(n); release.wait(5)
+    assert slots.spawn('test-a', 'curator', 1, 1, 'A', work, 'a')
+    assert not slots.spawn('test-a', 'curator', 1, 1, 'A', work, 'a')  # never queued twice
+    assert slots.spawn('test-b', 'curator', 2, 1, 'B', work, 'b')
+    for _ in range(50):
+        if entered: break
+        time.sleep(0.02)
+    time.sleep(0.2)
+    assert entered == ['a'] and slots.free() == 0
+    snap = slots.snapshot(1)
+    assert [j['state'] for j in snap['jobs']] == ['running', 'waiting'] and slots.snapshot(2)['jobs'] == []
+    with pytest.raises(slots.Busy):
+        with slots.slot('test-c', 'scout', None, 1, 'C', wait_s=0.1):
+            pass
+    with slots.slot('test-d', 'briefing', None, 1, 'D', priority=True):  # user-started work never queues
+        assert slots.snapshot()['running'] == 2
+    assert client.put('/api/settings/team', json={'max_parallel': 2}).json() == {'max_parallel': 2}
+    for _ in range(150):
+        if len(entered) == 2: break
+        time.sleep(0.02)
+    assert sorted(entered) == ['a', 'b'] and slots.snapshot()['running'] == 2
+    release.set()
+    for _ in range(150):
+        if not slots.snapshot()['jobs']: break
+        time.sleep(0.02)
+    assert slots.snapshot()['jobs'] == []
+    client.put('/api/settings/team', json={'max_parallel': 1})
+
+
+def test_team_overview_reports_real_agent_state(client, monkeypatch):
+    monkeypatch.setattr(curation, 'fetch', lambda url, **k: RSS)
+    curator = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed.xml'}], name='Tech')
+    hub.run(curator['id'])
+    team = client.get('/api/hub/team').json()
+    assert team['limit'] == 1 and team['running'] == 0
+    card = next(a for a in team['agents'] if a['key'] == f"curator-{curator['id']}")
+    assert card['status'] == 'idle' and card['found_today'] == 2 and len(card['finds']) == 2
+    assert card['last']['new_items'] == 2
+    scout_card = next(a for a in team['agents'] if a['kind'] == 'scout')
+    assert scout_card['status'] == 'idle' and scout_card['last'] is None
+    assert team['journal'][0]['kind'] == 'curator_run' and team['journal'][0]['new_items'] == 2
+    other = client.post('/api/profiles', json={'name': 'Other'}).json()
+    theirs = client.get('/api/hub/team', headers={'X-Profile-Id': str(other['id'])}).json()
+    assert all(a['kind'] != 'curator' for a in theirs['agents']) and theirs['journal'] == []
+
+
+def test_scheduler_dispatches_due_agents_up_to_free_slots(client, monkeypatch):
+    from bt.hub import slots
+    started = []
+    monkeypatch.setattr(slots, 'spawn', lambda key, *a, **k: started.append(key) or True)
+    a = make_curator(client, [], name='A'); b = make_curator(client, [], name='B')
+    hub.dispatch_due()
+    assert len(started) == 1  # default: one agent at a time
+    started.clear()
+    client.put('/api/settings/team', json={'max_parallel': 3})
+    hub.dispatch_due()
+    assert sorted(started) == sorted([f"curator-{a['id']}", f"curator-{b['id']}"])
+    client.put('/api/settings/team', json={'max_parallel': 1})
+
+
+def test_scheduled_scout_waiting_for_a_slot_retries_instead_of_failing(client, monkeypatch):
+    from bt.hub import slots
+    from bt.hub.api import ScoutInput, research_run
+    from fastapi import HTTPException
+    monkeypatch.setattr(slots, 'slot', lambda *a, **k: (_ for _ in ()).throw(slots.Busy('All agents are busy.')))
+    with pytest.raises(HTTPException) as err:
+        research_run(ScoutInput(query='https://example.org/'), 1, scheduled=True)
+    assert err.value.status_code == 429
+    assert client.get('/api/hub/scout/runs').json() == []

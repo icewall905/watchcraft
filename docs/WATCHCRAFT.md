@@ -107,6 +107,15 @@ results and five feed candidates per site; results can miss relevant sources. AI
 source adoption, sitemap/page-change/browser watchers, repair, shared polling and automated relevance scoring remain
 planned. This is a foundation, not the full autonomous research-team roadmap.
 
+## Agent Activity and parallel agents
+
+Automation → Agent Activity (`/team`) shows the real state of each agent: the video curator and downloader, every Hub
+curator, Source Scout and the briefing writer, with what each is doing, recent finds and a journal of finished runs.
+Nothing is simulated; idle agents show their last results. Settings → AI and limits → Agent team sets how many Hub
+agents (scheduled curators, Scout searches, briefings) may work at once (`team.max_parallel`, 1–8, default 1).
+Scheduled work waits for a free slot; anything a user starts begins at once but occupies a slot. The video curator
+runs in its own worker and is not counted. AI calls remain serialized per process.
+
 ## Not implemented yet (honest list)
 
 Semantic search/embeddings, child-approved Hub content (child profiles currently have no Hub access), advanced cron schedules and explicit run

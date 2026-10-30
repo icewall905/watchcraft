@@ -839,9 +839,16 @@ def write_settings(key: str, value: dict, s: Session = Depends(get_session)):
         url = value.get("searxng_url", cur["searxng_url"]).strip()
         if url and not url.startswith(("http://", "https://")):
             raise HTTPException(400, "SearXNG URL must start with http:// or https://")
+    if key == "team":
+        n = value.get("max_parallel", cur["max_parallel"])
+        if type(n) is not int or not 1 <= n <= 8:
+            raise HTTPException(400, "Allow between 1 and 8 parallel agents")
     if key == "throttle" and value.get("proxy") == "********":
         value["proxy"] = cur.get("proxy", "")
     save_setting(key, {**cur, **value}, s)
+    if key == "team":
+        from ..hub import slots
+        slots.invalidate()
     return _redact(get_settings(s))[key]
 
 

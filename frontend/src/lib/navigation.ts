@@ -18,7 +18,7 @@ export const SECTIONS: NavSection[] = [
 	{ key: 'watch', title: 'Watch', items: [TV, entry('/subscriptions', 'Subscriptions', 'subs')] },
 	{ key: 'explore', title: 'Explore', items: [DISCOVER, entry('/news', 'News', 'news'), entry('/knowledge', 'Knowledge', 'book'), LIBRARY, entry('/briefings', 'Briefings', 'briefing'), ALERTS] },
 	{ key: 'research', title: 'Research', items: [entry('/research', 'Research', 'research')] },
-	{ key: 'automation', title: 'Automation', items: [entry('/curators', 'Curators', 'curator'), entry('/sources', 'Sources', 'source'), entry('/agent', 'Video AI', 'agent'), entry('/stats', 'Statistics', 'chart')] }
+	{ key: 'automation', title: 'Automation', items: [entry('/team', 'Agent Activity', 'team'), entry('/curators', 'Curators', 'curator'), entry('/sources', 'Sources', 'source'), entry('/agent', 'Video AI', 'agent'), entry('/stats', 'Statistics', 'chart')] }
 ];
 export const ALL_ENTRIES: NavEntry[] = [...SECTIONS.flatMap((s) => s.items), SETTINGS];
 
@@ -37,6 +37,6 @@ export const MOBILE_MORE = { label: 'More', icon: 'more' };
 export const FIND = { href: '/find', label: 'Find', icon: 'search' };
 
 export function isHubPath(path: string): boolean {
-	return ['/discover', '/news', '/knowledge', '/library', '/briefings', '/alerts', '/research', '/curators', '/sources', '/find', '/item']
+	return ['/discover', '/news', '/knowledge', '/library', '/briefings', '/alerts', '/research', '/team', '/curators', '/sources', '/find', '/item']
 		.some((p) => path === p || path.startsWith(p + '/'));
 }

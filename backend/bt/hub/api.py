@@ -14,7 +14,7 @@ from ..access import hub_allowed, require_hub
 from ..api.core import profile_id
 from ..db import session
 from ..models import AgentEvent
-from . import ai, engine, scout
+from . import ai, engine, scout, slots
 from .models import (Alert, Briefing, BriefingIssue, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
                      CuratorRun, CuratorSource, ItemState, SavedSearch, ScoutPlan, ScoutRun, Source, Topic, TopicItem)
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
@@ -537,6 +537,88 @@ class ScoutPlanUpdate(BaseModel):
     interval_hours: int | None = Input(default=None, ge=24, le=168)
 
 
+# ---------- research team overview
+
+def _finds(s: Session, curator_id: int, limit: int = 3) -> list[dict]:
+    rows = s.exec(select(ContentItem.id, ContentItem.title, CuratorDiscovery.found_at)
+                  .join(CuratorDiscovery, CuratorDiscovery.item_id == ContentItem.id)
+                  .where(CuratorDiscovery.curator_id == curator_id)
+                  .order_by(CuratorDiscovery.found_at.desc()).limit(limit)).all()
+    return [{'id': i, 'title': t, 'found_at': f} for i, t, f in rows]
+
+
+@router.get('/team')
+def team(pid: int = Depends(profile_id)):
+    """Real state of this profile's Hub agents plus the shared agent-slot usage. Nothing here is simulated."""
+    live = slots.snapshot(pid)
+    jobs = {j['key']: j for j in live['jobs']}
+    day = time.time() - 86400
+    agents, journal = [], []
+    with session() as s:
+        for c in s.exec(select(Curator).where(Curator.profile_id == pid).order_by(Curator.id)).all():
+            job = jobs.get(f'curator-{c.id}')
+            last = s.exec(select(CuratorRun).where(CuratorRun.curator_id == c.id)
+                          .order_by(CuratorRun.started_at.desc()).limit(1)).first()
+            status = (job['state'] if job else 'running' if c.last_status == 'running' and c.next_run > time.time()
+                      else 'waiting' if c.last_status == 'queued' else 'attention' if c.error or c.last_status == 'failed'
+                      else 'paused' if not c.enabled else 'idle')
+            found_today = s.exec(select(func.count()).select_from(CuratorDiscovery)
+                                 .where(CuratorDiscovery.curator_id == c.id, CuratorDiscovery.found_at >= day)).one()
+            agents.append({'key': f'curator-{c.id}', 'kind': 'curator', 'id': c.id, 'name': c.name, 'icon': c.icon,
+                           'color': c.color, 'mission': c.description or c.instructions[:200], 'role': c.kind,
+                           'status': status, 'since': job['since'] if job else None, 'error': c.error,
+                           'enabled': c.enabled, 'next_run': c.next_run if c.enabled and c.next_run < 1e11 else None,
+                           'last_run': c.last_run, 'found_today': found_today, 'finds': _finds(s, c.id),
+                           'last': {'status': last.status, 'new_items': last.new_items, 'seen_items': last.seen_items,
+                                    'finished_at': last.finished_at} if last else None})
+        for r in s.exec(select(CuratorRun, Curator.name, Curator.icon).join(Curator, Curator.id == CuratorRun.curator_id)
+                        .where(CuratorRun.profile_id == pid, CuratorRun.finished_at != None)
+                        .order_by(CuratorRun.finished_at.desc()).limit(12)).all():
+            run, name, icon = r
+            journal.append({'at': run.finished_at, 'agent': f'curator-{run.curator_id}', 'name': name, 'icon': icon,
+                            'kind': 'curator_run', 'status': run.status, 'new_items': run.new_items,
+                            'seen_items': run.seen_items, 'errors': len(run.errors)})
+
+        _expire_scout_runs(s); s.commit()
+        runs = s.exec(select(ScoutRun).where(ScoutRun.profile_id == pid).order_by(ScoutRun.created_at.desc()).limit(6)).all()
+        active = next((r for r in runs if r.status == 'running'), None)
+        plans = s.exec(select(ScoutPlan).where(ScoutPlan.profile_id == pid, ScoutPlan.enabled == True)).all()
+        job = jobs.get(f'scout-{pid}')
+        doing = None
+        if active:
+            ev = _scout_events(s, pid, active.id)
+            doing = ev[-1]['message'] if ev else 'Starting research.'
+        finished = next((r for r in runs if r.status != 'running'), None)
+        agents.append({'key': 'scout', 'kind': 'scout', 'id': None, 'name': 'Source Scout', 'icon': '🧭', 'color': '#5cc8ff',
+                       'mission': 'Finds and tests new feeds and websites worth following.',
+                       'status': (job['state'] if job else 'running') if active else 'idle',
+                       'since': active.created_at if active else None, 'doing': doing, 'query': active.query if active else '',
+                       'plans': len(plans), 'next_run': min((p.next_run for p in plans), default=None),
+                       'last': {'query': finished.query, 'status': finished.status, 'suggestions': len(finished.suggestions),
+                                'finished_at': finished.finished_at, 'error': finished.error} if finished else None})
+        for r in runs:
+            if r.status != 'running':
+                journal.append({'at': r.finished_at or r.created_at, 'agent': 'scout', 'name': 'Source Scout', 'icon': '🧭',
+                                'kind': 'scout_run', 'status': r.status, 'query': r.query, 'suggestions': len(r.suggestions)})
+
+        briefs = s.exec(select(Briefing).where(Briefing.profile_id == pid)).all()
+        if briefs:
+            writing = [j for j in live['jobs'] if j['kind'] == 'briefing']
+            scheduled = [b.next_run for b in briefs if b.frequency != 'manual' and b.next_run]
+            agents.append({'key': 'briefings', 'kind': 'briefing', 'id': None, 'name': 'Briefing Writer', 'icon': '📰',
+                           'color': '#b18cff', 'mission': f'Writes {len(briefs)} briefing{"s" if len(briefs) != 1 else ""} from what your curators find.',
+                           'status': writing[0]['state'] if writing else 'idle', 'since': writing[0]['since'] if writing else None,
+                           'doing': writing[0]['label'] if writing else None,
+                           'next_run': min(scheduled, default=None), 'last_run': max((b.last_generated or 0 for b in briefs), default=0) or None})
+            for issue, name in s.exec(select(BriefingIssue, Briefing.name).join(Briefing, Briefing.id == BriefingIssue.briefing_id)
+                                      .where(Briefing.profile_id == pid).order_by(BriefingIssue.created_at.desc()).limit(4)).all():
+                journal.append({'at': issue.created_at, 'agent': 'briefings', 'name': 'Briefing Writer', 'icon': '📰',
+                                'kind': 'briefing', 'status': 'ok', 'title': name, 'briefing_id': issue.briefing_id})
+    journal.sort(key=lambda e: e['at'] or 0, reverse=True)
+    return {'limit': live['limit'], 'running': live['running'], 'waiting': live['waiting'],
+            'agents': agents, 'journal': journal[:20]}
+
+
 @router.get('/scout/plans')
 def scout_plans(pid: int = Depends(profile_id)):
     with session() as s:
@@ -597,6 +679,11 @@ def scout_runs(pid: int = Depends(profile_id)):
 
 @router.post('/scout/runs')
 def scout_run(body: ScoutInput, pid: int = Depends(profile_id)):
+    return research_run(body, pid)
+
+
+def research_run(body: ScoutInput, pid: int, scheduled: bool = False):
+    """Scheduled research waits for an agent slot; research the user started begins at once."""
     query = body.query.strip()
     if not query: raise HTTPException(422, 'Enter a topic or HTTPS website URL.')
     if '://' in query and not query.lower().startswith('https://'):
@@ -630,7 +717,13 @@ def scout_run(body: ScoutInput, pid: int = Depends(profile_id)):
                              payload={'scout_run_id': rid, 'step': kind}))
             s.commit()
     try:
-        suggestions, sitemaps = scout.research(query, emit)
+        with slots.slot(f'scout-{pid}', 'scout', rid, pid, query[:120], wait_s=300, priority=not scheduled,
+                        on_wait=lambda: emit('queued', 'Waiting for a free agent slot.')):
+            with session() as s:
+                # The interruption timeout counts from when research really starts, not from the queue.
+                row = s.get(ScoutRun, rid)
+                if row: row.created_at = time.time(); s.add(row); s.commit()
+            suggestions, sitemaps = scout.research(query, emit)
         if sitemaps: emit('sitemaps', f'Found {len(sitemaps)} sitemap links; sitemap monitoring is not available yet.')
         emit('complete', f'Found {len(suggestions)} validated sources.')
         with session() as s:
@@ -642,11 +735,18 @@ def scout_run(body: ScoutInput, pid: int = Depends(profile_id)):
             return _scout_dict(s, row)
     except HTTPException:
         raise
+    except slots.Busy as exc:
+        with session() as s:
+            # It never started: drop the run so a scheduled plan retries shortly (429) instead of failing.
+            row = s.get(ScoutRun, rid)
+            if row: _delete_scout_events(s, pid, rid); s.delete(row); s.commit()
+        raise HTTPException(429, str(exc)) from exc
     except Exception:
         with session() as s:
             row = s.get(ScoutRun, rid)
             if row:
-                row.status = 'failed'; row.error = 'Research could not be completed.'; row.finished_at = time.time()
+                row.status = 'failed'; row.finished_at = time.time()
+                row.error = 'Research could not be completed.'
                 s.add(row); s.commit(); s.refresh(row)
                 return _scout_dict(s, row)
         raise HTTPException(404, 'Research run not found')
@@ -1058,8 +1158,13 @@ def delete_briefing(bid: int, pid: int = Depends(profile_id)):
 @router.post('/briefings/{bid}/generate')
 def generate_briefing(bid: int, pid: int = Depends(profile_id)):
     with session() as s:
-        owned(s, Briefing, bid, pid)
-    return ai.generate_briefing(bid)
+        b = owned(s, Briefing, bid, pid)
+        name = b.name
+    try:
+        with slots.slot(f'briefing-{bid}', 'briefing', bid, pid, name, priority=True):
+            return ai.generate_briefing(bid)
+    except slots.Busy as exc:
+        raise HTTPException(409, 'This briefing is already being written.') from exc
 
 
 @router.get('/briefings/{bid}/issues')

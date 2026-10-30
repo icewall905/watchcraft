@@ -2,7 +2,6 @@
 import asyncio
 import logging
 import re
-import threading
 import time
 from urllib.parse import urlsplit
 
@@ -12,7 +11,7 @@ from sqlmodel import Session, select
 from .. import curation
 from ..access import hub_allowed
 from ..db import engine as db_engine, get_settings, session
-from . import ai
+from . import ai, slots
 from .models import (Alert, Briefing, CollectionItem, ContentItem, Curator, CuratorDiscovery, CuratorRun,
                      CuratorSource, Source, TopicItem)
 from .providers import PROVIDERS
@@ -105,12 +104,15 @@ def _feed_needs_keywords(provider: str) -> bool:
 
 # ---------- running
 
-def claim(cid: int) -> bool:
+def claim(cid: int, trigger: str = 'schedule') -> bool:
     with session() as s:
         curator = s.get(Curator, cid)
         if not curator or not hub_allowed(s, curator.profile_id):
             return False
-        res = s.exec(update(Curator).where(Curator.id == cid, Curator.next_run <= time.time())
+        cond = [Curator.id == cid, Curator.next_run <= time.time()]
+        if trigger == 'schedule':
+            cond.append(Curator.enabled == True)  # paused while it waited for a slot
+        res = s.exec(update(Curator).where(*cond)
                      .values(next_run=time.time() + LEASE_S, last_status='running'))
         s.commit()
         return res.rowcount == 1
@@ -118,7 +120,7 @@ def claim(cid: int) -> bool:
 
 def run(cid: int, trigger: str = 'schedule') -> CuratorRun | None:
     """Execute one curator. Idempotent across processes via the next_run lease."""
-    if not claim(cid):
+    if not claim(cid, trigger):
         return None
     with session() as s:
         c = s.get(Curator, cid)
@@ -142,8 +144,11 @@ def run(cid: int, trigger: str = 'schedule') -> CuratorRun | None:
 
 
 def start(cid: int) -> None:
-    """Run now, in the background (the lease still prevents overlap with the scheduler)."""
-    threading.Thread(target=run, args=(cid, 'manual'), daemon=True, name=f'curator-{cid}').start()
+    """Run now, in the background; user-started runs never queue (the lease still prevents overlap)."""
+    with session() as s:
+        c = s.get(Curator, cid)
+        pid, name = (c.profile_id, c.name) if c else (None, '')
+    slots.spawn(f'curator-{cid}', 'curator', cid, pid, name, run, cid, 'manual', priority=True)
 
 
 def recover_stale() -> None:
@@ -299,18 +304,44 @@ async def scheduler() -> None:
     await asyncio.to_thread(recover_stale)
     while True:
         try:
-            with session() as s:
-                ids = [c.id for c in s.exec(select(Curator).where(Curator.enabled == True, Curator.next_run <= time.time())).all()]
-                briefs = [b.id for b in s.exec(select(Briefing).where(Briefing.frequency != 'manual', Briefing.next_run <= time.time())).all()]
-            from . import scout
-            await asyncio.to_thread(scout.run_due)
-            for cid in ids:
-                await asyncio.to_thread(run, cid)
-            for bid in briefs:
-                await asyncio.to_thread(ai.generate_briefing, bid)
+            await asyncio.to_thread(dispatch_due)
         except Exception:  # noqa: BLE001 — never kill the loop
             log.exception('hub scheduler tick failed')
         await asyncio.sleep(30)
+
+
+def dispatch_due() -> None:
+    """Start due agents in the background, never more than the free agent slots."""
+    from . import scout
+    free = slots.free()
+    if free <= 0:
+        return
+    free -= scout.run_due(free)
+    now = time.time()
+    with session() as s:
+        curators = s.exec(select(Curator).where(Curator.enabled == True, Curator.next_run <= now)
+                          .order_by(Curator.next_run)).all()
+        briefs = s.exec(select(Briefing).where(Briefing.frequency != 'manual', Briefing.next_run <= now)
+                        .order_by(Briefing.next_run)).all()
+    for c in curators:
+        if free <= 0:
+            return
+        if slots.spawn(f'curator-{c.id}', 'curator', c.id, c.profile_id, c.name, run, c.id):
+            free -= 1
+    for b in briefs:
+        if free <= 0:
+            return
+        with session() as s:
+            # Lease the briefing so a failure retries later instead of every tick.
+            claimed = s.exec(update(Briefing).where(Briefing.id == b.id, Briefing.next_run == b.next_run)
+                             .values(next_run=now + LEASE_S))
+            s.commit()
+        if claimed.rowcount and slots.spawn(f'briefing-{b.id}', 'briefing', b.id, b.profile_id, b.name,
+                                            ai.generate_briefing, b.id):
+            free -= 1
+
+
+slots.after_release = dispatch_due
 
 
 def schedule_after(interval_hours: int) -> float:

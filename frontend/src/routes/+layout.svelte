@@ -82,7 +82,7 @@
 </script>
 
 {#if !session.ready}
-	<div class="splash"><img src="/favicon.svg" alt="" width="96" height="96" /></div>
+	<div class="splash"><img src="/logo.png" alt="" width="96" height="96" /></div>
 {:else if session.needsLogin}
 	<Login />
 {:else}

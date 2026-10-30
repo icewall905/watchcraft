@@ -2,7 +2,7 @@
 import { request } from '$lib/api';
 import type {
 	Alert, Briefing, Collection, Counts, Curator, CuratorDetail, CuratorInput, Issue, Item, ItemDetail, ItemState,
-	NewsGroup, Page, Registry, SavedSearch, SearchResult, ScoutPlan, ScoutRun, Source, Template, Topic, TopicDetail, WebResult
+	NewsGroup, Page, Registry, SavedSearch, SearchResult, ScoutPlan, ScoutRun, Source, Team, Template, Topic, TopicDetail, WebResult
 } from './types';
 
 type Params = Record<string, string | number | boolean | undefined | null>;
@@ -32,6 +32,8 @@ export const hub = {
 	deleteCollection: (id: number) => send<{ ok: boolean }>('DELETE', `/collections/${id}`),
 	addToCollection: (id: number, itemId: number) => send<{ ok: boolean }>('POST', `/collections/${id}/items/${itemId}`),
 	removeFromCollection: (id: number, itemId: number) => send<{ ok: boolean }>('DELETE', `/collections/${id}/items/${itemId}`),
+
+	team: (signal?: AbortSignal) => get<Team>('/team', signal),
 
 	scoutPlans: () => get<ScoutPlan[]>('/scout/plans'),
 	scoutPlan: (query: string, interval_hours: number) => send<ScoutPlan>('POST', '/scout/plans', { query, interval_hours }),

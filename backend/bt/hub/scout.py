@@ -132,8 +132,8 @@ def research(query, emit):
 
 
 
-def run_due():
-    """Claim due searches before starting bounded background work in any API process."""
+def run_due(limit: int = 4) -> int:
+    """Claim up to `limit` due searches and start them in the background; returns how many started."""
     import threading
     import time
     from sqlalchemy import update
@@ -145,7 +145,8 @@ def run_due():
     now = time.time()
     with session() as s:
         plans = s.exec(select(ScoutPlan).where(ScoutPlan.enabled == True, ScoutPlan.next_run <= now)
-                       .order_by(ScoutPlan.next_run).limit(4)).all()
+                       .order_by(ScoutPlan.next_run).limit(max(0, min(4, limit)))).all()
+    started = 0
     for plan in plans:
         with session() as s:
             if not hub_allowed(s, plan.profile_id):
@@ -159,11 +160,11 @@ def run_due():
             if not claimed.rowcount: continue
         def run_plan(pid=plan.profile_id, query=plan.query, plan_id=plan.id, scheduled=due):
             from fastapi import HTTPException
-            from .api import ScoutInput, scout_run
+            from .api import ScoutInput, research_run
             try:
                 with session() as s:
                     if not hub_allowed(s, pid): return
-                scout_run(ScoutInput(query=query), pid)
+                research_run(ScoutInput(query=query), pid, scheduled=True)
             except HTTPException as exc:
                 if exc.status_code in (409, 429):
                     with session() as s:
@@ -185,3 +186,5 @@ def run_due():
                                        error='Scheduled research could not be completed.'))
                         s.commit()
         threading.Thread(target=run_plan, daemon=True, name=f'scout-plan-{plan.id}').start()
+        started += 1
+    return started

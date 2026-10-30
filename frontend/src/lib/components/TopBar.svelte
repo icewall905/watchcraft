@@ -17,7 +17,7 @@
 <header class="topbar glass" data-nav-noscroll data-nav-skip-initial>
 	{#if deviceMode.mode === 'tv'}
 	<a class="logo" href="/" aria-label="WatchCraft home" tabindex="-1" data-nav-off>
-		<img src="/favicon.svg" alt="" width="38" height="38" /><span class="wordmark">WatchCraft</span>
+		<img src="/logo.png" alt="" width="38" height="38" /><span class="wordmark">WatchCraft</span>
 	</a>
 	{/if}
 

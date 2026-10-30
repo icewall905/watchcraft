@@ -84,7 +84,7 @@
 {#if !isTv}
 	<aside class="sidebar desktop" class:compact data-nav-noscroll data-nav-zone="main-navigation" data-nav-side data-nav-skip-initial>
 		<a class="brand" href="/tv" aria-label="WatchCraft">
-			<img src="/favicon.svg" alt="" width="36" height="36" />
+			<img src="/logo.png" alt="" width="36" height="36" />
 			{#if !compact}<span class="bt"><b>WatchCraft</b><small>Watching the Internet for you.</small></span>{/if}
 		</a>
 		<nav aria-label="Main" data-nav-skip-initial>
@@ -142,7 +142,7 @@
 		<div class="overlay" bind:this={panel} use:navScope={{ onBack: () => close() }}>
 			<button class="backdrop" aria-label="Close navigation" tabindex="-1" onclick={() => close()}></button>
 			<aside id="tv-navigation" class="sidebar tv" aria-label="Navigation drawer">
-				<div class="brand"><img src="/favicon.svg" alt="" width="40" height="40" /><span class="bt"><b>WatchCraft</b></span></div>
+				<div class="brand"><img src="/logo.png" alt="" width="40" height="40" /><span class="bt"><b>WatchCraft</b></span></div>
 				<nav aria-label="Main" data-nav-zone="main-navigation" data-nav-skip-initial>
 					{#each drawer as it}
 						{@const on = it.active(path, search)}
