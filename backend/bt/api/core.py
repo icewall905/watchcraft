@@ -177,9 +177,10 @@ def delete_profile(pid: int, request: Request, s: Session = Depends(get_session)
         s.exec(delete(Candidate).where(col(Candidate.category_id).in_(cats)))
     for m in (Category, ProfileChannel, Feedback, Lesson, LessonEvidenceState, LessonRevision, WatchHistory):
         s.exec(delete(m).where(m.profile_id == pid))
-    from ..curation import Curator, Discovery
+    from ..curation import Discovery
+    from ..hub.api import delete_profile_data
     s.exec(delete(Discovery).where(Discovery.profile_id == pid))
-    s.exec(delete(Curator).where(Curator.profile_id == pid))
+    delete_profile_data(s, pid)
     profile_pins.set_pin(s, pid, "")
     s.delete(p)
     s.commit()
@@ -772,7 +773,9 @@ def mark_seen(body: SeenIn, pid: int = Depends(profile_id), s: Session = Depends
 # ---------- settings
 
 def _redact(st: dict) -> dict:
-    st = {**st, "llm": {**st["llm"]}, "throttle": {**st["throttle"]}}
+    st = {**st, "llm": {**st["llm"]}, "throttle": {**st["throttle"]}, "search": {**st["search"]}}
+    if st["search"].get("brave_api_key"):
+        st["search"]["brave_api_key"] = "********"
     if st["llm"].get("api_key"):
         st["llm"]["api_key"] = "********"
     if st["throttle"].get("proxy") and "@" in st["throttle"]["proxy"]:
@@ -814,6 +817,14 @@ def write_settings(key: str, value: dict, s: Session = Depends(get_session)):
         if value.get("base_url", cur["base_url"]).strip().rstrip("/") != cur["base_url"].strip().rstrip("/"):
             raise HTTPException(400, "Enter the API key for the new server")
         value["api_key"] = cur.get("api_key", "")
+    if key == "search":
+        if value.get("brave_api_key") == "********":
+            value["brave_api_key"] = cur.get("brave_api_key", "")
+        if value.get("provider", cur["provider"]) not in ("none", "searxng", "brave"):
+            raise HTTPException(400, "Unknown search provider")
+        url = value.get("searxng_url", cur["searxng_url"]).strip()
+        if url and not url.startswith(("http://", "https://")):
+            raise HTTPException(400, "SearXNG URL must start with http:// or https://")
     if key == "throttle" and value.get("proxy") == "********":
         value["proxy"] = cur.get("proxy", "")
     save_setting(key, {**cur, **value}, s)

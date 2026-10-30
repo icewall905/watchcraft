@@ -1,8 +1,8 @@
 # WatchCraft
 
-**Let curiosity run on autopilot.**
+**Watching the Internet for you.**
 
-Evolving from BetterTube into a self-hosted personal discovery hub. This first increment preserves video playback and adds RSS/Atom and GitHub release curators at **Discover**. See [architecture, deployment, migration and remaining work](docs/WATCHCRAFT.md).
+Instead of going on the internet yourself, set WatchCraft up to do it for you. Curators watch feeds, search engines, GitHub, Hacker News, arXiv and security databases; Research briefs (OSINT) dig into a business, person, domain or topic from public sources; everything lands locally in Discover, News, Knowledge, Library, Briefings and Alerts. Video stays front and centre: TV is still the default home. See [the Hub design and API](docs/HUB.md) and [deployment and migration](docs/WATCHCRAFT.md).
 
 WatchCraft is a self-hosted YouTube front end for watching and discovering videos on your own terms. Run it on a computer at home, open it in a browser on your devices, and give each family member a place for their own interests. It plays videos without embedding the YouTube player and can use an AI curator to build playlists around the things you actually want to watch.
 

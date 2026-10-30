@@ -11,10 +11,10 @@ test('home: focus stays where the user put it', async ({ page, request }) => {
 	}
 	for (let run = 0; run < 3; run++) {
 		await freshPage(page, '/');
-		await expectFocus(page, /Play/);
+		await expect(page.getByRole('link', { name: '▶ Play', exact: true })).toBeFocused(); // body text also contains "Play"
 		await page.keyboard.press('ArrowUp');
 		const where = await focused(page);
-		expect(where).toMatch(/Home|Search|Subscriptions|Agent|Settings|AI status|Pause AI|Switch profile/);
+		expect(where).toMatch(/Play on|Search|Subscriptions|Agent|Settings|AI status|Pause AI|Switch profile/);
 		await page.waitForTimeout(2500);
 		expect(await focused(page)).toBe(where);
 		// Down again lands in the page, then stays there too.

@@ -6,7 +6,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth, curation
+from . import auth
+from .hub import api as hub_api, engine as hub_engine
 from .api import agent as agent_api
 from .api import core
 from .api import proxy as proxy_api
@@ -20,7 +21,7 @@ from .db import init_db
 @asynccontextmanager
 async def lifespan(_app):
     init_db()
-    task = asyncio.create_task(curation.scheduler())
+    task = asyncio.create_task(hub_engine.scheduler())
     try:
         yield
     finally:
@@ -33,7 +34,7 @@ app = FastAPI(title="WatchCraft", docs_url="/api/docs", openapi_url="/api/openap
 app.add_middleware(auth.AuthMiddleware)
 app.include_router(auth.router, prefix="/api")
 app.include_router(core.router, prefix="/api")
-app.include_router(curation.router, prefix="/api")
+app.include_router(hub_api.router, prefix="/api")
 app.include_router(proxy_api.router, prefix="/api")
 app.include_router(ytimport.router, prefix="/api")
 app.include_router(video.router, prefix="/api")

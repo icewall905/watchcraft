@@ -5,9 +5,9 @@ test('desktop sidebar, device preference, and TV remote drawer', async ({ page }
 	await freshPage(page, '/settings?tab=appearance');
 	const navigation = page.getByRole('navigation', { name: 'Main', exact: true });
 	await expect(navigation).toBeVisible();
-	await expect(navigation.getByRole('link')).toHaveCount(6);
+	for (const name of ['TV', 'Discover', 'News', 'Knowledge', 'Library', 'Briefings', 'Alerts', 'Research', 'Curators', 'Sources'])
+		await expect(navigation.getByRole('link', { name, exact: true })).toBeVisible();
 	await page.screenshot({ path: '/tmp/wc-sidebar-desktop.png' });
-	await expect(navigation.getByRole('link', { name: /Video AI|Agent/ })).toHaveCount(0);
 	await page.getByRole('button', { name: /^TV mode/ }).click();
 	await expect(navigation).toHaveCount(0);
 	await page.reload();
@@ -33,7 +33,9 @@ test('desktop sidebar, device preference, and TV remote drawer', async ({ page }
 	await expect(navigation).toHaveCount(0);
 	await expect(toggle).toHaveCSS('position', 'fixed');
 	await toggle.click();
-	await navigation.getByRole('link', { name: 'Discover' }).click();
+	// The TV drawer stays minimal; the rest of the hub is one entry away.
+	await expect(navigation.getByRole('link', { name: 'News' })).toHaveCount(0);
+	await navigation.getByRole('link', { name: 'Hub' }).click();
 	await expect(page).toHaveURL(/\/discover$/);
 	await expect(navigation).toHaveCount(0);
 	await page.goto('/settings?tab=appearance');

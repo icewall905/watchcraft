@@ -103,6 +103,7 @@ with session() as s:
 	const play = page.getByRole('link', { name: '▶ Play', exact: true });
 	await expect(play).toBeFocused();
 	const heroVideo = page.locator('.hero .backdrop video.bt-hover-pv');
+	await expect(heroVideo).toHaveCount(1); // locator.evaluate would otherwise auto-wait past the poll window
 	await expect.poll(async () => heroVideo.evaluate((v: HTMLVideoElement) => v.currentTime).catch(() => 0), { timeout: 8000 }).toBeGreaterThan(0.4);
 	await expect(heroVideo).toHaveAttribute('src', new RegExp(`/api/video/${ID}/file`));
 

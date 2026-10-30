@@ -14,11 +14,13 @@
 	import KeysTab from '$lib/settings/KeysTab.svelte';
 	import StorageTab from '$lib/settings/StorageTab.svelte';
 	import AppearanceTab from '$lib/settings/AppearanceTab.svelte';
+	import SearchTab from '$lib/settings/SearchTab.svelte';
 
 	const TABS = [
 		{ key: 'categories', label: 'Playlists', icon: '🗂️', hint: 'What the AI looks for' },
 		{ key: 'memory', label: 'AI memory', icon: '🧠', hint: 'Rules learned from feedback' },
 		{ key: 'ai', label: 'AI and limits', icon: '✦', hint: 'Model, curator, pace' },
+		{ key: 'search', label: 'Search & sources', icon: '🔎', hint: 'Web search provider for curators' },
 		{ key: 'player', label: 'Player', icon: '▶', hint: 'Quality, speed, captions' },
 		{ key: 'appearance', label: 'Appearance', icon: '🎨', hint: 'Device mode, themes and colours' },
 		{ key: 'storage', label: 'Storage', icon: '💾', hint: 'Videos saved on the server' },
@@ -62,6 +64,7 @@
 					{#if tab === 'categories'}<CategoriesTab />
 					{:else if tab === 'memory'}<MemoryTab />
 					{:else if tab === 'ai'}<AiTab />
+					{:else if tab === 'search'}<SearchTab />
 					{:else if tab === 'player'}<PlayerTab />
 					{:else if tab === 'appearance'}<AppearanceTab />
 					{:else if tab === 'storage'}<StorageTab />

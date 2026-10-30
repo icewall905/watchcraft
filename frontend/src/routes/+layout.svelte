@@ -10,6 +10,8 @@
 	import { dialogs } from '$lib/stores/dialogs.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { deviceMode } from '$lib/stores/deviceMode.svelte';
+	import MobileNav from '$lib/components/MobileNav.svelte';
+	import CommandPalette from '$lib/components/CommandPalette.svelte';
 	import TopBar from '$lib/components/TopBar.svelte';
 	import Toasts from '$lib/components/Toasts.svelte';
 	import OskOverlay from '$lib/components/OskOverlay.svelte';
@@ -82,7 +84,7 @@
 	<Login />
 {:else}
 	{#if !session.profile?.pin_locked}
-		{#if !fullscreen}<Sidebar />{/if}
+		{#if !fullscreen}<Sidebar /><MobileNav />{/if}
 		<div class:desktop={!fullscreen && deviceMode.mode === 'desktop'}>
 		{#if !fullscreen}<TopBar />{:else}<PlaybackPicker floating />{/if}
 		<main class:fullscreen>
@@ -92,6 +94,7 @@
 		</main>
 		</div>
 	{/if}
+	{#if !session.profile?.pin_locked && !fullscreen}<CommandPalette />{/if}
 	{#if session.choosing || session.profile?.pin_locked}
 		<ProfilePicker fullscreen onClose={() => (session.choosing = false)} />
 	{/if}
@@ -112,7 +115,7 @@
 		padding-bottom: env(safe-area-inset-bottom);
 	}
 	.desktop { margin-left: var(--sidebar-width, 14rem); }
-	@media (max-width: 760px) { .desktop { --sidebar-width: 4.5rem; } }
+	@media (max-width: 760px) { .desktop { margin-left: 0; padding-bottom: calc(3.75rem + env(safe-area-inset-bottom)); } }
 	.splash {
 		position: fixed;
 		inset: 0;

@@ -28,11 +28,16 @@ def init_db() -> None:
     # defaults so they cannot create duplicate profiles or settings.
     with engine.begin() as connection:
         connection.exec_driver_sql("BEGIN IMMEDIATE")
+        from . import curation  # noqa: F401  (registers v1 + hub tables)
+        from .hub import migrate, models as _hub_models  # noqa: F401
         SQLModel.metadata.create_all(connection)
         with Session(connection) as s:
+            fresh = not s.exec(select(Profile)).first()
             if not s.get(Setting, "watchcraft_schema_version"):
-                s.add(Setting(key="watchcraft_schema_version", value={"version": 1}))
+                s.add(Setting(key="watchcraft_schema_version", value={"version": migrate.VERSION if fresh else 1}))
                 s.commit()
+        migrate.migrate(connection)
+        with Session(connection) as s:
             if not s.exec(select(Profile)).first():
                 s.add(Profile(name="Family", emoji="🏠", color="#7c5cff"))
                 s.merge(Setting(key="setup", value={"completed": False}))

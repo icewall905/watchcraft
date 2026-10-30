@@ -29,6 +29,13 @@ POT_URL = os.environ.get("BT_POT_URL", "http://pot:4416")
 DEFAULT_SETTINGS: dict = {
     # Older databases remain ready; init_db opts new installations into the guide.
     "setup": {"completed": True},
+    # Hub web search: "none" | "searxng" (self-hosted, trusted URL) | "brave" (API key).
+    "search": {
+        "provider": os.environ.get("WC_SEARCH_PROVIDER", "none"),
+        "searxng_url": os.environ.get("WC_SEARXNG_URL", ""),
+        "brave_api_key": os.environ.get("WC_BRAVE_API_KEY", ""),
+        "hub_ai": True,  # use the configured LLM for curator relevance, drafts, reports and briefings
+    },
     "llm": {
         "base_url": os.environ.get("BT_LLM_BASE_URL", "http://10.0.10.23:8080/v1"),
         "model": os.environ.get("BT_LLM_MODEL", "currentmodel"),

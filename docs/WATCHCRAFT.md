@@ -1,46 +1,89 @@
-# WatchCraft: first development increment
+# WatchCraft — "Watching the Internet for you."
 
-WatchCraft evolves BetterTube into a personal discovery hub. The existing home route remains the TV experience. Discover (`/discover`) adds a responsive, profile-owned article/release feed, curator creation, pause/resume, manual scheduling and saved library. Interests are stored notes; new non-video curators do not yet use AI filtering. Existing video AI remains unchanged.
+WatchCraft evolves BetterTube into a self-hosted hub that goes on the internet for you. TV (`/`, `/tv`) remains
+the default and is unchanged. Design, route map, provider registry and API contract: [HUB.md](HUB.md).
 
-## Architecture and storage
+## What exists now (schema v2)
 
-FastAPI serves the SvelteKit static app, SQLite/SQLModel store application data, and existing standalone workers handle video AI and downloads. The API lifespan now starts a lightweight non-video scheduler. Durable curator records survive restarts; due jobs are checked every 30 seconds. Conditional database claims prevent overlapping runs across processes, with a ten-minute recovery lease. Failures are isolated and retried on the next scheduled interval. Run now queues work for the next poll. No provider credentials are required.
+| Section | Route | What works |
+|---|---|---|
+| TV | `/`, `/tv`, `/tv?mode=tv` | Existing video home. `?mode=tv` switches the browser to TV mode for media-center launch. |
+| Discover | `/discover` | Unified feed of curator finds: unread / new since last visit / saved, type/provider/curator/score/date filters, sort, save, favorite, read later, dismiss, "Why?" provenance. |
+| News | `/news` | News/article items by **publication** time (discovery time shown separately), grouped into stories by title overlap, follow/mute topics. |
+| Knowledge | `/knowledge` | Long-lived topics: overview, user notes, linked items, recent matching finds (FTS), relevant curators, related topics. |
+| Library | `/library` | Saved, favorites, read later, archive, collections (create/rename/pin/delete), URL import with page extraction, JSON export. |
+| Item | `/item/[id]` | Detail with source facts vs AI enrichment kept apart, type-specific metadata, provenance, notes, tags, collections, topics, related items. |
+| Briefings | `/briefings` | Manual/daily/weekly cited briefings over selected curators/topics; never repeats items from earlier issues; non-AI fallback digest. |
+| Alerts | `/alerts` | Per-curator rules (min severity, keywords); new/read/resolved/snooze; advisories say "possibly relevant — verify affected versions". |
+| Research (OSINT) | `/research` | One-off or ongoing public-source research on a topic, organization, person, domain or product; cited report; findings by type. |
+| Curators | `/curators`, `/curators/new`, `/curators/[id]` | Natural-language wizard + templates, multi-source, edit, duplicate, pause/resume, run now, delete, run history, export JSON. |
+| Sources | `/sources` | Provider catalogue with capabilities/availability, reusable sources, health, test connection. |
+| Find | `/find`, Ctrl/Cmd+K | Local FTS5 search (prefix, "phrases", -exclusions) over items, private notes, local videos, curators, collections, topics; live web search on demand; saved + recent searches; "turn into a curator". |
+| Settings → Search & sources | `/settings?tab=search` | SearXNG URL or Brave key (redacted), toggle Hub AI. |
 
-Schema version 1 is additive: `curator`, `discovery`, and the `watchcraft_schema_version` setting. Existing video categories, profile IDs, history, cookies, secrets and BT_* configuration remain intact. Discoveries are deduplicated by canonical HTTPS URL within each profile. Save state is profile-owned. Original source titles are displayed without generated summaries. No external HTML is rendered.
+Navigation is defined once in `frontend/src/lib/navigation.ts`. Desktop: grouped, collapsible sidebar with expanded/compact
+modes and unread/alert counts. Phones (desktop mode, ≤760px): bottom bar TV · Discover · Library · Alerts · More.
+TV mode: a deliberately small drawer (TV Home, Video search, Subscriptions, Playlists, Hub, Settings).
 
-Limitations: content and profile state are currently stored together; only the first discovering curator is retained. Run history, canonical cross-profile content records, editing/deletion, keyword filtering, AI enrichment, briefs, alerts, child-specific restrictions, exports, advanced schedules, pagination and notification rules remain planned. Do not enable these new curators for restricted child profiles until restriction enforcement is implemented. A dedicated /tv entry point is still planned; existing TV launch URLs remain valid.
+Providers: RSS/Atom (incl. YouTube channel feeds → video), GitHub releases, GitHub repository search, Hacker News,
+arXiv, NVD CVE API, CISA KEV, Wikipedia, RDAP, web search (SearXNG/Brave), single-page extraction (OpenGraph +
+JSON-LD Recipe/Article). Web search shows as unavailable until configured and is never silently enabled.
 
-Desktop and TV modes are available under Settings → Appearance and are saved per browser. Desktop keeps the navigation sidebar visible; TV hides it until Left is pressed at the page edge (or the menu button is selected). Right or Back closes the TV drawer. The AI activity indicator opens Video AI; it has no separate navigation entry.
+AI (optional, uses the existing OpenAI-compatible endpoint): relevance scoring with evidence-based reasons, curator
+drafts, cited research reports and briefings. Without AI: keyword relevance, heuristic drafts, grouped digests.
 
-## Sources and security
+## Architecture
 
-RSS and Atom: use a public HTTPS feed URL. GitHub: use `https://github.com/OWNER/REPO`; the adapter collects up to 20 public releases using GitHub's API. RSS collects at most 50 entries per cycle. Feeds with no new entries produce an empty feed rather than fabricated discoveries. Add future providers behind `discover`, retaining bounded fetches and normalized source URLs.
+- `backend/bt/hub/`: `models` (tables), `migrate` (versioned migrations), `providers` (registry/adapters),
+  `extract` (page metadata), `engine` (runs, dedupe, routing to collections/topics/alerts, scheduler), `ai`, `api`, `templates`.
+- Canonical `ContentItem` per normalized URL (tracking params removed). `CuratorDiscovery` keeps every curator↔item
+  link with score, reason and query. `ItemState` is per profile. Source facts (`meta`) and AI output (`enrichment`) are separate.
+- `content_fts` (SQLite FTS5) indexes title, summary, extracted text and people; private notes are searched per profile only.
+- Scheduler runs in the API process every 30 s; a conditional `next_run` lease (15 min) prevents overlapping runs across
+  processes and recovers after crashes. Each source fails independently; runs record `ok`/`partial`/`failed` with
+  per-source messages that never include URLs or credentials.
 
-Requests require HTTPS port 443 and publicly routable DNS addresses. Connections pin the validated IP while verifying TLS against the original host. Each redirect is revalidated. Fetches have 15-second socket timeouts, a 2 MB body limit and XML/JSON type checks. XML DTDs/entities are rejected. Use network egress restrictions as additional protection. Instructions and retrieved data cannot execute commands. Provider errors shown in the UI omit raw exception text to avoid leaking secrets.
+## Security
 
-Profile endpoints reuse existing profile PIN authorization. Open household profiles remain accessible to household users by design. This is not a multi-tenant authentication system.
+- All retrieved-content fetches use `bt/curation.py`: HTTPS:443 only, every resolved address must be public, the socket is
+  pinned to the validated IP, each redirect is revalidated, bounded size and content-type, XML entities rejected.
+- The SearXNG URL is admin configuration (may be on the LAN); it is requested without following redirects.
+- Retrieved HTML is reduced to text and allow-listed metadata; the UI renders text only. Only `https:` image URLs are kept.
+- Prompts mark retrieved content as untrusted data; outputs are schema-checked; summaries carry `[n]` citations.
+- Every `/api/hub` endpoint scopes by the active profile (existing PIN rules). Items are visible to a profile only if its
+  curators found them or it saved/touched them. Brave API key is redacted in settings responses.
+- OSINT is limited to public sources; the UI states lawful/ethical use. Not enabled-by-default for restricted child profiles —
+  child restrictions for hub content are **not implemented yet**; do not give children unsupervised hub access.
+
+## Migration and rollback
+
+`init_db` runs `bt.hub.migrate` inside the existing `BEGIN IMMEDIATE`. v1 → v2 adds curator columns, creates reusable
+sources from each v1 curator, and copies v1 discoveries into items, provenance and saved state. The v1 `discovery`
+table is kept untouched. Video tables are not modified. Back up first (maintenance menu); roll back by restoring the backup
+with the previous checkout. Tested by `tests/test_curation.py::test_v1_database_migrates_to_v2`.
 
 ## Deploy on 10.0.10.73
 
-1. Back up the existing installation with its maintenance menu before pointing this version at existing data. Keep the archive and original checkout for rollback.
-2. For a parallel installation, use `docker compose -p watchcraft -f compose.yaml -f compose.watchcraft.yaml up -d --build --wait` (Compose 2.24.4+ for `!override`). The included override assigns distinct container names to **all four services** and a distinct image tag for API/workers. Default compose names are deliberately retained for in-place compatibility and would conflict with a running BetterTube stack.
-3. Configure `BT_PORT=6646` in `.env` and select dedicated data/media paths for a parallel install. Restore a backup into empty destinations using the existing maintenance workflow if you want a copy of BetterTube data. Never run two stacks against the same SQLite data directory.
-4. Run setup or `docker compose up -d --build --wait` for an in-place migration after stopping the previous stack. Internal API port remains 6645; external port is 6646.
-5. Install `deploy/traefik-wc.yml` as `/opt/traefik/dynamic/wc.yml` on the proxy at 10.0.10.60. Point wc.tdgs.org and watchcraft.tdgs.org DNS at the proxy. Certificates remain managed by the existing Traefik setup.
-6. Verify profile switching, PINs, playback and remote Back behavior before retiring the old installation. For rollback, stop WatchCraft and restore the pre-upgrade backup with the original checkout into empty folders.
+1. Back up the existing installation with its maintenance menu before pointing this version at existing data.
+2. Parallel install: `docker compose -p watchcraft -f compose.yaml -f compose.watchcraft.yaml up -d --build --wait`
+   (Compose 2.24.4+). Never run two stacks against the same SQLite data directory.
+3. `BT_PORT=6646` in `.env`. Optional: `WC_SEARCH_PROVIDER=searxng` and `WC_SEARXNG_URL=http://searxng:8080`
+   (or configure in Settings → Search & sources). SearXNG must have the JSON format enabled.
+4. Install `deploy/traefik-wc.yml` as `/opt/traefik/dynamic/wc.yml` on 10.0.10.60.
+5. Media center: point the TV browser at `https://wc.tdgs.org/tv?mode=tv`.
 
-DNS, reverse proxy and the running server are not modified by repository changes.
+## Not implemented yet (honest list)
 
-## Next priorities
+Admin-only gating of settings writes (any unlocked profile can change the search provider, as with the LLM URL today), semantic search/embeddings, child-profile restrictions for hub content, advanced cron schedules and explicit run
+cancellation, notification channels and quiet hours, phone→TV handoff, custom sidebar ordering (only pinned
+collections/topics), curator config import (export exists), Reddit/Mastodon/Stack Exchange/OSV/vendor advisories,
+recipe/pattern site-specific adapters beyond JSON-LD, offline reading, per-task AI model selection.
 
-Add provider fixtures, execution history and explicit cancellation; implement shared content/provenance models and a versioned migration runner with automated backup checks; then add AI relevance scoring and curator editing. Preserve and expand remote-navigation browser tests before changing the television shell. Add security advisories and public article extraction only behind the same network boundary. Build briefings and alerts when source provenance and factual enrichment are established.
+## Verification of this iteration
 
-## Verification of this increment
-
-- Frontend Svelte check: zero errors and warnings; production build passed; regenerated all PWA icons from the new SVG crest.
-- Backend regression suite: 217 passed, 6 skipped. After the final profile-deletion cleanup, targeted curator/core/PIN tests: 27 passed.
-- Chrome TV regression: `watch-back.spec.ts` passed (Back returns from a watch session to its originating playlist).
-- Compose base plus WatchCraft override: configuration validation passed.
-- No real-provider network acceptance tests, full TV remote acceptance pass, live migration/restore rehearsal, Docker image build or server deployment were performed. One existing Starlette/httpx deprecation warning remains.
-
-The initial commit also preserves the pre-existing, uncommitted TV Back-navigation changes and their regression test from the BetterTube working tree. The original checkout was left untouched.
+- Backend: full pytest suite green (hub tests in `tests/test_curation.py`: isolation, multi-curator provenance,
+  FTS, partial failures, crash recovery, alerts, briefings, research fallback, page extraction, v1→v2 migration).
+- Frontend: `npm run check` 0 errors; production build OK.
+- Playwright (`npm run test:e2e`): all pass except 4 specs that also fail on the previous commit
+  (`smoke` keyboard-only, `stats` viewport ×2, `status-pill` hover). New: `navigation.spec.ts`, `hub.spec.ts`.
+- Not done: live-provider network tests, real SearXNG/Brave, TV remote pass on hardware, Docker build, deployment.

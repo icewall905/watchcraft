@@ -461,10 +461,12 @@ class NavEngine {
 		if (!horizontal) {
 			// Vertical moves stay inside a zone (e.g. a side menu vs. its content) but may leave to zone-less
 			// chrome like the top bar.
+			// A side column (the desktop sidebar) is entered only horizontally.
 			const zone = cur.el.closest('[data-nav-zone]');
-			if (zone) pool = pool.filter((x) => {
+			pool = pool.filter((x) => {
 				const z = x.e.el.closest('[data-nav-zone]');
-				return !z || z === zone;
+				if (zone) return !z || z === zone;
+				return !z || !z.hasAttribute('data-nav-side');
 			});
 		}
 		if (!pool.length) return false;
