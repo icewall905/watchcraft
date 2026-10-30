@@ -236,6 +236,61 @@ def test_query_provider_alerts_and_unavailable_web_search(client, monkeypatch):
     assert web['results'] == [] and web['errors'][0]['provider'] == 'web_search'
 
 
+def test_discovery_previews_and_live_briefing_steps_are_private(client, monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from bt.models import AgentEvent
+    monkeypatch.setattr(curation, 'fetch', lambda *a, **kw: RSS)
+    curator = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed', 'name': 'Release feed'}], keywords=['Widget'])
+    assert hub.run(curator['id']).new_items == 1
+    team = client.get('/api/hub/team').json()
+    find = next(a for a in team['agents'] if a['kind'] == 'curator')['finds'][0]
+    assert find['summary'] == 'Widget ships local inference'
+    assert find['source_name'] == 'Release feed' and find['url'] == 'https://example.org/release'
+    assert 'Matches' in find['reason'] and find['published_at'] is not None
+    briefing = client.post('/api/hub/briefings', json={'name': 'Morning', 'curator_ids': [curator['id']]}).json()
+    entered, release = threading.Event(), threading.Event()
+    def write(*args):
+        entered.set()
+        assert release.wait(5)
+        return 'A cited summary [1].'
+    monkeypatch.setattr(ai, 'enabled', lambda: True)
+    monkeypatch.setattr(ai, '_cited', write)
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        work = pool.submit(client.post, f"/api/hub/briefings/{briefing['id']}/generate")
+        try:
+            assert entered.wait(5)
+            writer = next(a for a in client.get('/api/hub/team').json()['agents'] if a['kind'] == 'briefing')
+            assert writer['status'] == 'running' and writer['timeline'][-1]['step'] == 'writing'
+            assert writer['doing'] == 'Writing a cited briefing from 1 discovery.'
+            assert client.get(f"/api/hub/briefings/{briefing['id']}/issues").json() == []
+            other = client.post('/api/profiles', json={'name': 'Other'}).json()
+            other_team = client.get('/api/hub/team', headers={'X-Profile-Id': str(other['id'])}).json()
+            assert not any(a['kind'] in ('curator', 'briefing') for a in other_team['agents'])
+            assert all(e['kind'] != 'hub_curator' for e in client.get('/api/agent/events').json())
+        finally:
+            release.set()
+        response = work.result(timeout=10)
+    assert response.status_code == 200 and response.json()['item_ids'] == [find['id']]
+    writer = next(a for a in client.get('/api/hub/team').json()['agents'] if a['kind'] == 'briefing')
+    assert writer['timeline'][-1]['step'] == 'completed'
+    client.delete(f"/api/hub/briefings/{briefing['id']}")
+    with session() as s:
+        assert s.exec(select(AgentEvent).where(AgentEvent.payload['briefing_id'].as_integer() == briefing['id'])).all() == []
+
+
+def test_briefing_fallback_does_not_claim_ai_writing(client, monkeypatch):
+    monkeypatch.setattr(curation, 'fetch', lambda *a, **kw: RSS)
+    curator = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}])
+    hub.run(curator['id'])
+    briefing = client.post('/api/hub/briefings', json={'name': 'Digest'}).json()
+    issue = client.post(f"/api/hub/briefings/{briefing['id']}/generate").json()
+    assert issue['ai'] is False and len(issue['item_ids']) == 2
+    writer = next(a for a in client.get('/api/hub/team').json()['agents'] if a['kind'] == 'briefing')
+    steps = [step['step'] for step in writer['timeline']]
+    assert 'fallback' in steps and 'writing' not in steps and steps[-1] == 'completed'
+
+
 def test_collections_topics_briefing_fallback(client, monkeypatch):
     monkeypatch.setattr(curation, 'fetch', lambda url, **k: RSS)
     col = client.post('/api/hub/collections', json={'name': 'Reading'}).json()

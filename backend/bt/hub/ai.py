@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import time
+import uuid
 
 from sqlmodel import select
 
@@ -187,6 +188,24 @@ def research_report(cid: int) -> Curator | None:
 
 
 def generate_briefing(bid: int) -> BriefingIssue | None:
+    from . import activity
+    from ..access import hub_allowed
+    with session() as s:
+        owner = s.get(Briefing, bid)
+        if not owner or not hub_allowed(s, owner.profile_id):
+            return None
+    run_id = uuid.uuid4().hex
+    def progress(step, message, **details):
+        activity.emit_briefing(owner, run_id, step, message, **details)
+    progress('started', f'Gathering new discoveries for {owner.name[:100]}.')
+    try:
+        return _generate_briefing(bid, progress)
+    except Exception as exc:
+        progress('failed', 'Briefing writing stopped before an issue was saved.', error=type(exc).__name__)
+        raise
+
+
+def _generate_briefing(bid: int, progress) -> BriefingIssue | None:
     with session() as s:
         from ..access import hub_allowed
         b = s.get(Briefing, bid)
@@ -212,20 +231,30 @@ def generate_briefing(bid: int) -> BriefingIssue | None:
             ids.add(item.id); items.append(item)
         limit = 12 if b.length == 'concise' else 30
         items = items[:limit]
-        if not items:
-            content, used_ai = 'Nothing new since the last briefing.', False
-        else:
-            try:
-                if not enabled():
-                    raise RuntimeError('AI disabled')
-                content = _cited(items, f'Write the "{b.name}" briefing: what is worth knowing from these new discoveries, '
-                                 'most important first, grouping related items.', 180 if b.length == 'concise' else 500)
-                used_ai = True
-            except Exception as e:  # noqa: BLE001
-                log.info('briefing AI failed: %s', e)
-                content, used_ai = fallback_digest(items), False
+    progress('selected', f'Selected {len(items)} new item{"" if len(items) == 1 else "s"} after topic filtering and duplicate checks.')
+    if not items:
+        content, used_ai = 'Nothing new since the last briefing.', False
+    else:
+        try:
+            if not enabled():
+                raise RuntimeError('AI disabled')
+            progress('writing', f'Writing a cited briefing from {len(items)} discover{"y" if len(items) == 1 else "ies"}.')
+            content = _cited(items, f'Write the "{b.name}" briefing: what is worth knowing from these new discoveries, '
+                             'most important first, grouping related items.', 180 if b.length == 'concise' else 500)
+            used_ai = True
+        except Exception as e:  # noqa: BLE001
+            log.info('briefing AI failed: %s', e)
+            progress('fallback', 'Using a source-linked digest because AI writing is unavailable.')
+            content, used_ai = fallback_digest(items), False
+    progress('saving', 'Saving the briefing and its source references.')
+    with session() as s:
+        current = s.get(Briefing, bid)
+        if not current or current.profile_id != b.profile_id or not hub_allowed(s, b.profile_id):
+            return None
+        b = current
         issue = BriefingIssue(briefing_id=bid, content=content, item_ids=[i.id for i in items], ai=used_ai)
         b.last_generated = time.time()
         b.next_run = time.time() + (86400 if b.frequency == 'daily' else 7 * 86400) if b.frequency != 'manual' else None
         s.add(issue); s.add(b); s.commit(); s.refresh(issue)
-        return issue
+    progress('completed', f'Briefing saved with {len(items)} source reference{"" if len(items) == 1 else "s"}.' if items else 'Briefing saved: nothing new since the previous issue.')
+    return issue

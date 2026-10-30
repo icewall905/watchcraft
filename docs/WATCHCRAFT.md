@@ -155,12 +155,21 @@ agents (scheduled curators, Scout searches, briefings) may work at once (`team.m
 Scheduled work waits for a free slot; anything a user starts begins at once but occupies a slot. The video curator
 runs in its own worker and is not counted. AI calls remain serialized per process.
 
-Curator cards and Source Scout expose an expandable run timeline. Curator milestones record real source checks,
+Curator cards, Source Scout and the Briefing Writer expose an expandable run timeline. Curator milestones record real source checks,
 reused fetches, matching, optional AI ranking, completion and report-writing steps as those operations occur. Source
 errors have expandable technical details. The existing event store retains up to 80 milestones per curator and shows
 the latest 12 from its latest run. Events belong to the profile and are excluded from the shared video-agent event/SSE
 feeds; deleting the curator/profile removes them. New runs gain milestones; earlier runs keep their existing summaries.
-Detailed briefing-writer steps and narration modes remain planned.
+Briefing milestones record discovery selection, AI writing or the source-linked fallback, saving and completion. The
+writer keeps up to 80 events per briefing, shows the latest run of the active briefing (or most recently recorded run
+while idle), and removes those events when the briefing is deleted. Completion follows the issue commit. Briefing
+generation rechecks profile access before saving and performs AI writing outside a database session. Narration modes
+remain planned.
+
+Recent curator discoveries expand into source previews: a bounded source summary, publisher/source label, published
+and discovery timestamps when known, the curator's separate note, an internal finding link and the original URL.
+Summaries come from stored source metadata; missing summaries are labeled instead of generated. Preview retrieval is
+profile-scoped and keeps the original discovery/source relationship.
 
 ## Not implemented yet (honest list)
 

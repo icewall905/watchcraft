@@ -571,12 +571,17 @@ class ScoutPlanUpdate(BaseModel):
 
 # ---------- research team overview
 
-def _finds(s: Session, curator_id: int, limit: int = 3) -> list[dict]:
-    rows = s.exec(select(ContentItem.id, ContentItem.title, CuratorDiscovery.found_at)
+def _finds(s: Session, pid: int, curator_id: int, limit: int = 3) -> list[dict]:
+    rows = s.exec(select(ContentItem, CuratorDiscovery, Source)
                   .join(CuratorDiscovery, CuratorDiscovery.item_id == ContentItem.id)
-                  .where(CuratorDiscovery.curator_id == curator_id)
+                  .outerjoin(Source, (Source.id == CuratorDiscovery.source_id) & (Source.profile_id == pid))
+                  .where(CuratorDiscovery.curator_id == curator_id, CuratorDiscovery.profile_id == pid)
                   .order_by(CuratorDiscovery.found_at.desc()).limit(limit)).all()
-    return [{'id': i, 'title': t, 'found_at': f} for i, t, f in rows]
+    return [{'id': item.id, 'title': item.title, 'found_at': discovery.found_at,
+             'url': item.url, 'summary': item.summary[:350], 'publisher': item.publisher,
+             'type': item.type, 'published_at': item.published_at,
+             'source_name': source.name if source else item.publisher,
+             'reason': discovery.reason[:350], 'score': discovery.score} for item, discovery, source in rows]
 
 
 @router.get('/team')
@@ -601,7 +606,7 @@ def team(pid: int = Depends(profile_id)):
                            'color': c.color, 'mission': c.description or c.instructions[:200], 'role': c.kind,
                            'status': status, 'since': job['since'] if job else None, 'error': c.error,
                            'enabled': c.enabled, 'next_run': c.next_run if c.enabled and c.next_run < 1e11 else None,
-                           'last_run': c.last_run, 'found_today': found_today, 'finds': _finds(s, c.id),
+                           'last_run': c.last_run, 'found_today': found_today, 'finds': _finds(s, pid, c.id),
                            'timeline': timeline, 'doing': timeline[-1]['message'] if timeline else None,
                            'last': {'status': last.status, 'new_items': last.new_items, 'seen_items': last.seen_items,
                                     'finished_at': last.finished_at} if last else None})
@@ -640,11 +645,16 @@ def team(pid: int = Depends(profile_id)):
         briefs = s.exec(select(Briefing).where(Briefing.profile_id == pid)).all()
         if briefs:
             writing = [j for j in live['jobs'] if j['kind'] == 'briefing']
+            timeline = activity.briefing_recent(s, pid, [writing[0]['ref_id']] if writing else [b.id for b in briefs])
+            if writing and timeline and timeline[-1]['at'] < writing[0]['since']:
+                timeline = []
+            failed = bool(timeline and timeline[-1]['step'] == 'failed')
             scheduled = [b.next_run for b in briefs if b.frequency != 'manual' and b.next_run]
             agents.append({'key': 'briefings', 'kind': 'briefing', 'id': None, 'name': 'Briefing Writer', 'icon': '📰',
                            'color': '#b18cff', 'mission': f'Writes {len(briefs)} briefing{"s" if len(briefs) != 1 else ""} from what your curators find.',
-                           'status': writing[0]['state'] if writing else 'idle', 'since': writing[0]['since'] if writing else None,
-                           'doing': writing[0]['label'] if writing else None,
+                           'status': writing[0]['state'] if writing else 'attention' if failed else 'idle', 'since': writing[0]['since'] if writing else None,
+                           'doing': timeline[-1]['message'] if timeline else None, 'timeline': timeline,
+                           'error': timeline[-1]['message'] if failed else '',
                            'next_run': min(scheduled, default=None), 'last_run': max((b.last_generated or 0 for b in briefs), default=0) or None})
             for issue, name in s.exec(select(BriefingIssue, Briefing.name).join(Briefing, Briefing.id == BriefingIssue.briefing_id)
                                       .where(Briefing.profile_id == pid).order_by(BriefingIssue.created_at.desc()).limit(4)).all():
@@ -1194,6 +1204,8 @@ def delete_briefing(bid: int, pid: int = Depends(profile_id)):
     with session() as s:
         b = owned(s, Briefing, bid, pid)
         s.exec(delete(BriefingIssue).where(BriefingIssue.briefing_id == bid))
+        s.exec(delete(AgentEvent).where(AgentEvent.kind == activity.KIND, AgentEvent.profile_id == pid,
+                                       AgentEvent.payload['briefing_id'].as_integer() == bid))
         s.delete(b); s.commit()
         return {'ok': True}
 

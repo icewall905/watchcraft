@@ -62,7 +62,8 @@ export type TeamAgent = {
 	key: string; kind: 'curator' | 'scout' | 'briefing'; id: number | null; name: string; icon: string; color: string; mission: string;
 	status: TeamStatus; since: number | null; next_run: number | null; last_run?: number | null; doing?: string | null; query?: string;
 	role?: 'watch' | 'research'; error?: string; enabled?: boolean; found_today?: number; plans?: number;
-	finds?: { id: number; title: string; found_at: number }[];
+	finds?: { id: number; title: string; found_at: number; url?: string; summary?: string; publisher?: string;
+		type?: string; published_at?: number | null; source_name?: string; reason?: string; score?: number | null }[];
 	timeline?: { id?: number; step: string; message: string; at: number; detail?: string }[];
 	last?: { status: string; new_items?: number; seen_items?: number; suggestions?: number; query?: string; error?: string; finished_at: number | null } | null;
 };

@@ -4,34 +4,50 @@ import { freshPage } from './helpers';
 test('Agent Activity shows real agent state and the parallel-agent setting saves', async ({ page, request }) => {
 	const now = Date.now() / 1000;
 	const team = {
-		limit: 2, running: 1, waiting: 1,
+		limit: 3, running: 2, waiting: 1,
 		agents: [
 			{ key: 'curator-1', kind: 'curator', id: 1, name: 'Local AI', icon: '🤖', color: '#ffb547', mission: 'Tracks local model releases.', role: 'watch',
 				status: 'running', since: now - 42, next_run: null, last_run: now - 3600, found_today: 2, error: '', enabled: true,
 				doing: 'Checking a real feed.', timeline: [{ step: 'checking', message: 'Checking a real feed.', at: now - 2 },
 					{ step: 'source_error', message: 'One source needs attention.', at: now - 1, detail: 'Source returned HTTP 503.' }],
-				finds: [{ id: 5, title: 'A new open model', found_at: now - 600 }], last: null },
+				finds: [{ id: 5, title: 'A new open model', found_at: now - 600, url: 'https://example.org/release',
+					summary: 'The source reports an updated public model.', publisher: 'Example publisher', source_name: 'Model releases',
+					type: 'project', reason: 'Matches your local models mission.', published_at: now - 3600 }], last: null },
 			{ key: 'curator-2', kind: 'curator', id: 2, name: 'Security', icon: '🛡️', color: '#ff6b6b', mission: '', role: 'watch',
 				status: 'waiting', since: now, next_run: null, found_today: 0, finds: [], last: null },
 			{ key: 'scout', kind: 'scout', id: null, name: 'Source Scout', icon: '🧭', color: '#5cc8ff', mission: 'Finds feeds.', status: 'idle',
-				since: null, next_run: null, plans: 1, last: { query: 'https://lwn.net/', status: 'complete', suggestions: 1, finished_at: now - 60 } }
+				since: null, next_run: null, plans: 1, last: { query: 'https://lwn.net/', status: 'complete', suggestions: 1, finished_at: now - 60 } },
+			{ key: 'briefings', kind: 'briefing', id: null, name: 'Briefing Writer', icon: '📰', color: '#b18cff', mission: 'Writes the morning briefing.',
+				status: 'running', since: now - 10, next_run: null, doing: 'Writing a cited briefing from 2 discoveries.',
+				timeline: [{ step: 'selected', message: 'Selected 2 new items after topic filtering and duplicate checks.', at: now - 5 },
+					{ step: 'writing', message: 'Writing a cited briefing from 2 discoveries.', at: now - 1 }] }
 		],
 		journal: [{ at: now - 60, agent: 'scout', name: 'Source Scout', icon: '🧭', kind: 'scout_run', status: 'complete', query: 'https://lwn.net/', suggestions: 1 }]
 	};
 	await page.route('**/api/hub/team', (route) => route.fulfill({ json: team }));
 	await freshPage(page, '/team');
 	await expect(page.getByRole('heading', { name: 'Agent Activity' })).toBeVisible();
-	await expect(page.getByText('1/2')).toBeVisible();
-	await expect(page.getByText(/Working · \d+s/)).toBeVisible();
+	await expect(page.getByText('2/3')).toBeVisible();
+	await expect(page.getByText(/Working · \d+s/).first()).toBeVisible();
 	await expect(page.getByText('Waiting for a free slot')).toBeVisible();
 	await expect(page.getByText('A new open model')).toBeVisible();
 	const card = page.getByRole('article').filter({ hasText: 'Local AI' });
+	await card.getByText('A new open model').click();
+	await expect(card.getByText('The source reports an updated public model.', { exact: false })).toBeVisible();
+	await expect(card.locator('.finding p').filter({ hasText: 'Curator note:' })).toContainText('Matches your local models mission.');
+	await expect(card.getByRole('link', { name: 'View finding' })).toHaveAttribute('href', '/item/5');
+	await expect(card.getByRole('link', { name: 'Open original source' })).toHaveAttribute('href', 'https://example.org/release');
 	await expect(card.locator('.now')).toHaveText('Checking a real feed.');
 	await card.getByText('Run timeline').click();
 	await expect(card.getByText('One source needs attention.')).toBeVisible();
 	await card.getByText('Technical details').click();
 	await expect(card.getByText('Source returned HTTP 503.')).toBeVisible();
+	const writer = page.getByRole('article').filter({ hasText: 'Briefing Writer' });
+	await expect(writer.locator('.now')).toHaveText('Writing a cited briefing from 2 discoveries.');
+	await writer.getByText('Run timeline').click();
+	await expect(writer.getByText('Selected 2 new items after topic filtering and duplicate checks.')).toBeVisible();
 	await expect(page.getByText('scouted “https://lwn.net/” and validated 1 source.')).toBeVisible();
+	await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }));
 	await page.screenshot({ path: 'test-results/team.png', fullPage: true });
 
 	expect((await (await request.get('/api/settings')).json()).team.max_parallel).toBe(1);

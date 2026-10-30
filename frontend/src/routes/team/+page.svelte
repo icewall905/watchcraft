@@ -65,7 +65,7 @@
 		if (a.status === 'running') {
 			if (a.kind === 'curator' && a.doing) return a.doing;
 			if (a.kind === 'scout') return a.doing || `Researching “${a.query}”.`;
-			if (a.kind === 'briefing') return a.doing ? `Writing “${a.doing}”.` : 'Writing a briefing.';
+			if (a.kind === 'briefing') return a.doing || 'Writing a briefing.';
 			return a.role === 'research' ? 'Investigating its subject across sources.' : 'Checking its sources for new finds.';
 		}
 		if (a.status === 'attention') return a.error || 'The last run had problems. Open it to see why.';
@@ -148,11 +148,22 @@
 				</div>
 				{#if a.mission}<p class="mission muted">{a.mission}</p>{/if}
 				<p class="now">{now_line(a)}</p>
-				{#if a.finds?.length}
-					<ul class="finds">{#each a.finds as f (f.id)}<li><span class="dot" aria-hidden="true"></span>{f.title}</li>{/each}</ul>
-				{/if}
 				{#if foot(a)}<p class="foot muted small">{foot(a)}</p>{/if}
 				</a>
+				{#if a.finds?.length}
+					<div class="findings" aria-label="Recent discoveries">
+						{#each a.finds as f (f.id)}
+							<details class="finding">
+								<summary use:focusable>{f.title}</summary>
+								<p class="small muted">{f.source_name || f.publisher || 'Source not named'}{f.type ? ` · ${f.type}` : ''} · found {ago(f.found_at)}</p>
+								{#if f.published_at}<p class="small muted">Published {ago(f.published_at)}</p>{/if}
+								<p class="small"><b>Source summary:</b> {f.summary || 'No source summary provided.'}</p>
+								{#if f.reason}<p class="small"><b>Curator note:</b> {f.reason}</p>{/if}
+								<div class="finding-links"><a href={`/item/${f.id}`} use:focusable>View finding</a>{#if f.url}<a href={f.url} target="_blank" rel="noopener noreferrer" use:focusable>Open original source</a>{/if}</div>
+							</details>
+						{/each}
+					</div>
+				{/if}
 				{#if a.timeline?.length}
 					<details class="timeline">
 						<summary use:focusable>Run timeline</summary>
@@ -209,6 +220,10 @@
 	.timeline ol { padding-left: 1.2rem; margin: .5rem 0; }
 	.timeline li { margin: .6rem 0; overflow-wrap: anywhere; }
 	.timeline p { margin: .2rem 0; }
+	.finding { border-top: 1px solid var(--line); padding: .5rem 0; overflow-wrap: anywhere; }
+	.finding summary { cursor: pointer; color: var(--text); }
+	.finding p { margin: .5rem 0; }
+	.finding-links { display: flex; flex-wrap: wrap; gap: .8rem; font-size: .85rem; }
 	.top { display: flex; gap: .8rem; align-items: center; }
 	.avatar { position: relative; width: 3rem; height: 3rem; display: grid; place-items: center; border-radius: var(--r-md); background: color-mix(in srgb, var(--c) 26%, transparent); color: var(--c); flex: none; }
 	.avatar.emoji { font-size: 1.6rem; }
@@ -223,9 +238,6 @@
 	.st.attention { color: var(--bad); border-color: var(--bad); }
 	.mission { margin: 0; font-size: .85rem; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 	.now { margin: 0; font-weight: 600; }
-	.finds { list-style: none; margin: 0; padding: 0; display: grid; gap: .25rem; font-size: .86rem; }
-	.finds li { display: flex; gap: .5rem; align-items: baseline; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-	.dot { width: .45rem; height: .45rem; border-radius: 50%; background: var(--c); flex: none; }
 	.foot { margin: 0; }
 	.hint { margin-top: 1rem; }
 	.journal { margin-top: 2rem; }
