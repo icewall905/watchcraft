@@ -169,8 +169,8 @@ def test_wrong_pairing_codes_lock_the_screen_for_a_while():
         assert c.delete(f'/api/playback/targets/{r["id"]}', headers={'X-Receiver-Token': r['token']}).status_code == 200
 
 
-def test_child_profiles_cannot_see_pair_or_command_screens():
-    """Child restrictions are enforced at the backend, not by hiding UI picks alone."""
+def test_child_profiles_pair_and_cast_like_everyone_else():
+    """Children watch any video on their own device, so casting needs the same screen code and nothing more."""
     with TestClient(app) as c:
         # Enabling a child needs a PIN on every adult/administrator profile that exists.
         assert c.patch('/api/profiles/1', json={'pin': '2468'}, headers={'X-Profile-Id': '1'}).status_code == 200
@@ -181,8 +181,17 @@ def test_child_profiles_cannot_see_pair_or_command_screens():
         child = c.post('/api/profiles', json={'name': 'Kid', 'role': 'child'}, headers={'X-Profile-Id': '1'}).json()
         headers = {'X-Profile-Id': str(child['id'])}
         r = c.post('/api/playback/targets', json={'name': 'Shared TV'}).json()
-        assert c.get('/api/playback/targets', headers=headers).json() == []
-        assert pair_screen(c, r['id'], r['pair_code'], headers=headers).status_code == 403
-        assert c.post(f'/api/playback/targets/{r["id"]}/commands',
-                      json={'action': 'pause'}, headers=headers).status_code == 403
-
+        path = f'/api/playback/targets/{r["id"]}'
+        receiver = {'X-Receiver-Token': r['token']}
+        assert r['id'] in [t['id'] for t in c.get('/api/playback/targets', headers=headers).json()]
+        assert c.post(path + '/commands', json={'action': 'pause'}, headers=headers).status_code == 403
+        assert pair_screen(c, r['id'], r['pair_code'], headers=headers).status_code == 200
+        assert c.post(path + '/heartbeat', json={'position_s': 5, 'duration_s': 30}, headers=receiver).status_code == 200
+        state = next(t for t in c.get('/api/playback/targets', headers=headers).json() if t['id'] == r['id'])['state']
+        assert state['duration_s'] == 30 and state['position_s'] == 5
+        # Seeking needs a position; the receiver gets it in the command.
+        assert c.post(path + '/commands', json={'action': 'seek'}, headers=headers).status_code == 422
+        assert c.post(path + '/commands', json={'action': 'seek', 'position_s': -1}, headers=headers).status_code == 422
+        assert c.post(path + '/commands', json={'action': 'seek', 'position_s': 12.5}, headers=headers).status_code == 200
+        command = c.post(path + '/heartbeat', json={}, headers=receiver).json()['command']
+        assert command['action'] == 'seek' and command['position_s'] == 12.5 and command['profile_id'] == child['id']

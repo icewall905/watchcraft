@@ -10,7 +10,7 @@ from sqlalchemy import text, update
 from sqlmodel import Session, select
 
 from ..db import get_session
-from ..models import Category, PlaybackTarget, Profile
+from ..models import Category, PlaybackTarget
 from .core import profile_id
 
 router = APIRouter(prefix="/playback")
@@ -38,12 +38,14 @@ class Heartbeat(BaseModel):
     paused: bool = True
     position_s: float = Field(default=0, ge=0, le=864000, allow_inf_nan=False)
     error: str = Field(default="", max_length=200)
+    duration_s: float | None = Field(default=None, ge=0, le=864000, allow_inf_nan=False)
 
 
 class Command(BaseModel):
-    action: str = Field(pattern=r"^(play|pause|resume|stop)$")
+    action: str = Field(pattern=r"^(play|pause|resume|stop|seek)$")
     video_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{11}$")
     category_id: int | None = None
+    position_s: float | None = Field(default=None, ge=0, le=864000, allow_inf_nan=False)
 
 
 def _pair(target) -> dict:
@@ -53,13 +55,6 @@ def _pair(target) -> dict:
 
 def _paired(target, pid: int) -> bool:
     return pid in _pair(target)["profiles"]
-
-
-def _household(s, pid: int) -> Profile | None:
-    profile = s.get(Profile, pid)
-    if not profile or profile.role == "child":
-        return None
-    return profile
 
 
 def _public(target, pid: int):
@@ -85,8 +80,6 @@ def _target(s, target_id):
 
 @router.get("/targets")
 def targets(pid: int = Depends(profile_id), s: Session = Depends(get_session)):
-    if s.get(Profile, pid).role == "child":
-        return []
     return [_public(t, pid) for t in s.exec(select(PlaybackTarget).order_by(PlaybackTarget.name)).all()]
 
 
@@ -115,8 +108,6 @@ def pair(target_id: str, body: PairCode, pid: int = Depends(profile_id),
     """Enter the pairing code shown on the screen to allow this profile to command it."""
     s.exec(text("BEGIN IMMEDIATE"))
     target = _target(s, target_id)
-    if not _household(s, pid):
-        raise HTTPException(403, "Open household profiles pair with screens; children cannot.")
     info = {**(target.pair or {}), **_pair(target)}
     now = time.time()
     fails = [f for f in info.get("fails", []) if now - f < PAIR_WINDOW]
@@ -159,12 +150,12 @@ def send_command(target_id: str, body: Command, pid: int = Depends(profile_id),
     # Serialize pairing and the rate window so two senders cannot exceed SEND_LIMIT together.
     s.exec(text("BEGIN IMMEDIATE"))
     target = _target(s, target_id)
-    if not _household(s, pid):
-        raise HTTPException(403, "Open household profiles control connected screens; children cannot.")
     if not _paired(target, pid):
         raise HTTPException(403, "Pair this screen once in the Play on picker before sending.")
     if time.time() - target.last_seen >= ONLINE_SECONDS:
         raise HTTPException(409, "This screen is offline. Open BetterTube on it first.")
+    if body.action == "seek" and body.position_s is None:
+        raise HTTPException(422, "Choose a position to seek to")
     if body.action == "play" and not body.video_id:
         raise HTTPException(422, "Choose a video to play")
     if body.category_id is not None:

@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { session } from '$lib/stores/session.svelte';
 	import { playback } from '$lib/stores/playback.svelte';
 	import { focusable } from '$lib/nav';
 	import Modal from './Modal.svelte';
@@ -18,6 +17,24 @@
 		try { await playback.unregister(); } catch { /* API displays the error */ }
 		finally { working = false; }
 	}
+	// Remote progress: the screen reports position every heartbeat; a drag holds its value until the screen catches up.
+	let scrub = $state<number | null>(null);
+	let scrubTimer: ReturnType<typeof setTimeout> | undefined;
+	const remote = $derived(playback.selected?.state);
+	const duration = $derived(remote?.video_id && remote.duration_s ? remote.duration_s : 0);
+	const position = $derived(scrub ?? Math.min(remote?.position_s ?? 0, duration));
+	const controllable = $derived(!!playback.selected?.online && !playback.needsPair);
+	const clock = (s: number) => {
+		const t = Math.max(0, Math.floor(s)), h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), sec = String(t % 60).padStart(2, '0');
+		return h ? `${h}:${String(m).padStart(2, '0')}:${sec}` : `${m}:${sec}`;
+	};
+	function seek(to: number) {
+		if (!duration) return;
+		scrub = Math.max(0, Math.min(to, duration));
+		void playback.send('seek', undefined, null, scrub);
+		clearTimeout(scrubTimer);
+		scrubTimer = setTimeout(() => (scrub = null), 4000);
+	}
 	async function pair() {
 		if (!code.trim()) return;
 		await playback.pair(code.trim());
@@ -25,7 +42,6 @@
 	}
 </script>
 
-{#if session.profile?.role !== 'child'}
 <button class="btn cast" class:floating class:active={!!playback.selectedId} aria-label="Play on" title="Choose a playback screen"
 	use:focusable={{ group: 'topbar', id: 'play-on', onSelect: () => (playback.open = true) }}>
 	<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8V4h18v16h-9M3 20h.01M3 15a5 5 0 0 1 5 5M3 10a10 10 0 0 1 10 10" /></svg>
@@ -59,10 +75,21 @@
 					</form>
 				{/if}
 				{#if playback.selected?.state.error}<p role="status">{playback.selected.state.error}</p>{/if}
+				{#if duration}
+					<div class="progress">
+						<input type="range" aria-label="Playback position" min="0" max={Math.ceil(duration)} step="1" value={position}
+							disabled={!controllable}
+							oninput={(e) => { scrub = Number(e.currentTarget.value); clearTimeout(scrubTimer); }}
+							onchange={(e) => seek(Number(e.currentTarget.value))} />
+						<span class="small muted time">{clock(position)} / {clock(duration)}</span>
+					</div>
+				{/if}
 				<div class="hstack">
+					<button class="btn" disabled={!controllable || !duration} aria-label="Back 10 seconds" use:focusable={{ group: 'cast', onSelect: () => seek(position - 10) }}>−10s</button>
 					<button class="btn" disabled={!playback.selected?.online || !!playback.needsPair} use:focusable={{ group: 'cast', onSelect: () => playback.send('pause') }}>Pause</button>
 					<button class="btn" disabled={!playback.selected?.online || !!playback.needsPair} use:focusable={{ group: 'cast', onSelect: () => playback.send('resume') }}>Resume</button>
 					<button class="btn" disabled={!playback.selected?.online || !!playback.needsPair} use:focusable={{ group: 'cast', onSelect: () => playback.send('stop') }}>Stop</button>
+					<button class="btn" disabled={!controllable || !duration} aria-label="Forward 10 seconds" use:focusable={{ group: 'cast', onSelect: () => seek(position + 10) }}>+10s</button>
 				</div>
 			</section>
 		{/if}
@@ -84,7 +111,6 @@
 		<button class="btn" use:focusable={{ group: 'cast', onSelect: () => (playback.open = false) }}>Done</button>
 	</Modal>
 {/if}
-{/if}
 
 <style>
 	.cast { white-space: nowrap; min-width: 2.6rem; padding: 0.5rem 0.7rem; }
@@ -93,6 +119,10 @@
 	.choices { display: grid; gap: 0.6rem; }
 	.target { justify-content: space-between; }
 	section { display: grid; gap: 0.7rem; border-top: 1px solid var(--line); margin: 1rem 0; padding-top: 1rem; }
+	.progress { display: grid; grid-template-columns: 1fr auto; gap: 0.6rem; align-items: center; }
+	.progress input { width: 100%; accent-color: var(--accent); }
+	.time { font-variant-numeric: tabular-nums; }
+	.hstack { flex-wrap: wrap; }
 	.pair-row { display: flex; gap: 0.6rem; align-items: end; }
 	label { font-size: 0.9rem; }
 	@media (max-width: 1300px) { .cast span { display: none; } }

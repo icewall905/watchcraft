@@ -1,13 +1,19 @@
 import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { resetBackend } from './helpers';
 
 const VIDEO = 'castvideo01';
 
 test('phone pairs, sends one-tap playback to a persistent browser receiver and controls it', async ({ browser, request }) => {
 	await resetBackend(request);
-	const media = execFileSync('ffmpeg', ['-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=160x90:r=5',
-		'-t', '30', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', 'frag_keyframe+empty_moov', '-f', 'mp4', 'pipe:1']);
+	// A regular faststart MP4 with a keyframe every second, so the receiver can seek within it.
+	const file = join(mkdtempSync(join(tmpdir(), 'bt-cast-')), 'cast.mp4');
+	execFileSync('ffmpeg', ['-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=160x90:r=5',
+		'-t', '30', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-g', '5', '-movflags', '+faststart', file]);
+	const media = readFileSync(file);
 	const phoneContext = await browser.newContext({ viewport: { width: 390, height: 844 } });
 	const screenContext = await browser.newContext();
 	const phone = await phoneContext.newPage();
@@ -25,9 +31,17 @@ test('phone pairs, sends one-tap playback to a persistent browser receiver and c
 		await screenContext.route(`**/api/video/${VIDEO}`, route => route.fulfill({ json: {
 			id: VIDEO, title: 'Cast test video', duration_s: 30, chapters: [], in_categories: []
 		} }));
-		await screenContext.route(`**/api/video/${VIDEO}/file`, route => route.fulfill({
-			status: 200, contentType: 'video/mp4', body: route.request().method() === 'HEAD' ? Buffer.alloc(0) : media
-		}));
+		// Byte ranges like the real file endpoint, so the receiver can seek.
+		await screenContext.route(`**/api/video/${VIDEO}/file`, async route => {
+			const range = /bytes=(\d+)-(\d*)/.exec((await route.request().allHeaders())['range'] ?? '');
+			if (route.request().method() === 'HEAD' || !range) return route.fulfill({
+				status: 200, contentType: 'video/mp4', headers: { 'Accept-Ranges': 'bytes' },
+				body: route.request().method() === 'HEAD' ? Buffer.alloc(0) : media
+			});
+			const start = Number(range[1]), end = range[2] ? Math.min(Number(range[2]), media.length - 1) : media.length - 1;
+			return route.fulfill({ status: 206, contentType: 'video/mp4', body: media.subarray(start, end + 1),
+				headers: { 'Accept-Ranges': 'bytes', 'Content-Range': `bytes ${start}-${end}/${media.length}` } });
+		});
 		await screenContext.route(`**/api/video/${VIDEO}/sponsorblock`, route => route.fulfill({ json: [] }));
 		await screenContext.route(`**/api/video/${VIDEO}/captions`, route => route.fulfill({ json: [] }));
 		await phone.goto('/');
@@ -66,6 +80,17 @@ test('phone pairs, sends one-tap playback to a persistent browser receiver and c
 		await expect.poll(() => screen.locator('.watch video').evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
 		await phone.getByRole('button', { name: 'Resume', exact: true }).click();
 		await expect.poll(() => screen.locator('.watch video').evaluate((v: HTMLVideoElement) => !v.paused)).toBe(true);
+		// The phone shows the screen's progress and can move it forward, back or to a dragged position.
+		const slider = phone.getByRole('slider', { name: 'Playback position' });
+		await expect(slider).toBeVisible();
+		await expect(phone.getByText(/\/ 0:30$/)).toBeVisible();
+		await phone.getByRole('button', { name: 'Forward 10 seconds' }).click();
+		await expect.poll(() => screen.locator('.watch video').evaluate((v: HTMLVideoElement) => v.currentTime)).toBeGreaterThan(9);
+		await expect(phone.getByRole('button', { name: 'Back 10 seconds' })).toBeEnabled();
+		await slider.fill('25');
+		await expect.poll(() => screen.locator('.watch video').evaluate((v: HTMLVideoElement) => v.currentTime)).toBeGreaterThan(24);
+		await phone.getByRole('button', { name: 'Back 10 seconds' }).click();
+		await expect.poll(() => screen.locator('.watch video').evaluate((v: HTMLVideoElement) => v.currentTime)).toBeLessThan(22);
 		await phone.getByRole('button', { name: 'Stop', exact: true }).click();
 		await expect(screen).toHaveURL(/\/$/);
 		await phone.getByRole('button', { name: 'This device', exact: true }).click();

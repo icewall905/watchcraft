@@ -8,10 +8,10 @@ export interface PlaybackTarget {
 	name: string;
 	online: boolean;
 	paired: boolean;
-	state: { video_id?: string | null; paused?: boolean; position_s?: number; error?: string };
+	state: { video_id?: string | null; paused?: boolean; position_s?: number; duration_s?: number | null; error?: string };
 }
 interface Receiver { id: string; name: string; token: string; ack?: string; pair_code?: string }
-interface Command { id: string; action: string; video_id: string | null; category_id: number | null; profile_id: number }
+interface Command { id: string; action: string; video_id: string | null; category_id: number | null; position_s?: number | null; profile_id: number }
 const KEY = 'bt.playback.receiver';
 
 class Playback {
@@ -104,11 +104,11 @@ class Playback {
 		await this.poll();
 	}
 
-	async send(action: string, video_id?: string, category_id?: number | null) {
+	async send(action: string, video_id?: string, category_id?: number | null, position_s?: number) {
 		if (!this.selectedId || this.sending) return;
 		this.sending = true;
 		try {
-			await request(`/playback/targets/${this.selectedId}/commands`, { body: { action, video_id, category_id } });
+			await request(`/playback/targets/${this.selectedId}/commands`, { body: { action, video_id, category_id, position_s } });
 			if (action === 'play') toast.success(`Sent to ${this.selected?.name ?? 'screen'}`);
 		} catch (e) {
 			// An unpaired profile must pair once; the picker shows the code entry.
@@ -137,6 +137,10 @@ class Playback {
 				if (command.action === 'stop') { video?.pause(); await goto('/'); }
 				else if (command.action === 'pause') video?.pause();
 				else if (command.action === 'resume') await video?.play();
+				else if (command.action === 'seek' && video && command.position_s != null) {
+					const end = Number.isFinite(video.duration) ? video.duration : command.position_s;
+					video.currentTime = Math.max(0, Math.min(command.position_s, end));
+				}
 			}
 		} catch { this.error = 'Playback could not start. Press Play on this screen.'; }
 	}
@@ -151,7 +155,8 @@ class Playback {
 				const match = location.pathname.match(/^\/watch\/([A-Za-z0-9_-]{11})/);
 				const reply = await request<{ command: Command | null; pair_code?: string }>(`/playback/targets/${r.id}/heartbeat`, {
 					body: { ack: this.ack, video_id: match?.[1] ?? null, paused: video?.paused ?? true,
-						position_s: Number.isFinite(video?.currentTime) ? video!.currentTime : 0, error: this.error },
+						position_s: Number.isFinite(video?.currentTime) ? video!.currentTime : 0,
+						duration_s: video && Number.isFinite(video.duration) ? video.duration : null, error: this.error },
 					headers: { 'X-Receiver-Token': r.token }, toast: false,
 					signal: AbortSignal.timeout(8000)
 				});
