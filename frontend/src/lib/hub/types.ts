@@ -69,6 +69,7 @@ export type Curator = {
 	source_ids: number[]; interval_hours: number; enabled: boolean; ai_enabled: boolean; min_score: number;
 	max_per_run: number; collection_id: number | null; topic_id: number | null; alert_enabled: boolean;
 	alert_keywords: string[]; alert_min_severity: string; subject: string; subject_type: string; aliases: string[];
+	tuned_up: string[]; tuned_down: string[];
 	report: string; report_at: number | null; report_refs: number[]; next_run: number | null; last_run: number | null; last_success: number | null;
 	last_status: string; error: string; discovery_count: number; created_at: number;
 };

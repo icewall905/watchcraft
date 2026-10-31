@@ -900,7 +900,7 @@ def test_local_capture_backfill_assets_and_profile_isolation(client, monkeypatch
         if url.endswith('photo.png'): return image, url, {'content_type': 'image/png'}
         return html, url, {'content_type': 'text/html'}
     monkeypatch.setattr(curation, 'fetch', fetch)
-    c = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}], keywords=['widget'])
+    c = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}], keywords=['widget', 'gadget'])
     hub.run(c['id'])
     iid = client.get('/api/hub/items').json()['items'][0]['id']
     with session() as s:
@@ -926,7 +926,7 @@ def test_capture_retry_and_asset_validation(client, monkeypatch):
     from bt.hub import capture
     from bt.hub.models import CaptureJob
     monkeypatch.setattr(curation, 'fetch', lambda url, **kw: RSS)
-    c = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}], keywords=['widget'])
+    c = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}], keywords=['widget', 'gadget'])
     hub.run(c['id'])
     iid = client.get('/api/hub/items').json()['items'][0]['id']
     def fail(*args, **kwargs): raise ValueError('Offline')
@@ -1539,3 +1539,44 @@ def test_report_preview_shapes(client, monkeypatch):
     headers = {'X-Profile-Id': str(child['id'])}
     response = client.get('/api/hub/scout-report/preview', headers=headers)
     assert response.status_code in (403, 404)
+
+
+
+def test_curator_feedback_terms_tune_scoring(client, monkeypatch):
+    from bt.hub.models import Curator as CuratorRow
+    monkeypatch.setattr(curation, 'fetch', lambda url, **kwargs: RSS)
+    curator = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}], keywords=['widget', 'gadget'])
+    hub.run(curator['id'])
+    item = next(x for x in client.get('/api/hub/items?limit=10').json()['items'] if 'Widget' in x['title'])
+    url = f"/api/hub/items/{item['id']}/curator-feedback"
+    # "Less like this" learns distinctive title words, never the curator's own keyword.
+    r = client.post(url, json={'curator_id': curator['id'], 'verdict': 'less'})
+    assert r.status_code == 200 and r.json()['added'] == ['release'] and r.json()['tuned_down'] == ['release']
+    assert client.get(f"/api/hub/curators/{curator['id']}").json()['tuned_down'] == ['release']
+    with session() as s:
+        row = s.get(CuratorRow, curator['id'])
+        base = hub.keyword_score(row, {'title': 'Widget tips'})
+        down = hub.keyword_score(row, {'title': 'Widget release notes'})
+        # Feedback never lets an unmatched item past the keyword gate.
+        assert hub.keyword_score(row, {'title': 'Release party'}) == (0.0, '')
+    assert down[0] == base[0] - 10 and 'Less like this: "release"' in down[1]
+    # "More like this" on the same finding moves the word across: the newest feedback wins.
+    r = client.post(url, json={'curator_id': curator['id'], 'verdict': 'more'}).json()
+    assert r['tuned_up'] == ['release'] and r['tuned_down'] == []
+    with session() as s:
+        row = s.get(CuratorRow, curator['id'])
+        up = hub.keyword_score(row, {'title': 'Widget release notes'})
+        # AI scores get the same nudge.
+        assert hub.tune(row, {'title': 'Widget release notes'}, 70.0, 'AI says so') == (80.0, 'AI says so · More like this: "release"')
+    assert up[0] == base[0] + 10
+    # Only the 20 newest words are kept.
+    with session() as s:
+        row = s.get(CuratorRow, curator['id'])
+        row.tuned_up = [f'word{n}' for n in range(20)]
+        s.add(row); s.commit()
+    r = client.post(url, json={'curator_id': curator['id'], 'verdict': 'more'}).json()
+    assert len(r['tuned_up']) == 20 and r['tuned_up'][-1] == 'release' and 'word0' not in r['tuned_up']
+    # Another profile cannot tune this curator.
+    other = client.post('/api/profiles', json={'name': 'Feedback stranger'}).json()
+    assert client.post(url, json={'curator_id': curator['id'], 'verdict': 'less'},
+                       headers={'X-Profile-Id': str(other['id'])}).status_code in (403, 404)

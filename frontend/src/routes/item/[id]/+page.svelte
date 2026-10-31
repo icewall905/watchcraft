@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import { focusable } from '$lib/nav';
 	import { hub, ago, host } from '$lib/hub/api';
+	import { toast } from '$lib/stores/toast.svelte';
 	import { str, num, list, bool, fmtDate, label, safeUrl, sevClass, duration, errMsg } from '$lib/hub/util';
 	import type { ItemDetail, Collection, Topic } from '$lib/hub/types';
 	import ContentCard from '$lib/hub/ContentCard.svelte';
@@ -87,6 +88,15 @@
 		if (!item) return;
 		try { const s = await hub.setState(item.id, p); item = { ...item, state: s }; msg = ''; return s; }
 		catch (e) { msg = errMsg(e); }
+	}
+	let feedback = $state<Record<string, 'more' | 'less'>>({});
+	async function tune(cid: number, verdict: 'more' | 'less') {
+		if (!item || feedback[String(cid)]) return;
+		try {
+			const r = await hub.curatorFeedback(item.id, cid, verdict);
+			feedback = { ...feedback, [cid]: verdict };
+			toast.success(`${r.added.length ? 'Learned: ' + r.added.join(', ') + '. ' : ''}Similar findings will rank ${verdict === 'more' ? 'higher' : 'lower'}.`);
+		} catch (e) { toast.error(errMsg(e)); }
 	}
 	async function saveNotes() {
 		if (!item || notes === item.state.notes) return;
@@ -222,7 +232,14 @@
 							{#each item.curators as c}
 								<li><a href={`/curators/${c.id}`} use:focusable>{c.name}</a>
 									<span class="faint small"> · {ago(c.found_at)}{#if c.score !== null} · score {Math.round(c.score <= 1 ? c.score * 100 : c.score)}{/if}</span>
-									{#if c.reason}<p class="small muted">{c.reason}</p>{/if}</li>
+									{#if c.reason}<p class="small muted">{c.reason}</p>{/if}
+									<span class="tune">
+										<button class="btn mini" class:active={feedback[String(c.id)] === 'more'} disabled={!!feedback[String(c.id)]}
+											aria-label={`Show ${c.name} more like this`} use:focusable onclick={() => tune(c.id, 'more')}>More like this</button>
+										<button class="btn mini" class:active={feedback[String(c.id)] === 'less'} disabled={!!feedback[String(c.id)]}
+											aria-label={`Show ${c.name} less like this`} use:focusable onclick={() => tune(c.id, 'less')}>Less like this</button>
+									</span>
+								</li>
 							{/each}
 						</ul>
 					{:else}<p class="muted small">Not found by a curator (added manually).</p>{/if}
@@ -275,6 +292,9 @@
 </div>
 
 <style>
+	.tune { display: inline-flex; gap: .35rem; margin-top: .4rem; flex-wrap: wrap; }
+	.tune .btn { min-height: 2rem; padding: .25rem .6rem; }
+	.tune .active { border-color: var(--accent); color: var(--accent); }
 	.captured-text { white-space: pre-wrap; }
 	.page { display: grid; gap: 1rem; align-content: start; }
 	.back { display: inline-block; min-height: 2.75rem; line-height: 2.75rem; }

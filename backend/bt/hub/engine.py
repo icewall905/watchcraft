@@ -223,11 +223,27 @@ def keyword_score(c: Curator, data: dict) -> tuple[float | None, str]:
     if c.content_types and data.get('type') not in c.content_types:
         return None, 'Content type not selected'
     if not kws:
-        return 50.0, ''
-    hits = [k for k in kws if k in hay]
-    if not hits:
-        return 0.0, ''
-    return min(100.0, 50 + 50 * len(hits) / len(kws)), 'Matches ' + ', '.join(f'"{h}"' for h in hits[:4])
+        score, reason = 50.0, ''
+    else:
+        hits = [k for k in kws if k in hay]
+        if not hits:
+            return 0.0, ''  # feedback never lets an unmatched item past the keyword gate
+        score, reason = min(100.0, 50 + 50 * len(hits) / len(kws)), 'Matches ' + ', '.join(f'"{h}"' for h in hits[:4])
+    return tune(c, data, score, reason)
+
+
+def tune(c: Curator, data: dict, score: float, reason: str) -> tuple[float, str]:
+    """Nudge a keyword or AI score by the family's "more/less like this" title terms."""
+    hay = f"{data.get('title', '')} {data.get('summary', '')}".lower()
+    down = [x for x in _terms(c.tuned_down) if x in hay]
+    up = [x for x in _terms(c.tuned_up) if x in hay]
+    if down and not up:
+        score, note = score - 10, f'Less like this: "{down[0]}"'
+    elif up and not down:
+        score, note = score + 10, f'More like this: "{up[0]}"'
+    else:
+        return score, reason  # no feedback, or opposite feedback on the same item: no nudge
+    return max(0.0, min(100.0, score)), ' · '.join(x for x in (reason, note) if x)
 
 
 def _feed_needs_keywords(provider: str) -> bool:
@@ -393,7 +409,7 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
                                                       fresh=narrate.phrase(len(fresh), 'item')))
         try:
             for x, (score, reason) in zip(fresh, ai.rank(c, [x[2] for x in fresh])):
-                x[3], x[4] = score, reason or x[4]
+                x[3], x[4] = tune(c, x[2], score, reason or x[4])
         except Exception as e:  # noqa: BLE001 — AI is optional; keep keyword scores
             errors.append({'source': 'AI relevance', 'message': f'AI scoring unavailable ({_safe_error(e)}); used keyword scores.'})
             activity.emit(c, r.id, 'ranking_error', narrate.say(c.tone, 'curator.ranking_error', seed=str(r.id)),

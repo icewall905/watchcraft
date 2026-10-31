@@ -197,6 +197,8 @@
 		<Toggle label="Use AI to judge relevance" hint="Uses the configured AI model. Without it, keyword matching is used." bind:checked={f.ai_enabled} group="cf-ai" />
 		<Slider label="Minimum relevance score" min={0} max={100} step={5} bind:value={f.min_score} hint="Items scoring lower are not kept." group="cf-ai" />
 		<label class="field"><span class="label">Max new items per run</span><input class="input" type="number" min="1" max="200" bind:value={f.max_per_run} use:focusable /></label>
+		<ChipInput label="From 'more like this' feedback" hint="Title terms saved when you marked findings as more relevant. Edit freely." bind:values={f.tuned_up} group="cf-tune" />
+		<ChipInput label="From 'less like this' feedback" hint="Title terms saved when you marked findings as less relevant. Matching findings rank lower; nothing is excluded." bind:values={f.tuned_down} group="cf-tune" />
 	</fieldset>
 
 	<fieldset>

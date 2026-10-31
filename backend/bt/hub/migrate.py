@@ -15,7 +15,7 @@ VERSION = 2
 
 
 JSON_DEFAULTS = {'queries': '[]', 'keywords': '[]', 'exclusions': '[]', 'content_types': '[]', 'alert_keywords': '[]',
-                 'aliases': '[]', 'report_refs': '[]', 'config': '{}'}
+                 'aliases': '[]', 'report_refs': '[]', 'tuned_up': '[]', 'tuned_down': '[]', 'config': '{}'}
 
 
 def _add_missing_columns(conn) -> None:

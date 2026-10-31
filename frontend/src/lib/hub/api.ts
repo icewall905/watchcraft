@@ -23,6 +23,8 @@ export const hub = {
 	items: (params: Params, signal?: AbortSignal) => get<Page<Item>>('/items' + qs(params), signal),
 	item: (id: number) => get<ItemDetail>(`/items/${id}`),
 	setState: (id: number, patch: Partial<ItemState> & { read?: boolean }) => send<ItemState>('POST', `/items/${id}/state`, patch),
+	curatorFeedback: (id: number, curator_id: number, verdict: 'more' | 'less') =>
+		send<{ curator_id: number; verdict: string; added: string[]; tuned_up: string[]; tuned_down: string[] }>('POST', `/items/${id}/curator-feedback`, { curator_id, verdict }),
 	importUrl: (url: string) => send<Item>('POST', '/items/import', { url }),
 	news: (params: Params) => get<{ groups: NewsGroup[]; topics: Topic[] }>('/news' + qs(params)),
 

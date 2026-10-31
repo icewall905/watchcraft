@@ -75,6 +75,17 @@ def _clip_list(v, n=20, size=200) -> list[str]:
     return [str(x).strip()[:size] for x in (v or []) if str(x).strip()][:n]
 
 
+_STOPWORDS = frozenset('the a an and or of for to in on with from this that your you it its at by is are was were how why what when'
+                        ' new best top review guide tutorial watch video edition part using make made really very more most about just'.split())
+
+
+def _salient(item, c) -> list[str]:
+    """Up to three distinctive title words, skipping words the curator is set up to follow."""
+    own = ' '.join([c.name, c.subject, *c.keywords, *c.queries, *c.aliases]).lower()
+    words = re.findall(r"[a-z][a-z'’\-]{2,}", (item.title or '').lower())
+    return [w for w in dict.fromkeys(words) if w not in _STOPWORDS and w not in own][:3]
+
+
 # ---------- registry / counts
 
 @router.get('/registry')
@@ -242,6 +253,34 @@ def item(iid: int, pid: int = Depends(profile_id)):
                                     .where(TopicItem.item_id == iid, Topic.profile_id == pid)).all())
         out['related'] = serialize(s, pid, related(s, pid, it))
         return out
+
+
+class FeedbackIn(BaseModel):
+    curator_id: int
+    verdict: str = Input(pattern='^(more|less)$')
+
+
+@router.post('/items/{iid}/curator-feedback')
+def curator_feedback(iid: int, body: FeedbackIn, pid: int = Depends(profile_id)):
+    """Tell a curator to prefer or de-prioritise finds shaped like this one. Real, explainable tuning."""
+    from . import engine
+    with session() as s:
+        if not can_see(s, pid, iid):
+            raise HTTPException(404, 'Item not found')
+        c = owned(s, Curator, body.curator_id, pid)
+        item = s.get(ContentItem, iid)
+        terms = _salient(item, c)
+        if not terms:
+            raise HTTPException(422, 'Nothing distinctive in this finding to learn from.')
+        keep, drop = ('tuned_up', 'tuned_down') if body.verdict == 'more' else ('tuned_down', 'tuned_up')
+        values = _clip_list(getattr(c, keep))
+        added = [t for t in terms if t not in values]
+        # The newest feedback wins: a word moves out of the opposite list, and the oldest words make room.
+        setattr(c, keep, (values + added)[-20:])
+        setattr(c, drop, [t for t in _clip_list(getattr(c, drop)) if t not in terms])
+        s.add(c); s.commit(); s.refresh(c)
+        return {'curator_id': c.id, 'verdict': body.verdict, 'added': added,
+                'tuned_up': c.tuned_up, 'tuned_down': c.tuned_down}
 
 
 @router.get('/capture/status')
@@ -1157,6 +1196,8 @@ class CuratorIn(BaseModel):
     subject: str | None = Input(default=None, max_length=300)
     subject_type: str | None = Input(default=None, pattern='^(|topic|organization|person|domain|product)$')
     aliases: list[str] | None = None
+    tuned_up: list[str] | None = None
+    tuned_down: list[str] | None = None
 
 
 def curator_dict(s, c: Curator) -> dict:
@@ -1171,7 +1212,7 @@ def apply(s, c: Curator, body: CuratorIn, pid: int) -> None:
     sids = data.pop('source_ids', None)
     if data.get('tone') is None:
         data.pop('tone', None)  # null keeps the current voice; the column stays a valid tone
-    for k in ('queries', 'keywords', 'exclusions', 'alert_keywords', 'aliases'):
+    for k in ('queries', 'keywords', 'exclusions', 'alert_keywords', 'aliases', 'tuned_up', 'tuned_down'):
         if k in data:
             data[k] = _clip_list(data[k])
     if 'content_types' in data:

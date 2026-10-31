@@ -364,3 +364,12 @@ The Scout Report page renders a Stories section above discoveries. The opt-in ho
 disabled + `show_home` (nothing is shown), enabled with no report yet (first-report CTA), a current report (counts,
 needs-attention line, the headline story or top finding with its link), and the next scheduled run. Child profiles
 still receive no Hub data.
+
+### Curator feedback from findings
+
+Each "Found by" curator on an item page has "More like this" and "Less like this". The endpoint
+(`POST /api/hub/items/{id}/curator-feedback`) learns up to three distinctive title words, skipping stopwords and words
+the curator already follows (name, subject, keywords, queries, aliases), into `tuned_up` / `tuned_down` on the curator
+(newest 20 kept; a word moves out of the opposite list). In runs, a matching item's keyword or AI score moves ±10 with
+the reason shown ("Less like this: …"); opposite matches cancel. Feedback never lets an item without keyword matches past
+the keyword gate and never excludes anything. The learned words are editable in the curator form.

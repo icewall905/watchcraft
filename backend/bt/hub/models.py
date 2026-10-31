@@ -49,6 +49,9 @@ class Curator(SQLModel, table=True):
     subject: str = ''
     subject_type: str = ''
     aliases: list = J()
+    # Curator feedback from findings ("more like this" / "less relevant"): learned title terms.
+    tuned_up: list = J()
+    tuned_down: list = J()
     report: str = ''
     report_at: float | None = None
     report_refs: list = J()  # item ids; report citation [n] = report_refs[n-1]

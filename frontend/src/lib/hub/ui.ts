@@ -24,7 +24,7 @@ export const emptyCurator = (kind: 'watch' | 'research' = 'watch'): import('./ty
 	name: '', description: '', icon: '🔭', color: '#7c5cff', kind, tone: 'friendly', instructions: '', queries: [], keywords: [], exclusions: [],
 	content_types: [], source_ids: [], interval_hours: 24, enabled: true, ai_enabled: true, min_score: 30, max_per_run: 20,
 	collection_id: null, topic_id: null, alert_enabled: false, alert_keywords: [], alert_min_severity: 'high',
-	subject: '', subject_type: 'topic', aliases: []
+	subject: '', subject_type: 'topic', aliases: [], tuned_up: [], tuned_down: []
 });
 
 export const toneOptions = [
