@@ -2,7 +2,7 @@
 
 The user asked to stop at a good point and leave a handover. This is a tested Source Scout foundation; the larger
 Source Scout and research-team roadmap remains open. **Deployed 2026-10-31:** `10.0.10.73:6646` (public endpoint
-`https://wc.tdgs.org`) runs `f514f64` as image `watchcraft:f514f64` (also tagged `latest`) for the API, worker and
+`https://wc.tdgs.org`) runs `64d2b70` as image `watchcraft:64d2b70` (also tagged `latest`) for the API, worker and
 downloader. See "Deployment record" below. Pending work is tracked outside the repo (see the local `AGENTS.md`).
 
 ## What is implemented
@@ -95,6 +95,21 @@ in the local `todo.md` (which is intentionally ignored by Git).
 - Rollback: `docker tag watchcraft:rollback-20261030T094200Z-880f732 watchcraft:latest` and rerun the compose command
   above (the new tables are additive and ignored by the old release). Restore the backup only if data must be reverted.
 - Still not done: physical TV remote pass and a real topic-search provider test.
+
+## Deployment record — provider metrics, pairing lockout (`64d2b70`, 2026-10-31)
+
+- Covers `f514f64..64d2b70`: source provider metrics and run durations in Team timelines (`e3125cd`, `b7e9b65`);
+  pairing lockout after five wrong codes, pairing form submit fix, secure legacy codes, empty details hidden (`64d2b70`).
+- Backup (online SQLite `.backup`, integrity `ok`, data extras, config, source, running images):
+  `/root/compose/watchcraft-backups/20261031T150002Z-pre-64d2b70`. Rollback image:
+  `watchcraft:rollback-20261031T150002Z-f514f64` (`9cf874c2…`, the image production was running).
+- Isolated copy on `127.0.0.1:6699` from the backup: started twice, no tracebacks, 6 profiles, both existing screens
+  keep their codes. A test screen refused five wrong codes (403) and then the right one (429, locked); Team returned
+  4 agents with 20 of 35 timeline steps carrying source metrics and run durations. The copy was removed.
+- Rollout used rsync **without** `--delete`, so untracked operational files in the live directory stay; a before/after
+  listing showed nothing missing. Files deleted from git must now be removed by hand (none in this range).
+- Production: API, worker and downloader run `watchcraft:64d2b70` (`0e08cc92…`); NVIDIA override checksum matches;
+  health passes locally and publicly; quick check `ok`; `/`, `/sources`, `/team` return 200; no errors after start.
 
 ## Deployment record — search relevance screen, playback pairing (`f514f64`, 2026-10-31)
 
