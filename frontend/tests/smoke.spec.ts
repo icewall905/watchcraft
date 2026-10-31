@@ -35,6 +35,12 @@ async function oskType(page: Page, text: string) {
 	}
 }
 
+// The smoke adds a profile; later specs in the same run expect a single profile (no "Who's watching?" picker).
+test.afterAll(async ({ request }) => {
+	const profiles = await (await request.get('/api/profiles')).json();
+	for (const p of profiles.slice(1)) await request.delete(`/api/profiles/${p.id}`);
+});
+
 test('keyboard-only smoke', async ({ page, request }) => {
 	await resetBackend(request);
 	await freshPage(page);
