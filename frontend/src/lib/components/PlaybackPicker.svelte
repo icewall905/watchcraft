@@ -51,11 +51,11 @@
 				<h3>{playback.selected?.name ?? 'Selected screen'}</h3>
 				<p class="muted small">{playback.selected?.online ? (playback.needsPair ? 'Enter the pairing code shown on that screen to send from this profile.' : 'Tap any video to play it on this screen.') : 'Screen offline. Open WatchCraft on it to reconnect.'}</p>
 				{#if playback.needsPair === playback.selectedId}
-					<form class="pair-row" onsubmit={pair}>
+					<form class="pair-row" onsubmit={(e) => { e.preventDefault(); void pair(); }}>
 						<label for="pair-code">Pairing code</label>
 						<input id="pair-code" maxlength="12" inputmode="numeric" bind:value={code}
 							placeholder="6-digit code" use:focusable={{ group: 'cast' }} />
-						<button class="btn" disabled={!code.trim() || playback.pairing} use:focusable={{ group: 'cast', onSelect: pair }}>Pair</button>
+						<button class="btn" disabled={!code.trim() || playback.pairing} use:focusable={{ group: 'cast' }}>Pair</button>
 					</form>
 				{/if}
 				{#if playback.selected?.state.error}<p role="status">{playback.selected.state.error}</p>{/if}

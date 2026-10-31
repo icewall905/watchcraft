@@ -1,7 +1,7 @@
 """Engine, sessions, settings helpers, agent state/control (shared across processes)."""
 import copy
 import json
-import random
+import secrets
 from contextlib import contextmanager
 from datetime import timedelta
 
@@ -45,12 +45,12 @@ def init_db() -> None:
                 if name not in have:
                     connection.exec_driver_sql(f"ALTER TABLE playbacktarget ADD COLUMN \"{name}\" JSON NULL")
             with Session(connection) as s:
-                paid = False
+                coded = False
                 for t in s.exec(select(PlaybackTarget).where(PlaybackTarget.pair == None)).all():  # noqa: E711
-                    t.pair = {"code": f"{random.randrange(100000, 1000000)}", "profiles": []}
+                    t.pair = {"code": str(secrets.randbelow(900000) + 100000), "profiles": []}
                     s.add(t)
-                    paid = True
-                if paid:
+                    coded = True
+                if coded:
                     s.commit()
         with Session(connection) as s:
             fresh = not s.exec(select(Profile)).first()

@@ -20,6 +20,8 @@ MAX_TARGETS = 10
 MAX_PAIRED = 20
 SEND_WINDOW = 10.0
 SEND_LIMIT = 30
+PAIR_WINDOW = 600.0
+PAIR_FAILS = 5
 
 
 class Registration(BaseModel):
@@ -115,8 +117,16 @@ def pair(target_id: str, body: PairCode, pid: int = Depends(profile_id),
     target = _target(s, target_id)
     if not _household(s, pid):
         raise HTTPException(403, "Open household profiles pair with screens; children cannot.")
-    info = _pair(target)
+    info = {**(target.pair or {}), **_pair(target)}
+    now = time.time()
+    fails = [f for f in info.get("fails", []) if now - f < PAIR_WINDOW]
+    if len(fails) >= PAIR_FAILS:
+        raise HTTPException(429, "Too many wrong pairing codes for this screen. Try again in a few minutes.")
     if not info["code"] or not hmac.compare_digest(info["code"], body.code.strip()):
+        # Count the miss before refusing so a 6-digit code cannot be guessed by trying them all.
+        target.pair = {**info, "fails": fails + [now]}
+        s.add(target)
+        s.commit()
         raise HTTPException(403, "That pairing code does not match this screen.")
     if pid not in info["profiles"]:
         if len(info["profiles"]) >= MAX_PAIRED:

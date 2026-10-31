@@ -153,6 +153,22 @@ def test_upgraded_screen_rediscovering_its_pairing_code():
                       json={'action': 'resume'}).status_code == 409
 
 
+def test_wrong_pairing_codes_lock_the_screen_for_a_while():
+    with TestClient(app) as c:
+        r = c.post('/api/playback/targets', json={'name': 'Guarded'}).json()
+        wrong = '000000' if r['pair_code'] != '000000' else '111111'
+        for n in range(5):
+            assert pair_screen(c, r['id'], wrong).status_code == 403, n
+        # Even the right code is refused until the window passes, so guessing all codes is impractical.
+        assert pair_screen(c, r['id'], r['pair_code']).status_code == 429
+        with session() as s:
+            t = s.get(PlaybackTarget, r['id'])
+            t.pair = {**t.pair, 'fails': [time.time() - 3600] * 5}
+            s.add(t); s.commit()
+        assert pair_screen(c, r['id'], r['pair_code']).status_code == 200
+        assert c.delete(f'/api/playback/targets/{r["id"]}', headers={'X-Receiver-Token': r['token']}).status_code == 200
+
+
 def test_child_profiles_cannot_see_pair_or_command_screens():
     """Child restrictions are enforced at the backend, not by hiding UI picks alone."""
     with TestClient(app) as c:
@@ -169,3 +185,4 @@ def test_child_profiles_cannot_see_pair_or_command_screens():
         assert pair_screen(c, r['id'], r['pair_code'], headers=headers).status_code == 403
         assert c.post(f'/api/playback/targets/{r["id"]}/commands',
                       json={'action': 'pause'}, headers=headers).status_code == 403
+
