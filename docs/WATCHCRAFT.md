@@ -97,33 +97,88 @@ Scout checks RSS, Atom and JSON Feeds advertised by the page or HTTP Link header
 when none are advertised. It validates each candidate using the same public-address, HTTPS, redirect and size checks
 as the Hub. When no valid feed is available, it can test same-host links inside semantic HTML `article` elements as a
 simple article-listing watcher. It also tests up to five advertised or robots.txt XML URL sitemaps. Validated sitemaps
-can be added as sources. Sitemap indexes can follow their first three same-host URL sitemaps; nested indexes are not supported.
+can be added as sources. Sitemap sources follow nested same-host indexes within fixed bounds (see Sitemap change tracking).
 Preview samples before explicitly adding a source, optionally to a curator. Adding
 rechecks the source; the ordinary curator scheduler performs subsequent monitoring.
 
 Runs and milestones are profile-owned and persisted in the existing activity store. Research may be repeated manually
-or scheduled daily/weekly with pause/resume; scheduled runs only suggest sources. A sitemap source returns up to 50
-same-host HTTPS URLs, ordered by last-modified date when present. Entries use URLs as titles, do not fetch article text,
-and do not track changes to existing entries; large undated sitemaps may omit new entries. The scheduler claims due work atomically,
+or scheduled daily/weekly with pause/resume; scheduled runs only suggest sources. The scheduler claims due work atomically,
 limits concurrent jobs, and disables plans when a profile becomes child-restricted. A run examines at most three search
 results and five feed candidates per site; results can miss relevant sources. AI-generated watcher rules, automatic
-source adoption, complete sitemap index traversal, advanced page-change/browser watchers, repair and automated relevance scoring remain
-planned. This is a foundation, not the full autonomous research-team roadmap.
+source adoption (OFF/SUGGEST/AUTO policies), browser watchers and automated relevance scoring remain planned.
+
+### Watcher rules
+
+Article listing, page change and sitemap sources have editable, declarative rules under **Sources → Watcher rules**.
+Rules are data only: CSS selectors and URL path patterns such as `/blog/*`. No source runs code supplied by a person
+or an agent. Selectors use tags, classes, IDs and attributes with at most three steps, at most one of them an
+any-depth (space) step, the rest direct children (`main .post > h2`), and four comma alternatives. Pseudo-classes such
+as `:not` or `:nth-child` and the `~` combinator are refused. With selector rules, pages deeper than 64 levels or larger
+than 50,000 elements are refused and at most 1,000 item containers are read. Selector rules also run in a separate
+process that is stopped after 20 seconds, so a page built to make matching slow fails that check instead of tying up
+the server. Default rules use no selectors, run in the server process and work on any page.
+
+- **Article listing:** item container, link, title and date selectors, allowed/ignored path patterns, ignored page
+  areas, and dropping query strings. Default rules are unchanged: every same-host link with a title inside an
+  `<article>`. With an item container, each item gives one link: a headline's own link wins over a leading image or
+  "Read more" link. Generic link texts ("Read more", "Continue reading") are never used as titles.
+- **Page change:** a content-area selector, ignored areas, and an optional alert when the page changes by at least a
+  chosen number of characters.
+- **Sitemap:** allowed/ignored path patterns and dropping query strings.
+
+**Test rules** runs them against the live page and shows extracted titles, URLs, dates and excerpts without saving.
+**Save** tests again and refuses rules whose test fails unless you choose **Save anyway** (for example while a site is
+down); a saved rule set is never reported as working without that live result. Every change is kept as a revision
+(the rules in service before the first change are kept as "original"), and **Restore** re-applies one with a fresh
+test; a restore whose test fails also needs **Restore anyway**. Different rules on the same URL never share cached
+responses. Changing a source's URL clears its rules and their history. After a page watcher's rules change, the first
+observation under the new rules is recorded in history but never alerted, and a run that started under the old rules
+records nothing.
+
+### Sitemap change tracking
+
+Sitemap sources follow nested same-host sitemap indexes breadth-first (at most 50 documents, three index levels and
+5,000 URLs), reading each index's newest sitemaps first by lastmod, and read gzip-compressed sitemaps up to 20 MB
+expanded. The root may redirect (for example to `www.`); children must stay on that host. An unreadable child is
+skipped; the check fails only if nothing usable remains. Source Scout validates a sitemap by reading at most four
+documents. Every listed URL is remembered per source, and each curator keeps its own position: its first read of a
+sitemap uses the 50 most recently modified URLs, later reads every URL that appeared or got a newer lastmod since its
+previous read, whichever curator's run noticed it. **View changes** lists new and updated URLs. URLs no
+longer listed for 30 days are forgotten. Entries still use the URL as their title and article text is not fetched;
+an updated URL that a curator already found is not reported as a new discovery.
+
+### Source health and repair
+
+Each source shows a health state from its last 20 checks: **healthy**, **degraded**, **broken**, **paused** or
+**unknown**, with success rate, typical item count, trend and plain-language signals (rate limiting, refused access,
+outage, rules extracting nothing, format change, or far fewer items than usual, which suggests a page redesign).
+Three failed checks in a row, two in a row that extracted nothing, or three successful checks with no items mark a
+source broken.
+
+**Repair** revalidates the current rules, asks Source Scout's inspector for other validated ways to follow the site
+(feeds first), re-reads the page structure, and proposes up to three rule sets. Each proposal has passed its own
+live extraction and is compared with the typical count and the current sample. Proposing changes nothing; **Apply**
+saves a proposal as a revision. A page watcher whose content area disappeared is offered the whole page instead.
+With **Repair automatically** enabled, a broken listing or page watcher applies the best proposal on its own, at most
+once a day: a listing only if it extracts at least three items and at least half the usual number, a page watcher only
+if the whole page extracts again. The previous rules remain available for restore, and a failed attempt never fails
+the curator run. Alternatives such as a newly found feed are only suggested, never added automatically.
 
 ### Page change watcher
 
 Add a **Page change watcher** under Sources and attach it to a curator. Scout can also suggest one when a site has
 readable text but no usable feed, listing or sitemap; adding it rechecks the page. Successful curator runs fetch the public
 HTTPS page and retain the first observation as a baseline, then save a revision when its extracted title or readable
-text changes. Open **View history** on the source to compare up to 20 retained observations. The before/after excerpt
-spans the first through last change and can include unchanged words; full observed text remains available. Connection tests do not
+text changes. Open **View history** on the source to compare up to 20 retained observations; each shows the paragraphs added and
+removed since the previous observation, and the full observed text remains available. Connection tests do not
 create a baseline. Revisions belong to the source's profile and are removed when the source or profile is deleted,
 or when the source URL changes. Pausing the source or detaching it from curators stops checks.
 
-This is basic text comparison, not a semantic change detector: dynamic page content may cause noise, navigation and
-scripts are excluded, only the first 20,000 extracted characters are compared, and JavaScript rendering is not
-supported. Changes appear in source history, not as new Discover items or notifications. Polling is per curator;
-configurable extraction rules remain planned. The revision table is additive and is created at
+This is text comparison, not a semantic change detector: dynamic page content may cause noise (narrow it with a
+content-area selector and ignored areas), navigation and scripts are excluded, only the first 20,000 extracted
+characters are compared, and JavaScript rendering is not supported. Changes appear in source history and, when the
+watcher's change alert is on, as one alert per page in Alerts that is raised again on each later change. They are
+not new Discover items. The revision table is additive and is created at
 startup, so follow the backup and restore procedure before deploying.
 
 ### Source check history
@@ -131,7 +186,7 @@ startup, so follow the backup and restore procedure before deploying.
 Each source can show its latest 20 recorded checks, including curator runs, connection tests and successful Scout
 validation. A multi-query run that returns results but also fails a query is marked partial, with the error retained.
 Older checks from before this feature are not reconstructed. History belongs to the source's profile and is removed
-with the source or profile, or when its URL changes. This history does not yet diagnose trends or repair sources.
+with the source or profile, or when its URL changes. Source health and repair (above) are computed from it.
 
 ### Shared source polling
 

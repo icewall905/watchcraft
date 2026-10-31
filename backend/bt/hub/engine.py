@@ -6,15 +6,15 @@ import re
 import time
 from urllib.parse import urlsplit
 
-from sqlalchemy import text, update
+from sqlalchemy import delete, text, update
 from sqlmodel import Session, select
 
 from .. import curation
 from ..access import hub_allowed
 from ..db import engine as db_engine, get_settings, session
-from . import activity, ai, polling, slots, narrate
+from . import activity, ai, polling, slots, narrate, watchers
 from .models import (Alert, Briefing, CollectionItem, ContentItem, Curator, CuratorDiscovery, CuratorRun,
-                     CuratorSource, PageRevision, Source, SourceCheck, TopicItem)
+                     CuratorSource, PageRevision, SitemapEntry, Source, SourceCheck, TopicItem)
 from .providers import PROVIDERS
 
 log = logging.getLogger(__name__)
@@ -23,22 +23,25 @@ SEVERITY = ['info', 'low', 'medium', 'high', 'critical']
 TRACKING = re.compile(r'^(utm_[a-z]+|fbclid|gclid|mc_cid|mc_eid|ref|ref_src)$', re.I)
 
 
-def record_page_revision(src: Source, data: dict, observed_at: float | None = None) -> None:
-    """Record a changed observation, serializing concurrent checks of the same source."""
+def record_page_revision(src: Source, data: dict, observed_at: float | None = None) -> PageRevision | None:
+    """Record a changed observation, serializing concurrent checks of the same source.
+
+    Returns the previous observation when a real change (not the first baseline) was saved."""
     title, body = data['title'], data['body']
     digest = hashlib.sha256((title + '\0' + body).encode()).hexdigest()
     with session() as s:
         s.exec(text('BEGIN IMMEDIATE'))
         current = s.get(Source, src.id)
         if (not current or current.profile_id != src.profile_id or not current.enabled
-                or current.url != src.url or not hub_allowed(s, src.profile_id)):
-            return
+                or current.url != src.url or (current.config or {}) != (src.config or {})
+                or not hub_allowed(s, src.profile_id)):
+            return None  # a run that started before a rule change must not record old-rule text
         last = s.exec(select(PageRevision).where(PageRevision.source_id == src.id)
                       .order_by(PageRevision.id.desc()).limit(1)).first()
         if last and observed_at is not None and last.observed_at > observed_at:
-            return
+            return None
         if last and last.digest == digest:
-            return
+            return None
         s.add(PageRevision(source_id=src.id, profile_id=src.profile_id, digest=digest, title=title, body=body,
                            observed_at=observed_at if observed_at is not None else time.time()))
         s.flush()
@@ -46,7 +49,78 @@ def record_page_revision(src: Source, data: dict, observed_at: float | None = No
                      .order_by(PageRevision.id.desc()).offset(20)).all()
         for revision in old:
             s.delete(revision)
+        if last:
+            s.expunge(last)
         s.commit()
+        return last
+
+
+def page_change_alert(c: Curator, src: Source, data: dict, before: str) -> bool:
+    """Raise (or re-raise) one alert per watched page when its change is large enough."""
+    change = watchers.diff(before, data['body'])
+    size = change['added_chars'] + change['removed_chars']
+    if not size or size < (src.config or {}).get('min_change_chars', 0):
+        return False
+    added = next((op['text'] for op in change['ops'] if op['op'] == 'added'), '')
+    reason = (f"{change['added_chars']} characters added, {change['removed_chars']} removed"
+              + (f': “{added[:160]}”' if added else '.'))
+    with session() as s:
+        if not hub_allowed(s, c.profile_id):
+            return False
+        item = upsert(s, dict(data), 'page_watch')
+        if not item:
+            return False
+        alert = (s.exec(select(Alert).where(Alert.profile_id == c.profile_id, Alert.item_id == item.id)).first()
+                 or Alert(profile_id=c.profile_id, item_id=item.id))
+        alert.curator_id, alert.severity, alert.state, alert.snooze_until = c.id, 'info', 'new', None
+        alert.title, alert.reason, alert.created_at = f'Page changed: {item.title}'[:500], reason[:1000], time.time()
+        s.add(alert); s.commit()
+    return True
+
+
+def track_sitemap(src: Source, items: list[dict], curator_id: int, run_start: float) -> list[dict]:
+    """Remember every listed URL and return what this curator has not had from this source yet.
+
+    Each curator-source link keeps its own cursor (the start of the run that last read it): the first read gets the
+    50 most recently modified URLs, later reads every URL that appeared or got a newer lastmod since the cursor,
+    whichever curator's run noticed it. Change times are database write times, never cached fetch times."""
+    with session() as s:
+        s.exec(text('BEGIN IMMEDIATE'))
+        current = s.get(Source, src.id)
+        if not current or current.profile_id != src.profile_id or current.url != src.url or not hub_allowed(s, src.profile_id):
+            return []
+        now = time.time()
+        known = dict(s.exec(select(SitemapEntry.url, SitemapEntry.lastmod).where(SitemapEntry.source_id == src.id)).all())
+        baseline, listed = not known, []
+        for d in items:  # crawl_sitemap returns each URL once
+            lastmod = (d.get('meta') or {}).get('updated_at')
+            if d['url'] not in known:
+                s.add(SitemapEntry(source_id=src.id, profile_id=src.profile_id, url=d['url'], lastmod=lastmod,
+                                   first_seen=now, last_seen=now, changed_at=now, change='baseline' if baseline else 'new'))
+                continue
+            listed.append(d['url'])
+            if lastmod and (known[d['url']] or 0) < lastmod:
+                s.exec(update(SitemapEntry).where(SitemapEntry.source_id == src.id, SitemapEntry.url == d['url'])
+                       .values(lastmod=lastmod, changed_at=now, change='updated'))
+        for i in range(0, len(listed), 500):
+            s.exec(update(SitemapEntry).where(SitemapEntry.source_id == src.id, SitemapEntry.url.in_(listed[i:i + 500]))
+                   .values(last_seen=now))
+        # Forget URLs the sitemap stopped listing a month ago.
+        s.exec(delete(SitemapEntry).where(SitemapEntry.source_id == src.id, SitemapEntry.last_seen < now - 30 * 86400))
+        link = s.get(CuratorSource, (curator_id, src.id))
+        cursor = link.sitemap_cursor if link else None
+        if link:
+            link.sitemap_cursor = run_start
+            s.add(link)
+        s.flush()
+        fresh = {} if cursor is None else {e.url: e.change for e in s.exec(select(SitemapEntry).where(
+            SitemapEntry.source_id == src.id, SitemapEntry.changed_at > cursor, SitemapEntry.change != 'baseline')).all()}
+        s.commit()
+    titled = lambda d, change=None: {**d, 'title': d.get('title') or d['url'],
+                                      'meta': {**(d.get('meta') or {}), **({'change': change} if change else {})}}
+    if cursor is None:
+        return [titled(d) for d in items[:50]]
+    return [titled(d, fresh[d['url']]) for d in items if d['url'] in fresh][:50]
 
 
 def record_source_check(src: Source, trigger: str, count: int, error: str = '', checked_at: float | None = None) -> bool:
@@ -243,22 +317,29 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
             activity.emit(c, r.id, 'source_error', narrate.say(c.tone, 'curator.source_unavailable', seed=f'{r.id}-{src.id}',
                             label=label), source_id=src.id, error=reason)
             errors.append({'source': src.name or src.provider, 'message': reason}); continue
-        got, failed, checked_at, shared = 0, None, None, False
+        got, failed, checked_at, shared, total = 0, None, None, False, None
         for q in (queries if prov.mode == 'query' else ['']):
             with session() as s:
                 if not hub_allowed(s, c.profile_id):
                     raise ValueError('Hub access was restricted during the run.')
             try:
                 if prov.mode == 'feed':
-                    result = polling.fetch(prov, src.url, _safe_error, force=r.trigger == 'manual')
+                    result = polling.fetch(prov, src.url, _safe_error, force=r.trigger == 'manual', config=src.config or None)
                     checked_at, shared = result.fetched_at, result.shared
                     if result.error:
                         raise ValueError(result.error)
                     fetched = result.items
                 else:
-                    fetched = prov.fetch(src.url, q)
+                    fetched = prov.run(src.url, q, src.config)
                 if src.provider == 'page_watch':
-                    record_page_revision(src, fetched[0], checked_at)
+                    before = record_page_revision(src, fetched[0], checked_at)
+                    # Text seen under different rules is not a page change worth an alert.
+                    if (before is not None and (src.config or {}).get('alert_on_change')
+                            and before.observed_at >= (src.rules_changed_at or 0)):
+                        page_change_alert(c, src, fetched[0], before.body)
+                elif src.provider == 'sitemap':
+                    total = len(fetched)
+                    fetched = track_sitemap(src, fetched, c.id, r.started_at)
                 for d in fetched:
                     candidates.append((src, q, dict(d))); got += 1
             except Exception as e:  # noqa: BLE001 — one source never fails the run
@@ -266,7 +347,14 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
                 failed = _safe_error(e)
         if prov.mode == 'query' and not queries:
             failed = 'No search queries configured.'
-        record_source_check(src, 'shared' if shared else 'curator', got, failed or '', checked_at)
+        # A sitemap's health counts every listed URL, not just this run's changes.
+        record_source_check(src, 'shared' if shared else 'curator', got if total is None else total, failed or '', checked_at)
+        if src.provider in watchers.CONFIGURABLE and (src.config or {}).get('auto_repair'):
+            from . import repair
+            try:
+                repair.auto(src)
+            except Exception:  # noqa: BLE001 — a failed repair attempt never fails the curator run
+                log.exception('automatic repair of source %s failed', src.id)
         if failed:
             errors.append({'source': src.name or src.provider, 'message': failed})
             activity.emit(c, r.id, 'source_error', narrate.say(c.tone, 'curator.source_error', seed=f'{r.id}-{src.id}',

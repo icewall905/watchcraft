@@ -9,6 +9,7 @@ import time
 from urllib.parse import urlsplit, urlunsplit, urljoin
 
 from sqlmodel import Field, SQLModel
+from .urls import canonical  # noqa: F401  (kept importable from here)
 from .hub.models import Curator  # noqa: F401  (re-export for older imports)
 
 class Discovery(SQLModel, table=True):
@@ -21,12 +22,6 @@ class Discovery(SQLModel, table=True):
     provider: str
     discovered_at: float = Field(default_factory=time.time)
     saved: bool = False
-
-def canonical(url):
-    p = urlsplit(url)
-    if p.scheme != 'https' or not p.hostname or p.username or p.password or p.port not in (None, 443):
-        raise ValueError('Use a public HTTPS URL on port 443.')
-    return urlunsplit(('https', p.netloc.lower(), p.path or '/', p.query, ''))
 
 FEED_TYPES = ('application/atom+xml', 'application/rss+xml', 'application/xml', 'text/xml', 'application/json', 'application/feed+json')
 HTML_TYPES = ('text/html', 'application/xhtml+xml')

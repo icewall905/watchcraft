@@ -70,6 +70,35 @@ class Source(SQLModel, table=True):
     last_checked: float | None = None
     item_count: int = 0
     created_at: float = Field(default_factory=time.time)
+    config: dict = J({})  # declarative watcher rules (see hub/watchers.py); {} = provider defaults
+    last_repair: float | None = None  # last automatic repair attempt
+    rules_changed_at: float | None = None  # page changes across a rule change are not alerted
+
+
+class WatcherRevision(SQLModel, table=True):
+    """Every tested watcher-rule change, so a source can be inspected and rolled back."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source_id: int = Field(index=True)
+    profile_id: int = Field(index=True)
+    created_at: float = Field(default_factory=time.time)
+    config: dict = J({})
+    reason: str = ''  # edit | repair | auto-repair | rollback
+    item_count: int = 0
+    sample: list = J()
+
+
+class SitemapEntry(SQLModel, table=True):
+    """URLs a sitemap source has listed, to tell new and updated pages from known ones."""
+    __table_args__ = (UniqueConstraint('source_id', 'url'),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    source_id: int = Field(index=True)
+    profile_id: int = Field(index=True)
+    url: str
+    lastmod: float | None = None
+    first_seen: float = Field(default_factory=time.time)
+    last_seen: float = Field(default_factory=time.time)
+    changed_at: float = Field(default_factory=time.time, index=True)
+    change: str = 'new'  # baseline | new | updated
 
 
 class PageRevision(SQLModel, table=True):
@@ -132,6 +161,7 @@ class ScoutRun(SQLModel, table=True):
 class CuratorSource(SQLModel, table=True):
     curator_id: int = Field(primary_key=True)
     source_id: int = Field(primary_key=True, index=True)
+    sitemap_cursor: float | None = None  # start of the run that last read this sitemap (see engine.track_sitemap)
 
 
 class ContentItem(SQLModel, table=True):

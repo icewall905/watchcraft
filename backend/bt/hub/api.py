@@ -2,6 +2,7 @@
 import json
 import re
 import time
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
@@ -14,9 +15,9 @@ from ..access import hub_allowed, require_admin, require_hub
 from ..api.core import profile_id
 from ..db import get_settings, save_setting, session
 from ..models import AgentEvent, Download
-from . import activity, ai, engine, polling, scout, slots
+from . import activity, ai, engine, polling, scout, slots, watchers
 from .models import (Alert, Briefing, BriefingIssue, CaptureJob, CapturedAsset, CapturedPage, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
-                     CuratorRun, CuratorSource, ItemState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, ScoutReportConfig, ScoutReportIssue, Source, SourceCheck, Topic, TopicItem)
+                     CuratorRun, CuratorSource, ItemState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, ScoutReportConfig, ScoutReportIssue, SitemapEntry, Source, SourceCheck, Topic, TopicItem, WatcherRevision)
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
 from .templates import TEMPLATES
 
@@ -522,8 +523,12 @@ class SourceIn(BaseModel):
     enabled: bool | None = None
 
 
-def source_dict(s, src: Source) -> dict:
-    return {**src.model_dump(), 'curator_ids': list(s.exec(select(CuratorSource.curator_id).where(CuratorSource.source_id == src.id)).all())}
+def source_dict(s, src: Source, checks: list | None = None) -> dict:
+    from . import repair
+    health = watchers.health(checks, src.enabled, src.provider) if checks is not None else repair.source_health(s, src)
+    return {**src.model_dump(), 'config': src.config or {}, 'configurable': src.provider in watchers.CONFIGURABLE,
+            'health': health,
+            'curator_ids': list(s.exec(select(CuratorSource.curator_id).where(CuratorSource.source_id == src.id)).all())}
 
 
 def _norm_source(provider: str, url: str) -> str:
@@ -552,7 +557,11 @@ def get_or_create_source(s, pid: int, provider: str, url: str = '', name: str = 
 @router.get('/sources')
 def sources(pid: int = Depends(profile_id)):
     with session() as s:
-        return [source_dict(s, x) for x in s.exec(select(Source).where(Source.profile_id == pid).order_by(Source.provider, Source.name)).all()]
+        rows = s.exec(select(Source).where(Source.profile_id == pid).order_by(Source.provider, Source.name)).all()
+        checks = {}
+        for c in s.exec(select(SourceCheck).where(SourceCheck.profile_id == pid).order_by(SourceCheck.id.desc())).all():
+            checks.setdefault(c.source_id, []).append(c)  # at most 20 kept per source
+        return [source_dict(s, x, checks.get(x.id, [])[:20]) for x in rows]
 
 
 @router.post('/sources')
@@ -575,6 +584,10 @@ def update_source(sid: int, body: SourceIn, pid: int = Depends(profile_id)):
                 raise HTTPException(409, 'That source already exists.')
             s.exec(delete(PageRevision).where(PageRevision.source_id == sid))
             s.exec(delete(SourceCheck).where(SourceCheck.source_id == sid))
+            s.exec(delete(SitemapEntry).where(SitemapEntry.source_id == sid))
+            # Rules and their history describe the old page, so they do not follow the source to a new URL.
+            s.exec(delete(WatcherRevision).where(WatcherRevision.source_id == sid))
+            src.config, src.last_repair = {}, None
             src.url = url
             src.last_checked = src.last_success = None; src.last_error = ''; src.item_count = 0
         s.add(src); s.commit(); s.refresh(src)
@@ -588,6 +601,8 @@ def delete_source(sid: int, pid: int = Depends(profile_id)):
         s.exec(delete(CuratorSource).where(CuratorSource.source_id == sid))
         s.exec(delete(PageRevision).where(PageRevision.source_id == sid))
         s.exec(delete(SourceCheck).where(SourceCheck.source_id == sid))
+        s.exec(delete(SitemapEntry).where(SitemapEntry.source_id == sid))
+        s.exec(delete(WatcherRevision).where(WatcherRevision.source_id == sid))
         s.delete(src); s.commit()
         return {'ok': True}
 
@@ -598,9 +613,112 @@ def source_revisions(sid: int, pid: int = Depends(profile_id)):
         src = owned(s, Source, sid, pid)
         if src.provider != 'page_watch':
             raise HTTPException(422, 'This source is not a page change watcher.')
-        return [r.model_dump(exclude={'digest', 'profile_id'}) for r in
-                s.exec(select(PageRevision).where(PageRevision.source_id == sid, PageRevision.profile_id == pid)
-                       .order_by(PageRevision.id.desc()).limit(20)).all()]
+        rows = s.exec(select(PageRevision).where(PageRevision.source_id == sid, PageRevision.profile_id == pid)
+                      .order_by(PageRevision.id.desc()).limit(20)).all()
+        # Each revision carries its paragraph-level changes from the observation before it.
+        return [{**r.model_dump(exclude={'digest', 'profile_id'}),
+                 'diff': watchers.diff(rows[i + 1].body, r.body) if i + 1 < len(rows) else None}
+                for i, r in enumerate(rows)]
+
+
+@router.get('/sources/{sid}/changes')
+def source_changes(sid: int, pid: int = Depends(profile_id)):
+    """URLs a sitemap source has seen appear or update, newest first."""
+    with session() as s:
+        src = owned(s, Source, sid, pid)
+        if src.provider != 'sitemap':
+            raise HTTPException(422, 'This source is not a sitemap.')
+        base = select(SitemapEntry).where(SitemapEntry.source_id == sid, SitemapEntry.profile_id == pid)
+        counts = dict(s.exec(select(SitemapEntry.change, func.count()).where(SitemapEntry.source_id == sid,
+                      SitemapEntry.profile_id == pid).group_by(SitemapEntry.change)).all())
+        rows = s.exec(base.where(SitemapEntry.change != 'baseline').order_by(SitemapEntry.changed_at.desc()).limit(50)).all()
+        return {'total': sum(counts.values()), 'new': counts.get('new', 0), 'updated': counts.get('updated', 0),
+                'changes': [r.model_dump(include={'url', 'lastmod', 'first_seen', 'changed_at', 'change'}) for r in rows]}
+
+
+class WatcherIn(BaseModel):
+    config: dict = {}
+    reason: Literal['edit', 'repair'] = 'edit'
+    force: bool = False  # save even though the live test failed (e.g. the site is down right now)
+
+
+def _rules(src: Source, config: dict) -> dict:
+    try:
+        return watchers.normalize(src.provider, config)
+    except watchers.RuleError as e:
+        raise HTTPException(422, str(e))
+
+
+@router.get('/sources/{sid}/watcher')
+def source_watcher(sid: int, pid: int = Depends(profile_id)):
+    with session() as s:
+        src = owned(s, Source, sid, pid)
+        revisions = s.exec(select(WatcherRevision).where(WatcherRevision.source_id == sid, WatcherRevision.profile_id == pid)
+                           .order_by(WatcherRevision.id.desc()).limit(20)).all()
+        return {'config': src.config or {}, 'fields': sorted(watchers.FIELDS.get(src.provider, [])),
+                'revisions': [r.model_dump(exclude={'profile_id'}) for r in revisions]}
+
+
+@router.post('/sources/{sid}/watcher/test')
+def test_watcher(sid: int, body: WatcherIn, pid: int = Depends(profile_id)):
+    """Try rules against the live page without saving them."""
+    from . import repair
+    with session() as s:
+        src = owned(s, Source, sid, pid)
+    config = _rules(src, body.config)
+    return {'config': config, **repair.test(src, config)}
+
+
+@router.put('/sources/{sid}/watcher')
+def save_watcher(sid: int, body: WatcherIn, pid: int = Depends(profile_id)):
+    """Apply rules only with a live test result; a failed test is not saved unless forced."""
+    from . import repair
+    with session() as s:
+        src = owned(s, Source, sid, pid)
+    config = _rules(src, body.config)
+    result = repair.test(src, config)
+    return _apply_rules(src, sid, config, body.reason, result, body.force)
+
+
+def _apply_rules(src: Source, sid: int, config: dict, reason: str, result: dict, force: bool) -> dict:
+    from . import repair
+    if not result['ok'] and not force:
+        return {'saved': False, 'test': result}
+    row = repair.save(src, config, reason, result)
+    if row is None:
+        raise HTTPException(404, 'Source not found')
+    engine.record_source_check(row, 'test', result['count'], result['error'] if not result['ok'] else '')
+    with session() as s:
+        return {'saved': True, 'test': result, 'source': source_dict(s, s.get(Source, sid))}
+
+
+class RollbackIn(BaseModel):
+    force: bool = False
+
+
+@router.post('/sources/{sid}/watcher/rollback/{rev_id}')
+def rollback_watcher(sid: int, rev_id: int, body: RollbackIn | None = None, pid: int = Depends(profile_id)):
+    """Re-apply earlier rules; like saving, a failed live test needs force."""
+    from . import repair
+    with session() as s:
+        src = owned(s, Source, sid, pid)
+        rev = s.get(WatcherRevision, rev_id)
+        if not rev or rev.source_id != sid or rev.profile_id != pid:
+            raise HTTPException(404, 'Revision not found')
+        config = _rules(src, rev.config)
+    result = repair.test(src, config)
+    return _apply_rules(src, sid, config, 'rollback', result, bool(body and body.force))
+
+
+@router.post('/sources/{sid}/repair')
+def repair_source(sid: int, pid: int = Depends(profile_id)):
+    """Diagnose and propose tested fixes; applying one is a separate, explicit step."""
+    from . import repair
+    with session() as s:
+        src = owned(s, Source, sid, pid)
+        if src.provider not in PROVIDERS:
+            raise HTTPException(422, 'Unknown provider')
+    return repair.propose(src)
 
 
 @router.get('/sources/{sid}/checks')
@@ -624,19 +742,19 @@ def test_source(sid: int, pid: int = Depends(profile_id)):
     try:
         checked_at = None
         if p.mode == 'feed':
-            result = polling.fetch(p, src.url, engine._safe_error, force=True)
+            result = polling.fetch(p, src.url, engine._safe_error, force=True, config=src.config or None)
             checked_at = result.fetched_at
             if result.error:
                 raise ValueError(result.error)
             got = result.items
         else:
-            got = p.fetch(src.url, 'open source' if p.mode == 'query' else '')
+            got = p.run(src.url, 'open source' if p.mode == 'query' else '', src.config)
     except Exception as e:  # noqa: BLE001
         err = engine._safe_error(e)
         engine.record_source_check(src, 'test', 0, err, checked_at)
         return {'ok': False, 'count': 0, 'sample': [], 'error': err}
     engine.record_source_check(src, 'test', len(got), checked_at=checked_at)
-    return {'ok': True, 'count': len(got), 'sample': [{'title': d.get('title', ''), 'url': d.get('url', '')} for d in got[:5]], 'error': ''}
+    return {'ok': True, 'count': len(got), 'sample': watchers.preview(got, 5), 'error': ''}
 
 
 # ---------- Source Scout
@@ -1566,5 +1684,5 @@ def delete_profile_data(s: Session, pid: int) -> None:
     s.exec(delete(TopicItem).where(TopicItem.topic_id.in_(tids or [0])))
     s.exec(delete(AgentEvent).where(AgentEvent.kind.in_(['source_scout', activity.KIND]), AgentEvent.profile_id == pid))
     s.exec(delete(ScoutReportConfig).where(ScoutReportConfig.profile_id == pid))
-    for model in (CaptureJob, CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, PageRevision, SourceCheck, Source, Curator, ScoutRun, ScoutPlan, ScoutReportIssue):
+    for model in (CaptureJob, CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, PageRevision, SourceCheck, SitemapEntry, WatcherRevision, Source, Curator, ScoutRun, ScoutPlan, ScoutReportIssue):
         s.exec(delete(model).where(model.profile_id == pid))

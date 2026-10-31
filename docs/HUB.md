@@ -107,9 +107,19 @@ GET/POST         collections          {id,name,description,icon,color,view,pinne
 PATCH/DELETE     collections/{id}
 POST/DELETE      collections/{id}/items/{item_id}
 
-GET/POST         sources              {id,provider,name,url,enabled,last_success,last_error,last_checked,item_count,curator_ids[]}
+GET/POST         sources              {id,provider,name,url,enabled,last_success,last_error,last_checked,item_count,curator_ids[],
+                                       config{},configurable,last_repair,health{status,signals[],success_rate,empty_rate,
+                                       consecutive_failures,typical_count,trend}}
 PATCH/DELETE     sources/{id}
-POST             sources/{id}/test    {ok,count,sample:[{title,url}],error}
+POST             sources/{id}/test    {ok,count,sample:[{title,url,published_at,excerpt}],error}
+GET              sources/{id}/checks      last 20 checks
+GET              sources/{id}/revisions   page_watch observations, each with diff{ops[{op,text}],added_chars,removed_chars}
+GET              sources/{id}/changes     sitemap: {total,new,updated,changes[{url,lastmod,first_seen,changed_at,change}]}
+GET              sources/{id}/watcher     {config,fields[],revisions[{id,created_at,config,reason,item_count,sample}]}
+POST             sources/{id}/watcher/test        {config} → {config,ok,count,sample,error} (dry run, nothing saved)
+PUT              sources/{id}/watcher             {config,reason?,force?} → {saved,test,source?}; a failed live test is not saved unless forced
+POST             sources/{id}/watcher/rollback/{rev}  re-applies an earlier rule set, with a fresh test
+POST             sources/{id}/repair      {health,current,proposals[{config,…test,comparison}],alternates[],steps[]} (applies nothing)
 
 GET/POST         curators             Curator
 GET/PATCH/DELETE curators/{id}        detail adds {runs:[Run], recent:[Item]}

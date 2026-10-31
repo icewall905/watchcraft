@@ -44,3 +44,11 @@ export const sinceTs = (days: string | null) => {
 };
 /** Filter keys shared by ItemFilters and pages. */
 export const FILTER_KEYS = ['type', 'provider', 'curator', 'unread', 'saved', 'min_score', 'since', 'sort'] as const;
+
+/** Watcher rules as compact "key: value" text; empty rules mean the provider defaults. */
+export const describeRules = (config: Record<string, unknown> | object | null | undefined): string => {
+	const parts = Object.entries(config ?? {})
+		.filter(([, v]) => v !== undefined && v !== null && v !== '' && !(Array.isArray(v) && !v.length))
+		.map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : String(v)}`);
+	return parts.length ? parts.join(' · ') : 'default rules';
+};

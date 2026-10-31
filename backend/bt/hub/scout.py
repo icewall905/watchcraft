@@ -4,11 +4,12 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
 from .. import curation
-from . import providers, narrate
+from . import providers, narrate, watchers
 from .extract import clean
 
 MAX_SITES = 3
 MAX_FEEDS = 5
+SITEMAP_PROBE = 4  # documents read to validate a sitemap; monitoring later reads the full bounded tree
 
 
 class Links(HTMLParser):
@@ -58,7 +59,7 @@ def inspect_site(url, emit, tone='friendly'):
             items = providers.parse_feed(data, final)
             return [suggestion(final, '', items)], []
         except ValueError:
-            items = providers.sitemap(final)
+            items = watchers.crawl_sitemap(final, max_docs=SITEMAP_PROBE)
             return [{**suggestion(final, '', items), 'provider': 'sitemap'}], [final]
     parser = Links()
     parser.feed(data.decode('utf-8', errors='replace'))
@@ -102,7 +103,7 @@ def inspect_site(url, emit, tone='friendly'):
     sitemaps = list(dict.fromkeys(u for href in sitemap_refs if (u := safe_url(final, href))))[:5]
     for candidate in sitemaps:
         try:
-            items = providers.sitemap(candidate)
+            items = watchers.crawl_sitemap(candidate, max_docs=SITEMAP_PROBE)
             found.append({**suggestion(candidate, clean(parser.title, 100), items), 'provider': 'sitemap'})
             emit('validated', narrate.say(tone, 'scout.validated_sitemap', seed=candidate,
                                           urls=narrate.phrase(len(items), 'sample URL')))
@@ -118,7 +119,7 @@ def inspect_site(url, emit, tone='friendly'):
 
 def suggestion(url, title, items):
     return {'provider': 'rss', 'url': url, 'name': title or urlsplit(url).hostname or 'Feed',
-            'count': len(items), 'sample': [{'title': x.get('title', ''), 'url': x.get('url', '')} for x in items[:5]],
+            'count': len(items), 'sample': [{'title': x.get('title') or x.get('url', ''), 'url': x.get('url', '')} for x in items[:5]],
             'validated': True}
 
 

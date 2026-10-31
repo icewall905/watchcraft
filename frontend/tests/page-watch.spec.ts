@@ -7,7 +7,8 @@ test('page watcher history compares real retained observations', async ({ page, 
 	const source = await response.json();
 	await page.route(`**/api/hub/sources/${source.id}/revisions`, async route => {
 		await route.fulfill({ json: [
-			{ id: 2, source_id: source.id, observed_at: 1000000001, title: 'New title', body: 'Release two is available now' },
+			{ id: 2, source_id: source.id, observed_at: 1000000001, title: 'New title', body: 'Release two is available now',
+				diff: { ops: [{ op: 'removed', text: 'Release one is available now' }, { op: 'added', text: 'Release two is available now' }], added_chars: 28, removed_chars: 28, truncated: false } },
 			{ id: 1, source_id: source.id, observed_at: 1000000000, title: 'Old title', body: 'Release one is available now' }
 		] });
 	});
@@ -27,10 +28,10 @@ test('page watcher history compares real retained observations', async ({ page, 
 		await row.getByText('Page changed', { exact: false }).click();
 		await expect(row.getByText('Title before:')).toBeVisible();
 		await expect(row.locator('p').filter({ hasText: 'Title before:' })).toContainText('Old title');
-		await expect(row.getByText('Before: one')).toBeVisible();
-		await expect(row.getByText('After: two')).toBeVisible();
+		await expect(row.locator('.diff li.removed')).toContainText('Release one is available now');
+		await expect(row.locator('.diff li.added')).toContainText('Release two is available now');
 		await row.getByText('Full observed text').first().click();
-		await expect(row.getByText('Release two is available now')).toBeVisible();
+		await expect(row.locator('p').filter({ hasText: 'Release two is available now' }).first()).toBeVisible();
 	} finally {
 		await request.delete(`/api/hub/sources/${source.id}`);
 	}

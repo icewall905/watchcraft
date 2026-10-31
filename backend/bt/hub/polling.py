@@ -1,6 +1,6 @@
 """Bounded, durable shared polling for public feed providers.
 
-Only provider + exact endpoint identifies a response. Query providers and AI
+Provider, exact endpoint and watcher rules identify a response. Query providers and AI
 interpretations never enter this cache. Network calls run outside DB transactions.
 """
 import hashlib
@@ -22,7 +22,7 @@ ERROR_SECONDS = 30
 LEASE_SECONDS = 180
 WAIT_SECONDS = 190
 MAX_ENTRIES = 256
-MAX_RESPONSE_BYTES = 2_000_000
+MAX_RESPONSE_BYTES = 3_000_000  # a full sitemap of up to 5,000 URLs fits
 log = logging.getLogger(__name__)
 
 
@@ -34,11 +34,13 @@ class Result:
     error: str = ''
 
 
-def fetch(provider, url: str, format_error, *, force: bool = False) -> Result:
+def fetch(provider, url: str, format_error, *, force: bool = False, config: dict | None = None) -> Result:
     """Reuse recent feed results; a forced check requires a response newer than its request."""
     if provider.mode != 'feed':
         raise ValueError('Shared polling only supports feed providers.')
-    key = hashlib.sha256((provider.key + '\0' + url).encode()).hexdigest()
+    # Different watcher rules on the same endpoint are different responses.
+    rules = json.dumps(config or {}, sort_keys=True)
+    key = hashlib.sha256((provider.key + '\0' + url + ('\0' + rules if config else '')).encode()).hexdigest()
     requested = time.time()
     deadline = time.monotonic() + WAIT_SECONDS
     token = uuid.uuid4().hex
@@ -77,7 +79,7 @@ def fetch(provider, url: str, format_error, *, force: bool = False) -> Result:
     try:
         heartbeat.start()
         try:
-            items, error = provider.fetch(url, ''), ''
+            items, error = provider.run(url, '', config), ''
             if len(json.dumps(items, ensure_ascii=False).encode()) > MAX_RESPONSE_BYTES:
                 raise ValueError('Source result is too large to share.')
         except Exception as exc:  # One failed endpoint does not fail a curator.

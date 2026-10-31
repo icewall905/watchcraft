@@ -26,6 +26,32 @@ export type Collection = { id: number; name: string; description: string; icon: 
 export type Source = {
 	id: number; provider: string; name: string; url: string; enabled: boolean; last_success: number | null;
 	last_error: string; last_checked: number | null; item_count: number; curator_ids: number[];
+	config?: WatcherConfig; configurable?: boolean; last_repair?: number | null; health?: SourceHealth;
+};
+export type HealthStatus = 'healthy' | 'degraded' | 'broken' | 'paused' | 'unknown';
+export type SourceHealth = {
+	status: HealthStatus; signals: { key: string; message: string }[]; checks: number; success_rate: number | null;
+	empty_rate: number | null; consecutive_failures: number; typical_count: number | null; trend: 'steady' | 'worsening' | 'improving';
+};
+/** Watcher rules; which keys apply depends on the provider (GET /sources/{id}/watcher lists them). */
+export type WatcherConfig = {
+	item_selector?: string; link_selector?: string; title_selector?: string; date_selector?: string; content_selector?: string;
+	allowed_patterns?: string[]; ignored_patterns?: string[]; ignore_selectors?: string[];
+	strip_query?: boolean; auto_repair?: boolean; alert_on_change?: boolean; min_change_chars?: number;
+};
+export type SampleItem = { title: string; url: string; published_at?: number | null; excerpt?: string };
+export type SourceTest = { ok: boolean; count: number; sample: SampleItem[]; error: string };
+export type PageDiff = { ops: { op: 'added' | 'removed'; text: string }[]; added_chars: number; removed_chars: number; truncated: boolean };
+export type PageRevision = { id: number; source_id: number; observed_at: number; title: string; body: string; diff?: PageDiff | null };
+export type SitemapChanges = { total: number; new: number; updated: number; changes: { url: string; lastmod: string | number | null; first_seen: number; changed_at: number; change: 'new' | 'updated' }[] };
+export type WatcherRevision = { id: number; source_id: number; created_at: number; config: WatcherConfig; reason: 'original' | 'edit' | 'repair' | 'auto-repair' | 'rollback'; item_count: number; sample: SampleItem[] };
+export type WatcherState = { config: WatcherConfig; fields: string[]; revisions: WatcherRevision[] };
+export type WatcherSave = { saved: boolean; test: SourceTest; source?: Source };
+export type RepairProposal = SourceTest & { config: WatcherConfig; comparison: { typical_count: number | null; current_count: number | null; overlap: number | null } };
+export type RepairResult = {
+	health: SourceHealth; current: SourceTest & { config: WatcherConfig }; proposals: RepairProposal[];
+	alternates: { provider: string; url: string; name: string; count: number; sample: SampleItem[]; validated: boolean }[];
+	steps: { step: 'revalidate' | 'alternatives' | 'reinspect' | 'test'; ok: boolean; detail: string }[];
 };
 export type ScoutReportConfig = { profile_id: number; frequency: 'manual' | 'daily' | 'weekly'; next_run: number | null; show_home: boolean };
 export type ScoutReport = { id: number; profile_id: number; curator_id: number | null; period: 'daily' | 'weekly'; created_at: number; item_ids: number[]; sections: { since: number; curator_name: string; findings: { id: number; title: string; summary: string; summary_ai?: boolean; url: string; publisher: string; curator_id: number; curator_name: string; found_at: number }[]; runs: { count: number; new_items: number; failed: number }; scout: { runs: number; validated_sources: number }; alerts: { id: number; title: string; severity: string }[]; upcoming: { id: number; name: string; next_run: number; href: string }[] } };

@@ -508,37 +508,44 @@ def test_scout_sitemap_validation_and_monitoring(client, monkeypatch):
     assert hub.run(curator['id']).new_items == 0
 
 
-def test_sitemap_index_is_bounded_and_rejects_nested_indexes(monkeypatch):
+def test_sitemap_traverses_nested_same_host_indexes(monkeypatch):
+    import gzip
     index = b'''<sitemapindex><sitemap><loc>https://example.org/one.xml</loc></sitemap>
       <sitemap><loc>https://other.test/evil.xml</loc></sitemap>
-      <sitemap><loc>https://example.org/two.xml</loc></sitemap></sitemapindex>'''
+      <sitemap><loc>https://example.org/nested.xml</loc></sitemap></sitemapindex>'''
     responses = {'https://example.org/index.xml': index,
                  'https://example.org/one.xml': b'<urlset><url><loc>https://example.org/a</loc></url></urlset>',
-                 'https://example.org/two.xml': b'<urlset><url><loc>https://example.org/b</loc></url></urlset>'}
+                 'https://example.org/nested.xml': b'<sitemapindex><sitemap><loc>https://example.org/two.xml.gz</loc></sitemap></sitemapindex>',
+                 'https://example.org/two.xml.gz': gzip.compress(b'<urlset><url><loc>https://example.org/b</loc>'
+                                                                 b'<lastmod>2026-10-30</lastmod></url></urlset>')}
     calls = []
     def fetch(url, **kwargs):
         calls.append(url)
         return responses[url], url, {'content_type': 'application/xml', 'link': ''}
     monkeypatch.setattr(curation, 'fetch', fetch)
-    assert {x['url'] for x in providers.sitemap('https://example.org/index.xml')} == {'https://example.org/a', 'https://example.org/b'}
+    assert [x['url'] for x in providers.sitemap('https://example.org/index.xml')] == ['https://example.org/b', 'https://example.org/a']
     assert 'https://other.test/evil.xml' not in calls
-    responses['https://example.org/two.xml'] = b'<sitemapindex/>'
-    with pytest.raises(ValueError):
-        providers.sitemap('https://example.org/index.xml')
+    rules = {'allowed_patterns': ['/a']}
+    assert [x['url'] for x in providers.sitemap('https://example.org/index.xml', '', rules)] == ['https://example.org/a']
 
 
-def test_sitemap_index_checks_no_more_than_three_children(monkeypatch):
-    index = ('<sitemapindex>' + ''.join(f'<sitemap><loc>https://example.org/{i}.xml</loc></sitemap>'
-                                       for i in range(5)) + '</sitemapindex>').encode()
+def test_sitemap_traversal_is_bounded_in_documents_and_depth(monkeypatch):
+    from bt.hub import watchers
     calls = []
     def fetch(url, **kwargs):
         calls.append(url)
-        data = index if url.endswith('/index.xml') else f'<urlset><url><loc>{url}/page</loc></url></urlset>'.encode()
-        return data, url, {'content_type': 'application/xml', 'link': ''}
+        n = int(url.rsplit('/', 1)[1].split('.')[0])
+        # Every index links to two deeper indexes and lists nothing itself, except via its url sitemap.
+        data = (f'<sitemapindex><sitemap><loc>https://example.org/{2 * n}.xml</loc></sitemap>'
+                f'<sitemap><loc>https://example.org/{2 * n + 1}.xml</loc></sitemap>'
+                f'<sitemap><loc>https://example.org/{n + 1000}.xml</loc></sitemap></sitemapindex>'
+                if n < 1000 else f'<urlset><url><loc>https://example.org/p{n}</loc></url></urlset>')
+        return data.encode(), url, {'content_type': 'application/xml', 'link': ''}
     monkeypatch.setattr(curation, 'fetch', fetch)
-    assert len(providers.sitemap('https://example.org/index.xml')) == 3
-    assert calls == ['https://example.org/index.xml', 'https://example.org/0.xml',
-                     'https://example.org/1.xml', 'https://example.org/2.xml']
+    items = providers.sitemap('https://example.org/1.xml')
+    assert len(calls) <= watchers.SITEMAP_DOCS and items
+    # Depth: the root index is depth 0, so nothing past depth 3 is fetched.
+    assert all(int(u.rsplit('/', 1)[1].split('.')[0]) < 16 or int(u.rsplit('/', 1)[1].split('.')[0]) >= 1000 for u in calls)
 
 
 def test_scout_accepts_direct_sitemap_url(client, monkeypatch):
@@ -1077,3 +1084,341 @@ def test_curator_tone_is_validated_and_narrated(client, monkeypatch):
     assert changed['tone'] == 'professional'
     assert client.patch(f"/api/hub/curators/{playful['id']}", json={'tone': None}).json()['tone'] == 'professional'
     assert client.post('/api/hub/curators', json={'name': 'Unset', 'tone': None}).json()['tone'] == 'friendly'
+
+
+LISTING_OLD = b'''<html><body><main>
+  <article><a href="/news/one">First real headline here</a><time datetime="2026-10-01">1 Oct</time></article>
+  <article><a href="/news/two">Second real headline here</a></article>
+  <article><a href="/news/three">Third real headline here</a></article>
+  <nav><a href="/about">About this website page</a></nav></main></body></html>'''
+LISTING_NEW = b'''<html><body><main><div class="feed">
+  <div class="post-card"><h3><a href="/news/four">Fourth real headline here</a></h3><span class="d">2026-10-30</span></div>
+  <div class="post-card"><h3><a href="/news/five">Fifth real headline here</a></h3><span class="d">2026-10-29</span></div>
+  <div class="post-card"><h3><a href="/news/six">Sixth real headline here</a></h3><span class="d">2026-10-28</span></div>
+  <div class="post-card"><h3><a href="/news/seven">Seventh real headline here</a></h3></div>
+  </div><footer><a href="/privacy">Privacy policy for this site</a></footer></main></body></html>'''
+
+
+def _html(page):
+    def fetch(url, **kwargs):
+        if url.endswith('/robots.txt'):
+            raise ValueError('Source returned HTTP 404.')
+        return page['body'], url, {'content_type': 'text/html', 'link': ''}
+    return fetch
+
+
+def test_listing_rules_are_validated_tested_saved_and_rolled_back(client, monkeypatch):
+    page = {'body': LISTING_NEW}
+    monkeypatch.setattr(curation, 'fetch', _html(page))
+    sid = client.post('/api/hub/sources', json={'provider': 'html_listing', 'url': 'https://example.org/news'}).json()['id']
+    base = f'/api/hub/sources/{sid}/watcher'
+    assert client.post(f'{base}/test', json={'config': {'item_selector': 'div[[['}}).status_code == 422
+    assert client.post(f'{base}/test', json={'config': {'allowed_patterns': ['news/*']}}).status_code == 422
+    rules = {'item_selector': '.post-card', 'title_selector': 'h3', 'date_selector': '.d', 'allowed_patterns': ['/news/*'],
+             'unknown': 'dropped'}
+    dry = client.post(f'{base}/test', json={'config': rules}).json()
+    assert dry['ok'] and dry['count'] == 4 and 'unknown' not in dry['config']
+    assert dry['sample'][0]['title'] == 'Fourth real headline here' and dry['sample'][0]['published_at']
+    assert client.get(base).json()['config'] == {}  # testing never saves
+    failed = client.put(base, json={'config': {'item_selector': 'article'}}).json()
+    assert failed['saved'] is False and not failed['test']['ok']
+    saved = client.put(base, json={'config': rules}).json()
+    assert saved['saved'] and saved['source']['config']['item_selector'] == '.post-card'
+    assert saved['source']['health']['status'] == 'healthy'
+    revisions = client.get(base).json()['revisions']
+    assert [r['reason'] for r in revisions] == ['edit', 'original'] and revisions[0]['item_count'] == 4
+    forced = client.put(base, json={'config': {'item_selector': 'article'}, 'force': True}).json()
+    assert forced['saved'] and not forced['test']['ok']
+    rolled = client.post(f"{base}/rollback/{revisions[0]['id']}").json()
+    assert rolled['test']['count'] == 4 and rolled['source']['config']['item_selector'] == '.post-card'
+    other = client.post('/api/profiles', json={'name': 'Other'}).json()
+    assert client.get(base, headers={'X-Profile-Id': str(other['id'])}).status_code == 404
+    assert client.post(f"{base}/rollback/{revisions[0]['id']}", headers={'X-Profile-Id': str(other['id'])}).status_code == 404
+
+
+def test_curator_uses_saved_listing_rules(client, monkeypatch):
+    monkeypatch.setattr(curation, 'fetch', _html({'body': LISTING_NEW}))
+    curator = make_curator(client, [{'provider': 'html_listing', 'url': 'https://example.org/news'}])
+    sid = client.get('/api/hub/sources').json()[0]['id']
+    assert hub.run(curator['id']).status == 'failed'  # default rules: no <article> elements
+    client.put(f'/api/hub/sources/{sid}/watcher', json={'config': {'item_selector': '.post-card'}})
+    client.post(f"/api/hub/curators/{curator['id']}/run")
+    assert hub.run(curator['id'], 'manual').new_items == 4
+
+
+def test_sitemap_tracks_new_and_updated_urls_per_curator(client, monkeypatch):
+    xml = {'body': b'<urlset><url><loc>https://example.org/a</loc><lastmod>2026-10-01</lastmod></url>'
+                   b'<url><loc>https://example.org/b</loc><lastmod>2026-10-02</lastmod></url></urlset>'}
+    monkeypatch.setattr(curation, 'fetch', lambda url, **k: (xml['body'], url, {'content_type': 'application/xml', 'link': ''}))
+    curator = make_curator(client, [{'provider': 'sitemap', 'url': 'https://example.org/sitemap.xml'}])
+    sid = client.get('/api/hub/sources').json()[0]['id']
+    assert hub.run(curator['id']).new_items == 2  # first observation: newest entries
+    assert client.get(f'/api/hub/sources/{sid}/changes').json() == {'total': 2, 'new': 0, 'updated': 0, 'changes': []}
+    xml['body'] = (b'<urlset><url><loc>https://example.org/a</loc><lastmod>2026-10-20</lastmod></url>'
+                   b'<url><loc>https://example.org/b</loc><lastmod>2026-10-02</lastmod></url>'
+                   b'<url><loc>https://example.org/c</loc></url></urlset>')
+    time.sleep(0.01)
+    client.post(f"/api/hub/curators/{curator['id']}/run")
+    run = hub.run(curator['id'], 'manual')
+    assert run.new_items == 1  # c is new; a was updated but is already a known discovery
+    changes = client.get(f'/api/hub/sources/{sid}/changes').json()
+    assert changes['new'] == 1 and changes['updated'] == 1
+    assert {(c['url'], c['change']) for c in changes['changes']} == {('https://example.org/c', 'new'), ('https://example.org/a', 'updated')}
+    checks = client.get(f'/api/hub/sources/{sid}/checks').json()
+    assert checks[0]['item_count'] == 3  # health counts the listed URLs, not only this run's changes
+    later = make_curator(client, [], name='Later')
+    client.patch(f"/api/hub/curators/{later['id']}", json={'source_ids': [sid]})
+    assert hub.run(later['id'], 'manual').new_items == 3  # a curator added later still gets a first view
+    time.sleep(0.01)
+    client.post(f"/api/hub/curators/{curator['id']}/run")
+    assert hub.run(curator['id'], 'manual').new_items == 0
+    assert client.get(f'/api/hub/sources/{sid}/checks').json()[0]['item_count'] == 3
+    assert client.delete(f'/api/hub/sources/{sid}').status_code == 200
+    with session() as s:
+        from bt.hub.models import SitemapEntry
+        assert not s.exec(select(SitemapEntry)).all()
+
+
+def test_page_watcher_rules_diffs_and_change_alerts(client, monkeypatch):
+    html = {'body': b'<html><title>Pricing</title><main><div id="plans"><p>Basic costs 5</p><p>Pro costs 10</p></div>'
+                    b'<div class="ad">Buy now 123</div></main></html>'}
+    monkeypatch.setattr(curation, 'fetch', _html(html))
+    curator = make_curator(client, [{'provider': 'page_watch', 'url': 'https://example.org/pricing'}])
+    sid = client.get('/api/hub/sources').json()[0]['id']
+    assert client.post(f'/api/hub/sources/{sid}/watcher/test', json={'config': {'content_selector': '#missing'}}).json()['ok'] is False
+    rules = {'content_selector': '#plans', 'ignore_selectors': ['.ad'], 'alert_on_change': True, 'min_change_chars': 3}
+    assert client.put(f'/api/hub/sources/{sid}/watcher', json={'config': rules}).json()['saved']
+    assert hub.run(curator['id']).new_items == 1
+    first = client.get(f'/api/hub/sources/{sid}/revisions').json()
+    assert 'Buy now' not in first[0]['body'] and first[0]['diff'] is None
+    html['body'] = html['body'].replace(b'Buy now 123', b'Buy now 456')  # ignored area: no revision
+    client.post(f"/api/hub/curators/{curator['id']}/run"); hub.run(curator['id'], 'manual')
+    assert len(client.get(f'/api/hub/sources/{sid}/revisions').json()) == 1
+    assert client.get('/api/hub/alerts').json()['items'] == []
+    html['body'] = html['body'].replace(b'Pro costs 10', b'Pro costs 12')
+    client.post(f"/api/hub/curators/{curator['id']}/run"); hub.run(curator['id'], 'manual')
+    revisions = client.get(f'/api/hub/sources/{sid}/revisions').json()
+    assert revisions[0]['diff']['ops'] == [{'op': 'removed', 'text': 'Pro costs 10'}, {'op': 'added', 'text': 'Pro costs 12'}]
+    alerts = client.get('/api/hub/alerts').json()['items']
+    assert len(alerts) == 1 and 'Pro costs 12' in alerts[0]['reason'] and alerts[0]['state'] == 'new'
+
+
+def test_source_health_diagnoses_failures_and_structure_changes():
+    from types import SimpleNamespace as C
+    from bt.hub import watchers
+    ok = lambda n: C(status='ok', item_count=n, error='')
+    bad = lambda e: C(status='failed', item_count=0, error=e)
+    assert watchers.health([])['status'] == 'unknown'
+    assert watchers.health([ok(10)] * 5)['status'] == 'healthy'
+    assert watchers.health([ok(10)], enabled=False)['status'] == 'paused'
+    h = watchers.health([bad('Source returned HTTP 429.')] + [ok(10)] * 4)
+    assert h['status'] == 'degraded' and h['signals'][0]['key'] == 'rate_limited'
+    h = watchers.health([bad('Source returned HTTP 403.')] * 3 + [ok(10)] * 3)
+    assert h['status'] == 'broken' and h['consecutive_failures'] == 3 and h['trend'] == 'worsening'
+    assert {s['key'] for s in h['signals']} == {'auth'}
+    h = watchers.health([ok(1)] + [ok(20)] * 5, provider='html_listing')
+    assert h['status'] == 'degraded' and h['signals'][0]['key'] == 'structure_change' and h['typical_count'] == 20
+    assert watchers.health([ok(1)] + [ok(20)] * 5, provider='page_watch')['status'] == 'healthy'
+    h = watchers.health([bad('No article links were found in the listing.')] + [ok(5)] * 3, provider='html_listing')
+    assert h['status'] == 'degraded'  # one empty extraction may be a blip
+    h = watchers.health([bad('No article links were found in the listing.')] * 2 + [ok(5)] * 3, provider='html_listing')
+    assert h['status'] == 'broken'
+
+
+def test_repair_proposes_tested_rules_and_auto_repair_applies_them(client, monkeypatch):
+    page = {'body': LISTING_OLD}
+    monkeypatch.setattr(curation, 'fetch', _html(page))
+    curator = make_curator(client, [{'provider': 'html_listing', 'url': 'https://example.org/news'}])
+    sid = client.get('/api/hub/sources').json()[0]['id']
+    assert hub.run(curator['id']).new_items == 3
+    page['body'] = LISTING_NEW  # the site redesign drops <article>
+    plan = client.post(f'/api/hub/sources/{sid}/repair').json()
+    assert plan['current']['ok'] is False and [s['step'] for s in plan['steps']] == ['revalidate', 'alternatives', 'reinspect', 'test']
+    best = plan['proposals'][0]
+    assert best['ok'] and best['count'] == 4 and best['config']['allowed_patterns'] == ['/news/*']
+    assert {x['url'] for x in best['sample']} >= {'https://example.org/news/four'}
+    assert client.get('/api/hub/sources').json()[0]['config'] == {}  # proposing applies nothing
+    # Unattended repair only when the owner allows it, and only once the source is broken.
+    client.put(f'/api/hub/sources/{sid}/watcher', json={'config': {'auto_repair': True}, 'force': True})
+    for _ in range(3):
+        client.post(f"/api/hub/curators/{curator['id']}/run")
+        hub.run(curator['id'], 'manual')
+    source = client.get('/api/hub/sources').json()[0]
+    assert source['config'].get('item_selector') and source['config']['auto_repair'] is True
+    assert client.get(f'/api/hub/sources/{sid}/watcher').json()['revisions'][0]['reason'] == 'auto-repair'
+    assert client.get(f"/api/hub/curators/{curator['id']}").json()['discovery_count'] == 7
+    with session() as s:  # one attempt a day, even if it breaks again
+        from bt.hub.models import Source
+        assert s.get(Source, sid).last_repair is not None
+
+
+def test_listing_prefers_headlines_and_suggests_durable_rules():
+    from bt.hub import watchers
+    html = b'''<html><nav><ul><li><a href="/2026/about">About this whole site</a></li></ul></nav><main>
+      <div class="entry"><a href="/2026/10/a"><img src="x.png"></a><h2><a href="/2026/10/a">Headline number one</a></h2><a href="/2026/10/a">Read more</a></div>
+      <div class="entry"><h2><a href="/2026/10/b">Headline number two</a></h2></div>
+      <div class="entry"><h2><a href="/2026/10/c">Headline number three</a></h2></div>
+      <div class="entry"><a href="/2026/10/d">Read more</a></div></main></html>'''
+    items = watchers.listing(html, 'https://example.org/', {'item_selector': '.entry'})
+    assert [i['title'] for i in items] == ['Headline number one', 'Headline number two', 'Headline number three']
+    best = watchers.suggest_listing_rules(html, 'https://example.org/')[0]
+    assert best['count'] == 3 and 'allowed_patterns' not in best['config']  # never a year-bound /2026/* rule
+    assert 'nav' in best['config']['ignore_selectors']
+    with pytest.raises(watchers.RuleError):
+        watchers.normalize('rss', {'item_selector': 'a'})
+    assert watchers.normalize('sitemap', {'item_selector': 'a', 'strip_query': 1}) == {'strip_query': True}
+
+
+def test_existing_source_table_gains_watcher_columns(tmp_path):
+    from sqlalchemy import create_engine
+    from sqlmodel import Session
+    from bt.hub.models import Source
+    db = tmp_path / 'deployed.db'
+    con = sqlite3.connect(db)
+    con.executescript('''
+      CREATE TABLE setting (key VARCHAR PRIMARY KEY, value JSON);
+      INSERT INTO setting VALUES ('watchcraft_schema_version', '{"version": 2}');
+      CREATE TABLE source (id INTEGER PRIMARY KEY, profile_id INTEGER, provider VARCHAR, name VARCHAR, url VARCHAR,
+        enabled BOOLEAN, last_success FLOAT, last_error VARCHAR, last_checked FLOAT, item_count INTEGER, created_at FLOAT,
+        UNIQUE (profile_id, provider, url));
+      INSERT INTO source VALUES (7, 1, 'html_listing', 'News', 'https://example.org/news', 1, NULL, '', NULL, 0, 1000);
+    ''')
+    con.commit(); con.close()
+    eng = create_engine(f'sqlite:///{db}')
+    with eng.begin() as conn:
+        SQLModel.metadata.create_all(conn)
+        migrate.migrate(conn)
+        migrate.migrate(conn)  # idempotent
+    with Session(eng) as s:
+        src = s.get(Source, 7)
+        assert src.config == {} and src.last_repair is None and src.name == 'News'
+
+
+def test_sitemap_crawl_follows_redirects_skips_bad_children_and_reads_newest_first(monkeypatch):
+    import gzip
+    from bt.hub import watchers
+    index = b'''<sitemapindex><sitemap><loc>https://www.example.org/old.xml</loc><lastmod>2020-01-01</lastmod></sitemap>
+      <sitemap><loc>https://www.example.org/broken.xml</loc><lastmod>2026-10-01</lastmod></sitemap>
+      <sitemap><loc>https://www.example.org/new.xml.gz</loc><lastmod>2026-10-30</lastmod></sitemap></sitemapindex>'''
+    calls = []
+    def fetch(url, **kwargs):
+        calls.append(url)
+        if url == 'https://example.org/sitemap.xml':
+            return index, 'https://www.example.org/sitemap.xml', {}  # root redirected to www
+        if url.endswith('broken.xml'):
+            raise ValueError('Source returned HTTP 404.')
+        body = {'old.xml': b'<urlset><url><loc>https://www.example.org/2020</loc></url></urlset>',
+                'new.xml.gz': gzip.compress(b'<urlset><url><loc>https://www.example.org/2026</loc></url></urlset>')}
+        return body[url.rsplit('/', 1)[1]], url, {}
+    monkeypatch.setattr(curation, 'fetch', fetch)
+    urls = [x['url'] for x in providers.sitemap('https://example.org/sitemap.xml')]
+    assert set(urls) == {'https://www.example.org/2020', 'https://www.example.org/2026'}
+    assert calls[1:] == ['https://www.example.org/new.xml.gz', 'https://www.example.org/broken.xml', 'https://www.example.org/old.xml']
+    calls.clear()
+    assert [x['url'] for x in watchers.crawl_sitemap('https://example.org/sitemap.xml', max_docs=2)] == ['https://www.example.org/2026']
+    monkeypatch.setattr(watchers, 'GZIP_MAX', 10)
+    with pytest.raises(ValueError):  # only child is too large once expanded; nothing usable remains
+        watchers.crawl_sitemap('https://example.org/sitemap.xml', max_docs=2)
+
+
+def test_sitemap_cursor_is_per_curator(client, monkeypatch):
+    xml = {'body': b'<urlset><url><loc>https://example.org/a</loc></url></urlset>'}
+    monkeypatch.setattr(curation, 'fetch', lambda url, **k: (xml['body'], url, {}))
+    a = make_curator(client, [{'provider': 'sitemap', 'url': 'https://example.org/sitemap.xml'}], name='A')
+    sid = client.get('/api/hub/sources').json()[0]['id']
+    b = make_curator(client, [], name='B')
+    client.patch(f"/api/hub/curators/{b['id']}", json={'source_ids': [sid]})
+    def run(cur):
+        client.post(f"/api/hub/curators/{cur['id']}/run")
+        return hub.run(cur['id'], 'manual').new_items
+    assert run(a) == 1 and run(b) == 1
+    xml['body'] = b'<urlset><url><loc>https://example.org/a</loc></url><url><loc>https://example.org/x</loc></url></urlset>'
+    time.sleep(0.01)
+    assert run(a) == 1  # A notices x first
+    assert run(b) == 1  # B still gets x on its own next read
+    assert run(b) == 0
+
+
+def test_watcher_safety_rules_and_resets(client, monkeypatch):
+    from bt.hub import watchers
+    for bad in [':is(div,p) a', 'a:not(.x)', 'main div ul a', ','.join(['a'] * 5)]:
+        with pytest.raises(watchers.RuleError):
+            watchers.normalize('html_listing', {'item_selector': bad})
+    assert watchers.normalize('html_listing', {'item_selector': 'a[href^="https:"]'})
+    # Default rules keep the original behaviour: every titled link inside an article.
+    one_article = b'<article>' + b''.join(f'<p><a href="/n/{i}">Linked headline {i}</a></p>'.encode() for i in range(10)) + b'</article>'
+    assert len(watchers.listing(one_article, 'https://example.org/')) == 10
+    wordpress = b'<body><header><a href="/">Home of the blog</a></header>' + b''.join(
+        f'<article><header class="entry-header"><h2><a href="/p/{i}">WordPress post title {i}</a></h2></header>'
+        f'<a href="/p/{i}">Continue reading</a></article>'.encode() for i in range(6)) + b'<footer><a href="/x">Footer link text</a></footer></body>'
+    best = watchers.suggest_listing_rules(wordpress, 'https://example.org/')[0]
+    assert best['count'] == 6 and best['sample'][0]['title'] == 'WordPress post title 0'
+    page = {'body': LISTING_NEW}
+    monkeypatch.setattr(curation, 'fetch', _html(page))
+    sid = client.post('/api/hub/sources', json={'provider': 'html_listing', 'url': 'https://example.org/news'}).json()['id']
+    base = f'/api/hub/sources/{sid}/watcher'
+    client.put(base, json={'config': {'item_selector': '.post-card', 'auto_repair': True}})
+    original = client.get(base).json()['revisions'][-1]
+    assert original['reason'] == 'original'
+    assert client.post(f"{base}/rollback/{original['id']}").json()['saved'] is False  # default rules fail here
+    assert client.post(f"{base}/rollback/{original['id']}", json={'force': True}).json()['saved'] is True
+    other = client.post('/api/profiles', json={'name': 'Other'}).json()
+    h = {'X-Profile-Id': str(other['id'])}
+    for method, path in [('post', f'{base}/test'), ('put', base), ('post', f'/api/hub/sources/{sid}/repair'),
+                         ('get', f'/api/hub/sources/{sid}/changes')]:
+        assert getattr(client, method)(path, json={'config': {}}, headers=h).status_code == 404 if method != 'get' else \
+            client.get(path, headers=h).status_code == 404
+    moved = client.patch(f'/api/hub/sources/{sid}', json={'url': 'https://example.org/blog'}).json()
+    assert moved['config'] == {} and client.get(base).json()['revisions'] == []
+
+
+def test_changing_page_rules_starts_a_new_baseline_without_alert(client, monkeypatch):
+    html = {'body': b'<html><title>Docs</title><main><div id="a">Alpha text here</div><div id="b">Beta text here</div></main></html>'}
+    monkeypatch.setattr(curation, 'fetch', _html(html))
+    curator = make_curator(client, [{'provider': 'page_watch', 'url': 'https://example.org/docs'}])
+    sid = client.get('/api/hub/sources').json()[0]['id']
+    client.put(f'/api/hub/sources/{sid}/watcher', json={'config': {'alert_on_change': True}})
+    hub.run(curator['id'])
+    client.put(f'/api/hub/sources/{sid}/watcher', json={'config': {'alert_on_change': True, 'content_selector': '#b'}})
+    client.post(f"/api/hub/curators/{curator['id']}/run"); hub.run(curator['id'], 'manual')
+    assert client.get('/api/hub/alerts').json()['items'] == []
+    assert 'Alpha' not in client.get(f'/api/hub/sources/{sid}/revisions').json()[0]['body']
+
+
+def test_forced_page_rule_change_is_not_alerted_and_deep_pages_are_refused(client, monkeypatch):
+    from bt.hub import watchers
+    deep = b'<div>' * 500 + b'<article><a href="/a">Deep article title</a></article>'
+    with pytest.raises(ValueError):  # selector rules refuse pathological nesting
+        watchers.listing(deep, 'https://example.org/', {'item_selector': 'article'})
+    assert len(watchers.listing(deep, 'https://example.org/')) == 1  # default rules are linear and still work
+    with pytest.raises(watchers.RuleError):
+        watchers.normalize('html_listing', {'item_selector': 'section div div'})
+    assert watchers.normalize('html_listing', {'item_selector': 'section > div > div'})
+    html = {'body': b'<html><title>Docs</title><main><div id="a">Alpha text here</div><div id="b">Beta text here</div></main></html>'}
+    monkeypatch.setattr(curation, 'fetch', _html(html))
+    curator = make_curator(client, [{'provider': 'page_watch', 'url': 'https://example.org/docs'}])
+    sid = client.get('/api/hub/sources').json()[0]['id']
+    client.put(f'/api/hub/sources/{sid}/watcher', json={'config': {'alert_on_change': True}})
+    hub.run(curator['id'])
+    # Forced while the area is missing: no baseline can be taken at save time.
+    saved = client.put(f'/api/hub/sources/{sid}/watcher', json={'config': {'alert_on_change': True, 'content_selector': '#c'}, 'force': True}).json()
+    assert saved['saved'] and not saved['test']['ok']
+    html['body'] = html['body'].replace(b'id="b"', b'id="c"')
+    client.post(f"/api/hub/curators/{curator['id']}/run"); hub.run(curator['id'], 'manual')
+    assert client.get('/api/hub/alerts').json()['items'] == []
+    html['body'] = html['body'].replace(b'Beta text here', b'Beta text changed')
+    client.post(f"/api/hub/curators/{curator['id']}/run"); hub.run(curator['id'], 'manual')
+    assert len(client.get('/api/hub/alerts').json()['items']) == 1  # a real change afterwards still alerts
+
+
+def test_selector_extraction_has_a_hard_time_limit(monkeypatch):
+    from bt.hub import watchers
+    monkeypatch.setattr(watchers, 'EXTRACT_SECONDS', 3)
+    hostile = b'<html><body>' + b'<div>' * 60 + b'<span>x</span>' * 49000 + b'</div>' * 60 + b'</body></html>'
+    started = time.time()
+    with pytest.raises(ValueError, match='longer than 3 seconds'):
+        watchers.listing(hostile, 'https://example.org/', {'item_selector': 'div', 'link_selector': 'section span'})
+    assert time.time() - started < 6
+    # Errors raised inside the child come back as ordinary rule errors.
+    with pytest.raises(ValueError, match='matched nothing'):
+        watchers.page(b'<html><body><p>Text</p></body></html>', 'https://example.org/', {'content_selector': '#gone'})

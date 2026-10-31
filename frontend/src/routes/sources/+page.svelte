@@ -9,7 +9,9 @@
 	import { hub, ago } from '$lib/hub/api';
 	import { errMsg } from '$lib/hub/ui';
 	import ErrorBox from '$lib/hub/ErrorBox.svelte';
-	import type { Registry, Source } from '$lib/hub/types';
+	import WatcherPanel from '$lib/hub/WatcherPanel.svelte';
+	import RepairPanel from '$lib/hub/RepairPanel.svelte';
+	import type { HealthStatus, Registry, SitemapChanges, Source, SourceTest } from '$lib/hub/types';
 
 	let registry = $state<Registry | null>(null);
 	let sources = $state<Source[]>([]);
@@ -22,29 +24,20 @@
 	let formErr = $state('');
 	let confirm = $state<Source | null>(null);
 	let testing = $state<number | null>(null);
-	let results = $state<Record<number, { ok: boolean; count: number; sample: { title: string; url: string }[]; error: string }>>({});
+	let results = $state<Record<number, SourceTest>>({});
 	let revisions = $state<Record<number, Awaited<ReturnType<typeof hub.sourceRevisions>>>>({});
 	let loadingHistory = $state<number | null>(null);
 	let checks = $state<Record<number, Awaited<ReturnType<typeof hub.sourceChecks>>>>({});
 	let loadingChecks = $state<number | null>(null);
+let changes = $state<Record<number, SitemapChanges>>({});
+let loadingChanges = $state<number | null>(null);
+let rulesOpen = $state<Record<number, boolean>>({});
+let repairOpen = $state<Record<number, boolean>>({});
 
 	const providers = $derived(registry?.providers ?? []);
 	const chosen = $derived(providers.find((p) => p.key === provider));
 	const addable = $derived(providers.filter((p) => p.available).map((p) => ({ value: p.key, label: p.label, hint: p.description })));
 	const label = (k: string) => providers.find((p) => p.key === k)?.label ?? k;
-
-	// Show the smallest span containing all changes, without implying that every word in it changed.
-	function changedSpan(before: string, after: string) {
-		const a = before.split(' '), b = after.split(' ');
-		let start = 0, endA = a.length, endB = b.length;
-		while (start < endA && start < endB && a[start] === b[start]) start++;
-		while (endA > start && endB > start && a[endA - 1] === b[endB - 1]) { endA--; endB--; }
-		const excerpt = (words: string[]) => {
-			const text = words.join(' ');
-			return text.length > 700 ? text.slice(0, 700) + '…' : text;
-		};
-		return { before: excerpt(a.slice(start, endA)), after: excerpt(b.slice(start, endB)) };
-	}
 
 	async function load() {
 		try { [registry, sources] = await Promise.all([hub.registry(), hub.sources()]); error = ''; if (!providers.find((p) => p.key === provider && p.available)) provider = providers.find((p) => p.available)?.key ?? provider; }
@@ -76,12 +69,33 @@
 		loadingChecks = s.id;
 		try { checks[s.id] = await hub.sourceChecks(s.id); } catch (e) { error = errMsg(e); } finally { loadingChecks = null; }
 	}
-	async function remove() {
+	async function sitemapChanges(s: Source) {
+loadingChanges = s.id;
+try { changes[s.id] = await hub.sourceChanges(s.id); } catch (e) { error = errMsg(e); } finally { loadingChanges = null; }
+}
+const replace = (u: Source) => { sources = sources.map((x) => (x.id === u.id ? { ...x, ...u } : x)); };
+async function remove() {
 		if (!confirm) return;
 		const s = confirm;
 		try { await hub.deleteSource(s.id); sources = sources.filter((x) => x.id !== s.id); toast.success('Source deleted'); } catch (e) { error = errMsg(e); } finally { confirm = null; }
 	}
-	const health = (s: Source) => (s.last_error ? 'bad' : s.last_success ? 'ok' : 'new');
+	const HEALTH: Record<HealthStatus, { label: string; dot: string }> = {
+healthy: { label: 'Healthy', dot: 'ok' }, degraded: { label: 'Degraded', dot: 'warn' }, broken: { label: 'Broken', dot: 'bad' },
+paused: { label: 'Paused', dot: 'new' }, unknown: { label: 'Not checked yet', dot: 'new' }
+};
+const healthOf = (s: Source): HealthStatus => s.health?.status ?? (s.last_error ? 'broken' : s.last_success ? 'healthy' : 'unknown');
+const needsRepair = (s: Source) => healthOf(s) === 'degraded' || healthOf(s) === 'broken';
+// "success 85% · typical 20 items · worsening": only facts the backend measured.
+function healthSummary(s: Source) {
+const h = s.health;
+if (!h) return '';
+const parts: string[] = [];
+if (h.success_rate !== null) parts.push(`success ${Math.round(h.success_rate * 100)}%`);
+if (h.typical_count !== null) parts.push(`typical ${h.typical_count} items`);
+if (h.consecutive_failures > 1) parts.push(`${h.consecutive_failures} failures in a row`);
+if (h.trend !== 'steady') parts.push(h.trend);
+return parts.join(' · ');
+}
 </script>
 
 <svelte:head><title>Sources · WatchCraft</title></svelte:head>
@@ -119,7 +133,7 @@
 			<form class="add panel" onsubmit={add}>
 				<Select label="Provider" bind:value={provider} options={addable} group="src-add" />
 				{#if chosen?.needs_url}<TextField type="url" label="URL" bind:value={url} placeholder={provider === 'github_releases' ? 'https://github.com/owner/repository' : 'https://example.org/feed.xml'} group="src-add" />{/if}
-				{#if provider === 'page_watch'}<p class="small muted">Attach this source to a curator to check it on that curator’s schedule. The first successful run establishes a baseline; later text changes appear in the source history.</p>{/if}
+				{#if provider === 'page_watch'}<p class="small muted">Attach this source to a curator to check it on that curator’s schedule. The first successful run establishes a baseline; later text changes appear in the source history. After adding it, use Watcher rules to narrow it to a content area, ignore noisy parts, and raise an alert in Alerts when the page changes.</p>{/if}
 				<TextField label="Name (optional)" bind:value={name} placeholder="Shown in lists" group="src-add" />
 				{#if formErr}<div class="err" role="alert">{formErr}</div>{/if}
 				<div><button class="btn primary" type="submit" disabled={adding} use:focusable>{adding ? 'Adding…' : 'Add source'}</button></div>
@@ -134,21 +148,37 @@
 				<ul class="list">
 					{#each sources as s (s.id)}
 						<li class="row">
-							<span class="dot {health(s)}" title={health(s)}></span>
+							<span class="dot {HEALTH[healthOf(s)].dot}" aria-hidden="true"></span>
 							<div class="info">
-								<b>{s.name || label(s.provider)}</b>
+								<span class="hstack name"><b>{s.name || label(s.provider)}</b><span class="hl {HEALTH[healthOf(s)].dot}">{HEALTH[healthOf(s)].label}</span></span>
 								<span class="small muted">{label(s.provider)}{#if s.url} · <a href={s.url} target="_blank" rel="noopener noreferrer" use:focusable>{s.url}</a>{/if}</span>
 								<span class="small faint">
 									{#if s.last_success}ok {ago(s.last_success)}{:else}never succeeded{/if}
 									{#if s.last_checked} · checked {ago(s.last_checked)}{/if}
 									· {s.item_count} items · {s.curator_ids.length} curator{s.curator_ids.length === 1 ? '' : 's'}
 								</span>
+								{#if s.health && healthSummary(s)}<span class="small faint">{healthSummary(s)}{#if s.last_repair} · repaired {ago(s.last_repair)}{/if}</span>{/if}
+								{#if s.health?.signals.length}
+									<ul class="signals">{#each s.health.signals as sig (sig.key)}<li class="small warnc">{sig.message}</li>{/each}</ul>
+								{/if}
 								{#if s.last_error}<span class="small bad" title={s.last_error}>⚠ {s.last_error}</span>{/if}
 								{#if results[s.id]}
 									{@const r = results[s.id]}
 									<div class="test" role="status">
-										{#if r.ok}<b class="okc">Works. {r.count} entries.</b>{#each r.sample.slice(0, 3) as it}<span class="small">· {it.title}</span>{/each}
+										{#if r.ok}<b class="okc">Works. {r.count} entries.</b>{#each r.sample.slice(0, 3) as it}<span class="small">· {it.title}{#if it.published_at} <span class="faint">({new Date(it.published_at * 1000).toLocaleDateString()})</span>{/if}</span>{/each}
 										{:else}<b class="bad">Test failed: {r.error || 'unknown error'}</b>{/if}
+									</div>
+								{/if}
+								{#if rulesOpen[s.id]}<WatcherPanel source={s} onchanged={replace} />{/if}
+								{#if repairOpen[s.id]}<RepairPanel source={s} onchanged={replace} onadded={load} />{/if}
+								{#if s.provider === 'sitemap' && changes[s.id]}
+									{@const ch = changes[s.id]}
+									<div class="test"><b>Sitemap changes</b>
+										<span class="small muted">{ch.total} URLs tracked · {ch.new} new · {ch.updated} updated</span>
+										{#if !ch.changes.length}<span class="small muted">No new or updated URLs since the first check established a baseline.</span>{/if}
+										{#each ch.changes as c (c.url + c.changed_at)}
+											<span class="small"><span class="tag {c.change}">{c.change === 'new' ? 'New' : 'Updated'}</span> <a href={c.url} target="_blank" rel="noopener noreferrer" use:focusable>{c.url}</a> <span class="faint">· {ago(c.changed_at)}{#if c.lastmod} · lastmod {c.lastmod}{/if}</span></span>
+										{/each}
 									</div>
 								{/if}
 								{#if s.provider === 'page_watch' && revisions[s.id]}
@@ -160,10 +190,16 @@
 												{#if i < revisions[s.id].length - 1}
 													{@const previous = revisions[s.id][i + 1]}
 													{#if previous.title !== revision.title}<p class="small"><b>Title before:</b> {previous.title}<br /><b>Title after:</b> {revision.title}</p>{/if}
-													{#if previous.body !== revision.body}
-														{@const change = changedSpan(previous.body, revision.body)}
-														<p class="small muted">Text between the first and last change; excerpts may include unchanged words and are limited to 700 characters.</p>
-														<p class="small"><b>Before:</b> {change.before || '(nothing)'}</p><p class="small"><b>After:</b> {change.after || '(nothing)'}</p>
+													{#if revision.diff && revision.diff.ops.length}
+														{@const d = revision.diff}
+														<p class="small muted">+{d.added_chars} / −{d.removed_chars} characters{#if d.truncated} · long change, only part is shown{/if}</p>
+														<ul class="diff">
+															{#each d.ops as op, k (k)}
+																<li class="small {op.op}"><span class="sign" aria-label={op.op === 'added' ? 'Added' : 'Removed'}>{op.op === 'added' ? '+' : '−'}</span> {op.text}</li>
+															{/each}
+														</ul>
+													{:else if previous.body !== revision.body}
+														<p class="small muted">The text changed, but no paragraph-level difference is available for this observation.</p>
 													{/if}
 												{/if}
 												<details><summary use:focusable>Full observed text</summary><b>{revision.title}</b><p class="small">{revision.body}</p></details>
@@ -185,6 +221,11 @@
 								<button class="btn" disabled={testing === s.id} use:focusable onclick={() => test(s)}>{testing === s.id ? 'Testing…' : 'Test connection'}</button>
 								<button class="btn" disabled={loadingChecks === s.id} use:focusable onclick={() => checkHistory(s)}>{loadingChecks === s.id ? 'Loading…' : 'Check history'}</button>
 								{#if s.provider === 'page_watch'}<button class="btn" disabled={loadingHistory === s.id} use:focusable onclick={() => history(s)}>{loadingHistory === s.id ? 'Loading…' : 'View history'}</button>{/if}
+{#if s.provider === 'sitemap'}<button class="btn" disabled={loadingChanges === s.id} use:focusable onclick={() => sitemapChanges(s)}>{loadingChanges === s.id ? 'Loading…' : 'View changes'}</button>{/if}
+{#if s.configurable}
+<button class="btn" aria-expanded={!!rulesOpen[s.id]} use:focusable onclick={() => (rulesOpen[s.id] = !rulesOpen[s.id])}>Watcher rules</button>
+<button class="btn" class:primary={needsRepair(s)} aria-expanded={!!repairOpen[s.id]} use:focusable onclick={() => (repairOpen[s.id] = !repairOpen[s.id])}>Repair</button>
+{/if}
 								<button class="btn ghost danger" use:focusable onclick={() => (confirm = s)}>Delete</button>
 							</div>
 						</li>
@@ -223,12 +264,25 @@
 	.add { display: grid; gap: .9rem; max-width: 40rem; }
 	.err { padding: .7rem 1rem; border-radius: var(--r-md); border: 1px solid rgba(255,92,122,.45); background: rgba(255,92,122,.1); color: #ffd1d9; }
 	.list { list-style: none; margin: 0; padding: 0; display: grid; gap: .7rem; }
-	.row { display: grid; grid-template-columns: auto 1fr auto; gap: .9rem; align-items: start; padding: 1rem; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
+	.row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .9rem; align-items: start; padding: 1rem; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
 	.dot { width: .8rem; height: .8rem; border-radius: 50%; margin-top: .45rem; background: var(--faint); }
-	.dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); }
+	.dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.warn { background: var(--warn); }
+.name { gap: .5rem; flex-wrap: wrap; }
+.hl { font-size: .7rem; font-weight: 700; padding: .05rem .5rem; border-radius: var(--r-pill); border: 1px solid var(--line-strong); color: var(--faint); }
+.hl.ok { color: var(--ok); } .hl.warn { color: var(--warn); border-color: var(--warn); } .hl.bad { color: var(--bad); border-color: var(--bad); }
+.warnc { color: var(--warn); }
+.signals { margin: 0; padding-left: 1.1rem; display: grid; gap: .05rem; }
+.diff { list-style: none; margin: .3rem 0; padding: 0; display: grid; gap: .2rem; }
+.diff li { padding: .2rem .5rem; border-radius: var(--r-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+.diff .added { background: rgba(61,220,151,.12); color: var(--ok); }
+.diff .removed { background: rgba(255,92,122,.12); color: var(--bad); text-decoration: line-through; text-decoration-color: rgba(255,92,122,.5); }
+.sign { font-weight: 700; font-family: monospace; text-decoration: none; display: inline-block; }
+.tag { font-size: .7rem; font-weight: 700; padding: 0 .4rem; border-radius: var(--r-pill); background: var(--surface-2); }
+.tag.new { color: var(--ok); } .tag.updated { color: var(--warn); }
 	.info { display: grid; gap: .2rem; min-width: 0; overflow-wrap: anywhere; }
 	.bad { color: var(--bad); } .okc { color: var(--ok); }
 	.test { display: grid; gap: .1rem; margin-top: .3rem; padding: .5rem .7rem; border-radius: var(--r-md); background: rgba(255,255,255,.04); }
-	.acts { display: flex; gap: .4rem; flex-wrap: wrap; justify-content: flex-end; }
-	@media (max-width: 760px) { .row { grid-template-columns: auto 1fr; } .acts { grid-column: 1 / -1; justify-content: flex-start; } }
+	.acts { display: flex; gap: .4rem; flex-wrap: wrap; justify-content: flex-end; max-width: 20rem; }
+	/* Many actions would squeeze the details column: below desktop width they move under it. */
+	@media (max-width: 1100px) { .row { grid-template-columns: auto minmax(0, 1fr); } .acts { grid-column: 1 / -1; justify-content: flex-start; max-width: none; } }
 </style>

@@ -2,7 +2,7 @@
 import { request } from '$lib/api';
 import type {
 	Alert, Briefing, Collection, Counts, Curator, CuratorDetail, CuratorInput, Issue, Item, ItemDetail, ItemState,
-	NewsGroup, Page, Registry, SavedSearch, SearchResult, ScoutPlan, ScoutReport, ScoutReportConfig, ScoutRun, Source, Team, Template, Topic, TopicDetail, WebResult
+	NewsGroup, Page, Registry, SavedSearch, SearchResult, ScoutPlan, ScoutReport, ScoutReportConfig, ScoutRun, Source, SourceTest, PageRevision, SitemapChanges, WatcherConfig, WatcherState, WatcherSave, RepairResult, Team, Template, Topic, TopicDetail, WebResult
 } from './types';
 
 type Params = Record<string, string | number | boolean | undefined | null>;
@@ -58,8 +58,14 @@ export const hub = {
 	createSource: (body: Partial<Source>) => send<Source>('POST', '/sources', body),
 	updateSource: (id: number, body: Partial<Source>) => send<Source>('PATCH', `/sources/${id}`, body),
 	deleteSource: (id: number) => send<{ ok: boolean }>('DELETE', `/sources/${id}`),
-	testSource: (id: number) => send<{ ok: boolean; count: number; sample: { title: string; url: string }[]; error: string }>('POST', `/sources/${id}/test`),
-	sourceRevisions: (id: number) => get<{ id: number; source_id: number; observed_at: number; title: string; body: string }[]>(`/sources/${id}/revisions`),
+	testSource: (id: number) => send<SourceTest>('POST', `/sources/${id}/test`),
+	sourceRevisions: (id: number) => get<PageRevision[]>(`/sources/${id}/revisions`),
+	sourceChanges: (id: number) => get<SitemapChanges>(`/sources/${id}/changes`),
+	watcher: (id: number) => get<WatcherState>(`/sources/${id}/watcher`),
+	testWatcher: (id: number, config: WatcherConfig) => request<SourceTest & { config: WatcherConfig }>(`${H}/sources/${id}/watcher/test`, { method: 'POST', body: { config }, toast: false }),
+	saveWatcher: (id: number, config: WatcherConfig, reason: 'edit' | 'repair' = 'edit', force = false) => request<WatcherSave>(`${H}/sources/${id}/watcher`, { method: 'PUT', body: { config, reason, force }, toast: false }),
+	rollbackWatcher: (id: number, revisionId: number, force = false) => send<WatcherSave>('POST', `/sources/${id}/watcher/rollback/${revisionId}`, { force }),
+	repairSource: (id: number) => send<RepairResult>('POST', `/sources/${id}/repair`),
 	sourceChecks: (id: number) => get<{ id: number; checked_at: number; trigger: string; status: 'ok' | 'partial' | 'failed'; item_count: number; error: string }[]>(`/sources/${id}/checks`),
 
 	curators: (kind?: 'watch' | 'research') => get<Curator[]>('/curators' + qs({ kind })),

@@ -9,24 +9,30 @@ from sqlalchemy import inspect
 from sqlmodel import Session, select
 
 from ..models import Setting
-from .models import Curator
+from .models import Curator, CuratorSource, Source
 
 VERSION = 2
 
 
+JSON_DEFAULTS = {'queries': '[]', 'keywords': '[]', 'exclusions': '[]', 'content_types': '[]', 'alert_keywords': '[]',
+                 'aliases': '[]', 'report_refs': '[]', 'config': '{}'}
+
+
 def _add_missing_columns(conn) -> None:
-    have = {c['name'] for c in inspect(conn).get_columns('curator')}
-    for col in Curator.__table__.columns:
-        if col.name in have:
-            continue
-        default = col.default.arg if col.default is not None and not callable(col.default.arg) else None
-        sqltype = col.type.compile(conn.dialect)
-        if default is None and col.name in {'queries', 'keywords', 'exclusions', 'content_types', 'alert_keywords', 'aliases', 'report_refs'}:
-            default = '[]'
-        literal = 'NULL' if default is None else repr(int(default)) if isinstance(default, bool) else repr(default) if isinstance(default, (int, float)) else "'" + str(default).replace("'", "''") + "'"
-        conn.exec_driver_sql(f'ALTER TABLE curator ADD COLUMN "{col.name}" {sqltype} DEFAULT {literal}')
-    if 'created_at' not in have:
-        conn.exec_driver_sql('UPDATE curator SET created_at = ? WHERE created_at IS NULL', (time.time(),))
+    for model in (Curator, Source, CuratorSource):
+        table = model.__table__.name
+        have = {c['name'] for c in inspect(conn).get_columns(table)}
+        for col in model.__table__.columns:
+            if col.name in have:
+                continue
+            default = col.default.arg if col.default is not None and not callable(col.default.arg) else None
+            sqltype = col.type.compile(conn.dialect)
+            if default is None and col.name in JSON_DEFAULTS:
+                default = JSON_DEFAULTS[col.name]
+            literal = 'NULL' if default is None else repr(int(default)) if isinstance(default, bool) else repr(default) if isinstance(default, (int, float)) else "'" + str(default).replace("'", "''") + "'"
+            conn.exec_driver_sql(f'ALTER TABLE {table} ADD COLUMN "{col.name}" {sqltype} DEFAULT {literal}')
+        if table == 'curator' and 'created_at' not in have:
+            conn.exec_driver_sql('UPDATE curator SET created_at = ? WHERE created_at IS NULL', (time.time(),))
 
 
 def migrate(conn) -> None:
