@@ -13,6 +13,7 @@ the default and is unchanged. Design, route map, provider registry and API contr
 | News | `/news` | News/article items by **publication** time (discovery time shown separately), conservatively grouped by shared headline terms, follow/mute topics. |
 | Knowledge | `/knowledge` | Searchable topics ordered by pin and recent additions: overview, user notes, linked items, recent matching finds (FTS), relevant curators, related topics. |
 | Library | `/library` | Saved, favorites, read later, archive, collections with descriptions, private item notes, URL import with page extraction, JSON export. |
+| Meme Radar | `/memes` | Image-first meme feed from Mastodon curators: exact (media hash) and near (perceptual hash) dedup, template/format grouping, counted trend observations with evidence strings and follow/hide, community/language/topic/time filters, saved + dismissed + history views, similar-meme lookup, optional AI "why is this funny?" explanations stored apart from source facts (422 without AI; never invents origins), sensitive posts blurred. Child profiles are blocked from the whole section. |
 | Item | `/item/[id]` | Detail with source facts vs AI enrichment kept apart, structured recipe and craft pattern facts and steps, provenance, notes, tags, collections, topics, related items. |
 | Briefings | `/briefings` | Manual/daily/weekly cited briefings over selected curators/topics; never repeats items from earlier issues; non-AI fallback digest. |
 | Alerts | `/alerts` | Per-curator rules (min severity, keywords); severity and curator filters; new/read/resolved/snooze; advisories say "possibly relevant — verify affected versions". |
@@ -26,8 +27,8 @@ Navigation is defined once in `frontend/src/lib/navigation.ts`. Desktop: grouped
 modes and unread/alert counts. Phones (desktop mode, ≤760px): bottom bar TV · Discover · Library · Alerts · More.
 TV mode: a deliberately small drawer (TV Home, Video search, Subscriptions, Playlists, Hub, Settings).
 
-Providers: RSS/Atom (incl. YouTube channel feeds → video), GitHub releases, GitHub repository search, Hacker News,
-arXiv, NVD CVE API, CISA KEV, Wikipedia, RDAP, web search (SearXNG/Brave), single-page extraction (OpenGraph +
+Providers: RSS/Atom (incl. YouTube channel feeds → video), GitHub releases, GitHub repository search, Hacker News, Mastodon
+(public instance tag timelines; images, GIFs and video poster previews), arXiv, NVD CVE API, CISA KEV, Wikipedia, RDAP, web search (SearXNG/Brave), single-page extraction (OpenGraph +
 JSON-LD Recipe/Article). Web search shows as unavailable until configured and is never silently enabled.
 
 AI (optional, uses the existing OpenAI-compatible endpoint): relevance scoring with evidence-based reasons, curator
