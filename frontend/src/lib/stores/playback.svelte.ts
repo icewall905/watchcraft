@@ -7,9 +7,10 @@ export interface PlaybackTarget {
 	id: string;
 	name: string;
 	online: boolean;
+	paired: boolean;
 	state: { video_id?: string | null; paused?: boolean; position_s?: number; error?: string };
 }
-interface Receiver { id: string; name: string; token: string; ack?: string }
+interface Receiver { id: string; name: string; token: string; ack?: string; pair_code?: string }
 interface Command { id: string; action: string; video_id: string | null; category_id: number | null; profile_id: number }
 const KEY = 'bt.playback.receiver';
 
@@ -20,6 +21,9 @@ class Playback {
 	open = $state(false);
 	error = $state('');
 	pending = $state(false);
+	// Set (target id) when the selected screen still needs this profile's pairing code.
+	needsPair = $state<string | null>(null);
+	pairing = $state(false);
 	selected = $derived(this.targets.find(t => t.id === this.selectedId));
 	private ack = '';
 	private running = false;
@@ -42,12 +46,31 @@ class Playback {
 			if (url.origin !== location.origin || !match) return;
 			e.preventDefault();
 			e.stopImmediatePropagation();
+			if (this.needsPair) { this.open = true; return; }
 			void this.send('play', match[1], Number(url.searchParams.get('c')) || null);
 		};
 		document.addEventListener('click', click, true);
 		void this.poll();
 		const timer = setInterval(() => void this.poll(), 2000);
 		return () => { this.running = false; clearInterval(timer); document.removeEventListener('click', click, true); };
+	}
+
+	select(id: string | null) {
+		this.selectedId = id;
+		this.needsPair = id && !this.targets.find(t => t.id === id)?.paired ? id : null;
+	}
+
+	async pair(code: string) {
+		const id = this.needsPair;
+		if (!id || this.pairing) return;
+		this.pairing = true;
+		try {
+			await request<{ paired: boolean }>(`/playback/targets/${id}/pair`, { body: { code } });
+			this.needsPair = null;
+			toast.success(`Paired with ${this.selected?.name ?? 'screen'}`);
+			await this.poll();
+		} catch { /* request displays errors; the code entry stays open */ }
+		finally { this.pairing = false; }
 	}
 
 	async register(name: string) {
@@ -64,6 +87,7 @@ class Playback {
 			this.receiver = r;
 			this.selectedId = null;
 			this.ack = '';
+			this.needsPair = null;
 			this.error = '';
 			toast.success(`${name} is ready to receive videos`);
 			await this.poll();
@@ -86,7 +110,11 @@ class Playback {
 		try {
 			await request(`/playback/targets/${this.selectedId}/commands`, { body: { action, video_id, category_id } });
 			if (action === 'play') toast.success(`Sent to ${this.selected?.name ?? 'screen'}`);
-		} catch { /* request displays errors; keep the selected target to avoid unintended local playback */ }
+		} catch (e) {
+			// An unpaired profile must pair once; the picker shows the code entry.
+			if (e instanceof ApiError && e.status === 403) this.needsPair = this.selectedId;
+			/* request displays errors; keep the selected target to avoid unintended local playback */
+		}
 		finally { this.sending = false; }
 	}
 
@@ -121,13 +149,18 @@ class Playback {
 			if (r) {
 				const video = document.querySelector<HTMLVideoElement>('.watch video');
 				const match = location.pathname.match(/^\/watch\/([A-Za-z0-9_-]{11})/);
-				const reply = await request<{ command: Command | null }>(`/playback/targets/${r.id}/heartbeat`, {
+				const reply = await request<{ command: Command | null; pair_code?: string }>(`/playback/targets/${r.id}/heartbeat`, {
 					body: { ack: this.ack, video_id: match?.[1] ?? null, paused: video?.paused ?? true,
 						position_s: Number.isFinite(video?.currentTime) ? video!.currentTime : 0, error: this.error },
 					headers: { 'X-Receiver-Token': r.token }, toast: false,
 					signal: AbortSignal.timeout(8000)
 				});
 				if (reply.command && this.receiver?.id === r.id) await this.receive(reply.command);
+				// The pairing code lets upgraded screens show their code after a server update.
+				if (this.receiver?.id === r.id && reply.pair_code && this.receiver.pair_code !== reply.pair_code) {
+					this.receiver = { ...this.receiver, pair_code: reply.pair_code };
+					try { localStorage.setItem(KEY, JSON.stringify(this.receiver)); } catch { /* keep in-memory */ }
+				}
 			}
 			if (this.open || this.selectedId) {
 				this.targets = await request<PlaybackTarget[]>('/playback/targets', { toast: false, signal: AbortSignal.timeout(8000) });

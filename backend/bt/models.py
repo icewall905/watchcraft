@@ -259,3 +259,7 @@ class PlaybackTarget(SQLModel, table=True):
     last_seen: float = 0
     state: dict = J({})
     command: dict = J({})
+    # Sender pairing: {'code': 6 digits, 'profiles': [profile_id]} filled at registration.
+    pair: dict = J({})
+    # Simple send limiter: {'ts': window_start, 'n': commands in window}.
+    rate: dict = J({})

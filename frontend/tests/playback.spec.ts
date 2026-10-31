@@ -4,7 +4,7 @@ import { resetBackend } from './helpers';
 
 const VIDEO = 'castvideo01';
 
-test('phone sends one-tap playback to a persistent browser receiver and controls it', async ({ browser, request }) => {
+test('phone pairs, sends one-tap playback to a persistent browser receiver and controls it', async ({ browser, request }) => {
 	await resetBackend(request);
 	const media = execFileSync('ffmpeg', ['-loglevel', 'error', '-f', 'lavfi', '-i', 'color=c=black:s=160x90:r=5',
 		'-t', '30', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', 'frag_keyframe+empty_moov', '-f', 'mp4', 'pipe:1']);
@@ -36,12 +36,22 @@ test('phone sends one-tap playback to a persistent browser receiver and controls
 		await screen.getByLabel('Screen name', { exact: true }).fill('Living room test');
 		await screen.getByRole('button', { name: 'Register this screen', exact: true }).click();
 		await expect(screen.getByRole('heading', { name: 'This screen: Living room test' })).toBeVisible();
+		// The screen shows the pairing code that senders must enter once.
+		await expect(screen.getByText(/Pairing code to enter on senders:/)).toBeVisible();
 		registration = await screen.evaluate(() => JSON.parse(localStorage.getItem('bt.playback.receiver')!));
+		expect(registration.pair_code).toMatch(/^\d{6}$/);
 		await screen.getByRole('button', { name: 'Done', exact: true }).click();
 		await screen.reload();
+
+		// Pairing is required before the phone may send anything to this screen.
 		await phone.getByRole('button', { name: 'Play on', exact: true }).click();
-		await phone.getByRole('button', { name: 'Living room test Online' }).click();
-		// Drop the test-only category from the link to keep category ownership validation real.
+		await phone.getByRole('button', { name: /Living room test/ }).click();
+		await expect(phone.getByLabel('Pairing code', { exact: true })).toBeVisible();
+		await phone.getByLabel('Pairing code', { exact: true }).fill(registration.pair_code);
+		await phone.getByRole('button', { name: 'Pair', exact: true }).click();
+		await expect(phone.getByText(/Tap any video to play it on this screen/)).toBeVisible();
+		await phone.getByRole('button', { name: 'Done', exact: true }).click();
+
 		await phone.getByRole('link', { name: 'Cast test video', exact: true }).evaluate(a => a.setAttribute('href', '/watch/castvideo01'));
 		await phone.getByRole('link', { name: 'Cast test video', exact: true }).click();
 		await expect(screen).toHaveURL(/\/watch\/castvideo01\?cast=/);

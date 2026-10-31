@@ -1,6 +1,7 @@
 """Engine, sessions, settings helpers, agent state/control (shared across processes)."""
 import copy
 import json
+import random
 from contextlib import contextmanager
 from datetime import timedelta
 
@@ -8,7 +9,7 @@ from sqlalchemy import event, inspect
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from .config import DB_PATH, DEFAULT_SETTINGS
-from .models import AgentEvent, Profile, Setting, YtRequest, now
+from .models import AgentEvent, PlaybackTarget, Profile, Setting, YtRequest, now
 
 engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False, "timeout": 30})
 
@@ -36,6 +37,21 @@ def init_db() -> None:
         if 'role' not in {c['name'] for c in inspect(connection).get_columns('profile')}:
             connection.exec_driver_sql("ALTER TABLE profile ADD COLUMN role VARCHAR NOT NULL DEFAULT 'adult'")
             connection.exec_driver_sql("UPDATE profile SET role = 'admin' WHERE id = (SELECT MIN(id) FROM profile)")
+        # Additive playback pairing columns; existing screens get a pairing code so their
+        # receivers can rediscover it on the next heartbeat (notification via the response).
+        have = {c['name'] for c in inspect(connection).get_columns('playbacktarget')}
+        if have:
+            for name in ('pair', 'rate'):
+                if name not in have:
+                    connection.exec_driver_sql(f"ALTER TABLE playbacktarget ADD COLUMN \"{name}\" JSON NULL")
+            with Session(connection) as s:
+                paid = False
+                for t in s.exec(select(PlaybackTarget).where(PlaybackTarget.pair == None)).all():  # noqa: E711
+                    t.pair = {"code": f"{random.randrange(100000, 1000000)}", "profiles": []}
+                    s.add(t)
+                    paid = True
+                if paid:
+                    s.commit()
         with Session(connection) as s:
             fresh = not s.exec(select(Profile)).first()
             if not s.get(Setting, "watchcraft_schema_version"):
