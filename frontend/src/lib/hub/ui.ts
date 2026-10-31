@@ -21,11 +21,17 @@ export const scheduleOptions = (current: number) =>
 	SCHEDULES.some((s) => s.value === current) ? SCHEDULES : [...SCHEDULES, { value: current, label: scheduleLabel(current) }];
 
 export const emptyCurator = (kind: 'watch' | 'research' = 'watch'): import('./types').CuratorInput => ({
-	name: '', description: '', icon: '🔭', color: '#7c5cff', kind, instructions: '', queries: [], keywords: [], exclusions: [],
+	name: '', description: '', icon: '🔭', color: '#7c5cff', kind, tone: 'friendly', instructions: '', queries: [], keywords: [], exclusions: [],
 	content_types: [], source_ids: [], interval_hours: 24, enabled: true, ai_enabled: true, min_score: 30, max_per_run: 20,
 	collection_id: null, topic_id: null, alert_enabled: false, alert_keywords: [], alert_min_severity: 'high',
 	subject: '', subject_type: 'topic', aliases: []
 });
+
+export const toneOptions = [
+	{ value: 'professional', label: 'Professional', hint: 'Plain, neutral progress notes.' },
+	{ value: 'friendly', label: 'Friendly', hint: 'Warm, everyday language. Default.' },
+	{ value: 'playful', label: 'Playful', hint: 'Light and fun — always honest about what really happened.' }
+];
 
 export const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export const duration = (a: number, b: number | null) => {

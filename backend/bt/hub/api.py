@@ -704,11 +704,14 @@ def _finds(s: Session, pid: int, curator_id: int, limit: int = 3) -> list[dict]:
 @router.get('/team')
 def team(pid: int = Depends(profile_id)):
     """Real state of this profile's Hub agents plus the shared agent-slot usage. Nothing here is simulated."""
+    from . import narrate
+    from ..models import Profile as ProfileModel
     live = slots.snapshot(pid)
     jobs = {j['key']: j for j in live['jobs']}
     day = time.time() - 86400
     agents, journal = [], []
     with session() as s:
+        profile_tone = narrate.profile_tone(s.get(ProfileModel, pid))
         for c in s.exec(select(Curator).where(Curator.profile_id == pid).order_by(Curator.id)).all():
             job = jobs.get(f'curator-{c.id}')
             last = s.exec(select(CuratorRun).where(CuratorRun.curator_id == c.id)
@@ -721,7 +724,7 @@ def team(pid: int = Depends(profile_id)):
             timeline = activity.recent(s, pid, c.id, last.id) if last else []
             agents.append({'key': f'curator-{c.id}', 'kind': 'curator', 'id': c.id, 'name': c.name, 'icon': c.icon,
                            'color': c.color, 'mission': c.description or c.instructions[:200], 'role': c.kind,
-                           'status': status, 'since': job['since'] if job else None, 'error': c.error,
+                           'tone': c.tone, 'status': status, 'since': job['since'] if job else None, 'error': c.error,
                            'enabled': c.enabled, 'next_run': c.next_run if c.enabled and c.next_run < 1e11 else None,
                            'last_run': c.last_run, 'found_today': found_today, 'finds': _finds(s, pid, c.id),
                            'timeline': timeline, 'doing': timeline[-1]['message'] if timeline else None,
@@ -748,6 +751,7 @@ def team(pid: int = Depends(profile_id)):
         scout_timeline = _scout_events(s, pid, (active or finished).id)[-12:] if active or finished else []
         agents.append({'key': 'scout', 'kind': 'scout', 'id': None, 'name': 'Source Scout', 'icon': '🧭', 'color': '#5cc8ff',
                        'mission': 'Finds and tests new feeds and websites worth following.',
+                       'tone': profile_tone,
                        'status': (job['state'] if job else 'running') if active else 'idle',
                        'since': active.created_at if active else None, 'doing': doing, 'query': active.query if active else '',
                        'timeline': [{'step': e['kind'], 'message': e['message'], 'at': e['at']} for e in scout_timeline],
@@ -769,6 +773,7 @@ def team(pid: int = Depends(profile_id)):
             scheduled = [b.next_run for b in briefs if b.frequency != 'manual' and b.next_run]
             agents.append({'key': 'briefings', 'kind': 'briefing', 'id': None, 'name': 'Briefing Writer', 'icon': '📰',
                            'color': '#b18cff', 'mission': f'Writes {len(briefs)} briefing{"s" if len(briefs) != 1 else ""} from what your curators find.',
+                           'tone': profile_tone,
                            'status': writing[0]['state'] if writing else 'attention' if failed else 'idle', 'since': writing[0]['since'] if writing else None,
                            'doing': timeline[-1]['message'] if timeline else None, 'timeline': timeline,
                            'error': timeline[-1]['message'] if failed else '',
@@ -870,6 +875,12 @@ def research_run(body: ScoutInput, pid: int, scheduled: bool = False):
         run = ScoutRun(profile_id=pid, query=query)
         s.add(run); s.commit(); s.refresh(run)
         rid = run.id
+    from . import narrate
+    from ..models import Profile as ProfileModel
+    # One shared, per-profile narration voice for the non-curator hub agents.
+    with session() as s:
+        tone = narrate.profile_tone(s.get(ProfileModel, pid))
+
     def emit(kind, message):
         # Short-lived transactions let other requests see real progress during network calls.
         with session() as s:
@@ -881,14 +892,16 @@ def research_run(body: ScoutInput, pid: int, scheduled: bool = False):
             s.commit()
     try:
         with slots.slot(f'scout-{pid}', 'scout', rid, pid, query[:120], wait_s=300, priority=not scheduled,
-                        on_wait=lambda: emit('queued', 'Waiting for a free agent slot.')):
+                        on_wait=lambda: emit('queued', narrate.say(tone, 'scout.queued', seed=str(rid)))):
             with session() as s:
                 # The interruption timeout counts from when research really starts, not from the queue.
                 row = s.get(ScoutRun, rid)
                 if row: row.created_at = time.time(); s.add(row); s.commit()
-            suggestions, sitemaps = scout.research(query, emit)
-        if sitemaps: emit('sitemaps', f'Found {len(sitemaps)} sitemap links; validated sitemaps appear in the suggestions.')
-        emit('complete', f'Found {len(suggestions)} validated sources.')
+            suggestions, sitemaps = scout.research(query, emit, tone)
+        if sitemaps:
+            emit('sitemaps', narrate.say(tone, 'scout.sitemaps', seed=str(rid), count=len(sitemaps)))
+        emit('complete', narrate.say(tone, 'scout.complete', seed=str(rid),
+                                     found=narrate.phrase(len(suggestions), 'validated source')))
         with session() as s:
             row = s.get(ScoutRun, rid)
             if not row: raise HTTPException(404, 'Research run not found')
@@ -967,6 +980,7 @@ class CuratorIn(BaseModel):
     icon: str | None = Input(default=None, max_length=8)
     color: str | None = Input(default=None, max_length=20)
     kind: str | None = Input(default=None, pattern='^(watch|research)$')
+    tone: str | None = Input(default=None, pattern='^(professional|friendly|playful)$')
     instructions: str | None = Input(default=None, max_length=4000)
     queries: list[str] | None = None
     keywords: list[str] | None = None

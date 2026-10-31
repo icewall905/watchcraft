@@ -20,8 +20,8 @@ test('proxy helper composes a URL and reports an unreachable proxy', async ({ pa
 
 	// Local VPN helper: host + port compose an http URL.
 	await page.getByRole('button', { name: 'Local VPN' }).click();
-	await page.getByLabel('Host').fill('127.0.0.1');
-	await page.getByLabel('Port').fill('9');
+	await page.getByRole('textbox', { name: 'Host' }).fill('127.0.0.1');
+	await page.getByRole('textbox', { name: 'Port', exact: true }).fill('9');
 	await page.getByRole('button', { name: 'Test this proxy' }).click();
 	await expect(page.getByText('Could not use this proxy')).toBeVisible();
 	await expect(page.getByText('Could not reach the proxy', { exact: false })).toBeVisible();

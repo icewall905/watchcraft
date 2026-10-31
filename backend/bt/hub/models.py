@@ -33,6 +33,7 @@ class Curator(SQLModel, table=True):
     description: str = ''
     icon: str = '✦'
     color: str = '#ffb547'
+    tone: str = 'friendly'  # narration voice for this agent's timeline
     queries: list = J()
     keywords: list = J()
     exclusions: list = J()

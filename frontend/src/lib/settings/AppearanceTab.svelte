@@ -19,6 +19,11 @@
 		} catch { /* The API client displays the error. */ }
 		finally { savingShelf = false; }
 	}
+	const TONES = [
+		{ id: 'professional', name: 'Professional', description: 'Plain, neutral progress notes.' },
+		{ id: 'friendly', name: 'Friendly', description: 'Warm, everyday language. Default.' },
+		{ id: 'playful', name: 'Playful', description: 'Light and fun — always honest about what really happened.' }
+	] as const;
 	const selected = $derived(session.settings?.appearance?.theme ?? 'projector');
 	async function select(id: string) {
 		if (saving || id === selected || !session.settings) return;
@@ -56,6 +61,18 @@
   {#if session.profile?.prefs?.scouts_home === true}
    <button class="theme-card" disabled={savingShelf} use:focusable={{ group: 'scouts-settings', onSelect: () => saveShelf({ scouts_home_position: session.profile?.prefs?.scouts_home_position === 'bottom' ? 'top' : 'bottom' }) }}><span class="details"><span class="name">Position: {session.profile?.prefs?.scouts_home_position === 'bottom' ? 'After video rows' : 'Before video rows'}</span><span class="small muted">Select to change the shelf position.</span></span></button>
   {/if}
+ </div>
+</Section>
+</div>
+<div class="device-section">
+<Section title="Research team voice" intro="How Source Scout and Briefing Writer describe their work. Each curator has its own voice in its settings.">
+ <div class="themes" aria-label="Research team voice">
+  {#each TONES as t}
+   <button class="theme-card" class:selected={(session.profile?.prefs?.hub_tone ?? 'friendly') === t.id} aria-pressed={(session.profile?.prefs?.hub_tone ?? 'friendly') === t.id} disabled={savingShelf}
+	use:focusable={{ group: 'hub-tone', id: `tone-${t.id}`, onSelect: () => saveShelf({ hub_tone: t.id }) }}>
+	<span class="details"><span class="name">{t.name}</span><span class="small muted">{t.description}</span></span>
+   </button>
+  {/each}
  </div>
 </Section>
 </div>

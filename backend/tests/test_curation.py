@@ -1,4 +1,5 @@
 import os
+import re
 import time
 import sqlite3
 import tempfile
@@ -1011,3 +1012,49 @@ def test_capture_claim_recovers_expired_lease(client, monkeypatch):
         assert job.status == 'running' and job.lease > time.time() and job.attempts == 2
     assert capture.dispatch() is False
     assert len(calls) == 1
+
+
+def test_narration_voice_covers_every_milestone_in_all_tones():
+    from bt.hub import narrate
+    facts = {'sources': narrate.phrase(2, 'source'), 'label': 'A blog', 'got': narrate.phrase(1, 'item'),
+             'fresh': narrate.phrase(2, 'unseen matching item'), 'new': narrate.phrase(2, 'new item'),
+             'seen': narrate.phrase(10, 'source item'), 'issues': narrate.phrase(1, 'issue'),
+             's': narrate.s(2), 'name': 'Morning briefing', 'sites': narrate.phrase(2, 'candidate site'),
+             'sample': narrate.phrase(3, 'sample item'), 'urls': narrate.phrase(2, 'sample URL'),
+             'count': 4, 'found': narrate.phrase(4, 'validated source')}
+    for key, tones in narrate.VOICE.items():
+        spoken = {tone: narrate.say(tone, key, seed='seed', **facts) for tone in narrate.TONES}
+        assert all(v and not v.startswith(' ') and not v.startswith('{') for v in spoken.values()), key
+        # Every voice states the same numbers; the voices differ in wording only.
+        digits = {tuple(re.findall(r'\d+', v)) for v in spoken.values()}
+        assert len(digits) == 1, (key, spoken)
+
+
+def test_narration_is_deterministic_and_unknown_tone_falls_back():
+    from bt.hub import narrate
+    a = narrate.say('playful', 'curator.checking', seed='r7', label='Non-fiction press')
+    assert a == narrate.say('playful', 'curator.checking', seed='r7', label='Non-fiction press')
+    assert narrate.say('loud', 'curator.checking', seed='r7', label='Non-fiction press') == \
+        narrate.say('friendly', 'curator.checking', seed='r7', label='Non-fiction press')
+    import pytest
+    with pytest.raises(KeyError):
+        narrate.say('playful', 'curator.made_up_milestone', seed='r7')
+
+
+def test_curator_tone_is_validated_and_narrated(client, monkeypatch):
+    monkeypatch.setattr(curation, 'fetch', lambda url, **kwargs: RSS)
+    assert client.post('/api/hub/curators', json={'name': 'A', 'tone': 'shouty'}).status_code == 422
+    feed = {'provider': 'rss', 'url': 'https://example.org/feed'}
+    playful = client.post('/api/hub/curators', json={'name': 'Playful', 'tone': 'playful',
+                                                     'source_ids': [client.post('/api/hub/sources', json=feed).json()['id']]}).json()
+    professional = client.post('/api/hub/curators', json={'name': 'Straight', 'tone': 'professional',
+                                                          'source_ids': [client.post('/api/hub/sources', json=feed).json()['id']]}).json()
+    assert playful['tone'] == 'playful'
+    hub.run(playful['id'])
+    hub.run(professional['id'])
+    timeline = next(a['timeline'] for a in client.get('/api/hub/team').json()['agents'] if a['id'] == playful['id'])
+    straight = next(a['timeline'] for a in client.get('/api/hub/team').json()['agents'] if a['id'] == professional['id'])
+    assert 'Off to the research fair' in [x['message'] for x in timeline if x['step'] == 'started'][0]
+    assert 'Run started; checking 1 source.' in [x['message'] for x in straight if x['step'] == 'started'][0]
+    changed = client.patch(f"/api/hub/curators/{playful['id']}", json={'tone': 'professional'}).json()
+    assert changed['tone'] == 'professional'

@@ -33,8 +33,10 @@ export type ScoutPlan = { id: number; query: string; interval_hours: number; ena
 export type ScoutSuggestion = { provider: 'rss' | 'html_listing' | 'sitemap' | 'page_watch'; url: string; name: string; count: number; sample: { title: string; url: string }[]; validated: boolean };
 export type ScoutRun = { id: number; query: string; status: 'running' | 'complete' | 'failed'; created_at: number; finished_at: number | null; events: { kind: string; message: string; at: number }[]; suggestions: ScoutSuggestion[]; sitemaps: string[]; error: string };
 export type Run = { id: number; started_at: number; finished_at: number | null; status: string; trigger: string; new_items: number; seen_items: number; errors: { source: string; message: string }[] };
+export type ToneName = 'professional' | 'friendly' | 'playful';
 export type Curator = {
 	id: number; name: string; description: string; icon: string; color: string; kind: 'watch' | 'research';
+	tone: ToneName;
 	instructions: string; queries: string[]; keywords: string[]; exclusions: string[]; content_types: string[];
 	source_ids: number[]; interval_hours: number; enabled: boolean; ai_enabled: boolean; min_score: number;
 	max_per_run: number; collection_id: number | null; topic_id: number | null; alert_enabled: boolean;
@@ -63,6 +65,7 @@ export type SavedSearch = { id: number; name: string; query: string; filters: Re
 export type TeamStatus = 'running' | 'waiting' | 'idle' | 'attention' | 'paused';
 export type TeamAgent = {
 	key: string; kind: 'curator' | 'scout' | 'briefing'; id: number | null; name: string; icon: string; color: string; mission: string;
+	tone?: ToneName;
 	status: TeamStatus; since: number | null; next_run: number | null; last_run?: number | null; doing?: string | null; query?: string;
 	role?: 'watch' | 'research'; error?: string; enabled?: boolean; found_today?: number; plans?: number;
 	finds?: { id: number; title: string; found_at: number; url?: string; summary?: string; publisher?: string;

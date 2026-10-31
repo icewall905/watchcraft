@@ -262,3 +262,14 @@ passed with original profile/PIN data and checked counts preserved. Backup and r
 ### Optional home activity shelf
 
 Each adult profile can enable the Scouts shelf under Settings → Appearance. It is off by default and can be placed before or after the video rows. It loads independently of the video feed and shows active or waiting agents, then recent real discoveries when the team is idle. The shelf links to Agent Activity and Scout Report; it is unavailable to child profiles. The current placement control chooses the beginning or end of the video rows rather than arbitrary ordering among individual rows.
+
+### Narration modes (P2)
+
+Every Hub agent narrates real milestones in three deterministic voices: professional, friendly (default) and playful.
+Each curator has a tone column (Settings → narration voice in the curator editor; a new `tone` column is added to the
+`curator` table by the existing additive startup migration). Source Scout and the Briefing Writer share a per-profile
+voice under Settings → Appearance → Research team voice (profile preference `hub_tone`). All voices state exactly the
+same facts and numbers; only wording differs, and no voice claims work that did not happen. Variant choice is derived
+from the run identifier, so a step never flaps between variants. Messages are narrated at emit time; events written
+before a voice change keep their original wording. Unknown tone values fall back to friendly. Tests cover the full
+milestone table across all voices, determinism, fallback, API validation and one narration-backed end-to-end run.

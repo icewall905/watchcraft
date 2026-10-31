@@ -203,24 +203,28 @@ def research_report(cid: int) -> Curator | None:
 
 
 def generate_briefing(bid: int) -> BriefingIssue | None:
-    from . import activity
+    from . import activity, narrate
     from ..access import hub_allowed
+    from ..models import Profile
     with session() as s:
         owner = s.get(Briefing, bid)
         if not owner or not hub_allowed(s, owner.profile_id):
             return None
+        profile = s.get(Profile, owner.profile_id)
+        tone = narrate.profile_tone(profile)
     run_id = uuid.uuid4().hex
     def progress(step, message, **details):
         activity.emit_briefing(owner, run_id, step, message, **details)
-    progress('started', f'Gathering new discoveries for {owner.name[:100]}.')
+    progress('started', narrate.say(tone, 'briefing.started', seed=run_id, name=owner.name[:100]))
     try:
-        return _generate_briefing(bid, progress)
+        return _generate_briefing(bid, progress, tone, run_id)
     except Exception as exc:
-        progress('failed', 'Briefing processing stopped unexpectedly. Check its issue history.', error=type(exc).__name__)
+        progress('failed', narrate.say(tone, 'briefing.failed', seed=run_id), error=type(exc).__name__)
         raise
 
 
-def _generate_briefing(bid: int, progress) -> BriefingIssue | None:
+def _generate_briefing(bid: int, progress, tone: str = 'friendly', run_id: str = '') -> BriefingIssue | None:
+    from . import narrate
     with session() as s:
         from ..access import hub_allowed
         b = s.get(Briefing, bid)
@@ -246,20 +250,21 @@ def _generate_briefing(bid: int, progress) -> BriefingIssue | None:
             ids.add(item.id); items.append(item)
         limit = 12 if b.length == 'concise' else 30
         items = items[:limit]
-    progress('selected', f'Selected {len(items)} new item{"" if len(items) == 1 else "s"} after topic filtering and duplicate checks.')
+    progress('selected', narrate.say(tone, 'briefing.selected', seed=run_id,
+                                     new=narrate.phrase(len(items), 'new item')))
     if not items:
         content, used_ai = 'Nothing new since the last briefing.', False
     else:
         try:
             if not enabled():
                 raise RuntimeError('AI disabled')
-            progress('writing', f'Writing a cited briefing from {len(items)} discover{"y" if len(items) == 1 else "ies"}.')
+            progress('writing', narrate.say(tone, 'briefing.writing', seed=run_id, new=narrate.phrase(len(items), 'discovery', 'discoveries')))
             content = _cited(items, f'Write the "{b.name}" briefing: what is worth knowing from these new discoveries, '
                              'most important first, grouping related items.', 180 if b.length == 'concise' else 500)
             used_ai = True
         except Exception as e:  # noqa: BLE001
             log.info('briefing AI failed: %s', e)
-            progress('fallback', 'Using a source-linked digest because AI writing is unavailable.')
+            progress('fallback', narrate.say(tone, 'briefing.fallback', seed=run_id))
             content, used_ai = fallback_digest(items), False
     progress('saving', 'Saving the briefing and its source references.')
     with session() as s:
@@ -271,5 +276,6 @@ def _generate_briefing(bid: int, progress) -> BriefingIssue | None:
         b.last_generated = time.time()
         b.next_run = time.time() + (86400 if b.frequency == 'daily' else 7 * 86400) if b.frequency != 'manual' else None
         s.add(issue); s.add(b); s.commit(); s.refresh(issue)
-    progress('completed', f'Briefing saved with {len(items)} source reference{"" if len(items) == 1 else "s"}.' if items else 'Briefing saved: nothing new since the previous issue.')
+    progress('completed', narrate.say(tone, 'briefing.saved', seed=run_id) if items
+             else narrate.say(tone, 'briefing.empty', seed=run_id))
     return issue

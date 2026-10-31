@@ -11,7 +11,7 @@
 	import ColorPicker from '$lib/components/ColorPicker.svelte';
 	import { hub } from './api';
 	import ErrorBox from './ErrorBox.svelte';
-	import { scheduleOptions, errMsg, emptyCurator } from './ui';
+	import { scheduleOptions, errMsg, emptyCurator, toneOptions } from './ui';
 	import type { Collection, CuratorInput, Registry, Source, Topic } from './types';
 
 	type Suggestion = { provider: string; url: string; name: string };
@@ -208,6 +208,7 @@
 
 	<fieldset>
 		<legend>Output</legend>
+		<Select label="Narration voice" hint="How this agent describes its work in the activity timeline. Wording only; the facts stay the same." bind:value={f.tone} options={toneOptions} group="cf-out" />
 		<Select label="Collection" hint="Auto-save finds into a collection." bind:value={colSel} options={[{ value: 0, label: 'None' }, ...collections.map((c) => ({ value: c.id, label: `${c.icon} ${c.name}` }))]} group="cf-out" />
 		<Select label="Knowledge topic" hint="Link finds to a long-lived topic." bind:value={topicSel} options={[{ value: 0, label: 'None' }, ...topics.map((t) => ({ value: t.id, label: t.name }))]} group="cf-out" />
 		<Toggle label="Raise alerts" hint="Create an alert when something matches below." bind:checked={f.alert_enabled} group="cf-out" />

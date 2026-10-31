@@ -4,7 +4,7 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
 from .. import curation
-from . import providers
+from . import providers, narrate
 from .extract import clean
 
 MAX_SITES = 3
@@ -47,12 +47,12 @@ def safe_url(base, url):
         return None
 
 
-def inspect_site(url, emit):
+def inspect_site(url, emit, tone='friendly'):
     """Inspect an HTTPS page or feed and validate advertised feeds before suggesting them."""
     url = curation.canonical(url)
     data, final, meta = curation.fetch(url, kinds=curation.HTML_TYPES + curation.FEED_TYPES,
                                        limit=2_000_000, with_metadata=True)
-    emit('inspected', 'Inspected a public site.')
+    emit('inspected', narrate.say(tone, 'scout.inspected', seed=final))
     if meta['content_type'] not in curation.HTML_TYPES:
         try:
             items = providers.parse_feed(data, final)
@@ -81,14 +81,16 @@ def inspect_site(url, emit):
             payload, resolved, _ = curation.fetch(candidate, with_metadata=True)
             items = providers.parse_feed(payload, resolved)
             found.append(suggestion(resolved, title or clean(parser.title, 100), items))
-            emit('validated', f'Validated a feed with {len(items)} sample items.')
+            emit('validated', narrate.say(tone, 'scout.validated_feed', seed=resolved,
+                                          sample=narrate.phrase(len(items), 'sample item')))
         except Exception:
-            emit('rejected', 'A candidate feed could not be validated.')
+            emit('rejected', narrate.say(tone, 'scout.rejected_feed', seed=candidate))
     if not found:
         items = providers.parse_listing(data, final)
         if items:
             found.append({**suggestion(final, clean(parser.title, 100), items), 'provider': 'html_listing'})
-            emit('validated', f'Tested an article listing with {len(items)} sample links.')
+            emit('validated', narrate.say(tone, 'scout.validated_listing', seed=final,
+                                          sample=narrate.phrase(len(items), 'article link')))
     sitemap_refs = list(parser.sitemaps)
     try:
         robots_url = urljoin(final, '/robots.txt')
@@ -102,14 +104,15 @@ def inspect_site(url, emit):
         try:
             items = providers.sitemap(candidate)
             found.append({**suggestion(candidate, clean(parser.title, 100), items), 'provider': 'sitemap'})
-            emit('validated', f'Tested a sitemap with {len(items)} sample URLs.')
+            emit('validated', narrate.say(tone, 'scout.validated_sitemap', seed=candidate,
+                                          urls=narrate.phrase(len(items), 'sample URL')))
         except Exception:
-            emit('rejected', 'A candidate sitemap could not be validated.')
+            emit('rejected', narrate.say(tone, 'scout.rejected_sitemap', seed=candidate))
     if not found:
         item = providers.extract_page(data, final)
         if item['body']:
             found.append({**suggestion(final, clean(parser.title, 100), [item]), 'provider': 'page_watch'})
-            emit('validated', 'Extracted readable page text for change monitoring.')
+            emit('validated', narrate.say(tone, 'scout.validated_page', seed=final))
     return found, sitemaps
 
 
@@ -119,31 +122,31 @@ def suggestion(url, title, items):
             'validated': True}
 
 
-def research(query, emit):
+def research(query, emit, tone='friendly'):
     """Return validated feed suggestions; search results and page markup are untrusted."""
     if query.lower().startswith('https://'):
         sites = [query]
     else:
         ok, reason = providers.PROVIDERS['web_search'].availability()
         if not ok: raise ValueError(reason)
-        emit('searching', 'Searching for relevant publishers.')
+        emit('searching', narrate.say(tone, 'scout.searching', seed=query))
         rows = providers.web_search('', query)
         sites = []
         for row in rows:
             u = safe_url('', row.get('url', ''))
             if u and u not in sites: sites.append(u)
             if len(sites) >= MAX_SITES: break
-        emit('found', f'Found {len(sites)} candidate sites.')
+        emit('found', narrate.say(tone, 'scout.found', seed=query, sites=narrate.phrase(len(sites), 'candidate site')))
     suggestions, sitemap_urls, seen = [], [], set()
     for site in sites[:MAX_SITES]:
         try:
-            feeds, sitemaps = inspect_site(site, emit)
+            feeds, sitemaps = inspect_site(site, emit, tone)
             for f in feeds:
                 if f['url'] not in seen:
                     seen.add(f['url']); suggestions.append(f)
             sitemap_urls.extend(x for x in sitemaps if x not in sitemap_urls)
         except Exception:
-            emit('failed', 'Could not inspect a candidate site.')
+            emit('failed', narrate.say(tone, 'scout.failed', seed=site))
     return suggestions[:15], sitemap_urls[:10]
 
 
