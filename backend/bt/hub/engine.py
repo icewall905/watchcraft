@@ -554,8 +554,9 @@ def dispatch_due() -> None:
             free -= 1
 
     if free > 0:
-        from . import capture
+        from . import capture, memes
         capture.dispatch()
+        memes.sweep()
 
 
 slots.after_release = dispatch_due

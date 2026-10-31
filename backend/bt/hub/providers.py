@@ -4,11 +4,13 @@ Feed providers read a URL and ignore queries; query providers run each query. Al
 fetches go through curation.fetch (HTTPS, public IPs only, bounded). The configured SearXNG
 endpoint is admin-trusted configuration and may live on the LAN."""
 import json
+import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Callable
-from urllib.parse import quote, urlencode, urljoin, urlsplit
+from urllib.parse import quote, unquote, urlencode, urljoin, urlsplit
+
 
 import httpx
 
@@ -22,6 +24,7 @@ TYPES = [
     ('recipe', 'Recipes', '🍳'), ('pattern', 'Craft patterns', '🧶'), ('advisory', 'Security advisories', '🛡'),
     ('project', 'Software projects', '📦'), ('document', 'Documents & papers', '📚'),
     ('person', 'People', '👤'), ('organization', 'Organizations', '🏢'), ('domain', 'Domains', '🔗'),
+    ('meme', 'Memes', '😂'),
 ]
 TYPE_KEYS = {t[0] for t in TYPES}
 
@@ -128,6 +131,75 @@ def parse_feed(data: bytes, url: str) -> list[dict]:
         out.append(f)
         if len(out) >= 50:
             break
+    return out
+
+
+def _mastodon_tags(q: str) -> list[str]:
+    """A query becomes up to three hashtag candidates; nothing is invented, only reshaped."""
+    words = [w for w in re.split(r'[^a-z0-9_]+', q.lower()) if len(w) >= 2][:6]
+    if not words:
+        return []
+    joined = ''.join(words)
+    out = [joined] if len(joined) >= 3 else []
+    out += [w for w in words if w not in out]
+    return out[:3]
+
+
+def _mastodon_status(s: dict, instance: str) -> dict | None:
+    """One public status → item dict. Replies and boosts are skipped; engagement counts are stored as observed."""
+    if not isinstance(s, dict) or s.get('in_reply_to_id') or s.get('reblog'):
+        return None
+    url = s.get('url')
+    if not isinstance(url, str) or not url.startswith('https://'):
+        return None
+    media = [m for m in (s.get('media_attachments') or []) if isinstance(m, dict)]
+    text = strip_tags(s.get('content') or '')
+    if not text and not media:
+        return None
+    account = s.get('account') or {}
+    tags = [str(t.get('name')) for t in (s.get('tags') or []) if isinstance(t, dict) and t.get('name')]
+    images = [m for m in media if m.get('type') in ('image', 'gifv') and safe_image(m.get('preview_url') or m.get('url') or '')]
+    first = images[0] if images else (media[0] if media else {})
+    preview = safe_image(first.get('preview_url') or '') or safe_image(first.get('url') or '')
+    title = clean((text.split('\n')[0] if text else (first.get('description') or '')) or f'{instance} post', 500)
+    community = f'#{tags[0]}' if tags else str(account.get('acct') or account.get('username') or instance)
+    return {
+        'url': url, 'type': 'meme', 'provider': 'mastodon', 'publisher': instance,
+        'author': clean(f"{account.get('display_name') or account.get('username') or ''} ({account.get('acct') or ''})", 200),
+        'title': title, 'summary': clean(text, 1000), 'body': text[:4000], 'image': preview,
+        'published_at': ts(s.get('created_at')), 'external_id': f"mstdn:{instance}:{s.get('id')}",
+        'meta': {'platform': 'mastodon', 'instance': instance, 'community': community[:200], 'tags': tags[:8],
+                 'language': str(s.get('language') or '')[:8], 'sensitive': bool(s.get('sensitive')),
+                 'spoiler': clean(s.get('spoiler_text'), 300),
+                 'media': {'type': str(first.get('type') or ''), 'mime': str(first.get('mime_type') or ''),
+                           'url': str(first.get('url') or ''), 'preview_url': str(first.get('preview_url') or ''),
+                           'alt': clean(first.get('description'), 300)} if media else {},
+                 'observations': {'replies': s.get('replies_count'), 'reblogs': s.get('reblogs_count'),
+                                  'favourites': s.get('favourites_count')}},
+    }
+
+
+def mastodon(url: str, q: str = '') -> list[dict]:
+    p = urlsplit(url)
+    if not p.hostname:
+        raise ValueError('Use the https:// URL of a Mastodon instance (e.g. https://mastodon.world).')
+    instance = p.hostname
+    m = re.match(r'^/api/v1/timelines/tag/([^/?]+)', p.path)
+    tags = [unquote(m.group(1))] if m else []
+    tags += [t for t in _mastodon_tags(q) if t not in tags]
+    endpoints = [f'https://{instance}/api/v1/timelines/tag/{quote(t, safe="")}?limit=30' for t in tags[:3]] \
+        or [f'https://{instance}/api/v1/timelines/public?limit=30']
+    out, seen = [], set()
+    for endpoint in endpoints:
+        data = json.loads(curation.fetch(endpoint))
+        if not isinstance(data, list):
+            raise ValueError('Unexpected Mastodon response.')
+        for s in data[:40]:
+            item = _mastodon_status(s, instance)
+            if not item or item['external_id'] in seen:
+                continue
+            seen.add(item['external_id'])
+            out.append(item)
     return out
 
 
@@ -365,4 +437,6 @@ PROVIDERS = {p.key: p for p in [
              ['url-extraction', 'structured-metadata'], needs_url=True, default_type='web'),
     Provider('page_watch', 'Page change watcher', 'feed', 'Track text changes on one public page, optionally limited to a content area.', page_watch,
              ['update-monitoring', 'page-changes'], needs_url=True, default_type='web'),
+    Provider('mastodon', 'Mastodon communities', 'query', 'Public posts and hashtags from a Mastodon instance (no login). Each query is tried as a hashtag.', mastodon,
+             ['keyword-search', 'update-monitoring', 'structured-metadata'], needs_url=True, default_type='meme'),
 ]}

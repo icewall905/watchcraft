@@ -3,6 +3,7 @@
 Retrieved text is untrusted. It is passed as quoted data with an explicit instruction to
 ignore instructions inside it, outputs are schema-validated, and every summary cites item
 numbers so claims stay traceable. Every function has a non-AI fallback."""
+import base64
 import json
 import logging
 import re
@@ -39,9 +40,9 @@ def _data(items: list[dict]) -> str:
     return '<data>\n' + _esc('\n'.join(rows)) + '\n</data>'
 
 
-def _call(system: str, user: str, schema: dict, max_tokens=1500) -> dict:
+def _call(system: str, user: str, schema: dict, max_tokens=1500, images: list[str] | None = None) -> dict:
     return llm.chat_json([{'role': 'system', 'content': f'{system}\n\n{GUARD}'}, {'role': 'user', 'content': user}],
-                         json_schema=schema, max_tokens=max_tokens, retries=1, timeout_s=90, no_think=True)
+                         json_schema=schema, max_tokens=max_tokens, retries=1, timeout_s=90, no_think=True, images=images)
 
 
 RANK_SCHEMA = {'type': 'object', 'properties': {'scores': {'type': 'array', 'items': {'type': 'object', 'properties': {
@@ -315,3 +316,32 @@ def _generate_briefing(bid: int, progress, tone: str = 'friendly', run_id: str =
     progress('completed', narrate.say(tone, 'briefing.saved', seed=run_id, refs=narrate.phrase(len(items), 'source reference')) if items
              else narrate.say(tone, 'briefing.empty', seed=run_id))
     return issue
+
+
+MEME_EXPLAIN_SCHEMA = {'type': 'object', 'properties': {
+    'what_shows': {'type': 'string'}, 'why_funny': {'type': 'string'}, 'referencing': {'type': 'string'},
+    'origin': {'type': 'string'}, 'why_now': {'type': 'string'}, 'uncertain': {'type': 'string'}},
+    'required': ['what_shows', 'why_funny', 'referencing', 'origin', 'why_now', 'uncertain']}
+
+
+def explain_meme(item: dict, similar: list[str], image: bytes | None = None, mime: str = '') -> dict:
+    """Explain one meme example from its own data. Origins the data does not establish stay 'unknown'."""
+    images = None
+    if image and mime and get_settings()['llm'].get('vision'):
+        images = [f'data:{mime};base64,{base64.b64encode(image).decode()}']
+    rows = {'title': (item.get('title') or '')[:300], 'caption': (item.get('summary') or '')[:600],
+            'platform': item.get('platform', ''), 'community': item.get('community', ''),
+            'tags': item.get('tags', []), 'first_seen': item.get('first_seen'),
+            'similar_examples': similar[:6]}
+    res = _call('You explain one internet meme to someone who does not know it. Use only the provided data for facts, '
+                'plus widely shared internet culture for background. "origin" must describe how the meme started: if '
+                'the data does not establish that, write exactly "unknown" — never invent an origin story. Put anything '
+                'you are unsure about in "uncertain". Keep each field under 50 words.',
+                f'{_data([rows])}\nFields: what_shows (what the image/text shows), why_funny (why people find it '
+                'funny), referencing (event/person/format it refers to, or unknown), origin, why_now (why it may be '
+                'spreading now, or unknown), uncertain.',
+                MEME_EXPLAIN_SCHEMA, max_tokens=900, images=images)
+    out = {k: str(res.get(k, '')).strip()[:600] for k in MEME_EXPLAIN_SCHEMA['properties']}
+    if not any(out.values()):
+        raise ValueError('empty explanation')
+    return out

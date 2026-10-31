@@ -11,6 +11,28 @@ from . import stories
 from .models import (Alert, ContentItem, Curator, CuratorDiscovery, CuratorRun, ScoutPlan, ScoutReportIssue, ScoutRun)
 
 
+def _meme_lines(s, pid: int, since: float) -> list[dict]:
+    """Counted meme-trend facts, only for memes this profile actually collected."""
+    from .models import MemeExample, MemeFormat, MemeTrend
+    trends = s.exec(select(MemeTrend).where(MemeTrend.updated_at >= since, MemeTrend.state.in_(('emerging', 'trending')))
+                    .order_by(MemeTrend.updated_at.desc()).limit(10)).all()
+    out = []
+    for t in trends:
+        members = (list(s.exec(select(MemeExample.item_id).where(
+            MemeExample.format_id == int(t.target_key))).all()) if t.target_kind == 'format' else
+            list(s.exec(select(MemeExample.item_id).where(MemeExample.community == t.target_key)).all()))
+        if not members or not s.exec(select(CuratorDiscovery.id).where(CuratorDiscovery.profile_id == pid,
+                    CuratorDiscovery.item_id.in_(members))).first():
+            continue
+        fmt = s.get(MemeFormat, int(t.target_key)) if t.target_kind == 'format' else None
+        name = fmt.name if fmt else t.target_key
+        out.append({'name': name[:120], 'kind': t.target_kind, 'state': t.state,
+                    'last7': (t.metrics or {}).get('last7'), 'communities': (t.metrics or {}).get('communities')})
+        if len(out) >= 3:
+            break
+    return out
+
+
 def generate(pid: int, period: str, curator_id: int | None = None):
     now = time.time()
     since = now - (86400 if period == 'daily' else 7 * 86400)
@@ -61,6 +83,7 @@ def generate(pid: int, period: str, curator_id: int | None = None):
                     'runs': {'count': len(runs), 'new_items': sum(r.new_items for r in runs),
                              'failed': sum(r.status in ('failed', 'partial') for r in runs)},
                     'scout': {'runs': len(scouts), 'validated_sources': sum(len(r.suggestions) for r in scouts)},
+                    'memes': _meme_lines(s, pid, since),
                     'alerts': [{'id': a.id, 'title': a.title, 'severity': a.severity} for a in alerts],
                     'upcoming': next_work,
                     'stories': stories.generate(s, pid, since, curator_id)}

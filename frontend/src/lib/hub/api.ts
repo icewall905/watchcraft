@@ -2,7 +2,8 @@
 import { request } from '$lib/api';
 import type {
 	Alert, Briefing, Collection, Counts, Curator, CuratorDetail, CuratorInput, Issue, Item, ItemDetail, ItemState,
-	NewsGroup, Page, Registry, SavedSearch, SearchResult, ScoutPlan, ScoutReport, ScoutReportConfig, ScoutRun, Source, SourceTest, PageRevision, SitemapChanges, WatcherConfig, WatcherState, WatcherSave, RepairResult, Team, Template, Topic, TopicDetail, WebResult
+	NewsGroup, Page, Registry, SavedSearch, SearchResult, ScoutPlan, ScoutReport, ScoutReportConfig, ScoutRun, Source, SourceTest, PageRevision, SitemapChanges, WatcherConfig, WatcherState, WatcherSave, RepairResult, Team, Template, Topic, TopicDetail, WebResult,
+	MemeExplain, MemeFormat, MemeTrend
 } from './types';
 
 type Params = Record<string, string | number | boolean | undefined | null>;
@@ -104,7 +105,16 @@ export const hub = {
 	webSearch: (q: string, providers: string[]) => send<{ results: WebResult[]; errors: { provider: string; message: string }[] }>('POST', '/search/web', { q, providers }),
 	savedSearches: () => get<SavedSearch[]>('/saved-searches'),
 	saveSearch: (body: Partial<SavedSearch>) => send<SavedSearch>('POST', '/saved-searches', body),
-	deleteSavedSearch: (id: number) => send<{ ok: boolean }>('DELETE', `/saved-searches/${id}`)
+	deleteSavedSearch: (id: number) => send<{ ok: boolean }>('DELETE', `/saved-searches/${id}`),
+
+	memeItems: (params: Params, signal?: AbortSignal) => get<Page<Item>>('/memes/items' + qs(params), signal),
+	memeFacets: () => get<{ communities: { key: string; count: number }[]; languages: { key: string; count: number }[] }>('/memes/facets'),
+	memeTrends: (params: Params) => get<{ trends: MemeTrend[] }>('/memes/trends' + qs(params)),
+	memeTrendState: (id: number, body: { followed?: boolean; hidden?: boolean }) => send<{ followed: boolean; hidden: boolean }>('POST', `/memes/trends/${id}/state`, body),
+	memeFormats: (params: Params) => get<{ formats: MemeFormat[]; total: number }>('/memes/formats' + qs(params)),
+	memeFormat: (id: number) => get<MemeFormat & { items: Item[] }>(`/memes/formats/${id}`),
+	memeSimilar: (id: number) => get<{ items: Item[] }>(`/memes/items/${id}/similar`),
+	memeExplain: (id: number, refresh = false) => send<{ ai: boolean; explanation: MemeExplain }>('POST', `/memes/items/${id}/explain`, { refresh })
 };
 
 const span = (s: number) => s < 3600 ? `${Math.max(1, Math.floor(s / 60))}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`;

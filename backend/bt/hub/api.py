@@ -15,9 +15,9 @@ from ..access import hub_allowed, require_admin, require_hub
 from ..api.core import profile_id
 from ..db import get_settings, save_setting, session
 from ..models import AgentEvent, Download
-from . import activity, ai, engine, polling, repair, scout, slots, watchers
+from . import activity, ai, engine, memes, polling, repair, scout, slots, watchers
 from .models import (Alert, Briefing, BriefingIssue, CaptureJob, CapturedAsset, CapturedPage, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
-                     CuratorRun, CuratorSource, ItemState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, ScoutReportConfig, ScoutReportIssue, SitemapEntry, Source, SourceCheck, Topic, TopicItem, WatcherRevision)
+                     CuratorRun, CuratorSource, ItemState, MemeExample, MemeFormat, MemeTrend, MemeTrendState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, ScoutReportConfig, ScoutReportIssue, SitemapEntry, Source, SourceCheck, Topic, TopicItem, WatcherRevision)
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
 from .templates import TEMPLATES
 
@@ -1842,6 +1842,227 @@ def delete_saved_search(sid: int, pid: int = Depends(profile_id)):
         return {'ok': True}
 
 
+
+# ---------- Meme Radar
+
+def _visible_to(col, pid: int):
+    """Profile visibility for meme items: found by its curators or touched by it. Two INs keep
+    the join graph clean; a union of differently-shaped selects makes SQLA warn about crosses."""
+    meme_ids = select(ContentItem.id).where(ContentItem.type == 'meme')
+    found = select(CuratorDiscovery.item_id).where(CuratorDiscovery.profile_id == pid, CuratorDiscovery.item_id.in_(meme_ids))
+    touched = select(ItemState.item_id).where(ItemState.profile_id == pid, ItemState.item_id.in_(meme_ids))
+    return or_(col.in_(found), col.in_(touched))
+
+
+def _attach_meme(s: Session, rows: list[dict]) -> None:
+    mapping = memes.example_map(s, [r['id'] for r in rows])
+    for r in rows:
+        r['meme'] = mapping.get(r['id'])
+
+
+@router.get('/memes/items')
+def meme_items(view: str = 'examples', q: str = '', community: str = '', provider: str = '', language: str = '',
+               format_id: int | None = None, topic: int = 0, since: float | None = None, until: float | None = None,
+               offset: int = 0, limit: int = 30, pid: int = Depends(profile_id)):
+    """Image-first feed. 'examples' hides exact duplicates, dismissed items and examples of hidden trends."""
+    limit = max(1, min(limit, 100))
+    with session() as s:
+        st = ItemState
+        stmt = (select(ContentItem).join(MemeExample, MemeExample.item_id == ContentItem.id)
+                .outerjoin(st, (st.item_id == ContentItem.id) & (st.profile_id == pid))
+                .where(ContentItem.type == 'meme', _visible_to(ContentItem.id, pid)))
+        if view != 'history':
+            stmt = stmt.where(MemeExample.dup_of == None)  # noqa: E711
+        if view == 'examples':
+            stmt = stmt.where(or_(st.dismissed == None, st.dismissed == False))  # noqa: E711
+            hidden = [int(t.target_key) for t, ts in s.exec(
+                select(MemeTrend, MemeTrendState).join(MemeTrendState, MemeTrendState.trend_id == MemeTrend.id)
+                .where(MemeTrendState.profile_id == pid, MemeTrendState.hidden == True,  # noqa: E711
+                       MemeTrend.target_kind == 'format')).all()]
+            if hidden:
+                stmt = stmt.where(or_(MemeExample.format_id == None, MemeExample.format_id.not_in(hidden)))  # noqa: E711
+        if view == 'saved':
+            stmt = stmt.where(st.saved == True)  # noqa: E711
+        if community:
+            stmt = stmt.where(MemeExample.community == community)
+        if language:
+            stmt = stmt.where(MemeExample.language == language)
+        if provider:
+            stmt = stmt.where(ContentItem.provider.in_(provider.split(',')))
+        if format_id:
+            stmt = stmt.where(MemeExample.format_id == format_id)
+        if topic:
+            owned = select(Topic.id).where(Topic.id == topic, Topic.profile_id == pid)
+            stmt = stmt.where(ContentItem.id.in_(select(TopicItem.item_id).where(TopicItem.topic_id.in_(owned))))
+        if q:
+            expr = fts_query(q)
+            if expr:
+                stmt = stmt.where(ContentItem.id.in_(text('SELECT rowid FROM content_fts WHERE content_fts MATCH :q').bindparams(q=expr)))
+        when = func.coalesce(ContentItem.published_at, ContentItem.first_seen)
+        if since: stmt = stmt.where(when >= since)
+        if until: stmt = stmt.where(when <= until)
+        total = s.exec(select(func.count()).select_from(stmt.subquery())).one()
+        rows = s.exec(stmt.order_by(ContentItem.first_seen.desc(), ContentItem.id.desc())
+                      .offset(max(0, offset)).limit(limit)).all()
+        out = serialize(s, pid, list(rows))
+        _attach_meme(s, out)
+        return {'items': out, 'total': total}
+
+
+@router.get('/memes/facets')
+def meme_facets(pid: int = Depends(profile_id)):
+    with session() as s:
+        vis = _visible_to(MemeExample.item_id, pid)
+        communities = s.exec(select(MemeExample.community, func.count(MemeExample.item_id))
+                             .where(MemeExample.community != '', vis)
+                             .group_by(MemeExample.community).order_by(func.count(MemeExample.item_id).desc())
+                             .limit(50)).all()
+        languages = s.exec(select(MemeExample.language, func.count(MemeExample.item_id))
+                           .where(MemeExample.language != '', vis)
+                           .group_by(MemeExample.language).order_by(func.count(MemeExample.item_id).desc())
+                           .limit(20)).all()
+        return {'communities': [{'key': c, 'count': n} for c, n in communities],
+                'languages': [{'key': l, 'count': n} for l, n in languages]}
+
+
+@router.get('/memes/trends')
+def meme_trends(state: str = '', include_hidden: bool = False, pid: int = Depends(profile_id)):
+    """Counted trend observations for this profile's collected memes; hidden trends only on request."""
+    with session() as s:
+        q = select(MemeTrend)
+        if state:
+            q = q.where(MemeTrend.state.in_([x for x in state.split(',') if x in memes.STATES]))
+        trends = s.exec(q.order_by(MemeTrend.updated_at.desc()).limit(100)).all()
+        out = []
+        for t in trends:
+            d = memes.trend_dict(s, t, pid)
+            if not d['example_ids']:
+                continue  # this profile has not collected any example of it
+            if d['hidden'] and not include_hidden:
+                continue
+            out.append(d)
+        return {'trends': out}
+
+
+class TrendStateIn(BaseModel):
+    followed: bool | None = None
+    hidden: bool | None = None
+
+
+@router.post('/memes/trends/{tid}/state')
+def meme_trend_state(tid: int, body: TrendStateIn, pid: int = Depends(profile_id)):
+    with session() as s:
+        if not s.get(MemeTrend, tid):
+            raise HTTPException(404, 'Trend not found')
+        st = s.get(MemeTrendState, (pid, tid)) or MemeTrendState(profile_id=pid, trend_id=tid)
+        for k, v in body.model_dump(exclude_none=True).items():
+            setattr(st, k, v)
+        s.add(st); s.commit(); s.refresh(st)
+        return {'followed': st.followed, 'hidden': st.hidden}
+
+
+@router.get('/memes/formats')
+def meme_formats(q: str = '', sort: str = 'new', offset: int = 0, limit: int = 30, pid: int = Depends(profile_id)):
+    """Template groups earned their name from collected examples; 'new' is the newest grouping."""
+    limit = max(1, min(limit, 100))
+    with session() as s:
+        grouped = select(MemeExample.format_id).where(_visible_to(MemeExample.item_id, pid))
+        stmt = select(MemeFormat).where(MemeFormat.example_count >= 2, MemeFormat.id.in_(grouped))
+        if q:
+            stmt = stmt.where(MemeFormat.name.ilike(f'%{q[:100]}%'))
+        total = s.exec(select(func.count()).select_from(stmt.subquery())).one()
+        order = MemeFormat.created_at.desc() if sort == 'new' else MemeFormat.last_seen.desc()
+        rows = s.exec(stmt.order_by(order).offset(max(0, offset)).limit(limit)).all()
+        out = []
+        for f in rows:
+            d = {'id': f.id, 'name': f.name, 'kind': f.kind, 'example_count': f.example_count,
+                 'community_count': f.community_count, 'first_seen': f.first_seen, 'last_seen': f.last_seen,
+                 'created_at': f.created_at}
+            trend = s.exec(select(MemeTrend).where(MemeTrend.target_kind == 'format', MemeTrend.target_key == str(f.id))).first()
+            d['state'] = trend.state if trend else 'newly_observed'
+            d['featured_item_id'] = f.exemplar_item_id
+            out.append(d)
+        return {'formats': out, 'total': total}
+
+
+@router.get('/memes/formats/{fid}')
+def meme_format(fid: int, pid: int = Depends(profile_id)):
+    with session() as s:
+        f = s.get(MemeFormat, fid)
+        if not f:
+            raise HTTPException(404, 'Format not found')
+        members = s.exec(select(ContentItem).join(MemeExample, MemeExample.item_id == ContentItem.id)
+                         .where(MemeExample.format_id == fid, _visible_to(ContentItem.id, pid))
+                         .order_by(ContentItem.first_seen.desc()).limit(100)).all()
+        out = serialize(s, pid, list(members))
+        _attach_meme(s, out)
+        return {'id': f.id, 'name': f.name, 'kind': f.kind, 'example_count': f.example_count,
+                'community_count': f.community_count, 'first_seen': f.first_seen, 'last_seen': f.last_seen,
+                'items': out}
+
+
+@router.get('/memes/items/{iid}/similar')
+def meme_similar(iid: int, pid: int = Depends(profile_id)):
+    with session() as s:
+        it = s.get(ContentItem, iid)
+        if not it or not can_see(s, pid, iid):
+            raise HTTPException(404, 'Item not found')
+        ids = memes.similar_ids(s, iid)
+        rows = s.exec(select(ContentItem).where(ContentItem.id.in_(ids), _visible_to(ContentItem.id, pid))).all()
+        out = serialize(s, pid, list(rows))
+        _attach_meme(s, out)
+        return {'items': out}
+
+
+class ExplainIn(BaseModel):
+    refresh: bool = False
+
+
+@router.post('/memes/items/{iid}/explain')
+def meme_explain(iid: int, body: ExplainIn, pid: int = Depends(profile_id)):
+    """Optional AI context. Stored separately from source facts; never invents an origin."""
+    with session() as s:
+        it = s.get(ContentItem, iid)
+        if not it or it.type != 'meme' or not can_see(s, pid, iid):
+            raise HTTPException(404, 'Item not found')
+        cached = it.enrichment.get('meme_explain') if it.enrichment else None
+        if cached and not body.refresh:
+            return {'ai': True, 'explanation': cached}
+    if not ai.enabled():
+        raise HTTPException(422, 'Meme explanations need the AI connection configured under Settings → AI.')
+    try:
+        with slots.slot(f'meme-explain-{iid}', 'meme_explain', iid, pid, 'Meme explanation'):
+            with session() as s:
+                it = s.get(ContentItem, iid)
+                meta = it.meta or {}
+                asset = s.get(CapturedAsset, (iid, 'image'))
+                titles = [t for (t,) in s.exec(select(ContentItem.title).where(
+                    ContentItem.id.in_(memes.similar_ids(s, iid) or [0]))).all()]
+                result = ai.explain_meme({'title': it.title, 'summary': it.summary, 'platform': meta.get('platform', ''),
+                                          'community': meta.get('community', ''), 'tags': meta.get('tags', []),
+                                          'first_seen': it.first_seen}, titles,
+                                         asset.data if asset else None, asset.mime if asset else '')
+    except slots.Busy:
+        raise HTTPException(409, 'An explanation for this meme is already running.')
+    except Exception as e:  # noqa: BLE001 — AI failures never break browsing
+        raise HTTPException(502, f'The AI could not explain this meme ({engine._safe_error(e)}). Try again later.')
+    result = {**{k: result.get(k, '') for k in ('what_shows', 'why_funny', 'referencing', 'origin', 'why_now', 'uncertain')},
+              'ai': True, 'at': time.time()}
+    with session() as s:
+        it = s.get(ContentItem, iid)
+        if not it or not can_see(s, pid, iid):
+            raise HTTPException(404, 'Item not found')
+        it.enrichment = {**it.enrichment, 'meme_explain': result}
+        s.add(it); s.commit()
+    return {'ai': True, 'explanation': result}
+
+
+@router.post('/memes/sweep')
+def meme_sweep():
+    """Analyze collected meme examples and recount trends now instead of on the next scheduler tick."""
+    return memes.sweep(throttled=False)
+
+
 def delete_profile_data(s: Session, pid: int) -> None:
     """Called when a profile is deleted. Shared ContentItems stay (other profiles may reference them)."""
     cids = list(s.exec(select(Curator.id).where(Curator.profile_id == pid)).all())
@@ -1855,5 +2076,5 @@ def delete_profile_data(s: Session, pid: int) -> None:
     s.exec(delete(TopicItem).where(TopicItem.topic_id.in_(tids or [0])))
     s.exec(delete(AgentEvent).where(AgentEvent.kind.in_(['source_scout', activity.KIND]), AgentEvent.profile_id == pid))
     s.exec(delete(ScoutReportConfig).where(ScoutReportConfig.profile_id == pid))
-    for model in (CaptureJob, CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, PageRevision, SourceCheck, SitemapEntry, WatcherRevision, Source, Curator, ScoutRun, ScoutPlan, ScoutReportIssue):
+    for model in (CaptureJob, CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, PageRevision, SourceCheck, SitemapEntry, WatcherRevision, Source, Curator, ScoutRun, ScoutPlan, ScoutReportIssue, MemeTrendState):
         s.exec(delete(model).where(model.profile_id == pid))

@@ -9,4 +9,5 @@ yt-dlp[default]==2026.10.21
 pysocks==1.7.1
 socksio==1.0.0
 bgutil-ytdlp-pot-provider==2.0.2
+Pillow==11.3.0
 pytest==8.4.2

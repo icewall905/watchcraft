@@ -121,8 +121,50 @@ def _run_stories(s: Session, pid: int, since: float, curator_id: int | None) -> 
     return out
 
 
+def _meme_story(s: Session, pid: int, since: float, curator_id: int | None) -> list[dict]:
+    if curator_id is not None:
+        return []
+    from .models import MemeExample, MemeFormat, MemeTrend
+    trends = s.exec(select(MemeTrend).where(MemeTrend.updated_at >= since,
+                                            MemeTrend.state.in_(('emerging', 'trending')))
+                    .order_by(MemeTrend.updated_at.desc()).limit(10)).all()
+    out = []
+    for t in trends:
+        members = (list(s.exec(select(MemeExample.item_id).where(
+            MemeExample.format_id == int(t.target_key))).all()) if t.target_kind == 'format' else
+            list(s.exec(select(MemeExample.item_id).where(MemeExample.community == t.target_key)).all()))
+        if not members:
+            continue
+        seen = s.exec(select(CuratorDiscovery.item_id).where(CuratorDiscovery.profile_id == pid,
+                        CuratorDiscovery.item_id.in_(members))).first()
+        if not seen:
+            continue  # never tell a profile about memes it has not collected
+        m = t.metrics or {}
+        name = ''
+        links = _links(('Open Meme Radar', '/memes'))
+        if t.target_kind == 'format':
+            f = s.get(MemeFormat, int(t.target_key))
+            name = f.name if f else ''
+            if f and f.exemplar_item_id:
+                links += _links(('See the example', f'/item/{f.exemplar_item_id}'))
+            what = f'the format "{name[:60]}"' if name else 'a recurring meme format'
+        else:
+            what = f'the community {t.target_key}'
+        text = (f'It watched {what} gather {m.get("last7", 0)} new example'
+                f'{"s" if m.get("last7", 0) != 1 else ""} in the last 7 days across '
+                f'{m.get("communities", 0)} independent communit'
+                f'{"y" if m.get("communities", 0) == 1 else "ies"}. The label "{t.state}" comes from those counted '
+                'observations only.')
+        if m.get('sparse'):
+            text += f' The sample is small ({m.get("samples", 0)} examples), so treat it as early.'
+        out.append({'kind': 'meme', 'title': f'A meme is {t.state.replace("_", " ")}: {what}.',
+                    'text': text, 'links': links, 'at': t.updated_at})
+    return out[:1]
+
+
 def generate(s: Session, pid: int, since: float, curator_id: int | None = None) -> list[dict]:
     """Real notable sequences from persisted data, newest first, bounded to five."""
     all_stories = [*_alert_story(s, pid, since, curator_id), *_research_story(s, pid, since, curator_id),
-                   *_scout_story(s, pid, since, curator_id), *_run_stories(s, pid, since, curator_id)]
+                   *_scout_story(s, pid, since, curator_id), *_run_stories(s, pid, since, curator_id),
+                   *_meme_story(s, pid, since, curator_id)]
     return sorted(all_stories, key=lambda x: x.get('at') or since, reverse=True)[:5]

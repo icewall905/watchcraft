@@ -94,6 +94,10 @@
 					{/each}</ul>
 				{:else}<p class="muted">No new unreported discoveries in this period.</p>{/if}
 				{#if current.sections.alerts.length}<h3>Needs attention</h3><ul>{#each current.sections.alerts as alert}<li><a href="/alerts" use:focusable>{alert.title} · {alert.severity}</a></li>{/each}</ul>{/if}
+				{#if current.sections.memes?.length}
+					<h3>Meme Radar</h3>
+					<ul>{#each current.sections.memes as m}<li><a href="/memes" use:focusable>{m.name}</a> · {m.state}{#if m.last7 != null} · {m.last7} example{m.last7 === 1 ? '' : 's'} in 7 days{#if m.communities != null} across {m.communities} communities{/if}{/if}</li>{/each}</ul>
+				{/if}
 				{#if current.sections.upcoming.length}<h3>What's next</h3><ul>{#each current.sections.upcoming as item}<li><a href={item.href} use:focusable>{item.name}</a> · {ago(item.next_run)}</li>{/each}</ul>{/if}
 			</article>
 		{:else}<div class="empty"><h2>No reports yet</h2><p>Generate a report to see what your researchers found.</p></div>{/if}

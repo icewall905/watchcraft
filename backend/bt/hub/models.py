@@ -352,3 +352,56 @@ class SavedSearch(SQLModel, table=True):
     filters: dict = J({})
     pinned: bool = False
     created_at: float = Field(default_factory=time.time)
+
+
+class MemeExample(SQLModel, table=True):
+    """A collected meme example: hash identity + template link on top of the canonical ContentItem."""
+    item_id: int = Field(primary_key=True)
+    media_sha: str = T('')          # sha256 of the exact captured media bytes
+    phash: str = T('')              # 64-bit dHash hex for visual examples ('' for text-only)
+    text_sha: str = T('')           # normalized caption hash for text memes
+    community: str = T('')          # community/hashtag/account the example came from
+    language: str = T('')
+    has_media: bool = False
+    dup_of: int | None = None       # item id of the exact-media/caption original this repeats
+    format_id: int | None = Field(default=None, index=True)
+    analyzed_at: float = Field(default_factory=time.time)
+
+
+class MemeFormat(SQLModel, table=True):
+    """A recurring joke/visual template: created once two examples are perceptually or textually alike."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    name: str = ''
+    kind: str = 'visual'            # visual | text
+    phash: str = T('')              # exemplar dHash hex (visual formats)
+    exemplar_item_id: int | None = None
+    example_count: int = 1
+    community_count: int = 1
+    first_seen: float = Field(default_factory=time.time)
+    last_seen: float = Field(default_factory=time.time)
+    created_at: float = Field(default_factory=time.time)
+    updated_at: float = Field(default_factory=time.time)
+
+
+class MemeTrend(SQLModel, table=True):
+    """Observed activity around a format or community. Every metric is counted, never estimated."""
+    __table_args__ = (UniqueConstraint('target_kind', 'target_key'),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    target_kind: str = 'format'     # format | community
+    target_key: str = ''            # format id as string, or community label
+    state: str = 'newly_observed'   # newly_observed | emerging | trending | established | fading
+    prev_state: str = T('')
+    first_observed: float | None = None
+    last_observed: float | None = None
+    observations: list = J()        # [{'day': 'YYYY-MM-DD', 'count': n}, …] newest last, 30 days
+    metrics: dict = J({})           # counted metrics + sample flag
+    evidence: list = J()            # human-readable factual sentences backing the label
+    updated_at: float = Field(default_factory=time.time)
+
+
+class MemeTrendState(SQLModel, table=True):
+    """Per-profile follow/hide on a trend."""
+    profile_id: int = Field(primary_key=True)
+    trend_id: int = Field(primary_key=True)
+    followed: bool = False
+    hidden: bool = False

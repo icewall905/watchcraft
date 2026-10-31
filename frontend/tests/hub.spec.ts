@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { freshPage } from './helpers';
 
 // Every hub section renders a real state (empty or populated) without page errors.
-const ROUTES = ['/discover', '/news', '/knowledge', '/library', '/briefings', '/alerts', '/research', '/curators', '/curators/new', '/sources', '/find?q=test', '/tv', '/settings?tab=search'];
+const ROUTES = ['/discover', '/news', '/knowledge', '/library', '/memes', '/briefings', '/alerts', '/research', '/curators', '/curators/new', '/sources', '/find?q=test', '/tv', '/settings?tab=search'];
 
 test.beforeEach(async ({ request }) => {
 	// These are browsing/fallback checks, independent of a configured AI server.

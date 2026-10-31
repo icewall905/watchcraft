@@ -16,7 +16,7 @@ export const SETTINGS = entry('/settings', 'Settings', 'settings');
 
 export const SECTIONS: NavSection[] = [
 	{ key: 'watch', title: 'Watch', items: [TV, entry('/subscriptions', 'Subscriptions', 'subs')] },
-	{ key: 'explore', title: 'Explore', items: [DISCOVER, entry('/news', 'News', 'news'), entry('/knowledge', 'Knowledge', 'book'), LIBRARY, entry('/briefings', 'Briefings', 'briefing'), ALERTS] },
+	{ key: 'explore', title: 'Explore', items: [DISCOVER, entry('/news', 'News', 'news'), entry('/knowledge', 'Knowledge', 'book'), LIBRARY, entry('/memes', 'Meme Radar', 'meme'), entry('/briefings', 'Briefings', 'briefing'), ALERTS] },
 	{ key: 'research', title: 'Research', items: [entry('/research', 'Research', 'research'), entry('/scout-report', 'Scout Report', 'briefing')] },
 	{ key: 'automation', title: 'Automation', items: [entry('/team', 'Agent Activity', 'team'), entry('/curators', 'Curators', 'curator'), entry('/sources', 'Sources', 'source'), entry('/agent', 'Video AI', 'agent'), entry('/stats', 'Statistics', 'chart')] }
 ];
@@ -37,6 +37,6 @@ export const MOBILE_MORE = { label: 'More', icon: 'more' };
 export const FIND = { href: '/find', label: 'Find', icon: 'search' };
 
 export function isHubPath(path: string): boolean {
-	return ['/discover', '/news', '/knowledge', '/library', '/briefings', '/alerts', '/research', '/scout-report', '/team', '/curators', '/sources', '/find', '/item']
+	return ['/discover', '/news', '/knowledge', '/library', '/memes', '/briefings', '/alerts', '/research', '/scout-report', '/team', '/curators', '/sources', '/find', '/item']
 		.some((p) => path === p || path.startsWith(p + '/'));
 }

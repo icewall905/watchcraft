@@ -152,4 +152,19 @@ POST alerts/{id}/state                    {state:'read'|'resolved'|'new', snooze
 GET  search?q&type&provider&scope=all|library|knowledge&offset&limit   local FTS → {items,total,videos:[{id,title,channel_name,thumbnail}],curators,collections,topics}
 POST search/web                       {q, providers[]} live → {results:[{title,url,snippet,provider,type}], errors:[{provider,message}]}
 GET/POST/DELETE saved-searches        {id,name,query,filters,pinned}
+
+GET  memes/items?view=examples|saved|history&q&community&provider&language&topic&format_id&since&until&offset&limit
+                                        meme Items, each + meme:{media_sha,has_media,dup_of,format_id,format_name,community,handle,language,sensitive,spoiler}
+GET  memes/facets                       {communities:[{key,count}], languages:[{key,count}]}
+GET  memes/trends?state=a,b&include_hidden  {trends:[{id,target_kind:format|community,target_key,name,kind,state,prev_state,
+                                        first_observed,last_observed,observations:[{day,count}],metrics{last7,prev7,baseline_week,
+                                        samples,communities,sparse},evidence[],updated_at,example_ids,featured_item_id,
+                                        exemplar_item_id,followed,hidden}]}   states counted from the profile's own examples
+POST memes/trends/{id}/state            {followed?,hidden?} → {followed,hidden}
+GET  memes/formats?q&sort=new|active&offset&limit   {formats:[{id,name,kind,example_count,community_count,first_seen,last_seen}],total}
+GET  memes/formats/{id}                 format + {items:[Item]}
+GET  memes/items/{id}/similar           {items:[Item]}  near-duplicates by perceptual hash
+POST memes/items/{id}/explain           {refresh?} → {ai,explanation:{what_shows,why_funny,referencing,origin,why_now,uncertain,ai,at}}
+                                        needs AI; stored in enrichment.meme_explain, never overwrites source facts
+POST memes/sweep                        analyze pending examples + recount trends now
 ```

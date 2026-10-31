@@ -7,7 +7,7 @@ export type Item = {
 	id: number; url: string; type: string; title: string; summary: string; author: string; publisher: string;
 	image: string; local_image: boolean; published_at: number | null; first_seen: number; provider: string;
 	meta: Record<string, unknown>; enrichment: Record<string, unknown>;
-	state: ItemState; score: number | null; reason: string; curator_names: string[];
+	state: ItemState; score: number | null; reason: string; curator_names: string[]; meme?: MemeMeta | null;
 };
 export type ItemDetail = Item & {
 	body: string; media_status: string | null; local_assets: string[]; capture_truncated: boolean; local_links: { id: number; label: string }[]; capture: { status: string; summary_status: string; error: string; attempts: number } | null;
@@ -55,7 +55,7 @@ export type RepairResult = {
 };
 export type ScoutReportConfig = { profile_id: number; frequency: 'manual' | 'daily' | 'weekly'; next_run: number | null; show_home: boolean };
 export type Story = { kind: string; title: string; text: string; links: { label: string; href: string }[]; at?: number | null };
-export type ScoutReport = { id: number; profile_id: number; curator_id: number | null; period: 'daily' | 'weekly'; created_at: number; item_ids: number[]; sections: { since: number; curator_name: string; findings: { id: number; title: string; summary: string; summary_ai?: boolean; url: string; publisher: string; curator_id: number; curator_name: string; found_at: number }[]; runs: { count: number; new_items: number; failed: number }; scout: { runs: number; validated_sources: number }; alerts: { id: number; title: string; severity: string }[]; upcoming: { id: number; name: string; next_run: number; href: string }[]; stories?: Story[] } };
+export type ScoutReport = { id: number; profile_id: number; curator_id: number | null; period: 'daily' | 'weekly'; created_at: number; item_ids: number[]; sections: { since: number; curator_name: string; findings: { id: number; title: string; summary: string; summary_ai?: boolean; url: string; publisher: string; curator_id: number; curator_name: string; found_at: number }[]; runs: { count: number; new_items: number; failed: number }; scout: { runs: number; validated_sources: number }; alerts: { id: number; title: string; severity: string }[]; upcoming: { id: number; name: string; next_run: number; href: string }[]; stories?: Story[]; memes?: { name: string; kind: string; state: string; last7: number | null; communities: number | null }[] } };
 export type ReportPreview = { enabled: boolean; issue: ScoutReport | null; frequency?: string; next_run?: number | null; counts?: { findings: number; runs: number; attention: number; stories: number } };
 export type ScoutPlan = { id: number; query: string; interval_hours: number; enabled: boolean; next_run: number; created_at: number };
 export type ScoutSuggestion = { provider: 'rss' | 'html_listing' | 'sitemap' | 'page_watch'; url: string; name: string; count: number; sample: { title: string; url: string }[]; validated: boolean };
@@ -111,3 +111,29 @@ export type TeamEntry = {
 	new_items?: number; seen_items?: number; errors?: number; query?: string; suggestions?: number; title?: string; briefing_id?: number;
 };
 export type Team = { limit: number; running: number; waiting: number; agents: TeamAgent[]; journal: TeamEntry[] };
+
+export type MemeMeta = {
+	media_sha: string; has_media: boolean; dup_of: number | null; format_id: number | null;
+	format_name: string; community: string; handle: string; language: string; sensitive: boolean; spoiler: string;
+};
+export type MemeObservation = { day: string; count: number };
+export type MemeMetrics = {
+	last7: number; prev7: number; baseline_week: number; samples: number; communities: number;
+	first_observed: number | null; last_observed: number | null; sparse: boolean;
+};
+export type MemeTrend = {
+	id: number; target_kind: 'format' | 'community'; target_key: string; name: string; kind: string;
+	state: string; prev_state: string; first_observed: number | null; last_observed: number | null;
+	observations: MemeObservation[]; metrics: MemeMetrics; evidence: string[]; updated_at: number;
+	example_ids: number[]; featured_item_id: number | null; exemplar_item_id: number | null;
+	followed: boolean; hidden: boolean;
+};
+export type MemeFormat = {
+	id: number; name: string; kind: string; example_count: number; community_count: number;
+	first_seen: number; last_seen: number; created_at: number; state: string;
+	featured_item_id?: number | null; items?: Item[];
+};
+export type MemeExplain = {
+	what_shows: string; why_funny: string; referencing: string; origin: string; why_now: string;
+	uncertain: string; ai?: boolean; at?: number;
+};

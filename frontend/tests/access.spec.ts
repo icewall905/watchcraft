@@ -30,8 +30,11 @@ test('child access, administrator PIN and shared settings are enforced in the UI
 		await expect(page.getByRole('heading', { name: 'Hub is unavailable for this profile' })).toBeVisible();
 		await page.screenshot({ path: '/tmp/watchcraft-child-access.png' });
 		await expect(page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'Discover', exact: true })).toHaveCount(0);
+		await expect(page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'Meme Radar' })).toHaveCount(0);
 		const denied = await page.request.get('/api/hub/items', { headers: { 'X-Profile-Id': String(child.id) } });
 		expect(denied.status()).toBe(403);
+		const deniedMemes = await page.request.get('/api/hub/memes/items', { headers: { 'X-Profile-Id': String(child.id) } });
+		expect(deniedMemes.status()).toBe(403);
 		await page.goto('/settings?tab=ai');
 		await expect(page.getByRole('heading', { name: 'Administrator access required' })).toBeVisible();
 		await expect(page.getByRole('button', { name: 'Pause AI', exact: true })).toHaveCount(0);
