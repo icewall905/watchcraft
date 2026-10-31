@@ -1,8 +1,26 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — P4 content experiences (`b5a9358`, 2026-10-31)
+
+- Covers `7ea4edc..b5a9358`: Discover and Find filtering, conservative news grouping, topic organization,
+  Library descriptions and notes, structured recipe/pattern details, cited reports and briefings, alert filters,
+  and an inactive research follow-up curator draft. No database migration was required.
+- Backend: 375 passed, 6 skipped; Svelte check and production build passed; four Hub, Source Scout and access
+  browser tests passed. The known sitemap test race appeared in an earlier full run and passed on the final run.
+- Fresh online SQLite backup with integrity `ok`, data extras and source/config archive:
+  `/root/compose/watchcraft-backups/20261031T173159Z-pre-b5a9358`. Rollback image:
+  `watchcraft:rollback-20261031T173159Z-7ea4edc`. The separate media volume was not copied.
+- An isolated restored copy started twice with integrity `ok`; 6 profiles, 6,068 videos, 3 curators, 69 content
+  items and 1 item-state row were preserved. Scheduled work was disabled on the copy. P4 routes and profile-scoped
+  API checks passed using a temporary copy-only profile; the disposable container was removed.
+- Production API, worker and downloader run `watchcraft:b5a9358` (image `964efcad…`); the host override checksum
+  matched, local and public health passed, P4 routes returned 200, and database quick check was `ok`. Live Find
+  rendered its new filters and returned content results. A saved video returned HTTP 206 and decoded 207 frames
+  with 206 distinct hashes. Physical TV acceptance remains tracked separately.
+
 The user asked to stop at a good point and leave a handover. This is a tested Source Scout foundation; the larger
 Source Scout and research-team roadmap remains open. **Deployed 2026-10-31:** `10.0.10.73:6646` (public endpoint
-`https://wc.tdgs.org`) runs `7ea4edc` as image `watchcraft:7ea4edc` (also tagged `latest`) for the API, worker and
+`https://wc.tdgs.org`) runs `b5a9358` as image `watchcraft:b5a9358` (also tagged `latest`) for the API, worker and
 downloader. See "Deployment record" below. Pending work is tracked outside the repo (see the local `AGENTS.md`).
 
 ## What is implemented
