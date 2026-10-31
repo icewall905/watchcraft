@@ -35,7 +35,7 @@ def _alert_story(s: Session, pid: int, since: float, curator_id: int | None) -> 
         return []
     newest = rows[0]
     return [{'kind': 'alerts', 'title': f'{len(rows)} high-severity alert{"s" if len(rows) != 1 else ""} came in.',
-             'text': f'Newest: "{newest.title}" ({newest.severity}). The alert rule says verify affected versions before acting.',
+             'text': f'Newest: "{newest.title}" ({newest.severity}).',
              'links': _links(('View alerts', '/alerts')), 'at': newest.created_at}]
 
 
@@ -47,7 +47,7 @@ def _research_story(s: Session, pid: int, since: float, curator_id: int | None) 
     out = []
     for c in s.exec(q.order_by(Curator.report_at.desc()).limit(3)).all():
         out.append({'kind': 'research', 'title': f'A fresh cited research report on "{c.subject or c.name}".',
-                    'text': 'Overview, key facts and open questions come from the public sources the researcher explored.',
+                    'text': f'"{c.name}" finished a report that cites its sources.',
                     'links': _links(('Open the report', f'/research/{c.id}')), 'at': c.report_at})
     return out
 
@@ -77,16 +77,19 @@ def _scout_story(s: Session, pid: int, since: float, curator_id: int | None) -> 
 
 
 def _run_stories(s: Session, pid: int, since: float, curator_id: int | None) -> list[dict]:
-    out = []
+    out, told = [], set()
     for run, owner in _curator_map(s, pid, since, curator_id, kind='watch'):
-        if not run.new_items:
+        # One story per curator, from its newest productive run, so a busy curator cannot crowd out the rest.
+        if not run.new_items or owner.id in told:
             continue
+        told.add(owner.id)
         source_rows = s.exec(select(Source.id, Source.name)
                              .join(CuratorSource, CuratorSource.source_id == Source.id)
                              .where(CuratorSource.curator_id == owner.id)).all()
         findings = [x for x in s.exec(select(CuratorDiscovery.item_id).where(
             CuratorDiscovery.profile_id == pid, CuratorDiscovery.curator_id == owner.id,
-            CuratorDiscovery.found_at >= since).order_by(CuratorDiscovery.found_at.desc()).limit(1)).all()]
+            CuratorDiscovery.found_at >= run.started_at, CuratorDiscovery.found_at <= run.finished_at + 1)
+            .order_by(CuratorDiscovery.found_at.desc()).limit(1)).all()]
         base = f'It kept {run.new_items} new find{"s" if run.new_items != 1 else ""}.'
         if source_rows:
             text = (f'It checked {run.seen_items} source item{"s" if run.seen_items != 1 else ""} across '
@@ -103,9 +106,11 @@ def _run_stories(s: Session, pid: int, since: float, curator_id: int | None) -> 
             text += ' Another curator independently matched the same item, so the find is corroborated.'
         ai_fallback = any(e.get('source') == 'AI relevance' for e in run.errors)
         if ai_fallback:
-            text += ' The AI judge was unavailable for one source, so the keyword scores decided.'
-        elif run.errors:
+            text += ' The AI judge was unavailable, so keyword scores decided.'
+        elif len(run.errors) == 1:
             text += f' One source had an issue: {run.errors[0].get("message", "")[:120]}'
+        elif run.errors:
+            text += f' {len(run.errors)} sources had issues, first: {run.errors[0].get("message", "")[:120]}'
         links = _links(('Open curator', f'/curators/{owner.id}'))
         item = s.get(ContentItem, findings[0]) if findings else None
         if item:
@@ -118,11 +123,6 @@ def _run_stories(s: Session, pid: int, since: float, curator_id: int | None) -> 
 
 def generate(s: Session, pid: int, since: float, curator_id: int | None = None) -> list[dict]:
     """Real notable sequences from persisted data, newest first, bounded to five."""
-    stories = [*(_sort(s, pid, since, curator_id))]
-    return stories[:5]
-
-
-def _sort(s: Session, pid: int, since: float, curator_id: int | None) -> list[dict]:
     all_stories = [*_alert_story(s, pid, since, curator_id), *_research_story(s, pid, since, curator_id),
                    *_scout_story(s, pid, since, curator_id), *_run_stories(s, pid, since, curator_id)]
-    return sorted(all_stories, key=lambda x: x.get('at') or since, reverse=True)
+    return sorted(all_stories, key=lambda x: x.get('at') or since, reverse=True)[:5]
