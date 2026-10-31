@@ -191,6 +191,91 @@ def _duration(v) -> str:
     return ' '.join(filter(None, [f'{h} h' if h else '', f'{mi} min' if mi else '']))
 
 
+def _recipe_steps(value) -> list[str]:
+    """Flatten schema.org HowTo sections and steps in their original order."""
+    result = []
+
+    def visit(node, depth=0):
+        if len(result) >= 60 or depth > 10:
+            return
+        if isinstance(node, list):
+            for child in node:
+                visit(child, depth + 1)
+        elif isinstance(node, dict):
+            children = node.get('itemListElement')
+            if children:
+                visit(children, depth + 1)
+            else:
+                visit(node.get('text') or node.get('name'), depth + 1)
+        elif isinstance(node, str):
+            step = clean(node, 1000)
+            if step:
+                result.append(step)
+
+    visit(value)
+    return result
+
+
+def _structured_values(value, limit=40, size=300) -> list[str]:
+    """Normalize schema.org text/list objects while retaining source order."""
+    result = []
+
+    def visit(node, depth=0):
+        if len(result) >= limit or depth > 8:
+            return
+        if isinstance(node, list):
+            for child in node:
+                visit(child, depth + 1)
+        elif isinstance(node, dict):
+            value = node.get('text') or node.get('name') or node.get('url')
+            if value:
+                visit(value, depth + 1)
+        elif node is not None:
+            value = clean(node, size)
+            if value:
+                result.append(value)
+
+    visit(value)
+    return result
+
+
+def _pattern_meta(node) -> dict:
+    """Extract useful, displayable craft pattern facts from HowTo/CreativeWork."""
+    fields = {
+        'materials': node.get('supply') or node.get('material') or node.get('materials'),
+        'tools': node.get('tool') or node.get('tools'),
+        'instructions': node.get('step') or node.get('recipeInstructions'),
+        'total_time': _duration(node.get('totalTime')),
+        'difficulty': _name(node.get('difficulty') or node.get('skillLevel') or node.get('proficiencyLevel')),
+        'size': _name(node.get('size') or node.get('patternSize') or node.get('sizes')),
+        'gauge': _name(node.get('gauge')),
+        'technique': _name(node.get('technique') or node.get('craftTechnique')),
+        'yarn': _name(node.get('yarn') or node.get('yarnWeight')),
+    }
+    out = {}
+    for key, value in fields.items():
+        if key in ('instructions',):
+            values = _recipe_steps(value)
+        elif key in ('materials', 'tools'):
+            values = _structured_values(value)
+        else:
+            values = clean(value, 300) if value else ''
+        if values:
+            out[key] = values
+    return out
+
+
+def _nutrition(value) -> str:
+    if isinstance(value, dict):
+        bits = []
+        for key in ('calories', 'carbohydrateContent', 'proteinContent', 'fatContent', 'sugarContent'):
+            text = clean(value.get(key), 100)
+            if text:
+                bits.append(text)
+        return ' · '.join(bits)
+    return clean(value, 300)
+
+
 def extract_page(html: bytes, url: str) -> dict:
     """Return ContentItem fields for a fetched HTML page."""
     p = _Page()
@@ -219,11 +304,13 @@ def extract_page(html: bytes, url: str) -> dict:
             item['type'] = 'recipe'
             ing = node.get('recipeIngredient') or node.get('ingredients') or []
             steps = node.get('recipeInstructions') or []
-            if isinstance(steps, str):
-                steps = [steps]
+            if isinstance(ing, str):
+                ing = [ing]
+            elif not isinstance(ing, list):
+                ing = []
             item['meta'] = {k: v for k, v in {
                 'ingredients': [clean(x, 300) for x in ing if isinstance(x, str)][:80],
-                'instructions': [clean(s.get('text') if isinstance(s, dict) else s, 1000) for s in steps if s][:60],
+                'instructions': _recipe_steps(steps),
                 'total_time': _duration(node.get('totalTime')),
                 'prep_time': _duration(node.get('prepTime')),
                 'cook_time': _duration(node.get('cookTime')),
@@ -231,7 +318,18 @@ def extract_page(html: bytes, url: str) -> dict:
                 'cuisine': _name(node.get('recipeCuisine')),
                 'category': _name(node.get('recipeCategory')),
                 'diet': _name(node.get('suitableForDiet')),
+                'servings': _name(node.get('recipeYield')),
+                'nutrition': _nutrition(node.get('nutrition')),
+                'equipment': _structured_values(node.get('tool') or node.get('equipment')),
             }.items() if v}
+        elif t & {'howto', 'creativework', 'pattern'}:
+            # Many craft sites publish a HowTo/CreativeWork rather than a
+            # dedicated Pattern type. Only promote when the page identifies a
+            # craft pattern, keeping generic how-to guides as articles.
+            candidate = ' '.join(str(node.get(k, '')) for k in ('name', 'headline', 'description', 'about')).lower()
+            if 'pattern' in t or 'pattern' in candidate or any(w in candidate for w in PATTERN_WORDS):
+                item['type'] = 'pattern'
+                item['meta'] = _pattern_meta(node)
         elif t & {'article', 'newsarticle', 'blogposting', 'techarticle', 'report'}:
             if item['type'] == 'web':
                 item['type'] = 'news' if 'newsarticle' in t else 'article'
@@ -253,7 +351,7 @@ def extract_page(html: bytes, url: str) -> dict:
 def classify(item: dict) -> str:
     """Refine a provisional type from URL and text. Never downgrades a structured type."""
     t = item.get('type') or 'web'
-    if t in ('recipe', 'advisory', 'project', 'video', 'document', 'person', 'organization', 'domain'):
+    if t in ('recipe', 'pattern', 'advisory', 'project', 'video', 'document', 'person', 'organization', 'domain'):
         return t
     u = urlsplit(item.get('url', ''))
     host, path = (u.hostname or '').lower(), u.path.lower()

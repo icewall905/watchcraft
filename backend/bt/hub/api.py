@@ -436,8 +436,16 @@ def import_url(body: UrlIn, pid: int = Depends(profile_id)):
         return serialize(s, pid, [it])[0]
 
 
+_STORY_FILLER = ai.STOP | {
+    'breaking', 'update', 'updates', 'latest', 'live', 'report', 'reports',
+    'news', 'says', 'say', 'today', 'year', 'years'
+}
+
+
 def _title_key(title: str) -> set[str]:
-    return {w for w in re.findall(r'[a-z0-9]{3,}', title.lower()) if w not in ai.STOP}
+    """Return meaningful title terms for conservative story clustering."""
+    words = re.findall(r'[a-z0-9]{3,}', title.lower())
+    return {w for w in words if w not in _STORY_FILLER and not w.isdigit()}
 
 
 @router.get('/news')
@@ -464,14 +472,24 @@ def news(days: int = 1, topic: int | None = None, pid: int = Depends(profile_id)
         for i in rows:
             key = _title_key(i.title)
             for g in groups:
-                if key and len(key & g['_k']) / max(1, min(len(key), len(g['_k']))) >= 0.5:
-                    g['_items'].append(i); g['_k'] |= key; break
+                # Compare against each headline in the group. Comparing to a
+                # growing union lets unrelated stories join transitively via
+                # one common word.
+                match = False
+                for prior in g['_keys']:
+                    shared = len(key & prior)
+                    denominator = max(1, min(len(key), len(prior)))
+                    if shared >= 2 and shared / denominator >= (0.75 if denominator <= 2 else 0.6):
+                        match = True
+                        break
+                if match:
+                    g['_items'].append(i); g['_keys'].append(key); break
             else:
-                groups.append({'_k': key, '_items': [i]})
+                groups.append({'_keys': [key], '_items': [i]})
         out = []
         for g in groups[:120]:
             its = sorted(g['_items'], key=lambda x: -(x.published_at or x.first_seen))
-            out.append({'key': str(its[-1].id), 'title': its[-1].title, 'items': serialize(s, pid, its),
+            out.append({'key': str(min(i.id for i in its)), 'title': its[0].title, 'items': serialize(s, pid, its),
                         'latest': its[0].published_at or its[0].first_seen})
         out.sort(key=lambda g: (-len(g['items']) if days > 1 else 0, -g['latest']))
         return {'groups': out, 'topics': [topic_dict(s, t) for t in topics]}
@@ -1158,6 +1176,37 @@ def scout_accept(rid: int, body: ScoutAccept, pid: int = Depends(profile_id)):
     return result
 
 
+@router.post('/curators/{cid}/follow-up')
+def curator_follow_up(cid: int, pid: int = Depends(profile_id)):
+    """Create a disabled, editable watch draft from a research curator.
+
+    The research curator and its report remain intact. The draft reuses the
+    approved source links but requires the user to edit and enable it before
+    scheduled collection begins.
+    """
+    with session() as s:
+        source = owned(s, Curator, cid, pid)
+        if source.kind != 'research':
+            raise HTTPException(422, 'Only a research brief can become a follow-up curator.')
+        if s.exec(select(func.count()).select_from(Curator).where(Curator.profile_id == pid)).one() >= MAX_CURATORS:
+            raise HTTPException(422, f'Maximum {MAX_CURATORS} curators per profile.')
+        draft = Curator(profile_id=pid, name=f'{source.subject or source.name} follow-up'[:100],
+                        description=f'Follow-up monitoring for {source.subject or source.name}.',
+                        kind='watch', icon=source.icon, color=source.color, tone=source.tone,
+                        instructions=source.instructions, queries=list(source.queries or []),
+                        keywords=list(source.keywords or []), exclusions=list(source.exclusions or []),
+                        content_types=list(source.content_types or []), interval_hours=0,
+                        enabled=False, next_run=1e12, ai_enabled=source.ai_enabled,
+                        max_per_run=source.max_per_run, alert_enabled=source.alert_enabled,
+                        alert_keywords=list(source.alert_keywords or []), alert_min_severity=source.alert_min_severity,
+                        subject=source.subject, subject_type=source.subject_type, aliases=list(source.aliases or []))
+        s.add(draft); s.flush()
+        for sid in s.exec(select(CuratorSource.source_id).where(CuratorSource.curator_id == cid)).all():
+            s.add(CuratorSource(curator_id=draft.id, source_id=sid))
+        s.commit(); s.refresh(draft)
+        return curator_dict(s, draft)
+
+
 @router.delete('/scout/runs/{rid}')
 def scout_delete(rid: int, pid: int = Depends(profile_id)):
     with session() as s:
@@ -1390,7 +1439,8 @@ class TopicIn(BaseModel):
 
 def topic_dict(s, t: Topic) -> dict:
     n = s.exec(select(func.count()).select_from(TopicItem).where(TopicItem.topic_id == t.id)).one()
-    return {**t.model_dump(), 'count': n}
+    last_added = s.exec(select(func.max(TopicItem.added_at)).where(TopicItem.topic_id == t.id)).one()
+    return {**t.model_dump(), 'count': n, 'last_added': last_added}
 
 
 @router.get('/topics')
@@ -1399,7 +1449,8 @@ def topics(kind: str | None = None, pid: int = Depends(profile_id)):
         q = select(Topic).where(Topic.profile_id == pid)
         if kind:
             q = q.where(Topic.kind == kind)
-        return [topic_dict(s, t) for t in s.exec(q.order_by(Topic.name)).all()]
+        rows = [topic_dict(s, t) for t in s.exec(q).all()]
+        return sorted(rows, key=lambda t: (not t['pinned'], -(t['last_added'] or 0), t['name'].lower()))
 
 
 @router.post('/topics')
@@ -1627,7 +1678,8 @@ def issues(bid: int, pid: int = Depends(profile_id)):
 # ---------- alerts
 
 @router.get('/alerts')
-def alerts(state: str = 'new', pid: int = Depends(profile_id)):
+def alerts(state: str = 'new', severity: str | None = None, curator_id: int | None = None,
+           pid: int = Depends(profile_id)):
     with session() as s:
         q = select(Alert).where(Alert.profile_id == pid)
         if state == 'new':
@@ -1636,6 +1688,13 @@ def alerts(state: str = 'new', pid: int = Depends(profile_id)):
             q = q.where(Alert.state == 'new', Alert.snooze_until >= time.time())
         elif state != 'all':
             q = q.where(Alert.state == state)
+        if severity:
+            levels = [x.strip() for x in severity.split(',') if x.strip() in engine.SEVERITY]
+            if levels:
+                q = q.where(Alert.severity.in_(levels))
+        if curator_id is not None:
+            owned(s, Curator, curator_id, pid)
+            q = q.where(Alert.curator_id == curator_id)
         rows = s.exec(q.order_by(Alert.created_at.desc()).limit(200)).all()
         its = {i['id']: i for i in serialize(s, pid, list(s.exec(select(ContentItem).where(ContentItem.id.in_([a.item_id for a in rows]))).all()))}
         return {'items': [{**a.model_dump(), 'item': its.get(a.item_id)} for a in rows if a.item_id in its], 'total': len(rows)}
@@ -1660,32 +1719,54 @@ def alert_state(aid: int, body: AlertStateIn, pid: int = Depends(profile_id)):
 
 @router.get('/search')
 def search(q: str = '', type: str = '', provider: str = '', scope: str = 'all', offset: int = 0, limit: int = 30,
-           pid: int = Depends(profile_id)):
+           curator: int | None = None, source: int | None = None, topic: int | None = None, tags: str = '',
+           saved: bool = False, unread: bool = False, since: float | None = None, until: float | None = None,
+           min_score: float | None = None, sort: str = 'relevance', pid: int = Depends(profile_id)):
     """Local search across indexed content, videos, curators, collections and topics. No AI per keystroke."""
     q = q.strip()[:300]
     if not q:
         return {'items': [], 'total': 0, 'videos': [], 'curators': [], 'collections': [], 'topics': []}
     like = f'%{q}%'
     with session() as s:
+        # Filter IDs are profile-owned.  Rejecting foreign IDs before building the
+        # query avoids using a topic/source as an oracle across profiles.
+        if curator is not None: owned(s, Curator, curator, pid)
+        if source is not None: owned(s, Source, source, pid)
+        if topic is not None: owned(s, Topic, topic, pid)
+        common = dict(type=type, provider=provider, curator=curator, saved=saved, unread=unread,
+                      min_score=min_score, since=since, until=until, topic=topic)
         if scope == 'library':
-            stmt = item_query(pid, section='library', q=q, type=type, provider=provider)
+            stmt = item_query(pid, section='library', **common)
         elif scope == 'knowledge':
-            stmt = item_query(pid, section='library', q=q, type=type, provider=provider).where(
+            stmt = item_query(pid, section='library', **common).where(
                 ContentItem.id.in_(select(TopicItem.item_id).join(Topic, Topic.id == TopicItem.topic_id).where(Topic.profile_id == pid)))
         else:
-            stmt = item_query(pid, section='all', q=q, type=type, provider=provider)
+            stmt = item_query(pid, section='all', **common)
+        if source:
+            stmt = stmt.where(ContentItem.id.in_(select(CuratorDiscovery.item_id).where(
+                CuratorDiscovery.profile_id == pid, CuratorDiscovery.source_id == source)))
+        if tags:
+            wanted = [x.strip() for x in tags.split(',') if x.strip()][:12]
+            if wanted:
+                # Tags are stored as JSON arrays; LIKE keeps this compatible with SQLite and existing databases.
+                stmt = stmt.where(ItemState.profile_id == pid,
+                                  *[ItemState.tags.like(f'%"{x.replace(chr(34), chr(39))}"%') for x in wanted])
         expr = fts_query(q)
+        notes = select(ItemState.item_id).where(ItemState.profile_id == pid, ItemState.notes.like(like))
         if expr:
-            rank = text('(SELECT rank FROM content_fts WHERE content_fts MATCH :rq AND rowid = contentitem.id)').bindparams(rq=expr)
-            ordered = stmt.order_by(rank)
+            indexed = ContentItem.id.in_(text('SELECT rowid FROM content_fts WHERE content_fts MATCH :q').bindparams(q=expr))
+            # Notes are profile-private and are not part of the shared FTS index.
+            stmt = stmt.where(or_(indexed, ContentItem.id.in_(notes)))
         else:
-            ordered = stmt.order_by(ContentItem.first_seen.desc())
+            stmt = stmt.where(ContentItem.id.in_(notes))
+        if expr and sort == 'relevance':
+            rank = text('(SELECT rank FROM content_fts WHERE content_fts MATCH :rq AND rowid = contentitem.id) NULLS LAST').bindparams(rq=expr)
+            ordered = stmt.order_by(rank, ContentItem.first_seen.desc())
+        else:
+            when = func.coalesce(ContentItem.published_at, ContentItem.first_seen)
+            ordered = stmt.order_by(when.desc(), ContentItem.id.desc())
         total = s.exec(select(func.count()).select_from(stmt.subquery())).one()
         rows = list(s.exec(ordered.offset(max(0, offset)).limit(max(1, min(limit, 100)))).all())
-        # Notes are private per profile and not in the shared FTS index.
-        noted = s.exec(select(ContentItem).join(ItemState, ItemState.item_id == ContentItem.id).where(
-            ItemState.profile_id == pid, ItemState.notes.like(like)).limit(10)).all() if offset == 0 else []
-        rows += [n for n in noted if n.id not in {r.id for r in rows}]
         videos = []
         if scope == 'all' and type in ('', 'video'):
             from ..models import Candidate, Category, ProfileChannel, Video, WatchHistory

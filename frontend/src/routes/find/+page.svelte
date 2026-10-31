@@ -6,7 +6,7 @@
 	import { currentProfileId } from '$lib/api';
 	import { hub, host } from '$lib/hub/api';
 	import { lsGet, lsSet, errMsg } from '$lib/hub/util';
-	import type { Registry, SavedSearch, SearchResult, WebResult } from '$lib/hub/types';
+	import type { Curator, Registry, SavedSearch, SearchResult, Source, Topic, WebResult } from '$lib/hub/types';
 	import ContentCard from '$lib/hub/ContentCard.svelte';
 	import VoiceSearch from '$lib/components/VoiceSearch.svelte';
 
@@ -21,6 +21,17 @@
 	let recent = $state<string[]>([]);
 	let saved = $state<SavedSearch[]>([]);
 	let savedErr = $state('');
+	let curators = $state<Curator[]>([]);
+	let sources = $state<Source[]>([]);
+	let topics = $state<Topic[]>([]);
+	let curator = $state('');
+	let source = $state('');
+	let topic = $state('');
+	let tags = $state('');
+	let filterState = $state<'any' | 'saved' | 'unread'>('any');
+	let sort = $state<'relevance' | 'newest'>('relevance');
+	let days = $state('');
+	let minScore = $state('');
 	let ctl: AbortController | null = null;
 
 	let picked = $state<Record<string, boolean>>({});
@@ -36,6 +47,10 @@
 	onMount(() => {
 		const p = page.url.searchParams;
 		q = p.get('q') ?? ''; type = p.get('type') ?? '';
+		curator = p.get('curator') ?? ''; source = p.get('source') ?? ''; topic = p.get('topic') ?? ''; tags = p.get('tags') ?? '';
+		filterState = p.get('state') === 'saved' || p.get('state') === 'unread' ? p.get('state') as 'saved' | 'unread' : 'any';
+		sort = p.get('sort') === 'newest' ? 'newest' : 'relevance';
+		days = p.get('days') ?? ''; minScore = p.get('min_score') ?? '';
 		const s = p.get('scope');
 		scope = s === 'library' || s === 'knowledge' ? s : 'all';
 		try { recent = JSON.parse(lsGet(rkey()) ?? '[]').filter((x: unknown) => typeof x === 'string'); } catch { recent = []; }
@@ -43,6 +58,9 @@
 			reg = r;
 			picked = Object.fromEntries(r.providers.filter((x) => x.mode === 'query' && x.available).map((x) => [x.key, true]));
 		}).catch(() => {});
+		hub.curators().then((r) => (curators = r)).catch(() => {});
+		hub.sources().then((r) => (sources = r)).catch(() => {});
+		hub.topics().then((r) => (topics = r)).catch(() => {});
 		loadSaved();
 		ready = true;
 	});
@@ -59,9 +77,9 @@
 	// Debounced local search (300ms) with cancellation of the previous request.
 	$effect(() => {
 		if (!ready) return;
-		const term = q.trim(), t = type, sc = scope;
+		const term = q.trim(), t = type, sc = scope, curatorFilter = curator, src = source, top = topic, tg = tags, st = filterState, order = sort, age = days, score = minScore;
 		const u = new URL(page.url);
-		for (const [k, v] of [['q', term], ['type', t], ['scope', sc === 'all' ? '' : sc]]) { if (v) u.searchParams.set(k, v); else u.searchParams.delete(k); }
+		for (const [k, v] of [['q', term], ['type', t], ['scope', sc === 'all' ? '' : sc], ['curator', curatorFilter], ['source', src], ['topic', top], ['tags', tg], ['state', st === 'any' ? '' : st], ['sort', order === 'relevance' ? '' : order], ['days', age], ['min_score', score]]) { if (v) u.searchParams.set(k, v); else u.searchParams.delete(k); }
 		if (u.search !== page.url.search) goto(u, { replaceState: true, keepFocus: true, noScroll: true });
 		ctl?.abort();
 		if (!term) { res = null; loading = false; error = ''; return; }
@@ -69,7 +87,7 @@
 			const c = (ctl = new AbortController());
 			loading = true; error = '';
 			try {
-				const r = await hub.search({ q: term, type: t || undefined, scope: sc, limit: 20 }, c.signal);
+				const r = await hub.search({ q: term, type: t || undefined, scope: sc, curator: curatorFilter || undefined, source: src || undefined, topic: top || undefined, tags: tg || undefined, saved: st === 'saved', unread: st === 'unread', sort: order, since: age ? Math.floor(Date.now() / 1000) - Number(age) * 86400 : undefined, min_score: score || undefined, limit: 20 }, c.signal);
 				if (c.signal.aborted) return;
 				res = r; remember(term);
 			} catch (e) {
@@ -102,8 +120,30 @@
 		const filters: Record<string, string> = {};
 		if (type) filters.type = type;
 		if (scope !== 'all') filters.scope = scope;
+		if (curator) filters.curator = curator;
+		if (source) filters.source = source;
+		if (topic) filters.topic = topic;
+		if (tags) filters.tags = tags;
+		if (filterState !== 'any') filters.state = filterState;
+		if (sort !== 'relevance') filters.sort = sort;
+		if (days) filters.days = days;
+		if (minScore) filters.min_score = minScore;
 		try { const s = await hub.saveSearch({ name: term, query: term, filters }); saved = [s, ...saved]; savedErr = ''; }
 		catch (e) { savedErr = errMsg(e); }
+	}
+	function currentFilterKey() {
+		const filters: Record<string, string> = {};
+		if (type) filters.type = type;
+		if (scope !== 'all') filters.scope = scope;
+		if (curator) filters.curator = curator;
+		if (source) filters.source = source;
+		if (topic) filters.topic = topic;
+		if (tags) filters.tags = tags;
+		if (filterState !== 'any') filters.state = filterState;
+		if (sort !== 'relevance') filters.sort = sort;
+		if (days) filters.days = days;
+		if (minScore) filters.min_score = minScore;
+		return JSON.stringify(filters);
 	}
 	async function delSaved(id: number) {
 		try { await hub.deleteSavedSearch(id); saved = saved.filter((s) => s.id !== id); }
@@ -112,8 +152,12 @@
 	function apply(s: SavedSearch) {
 		q = s.query; type = s.filters?.type ?? '';
 		scope = s.filters?.scope === 'library' || s.filters?.scope === 'knowledge' ? s.filters.scope : 'all';
+		curator = s.filters?.curator ?? ''; source = s.filters?.source ?? ''; topic = s.filters?.topic ?? ''; tags = s.filters?.tags ?? '';
+		filterState = s.filters?.state === 'saved' || s.filters?.state === 'unread' ? s.filters.state : 'any'; sort = s.filters?.sort === 'newest' ? 'newest' : 'relevance';
+		days = s.filters?.days ?? ''; minScore = s.filters?.min_score ?? '';
 	}
-	const isSaved = $derived(saved.some((s) => s.query === q.trim()));
+	const isSaved = $derived(saved.some((s) => s.query === q.trim() && JSON.stringify(s.filters ?? {}) === currentFilterKey()));
+	function clearFilters() { type = ''; curator = ''; source = ''; topic = ''; tags = ''; filterState = 'any'; sort = 'relevance'; days = ''; minScore = ''; }
 </script>
 
 <svelte:head><title>Find · WatchCraft</title></svelte:head>
@@ -134,6 +178,17 @@
 			<option value="knowledge">Knowledge</option>
 		</select>
 	</search>
+	<div class="filters" aria-label="Search filters">
+		<select class="input sel" bind:value={curator} aria-label="Curator"><option value="">Any curator</option>{#each curators as c}<option value={c.id}>{c.name}</option>{/each}</select>
+		<select class="input sel" bind:value={source} aria-label="Source"><option value="">Any source</option>{#each sources as s}<option value={s.id}>{s.name}</option>{/each}</select>
+		<select class="input sel" bind:value={topic} aria-label="Topic"><option value="">Any topic</option>{#each topics as t}<option value={t.id}>{t.name}</option>{/each}</select>
+		<select class="input sel" bind:value={filterState} aria-label="Saved and read state"><option value="any">Any state</option><option value="saved">Saved</option><option value="unread">Unread</option></select>
+		<select class="input sel" bind:value={sort} aria-label="Sort"><option value="relevance">Relevance</option><option value="newest">Newest</option></select>
+		<select class="input sel" bind:value={days} aria-label="Date"><option value="">Any time</option><option value="1">Last 24 hours</option><option value="7">Last 7 days</option><option value="30">Last 30 days</option></select>
+		<select class="input sel" bind:value={minScore} aria-label="Minimum relevance"><option value="">Any relevance</option><option value="0.3">30+</option><option value="0.5">50+</option><option value="0.7">70+</option><option value="0.9">90+</option></select>
+		<input class="input tags" bind:value={tags} placeholder="Tags (comma separated)" aria-label="Tags" />
+		{#if type || curator || source || topic || tags || filterState !== 'any' || sort !== 'relevance' || days || minScore}<button class="btn ghost" use:focusable onclick={clearFilters}>Clear filters</button>{/if}
+	</div>
 
 	<div class="hstack">
 		<button class="btn" disabled={!q.trim() || isSaved} use:focusable onclick={saveCurrent}>{isSaved ? 'Search saved' : 'Save this search'}</button>
@@ -241,6 +296,8 @@
 <style>
 	.page { display: grid; gap: 1rem; align-content: start; }
 	.bar { display: flex; gap: .6rem; flex-wrap: wrap; }
+	.filters { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+	.tags { min-width: 13rem; flex: 1 1 13rem; }
 	.bar .big { flex: 1; min-width: 14rem; min-height: 3.2rem; font-size: 1.1rem; }
 	.sel { width: auto; min-height: 3.2rem; background: rgba(10, 8, 25, .85); }
 	.layout { display: grid; grid-template-columns: minmax(0, 1fr) 22rem; gap: 2rem; align-items: start; }

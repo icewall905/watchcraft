@@ -29,9 +29,15 @@
 	let importError = $state('');
 
 	let newName = $state('');
+	let newDescription = $state('');
 	let editing = $state<number | null>(null);
 	let editName = $state('');
+	let editDescription = $state('');
 	let colError = $state('');
+	let editingNotes = $state<number | null>(null);
+	let noteDraft = $state('');
+	let noteStatus = $state<Record<number, string>>({});
+	let noteSaveVersion = $state<Record<number, number>>({});
 
 	const view = $derived(page.url.searchParams.get('view') ?? 'all');
 	const colId = $derived(Number(page.url.searchParams.get('collection')) || null);
@@ -133,15 +139,33 @@
 		const name = newName.trim();
 		if (!name) return;
 		colError = '';
-		try { const c = await hub.createCollection({ name }); collections = [...collections, c]; newName = ''; }
+		try { const c = await hub.createCollection({ name, description: newDescription.trim() }); collections = [...collections, c]; newName = ''; newDescription = ''; }
 		catch (err) { colError = errMsg(err); }
 	}
 	async function renameCol(c: Collection) {
 		const name = editName.trim();
-		if (!name || name === c.name) { editing = null; return; }
-		try { const u = await hub.updateCollection(c.id, { name }); collections = collections.map((x) => (x.id === c.id ? { ...x, ...u } : x)); editing = null; }
+		const description = editDescription.trim();
+		if (!name || (name === c.name && description === c.description)) { editing = null; return; }
+		try { const u = await hub.updateCollection(c.id, { name, description }); collections = collections.map((x) => (x.id === c.id ? { ...x, ...u } : x)); editing = null; }
 		catch (err) { colError = errMsg(err); }
 	}
+	async function saveItemNotes(it: Item) {
+		const version = (noteSaveVersion[it.id] ?? 0) + 1;
+		noteSaveVersion = { ...noteSaveVersion, [it.id]: version };
+		noteStatus = { ...noteStatus, [it.id]: 'Saving…' };
+		try {
+			const state = await hub.setState(it.id, { notes: noteDraft });
+			if (noteSaveVersion[it.id] !== version) return;
+			items = items.map((x) => x.id === it.id ? { ...x, state } : x);
+			noteStatus = { ...noteStatus, [it.id]: 'Saved' };
+			setTimeout(() => {
+				if (noteSaveVersion[it.id] === version) noteStatus = { ...noteStatus, [it.id]: '' };
+			}, 1500);
+		} catch (e) {
+			if (noteSaveVersion[it.id] === version) noteStatus = { ...noteStatus, [it.id]: errMsg(e) };
+		}
+	}
+	function editNotes(it: Item) { editingNotes = it.id; noteDraft = it.state.notes; noteStatus = { ...noteStatus, [it.id]: '' }; }
 	async function pinCol(c: Collection) {
 		try { const u = await hub.updateCollection(c.id, { pinned: !c.pinned }); collections = collections.map((x) => (x.id === c.id ? { ...x, ...u } : x)); }
 		catch (err) { colError = errMsg(err); }
@@ -197,6 +221,7 @@
 	{#if showCollections}
 		<form class="hstack" onsubmit={createCol}>
 			<input class="input newc" bind:value={newName} placeholder="New collection name" aria-label="New collection name" maxlength="80" />
+			<input class="input newc" bind:value={newDescription} placeholder="Description (optional)" aria-label="Collection description" maxlength="1000" />
 			<button class="btn primary" disabled={!newName.trim()} use:focusable>Create collection</button>
 		</form>
 		{#if colError}<p class="err" role="alert">{colError}</p>{/if}
@@ -209,16 +234,18 @@
 						{#if editing === c.id}
 							<form class="hstack" onsubmit={(e) => { e.preventDefault(); renameCol(c); }}>
 								<input class="input" bind:value={editName} aria-label="Collection name" />
+								<input class="input" bind:value={editDescription} aria-label="Collection description" maxlength="1000" />
 								<button class="btn primary" use:focusable>Save</button>
 								<button type="button" class="btn ghost" use:focusable onclick={() => (editing = null)}>Cancel</button>
 							</form>
 						{:else}
 							<a class="open" href={`/library?view=collections&collection=${c.id}`} use:focusable>
 								<h3>{c.pinned ? '📌 ' : ''}{c.name}</h3>
+								{#if c.description}<p class="muted small">{c.description}</p>{/if}
 								<p class="muted small">{c.count} item{c.count === 1 ? '' : 's'}</p>
 							</a>
 							<div class="hstack">
-								<button class="btn ghost" use:focusable onclick={() => { editing = c.id; editName = c.name; }}>Rename</button>
+								<button class="btn ghost" use:focusable onclick={() => { editing = c.id; editName = c.name; editDescription = c.description; }}>Edit</button>
 								<button class="btn ghost" aria-pressed={c.pinned} use:focusable onclick={() => pinCol(c)}>{c.pinned ? 'Unpin' : 'Pin'}</button>
 								<button class="btn ghost danger" use:focusable onclick={() => delCol(c)}>Delete</button>
 							</div>
@@ -243,10 +270,17 @@
 	{:else}
 		<p class="faint small">{total} item{total === 1 ? '' : 's'}</p>
 		<div class={eff === 'list' || eff === 'compact' ? 'stack' : eff === 'gallery' ? 'gallery' : 'grid-cards'}>
-			{#each items as it, i (it.id)}
-				<ContentCard bind:item={items[i]} {layout} onchange={changed}>
-					{#snippet extra(item)}
-						<button class="btn ghost" use:focusable onclick={() => archive(i)}>{item.state.archived ? 'Unarchive' : 'Archive'}</button>
+							{#each items as it, i (it.id)}
+								<ContentCard bind:item={items[i]} {layout} onchange={changed}>
+									{#snippet extra(item)}
+										<button class="btn ghost" use:focusable onclick={() => archive(i)}>{item.state.archived ? 'Unarchive' : 'Archive'}</button>
+										<button class="btn ghost" aria-expanded={editingNotes === item.id} use:focusable onclick={() => editNotes(item)}>{item.state.notes ? 'Edit note' : 'Add note'}</button>
+										{#if editingNotes === item.id}
+											<div class="inline-note">
+												<textarea class="input" rows="3" maxlength="20000" aria-label={`Notes for ${item.title}`} bind:value={noteDraft} placeholder="Your private note…"></textarea>
+												<div class="hstack"><button class="btn primary" type="button" disabled={noteStatus[item.id] === 'Saving…'} use:focusable onclick={() => saveItemNotes(item)}>Save note</button><button class="btn ghost" type="button" use:focusable onclick={() => (editingNotes = null)}>Cancel</button><span class="faint tiny" role="status">{noteStatus[item.id] ?? ''}</span></div>
+											</div>
+										{/if}
 						{#if colId}
 							<button class="btn ghost" use:focusable onclick={() => removeFrom(item)}>Remove from collection</button>
 						{:else if collections.length}
@@ -285,6 +319,7 @@
 	.col { border: 1px solid var(--line); background: var(--surface); border-radius: var(--r-lg); padding: 1rem 1.1rem; display: grid; gap: .5rem; }
 	.col h3 { margin-bottom: .2rem; }
 	.open { display: block; min-height: 2.75rem; }
+	.inline-note { display: grid; gap: .4rem; flex-basis: 100%; padding: .35rem 0; }
 	.addc { width: auto; min-height: 2.75rem; font-size: .85rem; padding: .2rem .5rem; background: rgba(10, 8, 25, .85); }
 	.sk { height: 16rem; }
 	.moreb { display: grid; place-items: center; padding: 1rem; }

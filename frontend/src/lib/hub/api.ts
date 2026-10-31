@@ -76,6 +76,7 @@ export const hub = {
 	updateCurator: (id: number, body: Partial<CuratorInput>) => send<Curator>('PATCH', `/curators/${id}`, body),
 	deleteCurator: (id: number) => send<{ ok: boolean }>('DELETE', `/curators/${id}`),
 	curatorAction: (id: number, action: 'run' | 'pause' | 'resume' | 'duplicate') => send<Curator>('POST', `/curators/${id}/${action}`),
+	curatorFollowUp: (id: number) => send<Curator>('POST', `/curators/${id}/follow-up`),
 	templates: () => get<Template[]>('/curators/templates'),
 	draft: (goal: string, kind: 'watch' | 'research' = 'watch') => send<CuratorInput & { ai: boolean; source_suggestions: { provider: string; url: string; name: string }[] }>('POST', '/curators/draft', { goal, kind }),
 	report: (id: number) => send<Curator>('POST', `/curators/${id}/report`),
@@ -96,7 +97,7 @@ export const hub = {
 	generateBriefing: (id: number) => send<Issue>('POST', `/briefings/${id}/generate`),
 	issues: (id: number) => get<Issue[]>(`/briefings/${id}/issues`),
 
-	alerts: (state = 'new') => get<Page<Alert>>('/alerts' + qs({ state })),
+	alerts: (state = 'new', severity?: string, curator_id?: number) => get<Page<Alert>>('/alerts' + qs({ state, severity, curator_id })),
 	alertState: (id: number, state: string, snooze_hours?: number) => send<{ ok: boolean }>('POST', `/alerts/${id}/state`, { state, snooze_hours }),
 
 	search: (params: Params, signal?: AbortSignal) => get<SearchResult>('/search' + qs(params), signal),

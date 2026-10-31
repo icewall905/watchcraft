@@ -59,6 +59,22 @@ def test_news_rejects_another_profiles_topic(client):
     assert client.get('/api/hub/news', params={'topic': topic['id']}).status_code == 200
 
 
+def test_news_groups_two_shared_terms_without_one_word_false_positive(client, monkeypatch):
+    feed = b'''<rss><channel><title>Stories</title>
+    <item><title>Mars mission discovers water ice</title><link>https://example.org/mars-a</link><pubDate>Fri, 30 Oct 2026 12:00:00 GMT</pubDate></item>
+    <item><title>New Mars mission discovers ice</title><link>https://example.org/mars-b</link><pubDate>Fri, 30 Oct 2026 11:00:00 GMT</pubDate></item>
+    <item><title>Apple unveils faster laptops</title><link>https://example.org/apple-a</link><pubDate>Fri, 30 Oct 2026 10:00:00 GMT</pubDate></item>
+    <item><title>Apple reports stronger profits</title><link>https://example.org/apple-b</link><pubDate>Fri, 30 Oct 2026 09:00:00 GMT</pubDate></item>
+    </channel></rss>'''
+    monkeypatch.setattr(curation, 'fetch', lambda url, **k: feed)
+    curator = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/stories'}])
+    hub.run(curator['id'], 'manual')
+    groups = client.get('/api/hub/news?days=30').json()['groups']
+    assert sorted(len(g['items']) for g in groups) == [1, 1, 2]
+    mars = next(g for g in groups if len(g['items']) == 2)
+    assert 'Mars mission discovers' in mars['title']
+
+
 def test_discovery_save_and_profile_isolation(client, monkeypatch):
     monkeypatch.setattr(curation, 'fetch', lambda url, **k: RSS)
     c = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}])
@@ -110,6 +126,26 @@ def test_search_fts_exclusions_and_notes(client, monkeypatch):
     client.post(f'/api/hub/items/{iid}/state', json={'notes': 'remember zebra'})
     assert client.get('/api/hub/search?q=zebra').json()['items'][0]['id'] == iid
     assert client.get('/api/hub/search?q=AI').json()['curators'][0]['id'] == c['id']
+
+
+def test_search_notes_respect_filters_pagination_and_topic_ownership(client, monkeypatch):
+    monkeypatch.setattr(curation, 'fetch', lambda url, **k: RSS)
+    c = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}])
+    hub.run(c['id'])
+    items = client.get('/api/hub/items').json()['items']
+    for item in items:
+        client.post(f"/api/hub/items/{item['id']}/state", json={'notes': 'zebra'})
+    client.post(f"/api/hub/items/{items[0]['id']}/state", json={'saved': True})
+    all_results = client.get('/api/hub/search', params={'q': 'zebra', 'limit': 1}).json()
+    next_results = client.get('/api/hub/search', params={'q': 'zebra', 'limit': 1, 'offset': 1}).json()
+    assert all_results['total'] == 2 and len(all_results['items']) == 1
+    assert next_results['total'] == 2 and next_results['items'][0]['id'] != all_results['items'][0]['id']
+    saved = client.get('/api/hub/search', params={'q': 'zebra', 'saved': 'true'}).json()
+    assert saved['total'] == 1 and saved['items'][0]['id'] == items[0]['id']
+    topic = client.post('/api/hub/topics', json={'name': 'Private', 'kind': 'knowledge'}).json()
+    other = client.post('/api/profiles', json={'name': 'Other'}).json()
+    assert client.get('/api/hub/search', params={'q': 'zebra', 'topic': topic['id']},
+                      headers={'X-Profile-Id': str(other['id'])}).status_code == 404
 
 
 def test_partial_failure_history_and_curator_crud(client, monkeypatch):
@@ -226,6 +262,12 @@ def test_query_provider_alerts_and_unavailable_web_search(client, monkeypatch):
     assert r.status == 'partial' and 'Settings' in r.errors[0]['message']  # web search never silently enabled
     alerts = client.get('/api/hub/alerts').json()['items']
     assert len(alerts) == 1 and alerts[0]['severity'] == 'critical'
+    assert client.get('/api/hub/alerts', params={'severity': 'critical'}).json()['total'] == 1
+    assert client.get('/api/hub/alerts', params={'severity': 'info'}).json()['total'] == 0
+    assert client.get('/api/hub/alerts', params={'curator_id': c['id']}).json()['total'] == 1
+    other = client.post('/api/profiles', json={'name': 'Other alert profile'}).json()
+    assert client.get('/api/hub/alerts', params={'curator_id': c['id']},
+                      headers={'X-Profile-Id': str(other['id'])}).status_code == 404
     assert 'exploited' in alerts[0]['reason'] and 'verify affected versions' in alerts[0]['reason']
     assert alerts[0]['item']['meta']['cvss_score'] == 9.8
     assert client.get('/api/hub/counts').json()['alerts_new'] == 1
@@ -727,6 +769,18 @@ def test_scout_approval_rechecks_access_after_network_fetch(client, monkeypatch)
     response = client.post(f"/api/hub/scout/runs/{run['id']}/accept", json={'index': 0})
     assert response.status_code == 403
     assert client.get('/api/hub/sources').json() == []
+
+
+def test_research_follow_up_is_editable_disabled_and_profile_scoped(client):
+    source = client.post('/api/hub/sources', json={'provider': 'rss', 'url': 'https://example.org/feed'}).json()
+    research = client.post('/api/hub/curators', json={'name': 'Research brief', 'kind': 'research',
+                                                       'subject': 'Widget', 'source_ids': [source['id']]}).json()
+    draft = client.post(f"/api/hub/curators/{research['id']}/follow-up").json()
+    assert draft['kind'] == 'watch' and draft['enabled'] is False and draft['interval_hours'] == 0
+    assert draft['source_ids'] == [source['id']]
+    other = client.post('/api/profiles', json={'name': 'Other'}).json()
+    assert client.post(f"/api/hub/curators/{research['id']}/follow-up",
+                       headers={'X-Profile-Id': str(other['id'])}).status_code == 404
 
 
 def test_agent_slots_respect_live_limit_and_team_setting(client):

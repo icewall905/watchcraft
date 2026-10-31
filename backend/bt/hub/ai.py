@@ -34,7 +34,8 @@ def _data(items: list[dict]) -> str:
     rows = []
     for i, d in enumerate(items, 1):
         rows.append(json.dumps({'n': i, 'type': d.get('type'), 'title': (d.get('title') or '')[:300],
-                                'source': d.get('publisher') or '', 'summary': (d.get('summary') or '')[:600]}, ensure_ascii=False))
+                                'source': d.get('publisher') or '', 'url': (d.get('url') or '')[:500],
+                                'summary': (d.get('summary') or '')[:600]}, ensure_ascii=False))
     return '<data>\n' + _esc('\n'.join(rows)) + '\n</data>'
 
 
@@ -157,21 +158,52 @@ def draft(goal: str, kind: str = 'watch') -> dict:
 SUMMARY_SCHEMA = {'type': 'object', 'properties': {'text': {'type': 'string'}}, 'required': ['text']}
 
 
+def _citation_sentences(text: str) -> list[str]:
+    """Split prose without mistaking URL/abbreviation periods for boundaries."""
+    protected: list[str] = []
+
+    def stash(match: re.Match) -> str:
+        protected.append(match.group(0))
+        return f'__CITE_SPAN_{len(protected) - 1}__'
+
+    # URLs commonly end in .com/.org and are often followed immediately by
+    # prose, so protect the complete URL before looking for sentence stops.
+    safe = re.sub(r'https?://[^\s<>()]+', stash, text)
+    safe = re.sub(r'(?i)\b(?:e\.g|i\.e|u\.s|inc|ltd|vs|dr|mr|ms|prof|no)\.', stash, safe)
+    # A model may begin the next sentence with a lowercase word; casing is
+    # not evidence that the preceding claim is part of the same sentence.
+    chunks = re.split(r'(?<=[.!?])\s+(?=[A-Za-z0-9])', safe)
+    return [re.sub(r'__CITE_SPAN_(\d+)__', lambda m: protected[int(m.group(1))], chunk).strip()
+            for chunk in chunks if chunk.strip()]
+
+
 def _cited(items: list[ContentItem], instruction: str, words: int) -> str:
-    rows = [{'title': i.title, 'type': i.type, 'publisher': i.publisher, 'summary': i.summary} for i in items]
+    rows = [{'title': i.title, 'type': i.type, 'publisher': i.publisher, 'url': i.url, 'summary': i.summary} for i in items]
     res = _call(f'{instruction} Write about {words} words of plain text paragraphs (no markdown headings). Every factual '
                 'sentence must end with citations like [3] referring to item numbers n. Only state what the items say; '
                 'clearly mark uncertainty. Separate verified facts from interpretation.', _data(rows), SUMMARY_SCHEMA, 2500)
     text = str(res.get('text', '')).strip()
     if not text:
         raise ValueError('empty summary')
+    citations = [int(n) for n in re.findall(r'\[(\d+)\]', text)]
+    if not citations or any(n < 1 or n > len(items) for n in citations):
+        raise ValueError('summary has missing or invalid source references')
+    # A report is evidence-backed paragraph by paragraph.  Reject a response
+    # that cites one sentence but leaves other factual sentences unsupported.
+    # Sentence endings are deliberately conservative: abbreviations and URLs
+    # are not treated as separate sentences, while prose without a citation is.
+    for paragraph in re.split(r'\n\s*\n', text):
+        for sentence in _citation_sentences(paragraph):
+            if sentence and not re.search(r'\[\d+\]\s*[.!?]*$', sentence):
+                raise ValueError('summary contains an uncited sentence')
     return text
 
 
 def fallback_digest(items: list[ContentItem]) -> str:
     by_type: dict[str, list[str]] = {}
     for n, i in enumerate(items, 1):
-        by_type.setdefault(i.type, []).append(f'• {i.title} — {i.publisher or "source"} [{n}]')
+        source = i.publisher or 'source'
+        by_type.setdefault(i.type, []).append(f'• {i.title} — {source} [{n}]\n  {i.url}')
     return '\n\n'.join(f'{t.capitalize()}:\n' + '\n'.join(lines) for t, lines in by_type.items())
 
 
@@ -190,8 +222,10 @@ def research_report(cid: int) -> Curator | None:
                 if not enabled():
                     raise RuntimeError('AI disabled')
                 c.report = _cited(items, f'Write a public-source research brief about "{c.subject or c.name}" '
-                                  f'({c.subject_type or "topic"}). Cover: overview, key facts, recent developments, notable '
-                                  'relations, open questions. Do not speculate about private lives or sensitive personal data.', 450)
+                                      f'({c.subject_type or "topic"}). Cover: overview, key facts, recent developments, notable '
+                                      'relations, open questions. Group related findings when they come from the same publisher, '
+                                      'and make clear when a claim is only reported by one source. Do not speculate about private '
+                                      'lives or sensitive personal data.', 450)
             except Exception as e:  # noqa: BLE001
                 log.info('report AI failed: %s', e)
                 c.report = 'AI summary unavailable — findings by type:\n\n' + fallback_digest(items)
@@ -260,7 +294,9 @@ def _generate_briefing(bid: int, progress, tone: str = 'friendly', run_id: str =
                 raise RuntimeError('AI disabled')
             progress('writing', narrate.say(tone, 'briefing.writing', seed=run_id, new=narrate.phrase(len(items), 'discovery', 'discoveries')))
             content = _cited(items, f'Write the "{b.name}" briefing: what is worth knowing from these new discoveries, '
-                             'most important first, grouping related items.', 180 if b.length == 'concise' else 500)
+                             'most important first. Group related items from the same publisher or source domain, avoid '
+                             'repeating the same development, and distinguish confirmed facts from interpretation.',
+                             180 if b.length == 'concise' else 500)
             used_ai = True
         except Exception as e:  # noqa: BLE001
             log.info('briefing AI failed: %s', e)

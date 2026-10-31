@@ -110,10 +110,14 @@
 			{#each visible as { g, idx } (g.key)}
 				{@const rest = g.items.length - 1}
 				<section class="story" aria-label={g.title}>
+					<div class="story-head">
+						<h2>{g.title}</h2>
+						<span class="muted small">{g.items.length} article{g.items.length === 1 ? '' : 's'} · {ago(g.latest)}</span>
+					</div>
 					<ContentCard bind:item={groups[idx].items[0]} layout="row" />
 					{#if rest > 0}
 						<button class="btn ghost" aria-expanded={!!open[g.key]} use:focusable onclick={() => (open[g.key] = !open[g.key])}>
-							{open[g.key] ? 'Hide' : `${rest} more source${rest === 1 ? '' : 's'}`}
+							{open[g.key] ? 'Hide' : `${rest} more article${rest === 1 ? '' : 's'}`}
 						</button>
 						{#if open[g.key]}
 							<div class="more">
@@ -143,8 +147,10 @@
 	.pub { width: auto; min-width: 11rem; background: rgba(10, 8, 25, .85); }
 	.stories { display: grid; gap: 1.2rem; max-width: 62rem; }
 	.story { display: grid; gap: .3rem; }
+	.story-head { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; }
+	.story-head h2 { font-size: 1.15rem; margin: 0; }
 	.more { display: grid; gap: .5rem; padding-left: 1.2rem; border-left: 2px solid var(--line-strong); }
 	.sk { height: 9rem; }
 	.err { color: var(--bad); font-size: .85rem; }
-	@media (max-width: 760px) { .tabs { overflow-x: auto; } .follow { min-width: 0; max-width: none; } .more { padding-left: .6rem; } }
+	@media (max-width: 760px) { .tabs { overflow-x: auto; } .follow { min-width: 0; max-width: none; } .more { padding-left: .6rem; } .story-head { display: grid; gap: .1rem; } }
 </style>

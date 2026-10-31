@@ -56,6 +56,14 @@
 	async function remove() {
 		try { await hub.deleteCurator(id); goto('/research'); } catch (e) { error = errMsg(e); confirm = false; }
 	}
+	async function followUp() {
+		busy = 'follow-up';
+		try {
+			const draft = await hub.curatorFollowUp(id);
+			toast.success('Editable follow-up draft created');
+			goto(`/curators/${draft.id}`);
+		} catch (e) { error = errMsg(e); } finally { busy = ''; }
+	}
 	let watching = $state(false);
 	$effect(() => { watching = (c?.interval_hours ?? 0) > 0; });
 </script>
@@ -78,6 +86,7 @@
 				<p class="small faint">{c.last_status === 'queued' ? 'Queued…' : c.last_status === 'running' ? 'Running now…' : c.last_run ? `Last run ${ago(c.last_run)}` : 'Not run yet'} · {c.discovery_count} findings</p>
 			</div>
 			<div class="acts">
+				{#if c.kind === 'research'}<button class="btn" disabled={busy === 'follow-up'} use:focusable onclick={followUp}>{busy === 'follow-up' ? 'Creating…' : 'Create follow-up curator'}</button>{/if}
 				<button class="btn primary" disabled={busy === 'run' || c.last_status === 'running' || c.last_status === 'queued'} use:focusable onclick={run}>{c.last_status === 'queued' ? 'Queued…' : c.last_status === 'running' ? 'Running…' : 'Run again'}</button>
 				<button class="btn ghost danger" use:focusable onclick={() => (confirm = true)}>Delete</button>
 			</div>

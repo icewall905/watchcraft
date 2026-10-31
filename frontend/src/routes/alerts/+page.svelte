@@ -17,10 +17,12 @@
 	let error = $state('');
 	let tab = $state<Tab>('new');
 	let busyId = $state<number | null>(null);
+	let severityFilter = $state('');
+	let curatorFilter = $state('');
 
 	async function load() {
 		try {
-			const [a, sn, cs] = await Promise.all([hub.alerts('all'), hub.alerts('snoozed').catch(() => ({ items: [] as Alert[] })), hub.curators().catch(() => [])]);
+			const [a, sn, cs] = await Promise.all([hub.alerts('all', severityFilter || undefined, curatorFilter ? Number(curatorFilter) : undefined), hub.alerts('snoozed', severityFilter || undefined, curatorFilter ? Number(curatorFilter) : undefined).catch(() => ({ items: [] as Alert[] })), hub.curators().catch(() => [])]);
 			snoozedIds = sn.items.map((x) => x.id); alerts = a.items; curatorNames = Object.fromEntries(cs.map((c) => [c.id, c.name])); error = '';
 		} catch (e) { error = errMsg(e); } finally { loading = false; }
 	}
@@ -43,6 +45,7 @@
 	}
 	const exploited = (a: Alert) => a.item?.meta?.known_exploited === true || a.item?.meta?.known_exploited === 'true';
 	const isAdvisory = (a: Alert) => a.item?.type === 'advisory';
+	function applyFilters() { void load(); }
 </script>
 
 <svelte:head><title>Alerts · WatchCraft</title></svelte:head>
@@ -58,6 +61,10 @@
 		{#each [['new', 'New'], ['read', 'Read'], ['snoozed', 'Snoozed'], ['resolved', 'Resolved'], ['all', 'All']] as [k, l]}
 			<button role="tab" class="tab" class:on={tab === k} aria-selected={tab === k} use:focusable onclick={() => (tab = k as Tab)}>{l} <span class="n">{count(k as Tab)}</span></button>
 		{/each}
+	</div>
+	<div class="filters" aria-label="Alert filters">
+		<label>Severity <select bind:value={severityFilter} onchange={applyFilters}><option value="">All severities</option><option value="critical">Critical</option><option value="high">High</option><option value="medium">Medium</option><option value="low">Low</option><option value="info">Info</option></select></label>
+		<label>Curator <select bind:value={curatorFilter} onchange={applyFilters}><option value="">All curators</option>{#each Object.entries(curatorNames) as [id, name]}<option value={id}>{name}</option>{/each}</select></label>
 	</div>
 
 	{#if error}<ErrorBox message={error} onretry={load} />{/if}
@@ -97,6 +104,9 @@
 	.eyebrow { font-size: .7rem; letter-spacing: .15em; color: var(--accent); font-weight: 700; margin: 0; }
 	h1 { font-size: clamp(1.8rem, 3vw, 2.8rem); margin: .2rem 0; }
 	.tabs { display: flex; gap: .4rem; border-bottom: 1px solid var(--line); margin: 1.2rem 0; overflow-x: auto; }
+	.filters { display: flex; gap: .8rem; flex-wrap: wrap; margin: 0 0 1rem; }
+	.filters label { display: grid; gap: .25rem; color: var(--muted); font-size: .8rem; }
+	.filters select { min-height: 2.4rem; padding: .35rem .6rem; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface); color: var(--text); }
 	.tab { min-height: 2.75rem; padding: .5rem 1.1rem; background: none; border: 0; border-bottom: 3px solid transparent; color: var(--muted); font-weight: 650; cursor: pointer; white-space: nowrap; }
 	.tab.on { color: var(--text); border-bottom-color: var(--accent); }
 	.n { font-size: .75rem; padding: .05rem .5rem; border-radius: var(--r-pill); background: var(--surface-2); margin-left: .3rem; }

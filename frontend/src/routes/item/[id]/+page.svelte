@@ -47,7 +47,13 @@
 
 	const m = $derived(item?.meta ?? {});
 	const ai = $derived(item && typeof item.enrichment?.summary === 'string' ? (item.enrichment.summary as string) : '');
-	const HANDLED = new Set(['ingredients', 'references', 'releases', 'instructions', 'steps', 'affected', 'materials', 'video_id']);
+	const HANDLED = new Set(['ingredients', 'references', 'releases', 'instructions', 'steps', 'affected', 'materials', 'tools', 'equipment', 'video_id', 'total_time', 'prep_time', 'cook_time', 'yield', 'servings', 'cuisine', 'category', 'diet', 'nutrition', 'difficulty', 'size', 'gauge', 'technique', 'yarn']);
+	const structuredFacts = $derived([
+		['Total time', str(m, 'total_time')], ['Prep time', str(m, 'prep_time')], ['Cook time', str(m, 'cook_time')],
+		['Servings', str(m, 'servings') || str(m, 'yield')], ['Cuisine', str(m, 'cuisine')], ['Category', str(m, 'category')],
+		['Diet', str(m, 'diet')], ['Nutrition', str(m, 'nutrition')], ['Difficulty', str(m, 'difficulty')], ['Size', str(m, 'size')],
+		['Gauge', str(m, 'gauge')], ['Technique', str(m, 'technique')], ['Yarn', str(m, 'yarn')]
+	].filter(([, value]) => value));
 	const rows = $derived(
 		Object.entries(m).filter(([k, v]) => !HANDLED.has(k) && v !== null && v !== '' && v !== undefined && (typeof v !== 'object' || (Array.isArray(v) && v.every((x) => typeof x !== 'object'))))
 			.map(([k, v]) => [k, Array.isArray(v) ? v.join(', ') : typeof v === 'boolean' ? (v ? 'Yes' : 'No') : String(v)] as [string, string])
@@ -169,6 +175,11 @@
 				{#if item.summary}
 					<section><h2>Source summary <span class="tag">From source</span></h2><p class="prose">{item.summary}</p></section>
 				{/if}
+				{#if structuredFacts.length}
+					<section><h2>{item.type === 'pattern' ? 'Pattern details' : 'Recipe details'}</h2><div class="fact-grid">
+						{#each structuredFacts as [key, value]}<div class="fact"><dt>{key}</dt><dd>{value}</dd></div>{/each}
+					</div></section>
+				{/if}
 
 				<section>
 					<h2>Read in WatchCraft</h2>
@@ -198,6 +209,9 @@
 				{/if}
 				{#if list(m, 'materials').length}
 					<section><h2>Materials</h2><ul class="prose">{#each list(m, 'materials') as g}<li>{textOf(g)}</li>{/each}</ul></section>
+				{/if}
+				{#if list(m, 'tools').length || list(m, 'equipment').length}
+					<section><h2>Tools and equipment</h2><ul class="prose">{#each (list(m, 'tools').length ? list(m, 'tools') : list(m, 'equipment')) as g}<li>{textOf(g)}</li>{/each}</ul></section>
 				{/if}
 				{#if list(m, 'instructions').length || list(m, 'steps').length}
 					<section><h2>Steps</h2><ol class="prose">{#each (list(m, 'instructions').length ? list(m, 'instructions') : list(m, 'steps')) as g}<li>{textOf(g)}</li>{/each}</ol></section>
@@ -312,6 +326,10 @@
 	ul.prose, ol.prose { padding-left: 1.3rem; white-space: normal; }
 	ul.prose li, ol.prose li { margin: .25rem 0; overflow-wrap: anywhere; }
 	.prose a, .u { color: var(--accent-2); text-decoration: underline; }
+	.fact-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: .65rem; }
+	.fact { padding: .7rem .8rem; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
+	.fact dt { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; }
+	.fact dd { margin: .2rem 0 0; overflow-wrap: anywhere; }
 	.tag { font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; padding: .1rem .5rem; border-radius: var(--r-pill); background: var(--surface-2); color: var(--muted); }
 	.tag.ai { background: rgba(157, 134, 255, .2); color: #d9d0ff; }
 	.aib { border-left: 3px solid var(--ai); padding-left: 1rem; }

@@ -18,6 +18,11 @@
 	let keywords = $state<string[]>([]);
 	let busy = $state(false);
 	let formErr = $state('');
+	let query = $state('');
+	const visibleTopics = $derived(topics.filter((t) => {
+		const q = query.trim().toLowerCase();
+		return !q || `${t.name} ${t.description} ${t.keywords.join(' ')}`.toLowerCase().includes(q);
+	}));
 
 	async function load() {
 		try { topics = await hub.topics('knowledge'); error = ''; } catch (e) { error = errMsg(e); } finally { loading = false; }
@@ -56,13 +61,18 @@
 	{/if}
 
 	{#if error}<ErrorBox message={error} onretry={load} />{/if}
+	{#if topics.length}
+		<label class="search"><span class="sr-only">Find a topic</span><input class="input" bind:value={query} placeholder="Find a topic or keyword" aria-label="Find a topic or keyword" /></label>
+	{/if}
 	{#if loading}
 		<div class="grid" aria-busy="true">{#each [0, 1, 2, 3] as i (i)}<div class="skeleton" style="height:8rem"></div>{/each}</div>
 	{:else if !topics.length && !error}
 		<section class="empty"><span class="bigic">📚</span><h2>No topics yet.</h2><p>Create a topic, then save items from Discover or Research into it.</p><button class="btn primary" use:focusable onclick={() => (showNew = true)}>Create your first topic</button></section>
+	{:else if !visibleTopics.length}
+		<section class="empty"><h2>No matching topics</h2><p>Try a different name or keyword.</p></section>
 	{:else}
 		<div class="grid">
-			{#each topics as t (t.id)}
+			{#each visibleTopics as t (t.id)}
 				<a class="card" href={`/knowledge/${t.id}`} use:focusable>
 					<div class="hstack"><b>{t.name}</b>{#if t.pinned}<span title="Pinned">📌</span>{/if}</div>
 					{#if t.description}<p class="muted small desc">{t.description}</p>{/if}
@@ -81,6 +91,7 @@
 	h1 { font-size: clamp(1.8rem, 3vw, 2.8rem); margin: .2rem 0; }
 	.form { max-width: 40rem; margin-bottom: 1.5rem; }
 	.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 17rem), 1fr)); gap: 1rem; }
+	.search { display: block; max-width: 32rem; margin-bottom: .25rem; }
 	.card { display: grid; gap: .45rem; padding: 1.2rem; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); color: var(--text); align-content: start; min-height: 2.75rem; }
 	.card:hover { border-color: var(--accent); }
 	.card b { font-size: 1.1rem; }

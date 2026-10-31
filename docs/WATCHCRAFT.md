@@ -9,17 +9,17 @@ the default and is unchanged. Design, route map, provider registry and API contr
 |---|---|---|
 | TV | `/`, `/tv`, `/tv?mode=tv` | Existing video home. `?mode=tv` switches the browser to TV mode for media-center launch. |
 | Play on | Header → Play on | Persistent browser receivers with registration capped at 10 screens; senders pair once per screen with the screen's 6-digit pairing code (shown on the screen and re-derivable from a receiver heartbeat), per-screen send rate limit of 30 commands per 10 s. Any profile, child included, pairs the same way. Senders see the screen's progress and can seek (slider, ±10 s). Commands stay short-lived and acknowledged; receiver credentials remain hashed. Verified in `tests/playback.spec.ts` (pairing UI + real generated media), including the wrong-code path in `tests/test_playback.py`. |
-| Discover | `/discover` | Unified feed of curator finds: unread / new since last visit / saved, type/provider/curator/score/date filters, sort, save, favorite, read later, dismiss, "Why?" provenance. |
-| News | `/news` | News/article items by **publication** time (discovery time shown separately), grouped into stories by title overlap, follow/mute topics. |
-| Knowledge | `/knowledge` | Long-lived topics: overview, user notes, linked items, recent matching finds (FTS), relevant curators, related topics. |
-| Library | `/library` | Saved, favorites, read later, archive, collections (create/rename/pin/delete), URL import with page extraction, JSON export. |
-| Item | `/item/[id]` | Detail with source facts vs AI enrichment kept apart, type-specific metadata, provenance, notes, tags, collections, topics, related items. |
+| Discover | `/discover` | Unified feed of curator finds: text search, unread / new since last visit / saved, type/provider/curator/score/date filters, sort, save, favorite, read later, dismiss, "Why?" provenance. |
+| News | `/news` | News/article items by **publication** time (discovery time shown separately), conservatively grouped by shared headline terms, follow/mute topics. |
+| Knowledge | `/knowledge` | Searchable topics ordered by pin and recent additions: overview, user notes, linked items, recent matching finds (FTS), relevant curators, related topics. |
+| Library | `/library` | Saved, favorites, read later, archive, collections with descriptions, private item notes, URL import with page extraction, JSON export. |
+| Item | `/item/[id]` | Detail with source facts vs AI enrichment kept apart, structured recipe and craft pattern facts and steps, provenance, notes, tags, collections, topics, related items. |
 | Briefings | `/briefings` | Manual/daily/weekly cited briefings over selected curators/topics; never repeats items from earlier issues; non-AI fallback digest. |
-| Alerts | `/alerts` | Per-curator rules (min severity, keywords); new/read/resolved/snooze; advisories say "possibly relevant — verify affected versions". |
-| Research (OSINT) | `/research` | One-off or ongoing public-source research on a topic, organization, person, domain or product; cited report; findings by type. |
+| Alerts | `/alerts` | Per-curator rules (min severity, keywords); severity and curator filters; new/read/resolved/snooze; advisories say "possibly relevant — verify affected versions". |
+| Research (OSINT) | `/research` | One-off or ongoing public-source research on a topic, organization, person, domain or product; cited report; findings by type; create an inactive editable watch curator from an investigation. |
 | Curators | `/curators`, `/curators/new`, `/curators/[id]` | Natural-language wizard + templates, multi-source, edit, duplicate, pause/resume, run now, delete, run history, export JSON. |
 | Sources | `/sources` | Provider catalogue with capabilities/availability, reusable sources, health, test connection. |
-| Find | `/find`, Ctrl/Cmd+K | Local FTS5 search (prefix, "phrases", -exclusions) over items, private notes, local videos, curators, collections, topics; live web search on demand; saved + recent searches; "turn into a curator". |
+| Find | `/find`, Ctrl/Cmd+K | Local FTS5 search (prefix, "phrases", -exclusions) over items, private notes, local videos, curators, collections, topics; filters for type, curator, source, topic, tags, state, date and relevance; live web search on demand; saved + recent searches; "turn into a curator". |
 | Settings → Search & sources | `/settings?tab=search` | SearXNG URL or Brave key (redacted), toggle Hub AI. |
 
 Navigation is defined once in `frontend/src/lib/navigation.ts`. Desktop: grouped, collapsible sidebar with expanded/compact
