@@ -1,9 +1,9 @@
 # Source Scout handover — 2026-10-30
 
 The user asked to stop at a good point and leave a handover. This is a tested Source Scout foundation; the larger
-Source Scout and research-team roadmap remains open. **Deployed 2026-10-30:** `10.0.10.73:6646` (public endpoint
-`https://wc.tdgs.org`) runs `3668357` as image `watchcraft:3668357` (also tagged `latest`) for the API, worker and
-downloader. See "Deployment record" below.
+Source Scout and research-team roadmap remains open. **Deployed 2026-10-31:** `10.0.10.73:6646` (public endpoint
+`https://wc.tdgs.org`) runs `40a9025` as image `watchcraft:40a9025` (also tagged `latest`) for the API, worker and
+downloader. See "Deployment record" below. Pending work is tracked outside the repo (see the local `AGENTS.md`).
 
 ## What is implemented
 
@@ -95,6 +95,36 @@ in the local `todo.md` (which is intentionally ignored by Git).
 - Rollback: `docker tag watchcraft:rollback-20261030T094200Z-880f732 watchcraft:latest` and rerun the compose command
   above (the new tables are additive and ignored by the old release). Restore the backup only if data must be reverted.
 - Still not done: physical TV remote pass and a real topic-search provider test.
+
+## Deployment record — P1 watchers, narration modes, planner search yield (`40a9025`, 2026-10-31)
+
+- Covers `c4ddd77..40a9025`: planner search yield, seed commas, narration modes and fixes, P1 watcher rules, sitemap
+  tracking, page diffs and alerts, source health and repair. Production previously ran `28de7fd` (image `fd0fdee2…`).
+- Backup before rollout (online SQLite `.backup`, integrity `ok`, plus data extras, config, source, running images):
+  `/root/compose/watchcraft-backups/20261031T103738Z-pre-0c71555`. Rollback image:
+  `watchcraft:rollback-20261031T103738Z-28de7fd` (the image production was running).
+- Isolated copy on `127.0.0.1:6699`, started twice, first with `0c71555` and then, after a fix, from a fresh restore
+  with `40a9025`. Quick check `ok`, 6 profiles and 5,746 videos kept; the new columns and tables were added. PINs were
+  reset **on the disposable copy only**. Acceptance with real server egress (`p1_accept.py` in the backup directory):
+  - All existing sources still test successfully with default rules.
+  - An invalid selector is rejected. Repair on Debian News proposed two tested rule sets. Saved rules passed a live
+    test (4 news items), and the rule history kept "original" and "repair".
+  - WordPress news sitemap: the first curator read gave 30 new items out of 50, the second gave 0, and 1,242 URLs are
+    tracked. A Debian page watcher with a content area tested successfully.
+  - Another profile gets 404 for the rules and a child profile gets 403. The source list shows health.
+  - The first copy showed the RDAP lookup as broken because a lookup may rightly find nothing. `40a9025` judges only
+    list-style sources on empty results; the fresh copy then showed it healthy. Web search showed degraded from real
+    earlier failures.
+  - The copy and its container were removed.
+- Production after the deploy:
+  - API, worker and downloader run `watchcraft:40a9025` (`ebfce570…`); compose files unchanged and the NVIDIA override
+    checksum matches. Health checks pass locally and publicly; quick_check `ok`; 6 profiles, 5,746 videos, 8 sources.
+  - `/sources` and `/team` return 200 and the deployed bundle contains the watcher rules UI. Hub APIs refuse requests
+    without the profile PIN (403), as intended.
+  - A saved video served HTTP 206 for a range request and its first 4 MB decoded 537 frames. No tracebacks in the API
+    or worker logs.
+- The new dependencies (beautifulsoup4, soupsieve) are in the image. Selector rules run in a short-lived child
+  process (`python -m bt.hub.watchers`) inside the API container.
 
 ## Deployment record — Agent Activity, parallel agents, new logo (`dfc8ed2`, 2026-10-30)
 
