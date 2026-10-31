@@ -1111,3 +1111,25 @@ def test_expired_caption_checkpoint_refreshes_metadata():
     assert enrich.enrich_one(w.rt, w.rl, cand, cat) == "enriched"
     assert w.rt.yt.calls == ["metadata", "transcript", "comments"]
     assert get_kv("research:expired") == {}
+
+
+def test_planner_receives_scoped_search_yield_not_just_latest_rejections():
+    cat = make_category()
+    with session() as s:
+        other = Category(profile_id=cat.profile_id, name="Other")
+        s.add(other); s.commit()
+        for vid, cid, status, source, title in [
+            ("yieldbad001", cat.id, "rejected", "search: Amazing", "Pop song"),
+            ("yieldbad002", cat.id, "rejected", "search: Amazing", "Another song"),
+            ("yieldgood01", cat.id, "accepted", "search: automaton mechanism build", "Original automaton"),
+            ("yieldfound1", cat.id, "enriched", "search: Amazing", "Not judged"),
+            ("yieldother1", other.id, "accepted", "search: Amazing", "Other playlist")]:
+            s.add(Video(id=vid, title=title))
+            s.add(Candidate(category_id=cid, video_id=vid, status=status, source=source, judged_at=now()))
+        s.commit()
+        outcomes = data.discovery_yield(s, cat.id)
+    assert any("search: Amazing: 0 accepted, 2 rejected" in line for line in outcomes)
+    assert any("search: automaton mechanism build: 1 accepted, 0 rejected" in line for line in outcomes)
+    prompt = prompts.planner_messages(cat, [], [], [], [], [], search_yield=outcomes)[-1]["content"]
+    assert "RECENT DISCOVERY OUTCOMES" in prompt and "Pop song" in prompt
+    assert "Not judged" not in prompt and "Other playlist" not in prompt

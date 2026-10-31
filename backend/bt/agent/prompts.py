@@ -48,9 +48,16 @@ How to judge:
   qualities; one boring ferret video is not proof that all ferret videos are boring. Core membership adds
   no confidence. Evidence-reviewed revisions supersede the older wording.
 - RECENT REJECTIONS lists videos this category already turned down, with the reason ("family:" = the
-  family's own words). A candidate that repeats a listed failure — same shallow treatment of the topic,
+  family's own words). AI reasons are fallible past verdicts, not new family rules: verify each against
+  the current brief and applicable lessons; never infer a channel ban from previous AI rejections.
+  A candidate that repeats a supported listed failure — same shallow treatment of the topic,
   same red flag — must be rejected too. One that fixes the reason (e.g. the family said "too basic", so
   this one goes deeper) counts in its favour.
+- Preserve the brief's distinctions between preferences and hard requirements. A preferred duration,
+  target mix of obscure creators, or preference for explanations is not an absolute ban unless the
+  family explicitly made it one. A demonstration can be valuable without narration; missing transcripts
+  are missing evidence, not proof of low effort. Apply tutorial-specific lessons to tutorials, not every
+  visual demonstration. Do not infer that a topic is banned because earlier videos on it were rejected.
 - CHANNEL TRUST (-1..1) reflects the family's past ratings of this channel: lean on it, but the video's own
   content decides.
 - VARIETY: the CURRENT QUEUE lists what is already waiting in this category. When the brief covers several
@@ -117,7 +124,7 @@ def queue_block(queue: list[str]) -> str:
 def rejections_block(rejections: list[str]) -> str:
     if not rejections:
         return "RECENT REJECTIONS in this category: (none yet)"
-    out = ["RECENT REJECTIONS in this category (with reasons) — do not accept another video that fails the same way:"]
+    out = ["RECENT REJECTIONS in this category (family feedback or fallible AI reasons; verify against the brief and applicable lessons):"]
     out += [f"- {t}" for t in rejections]
     return "\n".join(out)
 
@@ -181,14 +188,19 @@ You are the PLANNER. Propose YouTube searches that will surface excellent NEW vi
   of formats and creators while preserving the strongest quality and safety requirements.
 - Favour queries that find high-effort, genuinely fun or educational content; avoid queries that attract
   clickbait, prank, reaction, compilation or "satisfying" spam.
-- Respect the lessons and the avoid-list strictly; learn from the liked and rejected examples.
+- Use RECENT DISCOVERY OUTCOMES to improve searches: replace phrases that mostly found off-topic,
+  retail product reviews or compilations with concrete projects, mechanisms and original creator terms.
+  Seed searches are starting points, not requirements; do not copy vague fragments such as "Amazing".
+  AI rejections are fallible evidence, not family rules or blanket topic/channel bans.
+- Respect applicable lessons and explicit avoid-lists; learn from liked and rejected examples.
 - channels: 0-4 YouTube channel @handles you are confident exist and consistently fit the category
   (e.g. "@MarkRober"). Leave empty if unsure — never invent handles.
 Output ONLY the JSON object."""
 
 
 def planner_messages(cat, lessons: list, accepted: list[str], rejected: list[str], disliked: list[str],
-                     tried: list[str], queue: Optional[list[str]] = None, core: str = "") -> list[dict]:
+                     tried: list[str], queue: Optional[list[str]] = None, core: str = "",
+                     search_yield: Optional[list[str]] = None) -> list[dict]:
     # Keep stable category/seeds/lessons context ahead of changing queue/history.
     parts = [category_block(cat)]
     if cat.seed_queries:
@@ -203,6 +215,8 @@ def planner_messages(cat, lessons: list, accepted: list[str], rejected: list[str
                      + "\n".join(f"- {t}" for t in rejected))
     if disliked:
         parts.append("The family DISLIKED:\n" + "\n".join(f"- {t}" for t in disliked))
+    if search_yield:
+        parts.append("RECENT DISCOVERY OUTCOMES (AI judgments, not family rules):\n" + "\n".join(search_yield))
     if tried:
         parts.append("Queries already tried (do not repeat): " + "; ".join(tried))
     from .memory import apply

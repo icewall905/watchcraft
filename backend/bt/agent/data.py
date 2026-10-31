@@ -230,3 +230,20 @@ def touch_category(s: Session, cat_id: int) -> None:
         c.last_worked_at = now()
         s.add(c)
         s.commit()
+
+
+def discovery_yield(s: Session, cat_id: int, n: int = 120) -> list[str]:
+    """Recent judged search batches, so planning can improve poor retrieval phrases."""
+    rows = s.exec(select(Candidate, Video.title).join(Video, Video.id == Candidate.video_id)
+                  .where(Candidate.category_id == cat_id, Candidate.status.in_(["accepted", "rejected"]),
+                         Candidate.dismissed == False, Candidate.source.startswith("search:"))
+                  .order_by(col(Candidate.judged_at).desc(), col(Candidate.id).desc()).limit(n)).all()
+    groups = {}
+    for c, title in rows:
+        group = groups.setdefault(c.source, {"accepted": 0, "rejected": 0, "examples": []})
+        group[c.status] += 1
+        if c.status == "rejected" and len(group["examples"]) < 2:
+            group["examples"].append(title[:120])
+    return [f"{source}: {g['accepted']} accepted, {g['rejected']} rejected"
+            + ("; rejected examples: " + "; ".join(g["examples"]) if g["examples"] else "")
+            for source, g in list(groups.items())[:12]]

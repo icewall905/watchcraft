@@ -61,7 +61,9 @@ def test_core_scope_recent_corrections_and_stable_prompt_prefix():
         source = memory.active(s, pid)
         assert len(source) == 3 and all(le.active for le in source)
         core = memory.latest(s, pid)
-        assert f"Playlist {cat.id}" in core.text and "ONLY channel UCscience" in core.text
+        assert f"Playlist {cat.id}" in core.text and "lessons apply only when evaluating channel UCscience" in core.text
+        assert "other channels remain eligible" in core.text
+        assert "; ONLY channel" not in core.text
         assert len(core.sources) == 3
         correction = Lesson(profile_id=pid, text="Prefer longer explanations")
         s.add(correction); s.commit()
@@ -223,3 +225,27 @@ def test_core_metric_stops_before_priority_and_task_even_without_corrections():
     with session() as s:
         request = s.exec(select(LlmRequest)).one()
         assert request.core_chars == 4 and request.correction_chars == 0
+
+
+def test_legacy_scope_header_repaired_without_changing_explicit_rules():
+    legacy = "Playlist 9: Engineering; ONLY channel UCscience\n- Only accept this channel for this lesson.\n\nAll playlists; ONLY channel UCother\n- Prefer long videos."
+    fixed = memory.repair_scope_headers(legacy)
+    assert "; ONLY channel" not in fixed
+    assert "other channels remain eligible" in fixed
+    assert "- Only accept this channel for this lesson." in fixed
+    assert memory.repair_scope_headers(fixed) == fixed
+    messages = memory.apply([{"role": "system", "content": "Judge"}], legacy)
+    assert "; ONLY channel" not in messages[0]["content"]
+
+
+def test_legacy_core_is_repaired_on_read_even_when_sources_unchanged():
+    pid, cat = seed()
+    with session() as s:
+        lessons = memory.active(s, pid)
+        s.add(MemoryCore(profile_id=pid, text=f"Playlist {cat.id}: Science; ONLY channel UCscience\n- Prefer explanations.",
+                         sources=memory.source_snapshot(s, lessons)))
+        s.commit()
+        core, corrections = memory.select_memory(s, pid, data.lessons_for(s, cat, "UCdifferent"))
+        assert "other channels remain eligible" in core
+        assert "; ONLY channel" not in core
+        assert not corrections

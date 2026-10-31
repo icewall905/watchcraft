@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import defaultdict
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -61,6 +62,17 @@ def sources_valid(core, current):
     return all(current.get(k) == v for k, v in core.sources.items() if k != "_evidence")
 
 
+def channel_scope(channel):
+    return (f"The following lessons apply only when evaluating channel {channel}. "
+            "This scopes the lessons, not the playlist: other channels remain eligible.")
+
+
+def repair_scope_headers(core):
+    """Repair the old generated heading, preserving lesson text and explicit rules."""
+    return re.sub(r"^(Playlist [^\n]+|All playlists); ONLY channel ([^\s;]+)$",
+                  lambda m: m[1] + "\n" + channel_scope(m[2]), core, flags=re.MULTILINE)
+
+
 def select_memory(s, pid, lessons):
     """Return a stable profile prefix plus applicable corrections not covered by it.
 
@@ -77,12 +89,13 @@ def select_memory(s, pid, lessons):
         LessonEvidenceState.profile_id == pid, LessonEvidenceState.updated_at > core.created_at)).all())
     # Keep the cached prefix stable, but expose newer confidence reviews alongside
     # ordinary corrections so the judge need not wait until tonight to see them.
-    return core.text, [le for le in lessons if str(le.id) not in core.sources or le.id in reviewed]
+    return repair_scope_headers(core.text), [le for le in lessons if str(le.id) not in core.sources or le.id in reviewed]
 
 
 def apply(messages, core, corrections=""):
     """Same core-first prefix across planner, judge and learner for a profile."""
     from .prompts import FAMILY
+    core = repair_scope_headers(core)
     core = core.replace("New corrections take precedence.", "Assess corrections as evidence, preserving established rules and their scope.")
     original = messages[0]["content"]
     role = original.removeprefix(FAMILY).strip()
@@ -201,7 +214,7 @@ def compact_profile(rt, pid, budget):
             merged = _compact_batch(rt, merged, group_budget)
         scope = f"Playlist {cid}: {names.get(cid, 'deleted playlist')}" if cid else "All playlists"
         if channel:
-            scope += f"; ONLY channel {channel}"
+            scope += "\n" + channel_scope(channel)
         lines = []
         for r in merged:
             labels = "; ".join(f"{i}: {strength[i]['kind']} ({strength[i]['support']} supporting, {strength[i]['opposition']} opposing videos)"
@@ -215,7 +228,7 @@ def compact_profile(rt, pid, budget):
         # A second, independent review compares revisions against the established core.
         # Fail closed if it cannot be reviewed safely; new lessons remain available as
         # recent corrections and the previous core stays in service.
-        audit_input = {"previous_core": prior.text, "proposed_core": core_text,
+        audit_input = {"previous_core": repair_scope_headers(prior.text), "proposed_core": core_text,
                        "source_strength": strength, "new_lessons": [{"id": le.id, "text": le.text, "category_id": le.category_id,
                            "channel_id": le.channel_id, "feedback_ids": le.source_feedback_ids}
                            for le in new_lessons], "feedback": evidence}
