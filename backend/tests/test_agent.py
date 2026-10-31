@@ -1155,6 +1155,9 @@ def test_screen_records_off_topic_results_without_research():
     assert any(e.payload.get("screened") == 1 and "1 off-topic" in e.message for e in events("search"))
     with session() as s:
         assert data.rejections_for(s, cat.id, cat.profile_id) == []
+        judged = Candidate(category_id=cat.id, video_id="vidJUDGED01", status="rejected", score=10,
+                           red_flags=["off-topic: no cats in the transcript"], judged_at=now())
+        assert not data.screened(judged) and data.screened(pop)
         assert any("1 off-topic" in line for line in data.discovery_yield(s, cat.id))
 
 

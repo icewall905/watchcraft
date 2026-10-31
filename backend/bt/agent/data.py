@@ -162,7 +162,8 @@ def recent_titles(s: Session, cat_id: int, status: str, n: int = 8) -> list[str]
 
 
 def screened(c: Candidate) -> bool:
-    return str((c.red_flags or [""])[0]).startswith("off-topic:")
+    """Dropped by the title screen; judged rejections always carry a score, even when the judge says off-topic."""
+    return c.score is None and str((c.red_flags or [""])[0]).startswith("off-topic:")
 
 
 def rejections_for(s: Session, cat_id: int, profile_id: int, n: int = 8) -> list[str]:
