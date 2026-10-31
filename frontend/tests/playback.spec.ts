@@ -12,7 +12,7 @@ test('phone pairs, sends one-tap playback to a persistent browser receiver and c
 	const screenContext = await browser.newContext();
 	const phone = await phoneContext.newPage();
 	const screen = await screenContext.newPage();
-	let registration: { id: string; token: string } | null = null;
+	let registration: { id: string; token: string; pair_code: string } | null = null;
 	try {
 		await phoneContext.route('**/api/feed/home*', route => route.fulfill({ json: [{
 			kind: 'category', category_id: 999, title: 'Test picks', emoji: '▶', color: '#7c5cff', items: [{
@@ -39,7 +39,7 @@ test('phone pairs, sends one-tap playback to a persistent browser receiver and c
 		// The screen shows the pairing code that senders must enter once.
 		await expect(screen.getByText(/Pairing code to enter on senders:/)).toBeVisible();
 		registration = await screen.evaluate(() => JSON.parse(localStorage.getItem('bt.playback.receiver')!));
-		expect(registration.pair_code).toMatch(/^\d{6}$/);
+		expect(registration!.pair_code).toMatch(/^\d{6}$/);
 		await screen.getByRole('button', { name: 'Done', exact: true }).click();
 		await screen.reload();
 
@@ -47,7 +47,7 @@ test('phone pairs, sends one-tap playback to a persistent browser receiver and c
 		await phone.getByRole('button', { name: 'Play on', exact: true }).click();
 		await phone.getByRole('button', { name: /Living room test/ }).click();
 		await expect(phone.getByLabel('Pairing code', { exact: true })).toBeVisible();
-		await phone.getByLabel('Pairing code', { exact: true }).fill(registration.pair_code);
+		await phone.getByLabel('Pairing code', { exact: true }).fill(registration!.pair_code);
 		await phone.getByRole('button', { name: 'Pair', exact: true }).click();
 		await expect(phone.getByText(/Tap any video to play it on this screen/)).toBeVisible();
 		await phone.getByRole('button', { name: 'Done', exact: true }).click();
