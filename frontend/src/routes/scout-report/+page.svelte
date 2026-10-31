@@ -71,6 +71,22 @@
 				<h2>{current.sections.curator_name || 'Your research team'}</h2>
 				<p>{current.sections.runs.count} curator runs · {current.sections.runs.new_items} new findings{#if current.sections.runs.failed} · {current.sections.runs.failed} runs need attention{/if}</p>
 				{#if current.curator_id === null}<p>Source Scout completed {current.sections.scout.runs} research runs and validated {current.sections.scout.validated_sources} source suggestions. <a href="/sources" use:focusable>View sources</a></p>{/if}
+				{#if current.sections.stories?.length}
+					<section class="stories">
+						<h3>Discovery stories</h3>
+						<ul>
+							{#each current.sections.stories as story}
+								<li>
+									<p class="story-title">{story.title}</p>
+									<p class="small muted">{story.text}</p>
+									<div class="story-links">{#each story.links as link}
+										<a href={link.href} use:focusable>{link.label} →</a>
+									{/each}</div>
+								</li>
+							{/each}
+						</ul>
+					</section>
+				{/if}
 				<h3>Discoveries</h3>
 				{#if current.sections.findings.length}
 					<ul class="findings">{#each current.sections.findings as finding}
@@ -100,6 +116,10 @@
 	.issue { margin-top: 1rem; padding: clamp(1rem, 2.5vw, 2rem); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
 	.issue h2 { font-size: 1.6rem; }
 	.issue h3 { margin-top: 2rem; }
+	.stories ul { list-style: none; padding: 0; display: grid; gap: .8rem; }
+	.stories li { padding: 1rem; border: 1px dashed var(--line-strong); border-radius: var(--r-md); }
+	.story-title { font-weight: 750; margin: 0 0 .3rem; }
+	.story-links { display: flex; gap: .9rem; flex-wrap: wrap; }
 	.findings { list-style: none; padding: 0; display: grid; gap: .8rem; }
 	.findings li { padding: 1rem; border: 1px solid var(--line); border-radius: var(--r-md); overflow-wrap: anywhere; }
 	.findings li > a:first-child { font-weight: 750; font-size: 1.05rem; }

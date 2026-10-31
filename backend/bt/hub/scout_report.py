@@ -7,6 +7,7 @@ from sqlmodel import select
 
 from ..access import hub_allowed
 from ..db import session
+from . import stories
 from .models import (Alert, ContentItem, Curator, CuratorDiscovery, CuratorRun, ScoutPlan, ScoutReportIssue, ScoutRun)
 
 
@@ -61,7 +62,8 @@ def generate(pid: int, period: str, curator_id: int | None = None):
                              'failed': sum(r.status in ('failed', 'partial') for r in runs)},
                     'scout': {'runs': len(scouts), 'validated_sources': sum(len(r.suggestions) for r in scouts)},
                     'alerts': [{'id': a.id, 'title': a.title, 'severity': a.severity} for a in alerts],
-                    'upcoming': next_work}
+                    'upcoming': next_work,
+                    'stories': stories.generate(s, pid, since, curator_id)}
         issue = ScoutReportIssue(profile_id=pid, curator_id=curator_id, period=period,
                                  item_ids=[item['id'] for item in findings], sections=sections)
         s.add(issue); s.commit(); s.refresh(issue)

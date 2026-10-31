@@ -1481,12 +1481,22 @@ def report_issues(pid: int = Depends(profile_id)):
 
 @router.get('/scout-report/preview')
 def report_preview(pid: int = Depends(profile_id)):
+    """Home-card cases: disabled, enabled with no report yet, the newest report, and the schedule."""
     with session() as s:
         config = s.get(ScoutReportConfig, pid)
-        if not config or not config.show_home: return {'enabled': False, 'issue': None}
+        if not config or not config.show_home:
+            return {'enabled': False, 'issue': None}
         issue = s.exec(select(ScoutReportIssue).where(ScoutReportIssue.profile_id == pid, ScoutReportIssue.curator_id == None)
                        .order_by(ScoutReportIssue.created_at.desc()).limit(1)).first()
-        return {'enabled': True, 'issue': issue.model_dump() if issue else None}
+        out = {'enabled': True, 'issue': issue.model_dump() if issue else None,
+               'frequency': config.frequency, 'next_run': config.next_run if config.next_run and config.frequency != 'manual' else None}
+        if issue:
+            sections = issue.sections or {}
+            out['counts'] = {'findings': len(sections.get('findings') or []),
+                             'runs': (sections.get('runs') or {}).get('count', 0),
+                             'attention': (sections.get('runs') or {}).get('failed', 0) + len(sections.get('alerts') or []),
+                             'stories': len(sections.get('stories') or [])}
+        return out
 
 
 @router.post('/scout-report/generate')

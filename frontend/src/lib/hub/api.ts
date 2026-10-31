@@ -44,7 +44,7 @@ export const hub = {
 	updateReportConfig: (body: Partial<ScoutReportConfig>) => send<ScoutReportConfig>('PUT', '/scout-report/config', body),
 	scoutReports: () => get<ScoutReport[]>('/scout-report/issues'),
 	generateScoutReport: (period: 'daily' | 'weekly', curator_id: number | null) => send<ScoutReport>('POST', '/scout-report/generate', { period, curator_id }),
-	scoutReportPreview: () => request<{ enabled: boolean; issue: ScoutReport | null }>(H + '/scout-report/preview', { toast: false }),
+	scoutReportPreview: () => request<{ enabled: boolean; issue: ScoutReport | null; frequency?: string; next_run?: number | null; counts?: { findings: number; runs: number; attention: number; stories: number } }>(H + '/scout-report/preview', { toast: false }),
 
 	scoutPlans: () => get<ScoutPlan[]>('/scout/plans'),
 	scoutPlan: (query: string, interval_hours: number) => send<ScoutPlan>('POST', '/scout/plans', { query, interval_hours }),

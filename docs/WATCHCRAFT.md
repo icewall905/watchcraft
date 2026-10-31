@@ -345,3 +345,20 @@ enumeration. All previous guarantees remain:
 short-lived commands, acknowledgement-based delivery, hashed receiver credentials, online-window checks and per-profile
 playlist ownership. Tests: 5 playback suites (registration/pair/delivery/offline credentials, sending scope and
 playlist ownership, cap + rate limit, legacy-row code recovery, child blocks) besides the browser pairing test.
+
+### Scout Report stories and richer home preview (P3)
+
+Discovery stories (`bt/hub/stories.py`) are deterministic, factual retellings generated when a report is created, from
+real persisted rows within the report period: watch-curator runs that kept finds (citing what was checked where, kept
+counts, corroborating curators matching the same canonical item through real provenance, AI-ranking fallback or one
+source issue with its actual error), Source Scout runs that validated sources (provider groups, sitemap leads),
+fresh cited research reports, and high/critical alerts. Stories never report activity the rows do not support, at
+most five per report, each with fact links (curator, finding, sources, alerts, report). They persist inside the
+issue's JSON so report history keeps the wording as it was generated.
+
+The Scout Report page renders a Stories section above discoveries. The opt-in home preview
+(`GET /api/hub/scout-report/preview`) now reports the configured schedule (frequency, next automatic run) and counts
+(findings, curator runs, attention = failed runs + new alerts, stories), and the home card covers the real cases:
+disabled + `show_home` (nothing is shown), enabled with no report yet (first-report CTA), a current report (counts,
+needs-attention line, the headline story or top finding with its link), and the next scheduled run. Child profiles
+still receive no Hub data.

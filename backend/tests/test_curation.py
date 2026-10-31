@@ -1464,3 +1464,78 @@ def test_team_timeline_steps_carry_source_provider_metrics_and_run_duration(clie
     assert metrics2['health']['status'] in ('degraded', 'broken', 'healthy')
     assert any(x['key'] in ('outage', 'rate_limited', 'auth') for x in metrics2['health']['signals'])
     assert metrics2['last_error'] == 'Source returned HTTP 500.'
+
+
+def test_scout_report_contains_truthful_discovery_stories(client, monkeypatch):
+    def fetch(url, **kwargs):
+        if 'broken' in url:
+            raise RuntimeError('Source returned HTTP 500.')
+        return RSS
+    monkeypatch.setattr(curation, 'fetch', fetch)
+    curator = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'},
+                                    {'provider': 'rss', 'url': 'https://example.org/broken/feed'}])
+    hub.run(curator['id'])
+    issue = client.post('/api/hub/scout-report/generate', json={'period': 'daily'}).json()
+    stories = issue['sections']['stories']
+    run_story = next(x for x in stories if x['kind'] == 'curator')
+    assert 'brought home 2 finds' in run_story['title']
+    assert 'One source had an issue: RuntimeError: source unreachable or returned invalid data' in run_story['text']
+    assert run_story['links'][0]['href'] == f'/curators/{curator["id"]}'
+    # A second curator matching the same item gets the corroboration fact from real provenance.
+    second = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}], name='Robot co-worker')
+    hub.run(second['id'])
+    issue2 = client.post('/api/hub/scout-report/generate', json={'period': 'daily'}).json()
+    shared = next(x for x in issue2['sections']['stories']
+                  if x['kind'] == 'curator' and 'Another curator' in x['text'])
+    assert second['name'] not in shared['text']  # the corroborating curator's references stay factual
+
+
+def test_scout_story_from_scout_runs_alerts_and_research_reports(client, monkeypatch):
+    page = b'''<html><head><title>Example publication</title><link rel="alternate" type="application/rss+xml" href="/feed.xml"></head></html>'''
+    def fetch(url, **kwargs):
+        if url == 'https://example.org/': data, kind = page, 'text/html'
+        elif url == 'https://example.org/feed.xml': data, kind = RSS, 'application/rss+xml'
+        else: raise ValueError('unexpected URL')
+        return (data, url, {'content_type': kind, 'link': ''}) if kwargs.get('with_metadata') else data
+    monkeypatch.setattr(curation, 'fetch', fetch)
+    curator = make_curator(client, [], name='Deals')
+    alert = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}], name='Watchful',
+                         alert_enabled=True, alert_min_severity='high')
+    result = client.post('/api/hub/scout/runs', json={'query': 'https://example.org/'}).json()
+    assert result['status'] == 'complete'
+    hub.run(alert['id'])  # cooking-with-gas item matches a keyword RSS run without alerts
+    issue = client.post('/api/hub/scout-report/generate', json={'period': 'weekly'}).json()
+    kinds = [x['kind'] for x in issue['sections']['stories']]
+    assert 'scout' in kinds
+    scout_story = next(x for x in issue['sections']['stories'] if x['kind'] == 'scout')
+    assert 'validated 1 actionable source' in scout_story['text'] and 'rss' in scout_story['text']
+    # No fabricated story kinds: only kinds whose backing rows actually exist.
+    assert all(x['kind'] in ('alerts', 'research', 'scout', 'curator') for x in issue['sections']['stories'])
+
+
+def test_report_preview_shapes(client, monkeypatch):
+    monkeypatch.setattr(curation, 'fetch', lambda url, **kwargs: RSS)
+    curator = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed', 'name': 'Example blog'}])
+    hub.run(curator['id'])
+    client.post('/api/hub/scout-report/generate', json={'period': 'daily'})
+    # Off by default: the home card reports disabled rather than leaking anything.
+    expected = {'enabled': False, 'issue': None}
+    assert client.get('/api/hub/scout-report/preview').json() == expected
+    client.put('/api/hub/scout-report/config', json={'frequency': 'manual', 'show_home': True})
+    preview = client.get('/api/hub/scout-report/preview').json()
+    assert preview['enabled'] and preview['issue']['sections']['findings']
+    assert preview['counts']['findings'] == 2 and preview['counts']['runs'] == 1
+    assert preview['frequency'] == 'manual' and preview['next_run'] is None
+    client.put('/api/hub/scout-report/config', json={'frequency': 'daily'})
+    later = client.get('/api/hub/scout-report/preview').json()
+    assert later['next_run'] and later['frequency'] == 'daily'
+    # A child profile needs household restrictions later; set PINs on existing adults first.
+    client.patch('/api/profiles/1', json={'pin': '2468'}, headers={'X-Profile-Id': '1'})
+    for p in client.get('/api/profiles').json():
+        if p['id'] != 1 and p['role'] != 'child':
+            client.patch(f'/api/profiles/{p["id"]}', json={'pin': '9999'})
+    client.post('/api/profiles/1/unlock', json={'pin': '2468'}, headers={'X-Profile-Id': '1'})
+    child = client.post('/api/profiles', json={'name': 'Kid', 'role': 'child'}, headers={'X-Profile-Id': '1'}).json()
+    headers = {'X-Profile-Id': str(child['id'])}
+    response = client.get('/api/hub/scout-report/preview', headers=headers)
+    assert response.status_code in (403, 404)

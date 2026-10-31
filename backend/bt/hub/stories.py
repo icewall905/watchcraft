@@ -1,0 +1,128 @@
+"""Discovery Stories: engaging, factual summaries of real research sequences.
+
+Every sentence is generated from persisted rows (runs, checks, discoveries, scout runs,
+alerts, reports). Nothing is invented: differing facts keep their own sentences, and a
+story only appears when something actually happened worth retelling.
+"""
+from sqlmodel import Session, select
+
+from .models import (Alert, ContentItem, Curator, CuratorDiscovery, CuratorRun, CuratorSource,
+                     ScoutRun, Source)
+
+
+def _links(*entries) -> list[dict]:
+    return [{'label': label, 'href': href} for label, href in entries]
+
+
+def _curator_map(s: Session, pid: int, since: float, curator_id: int | None, kind: str | None = None):
+    q = select(CuratorRun, Curator).join(Curator, Curator.id == CuratorRun.curator_id).where(
+        CuratorRun.profile_id == pid, CuratorRun.finished_at != None,  # noqa: E711
+        CuratorRun.started_at >= since)
+    if kind:
+        q = q.where(Curator.kind == kind)
+    if curator_id is not None:
+        q = q.where(CuratorRun.curator_id == curator_id)
+    return s.exec(q.order_by(CuratorRun.started_at.desc()).limit(30)).all()
+
+
+def _alert_story(s: Session, pid: int, since: float, curator_id: int | None) -> list[dict]:
+    q = select(Alert).where(Alert.profile_id == pid, Alert.created_at >= since,
+                            Alert.severity.in_(('high', 'critical')))
+    if curator_id is not None:
+        q = q.where(Alert.curator_id == curator_id)
+    rows = s.exec(q.order_by(Alert.created_at.desc()).limit(5)).all()
+    if not rows:
+        return []
+    newest = rows[0]
+    return [{'kind': 'alerts', 'title': f'{len(rows)} high-severity alert{"s" if len(rows) != 1 else ""} came in.',
+             'text': f'Newest: "{newest.title}" ({newest.severity}). The alert rule says verify affected versions before acting.',
+             'links': _links(('View alerts', '/alerts')), 'at': newest.created_at}]
+
+
+def _research_story(s: Session, pid: int, since: float, curator_id: int | None) -> list[dict]:
+    q = select(Curator).where(Curator.profile_id == pid, Curator.kind == 'research', Curator.report_at >= since,
+                              Curator.report != '')
+    if curator_id is not None:
+        q = q.where(Curator.id == curator_id)
+    out = []
+    for c in s.exec(q.order_by(Curator.report_at.desc()).limit(3)).all():
+        out.append({'kind': 'research', 'title': f'A fresh cited research report on "{c.subject or c.name}".',
+                    'text': 'Overview, key facts and open questions come from the public sources the researcher explored.',
+                    'links': _links(('Open the report', f'/research/{c.id}')), 'at': c.report_at})
+    return out
+
+
+def _scout_story(s: Session, pid: int, since: float, curator_id: int | None) -> list[dict]:
+    if curator_id is not None:
+        return []
+    runs = s.exec(select(ScoutRun).where(ScoutRun.profile_id == pid, ScoutRun.status == 'complete',
+                                         ScoutRun.created_at >= since)
+                  .order_by(ScoutRun.created_at.desc()).limit(10)).all()
+    validated = sum(len(r.suggestions) for r in runs)
+    if not validated:
+        return []
+    providers = sorted({x.get('provider') for r in runs for x in r.suggestions if x.get('provider')})
+    sitemaps = sum(len(r.sitemaps) for r in runs)
+    text = (f'Across {len(runs)} research run{"s" if len(runs) != 1 else ""} it validated '
+            f'{validated} actionable source{"s" if validated != 1 else ""} ({", ".join(str(p) for p in providers)}).'
+            if providers else
+            f'Across {len(runs)} research run{"s" if len(runs) != 1 else ""} it validated '
+            f'{validated} source{"s" if validated != 1 else ""}.')
+    if sitemaps:
+        text += f' It also recorded {sitemaps} sitemap lead{"s" if sitemaps != 1 else ""} for later checks.'
+    return [{'kind': 'scout', 'title': f'Source Scout found {validated} new source{"s" if validated != 1 else ""} to follow.',
+             'text': text + ' Nothing reaches your curators until you approve it on the Sources page.',
+             'links': _links(('View sources', '/sources')),
+             'at': max((r.created_at for r in runs), default=since)}]
+
+
+def _run_stories(s: Session, pid: int, since: float, curator_id: int | None) -> list[dict]:
+    out = []
+    for run, owner in _curator_map(s, pid, since, curator_id, kind='watch'):
+        if not run.new_items:
+            continue
+        source_rows = s.exec(select(Source.id, Source.name)
+                             .join(CuratorSource, CuratorSource.source_id == Source.id)
+                             .where(CuratorSource.curator_id == owner.id)).all()
+        findings = [x for x in s.exec(select(CuratorDiscovery.item_id).where(
+            CuratorDiscovery.profile_id == pid, CuratorDiscovery.curator_id == owner.id,
+            CuratorDiscovery.found_at >= since).order_by(CuratorDiscovery.found_at.desc()).limit(1)).all()]
+        base = f'It kept {run.new_items} new find{"s" if run.new_items != 1 else ""}.'
+        if source_rows:
+            text = (f'It checked {run.seen_items} source item{"s" if run.seen_items != 1 else ""} across '
+                    f'{len(source_rows)} source{"s" if len(source_rows) != 1 else ""} and kept {run.new_items} '
+                    f'new find{"s" if run.new_items != 1 else ""}.')
+        else:
+            text = base
+        shared = []
+        if findings:
+            shared = s.exec(select(CuratorDiscovery.curator_id).where(
+                CuratorDiscovery.profile_id == pid, CuratorDiscovery.item_id == findings[0],
+                CuratorDiscovery.curator_id != owner.id)).all()
+        if shared:
+            text += ' Another curator independently matched the same item, so the find is corroborated.'
+        ai_fallback = any(e.get('source') == 'AI relevance' for e in run.errors)
+        if ai_fallback:
+            text += ' The AI judge was unavailable for one source, so the keyword scores decided.'
+        elif run.errors:
+            text += f' One source had an issue: {run.errors[0].get("message", "")[:120]}'
+        links = _links(('Open curator', f'/curators/{owner.id}'))
+        item = s.get(ContentItem, findings[0]) if findings else None
+        if item:
+            links += _links(('Show the finding', f'/item/{item.id}'))
+        out.append({'kind': 'curator', 'title': f'"{owner.name}" brought home {run.new_items} '
+                    f'find{"s" if run.new_items != 1 else ""}.', 'text': text, 'links': links,
+                    'at': run.finished_at})
+    return out
+
+
+def generate(s: Session, pid: int, since: float, curator_id: int | None = None) -> list[dict]:
+    """Real notable sequences from persisted data, newest first, bounded to five."""
+    stories = [*(_sort(s, pid, since, curator_id))]
+    return stories[:5]
+
+
+def _sort(s: Session, pid: int, since: float, curator_id: int | None) -> list[dict]:
+    all_stories = [*_alert_story(s, pid, since, curator_id), *_research_story(s, pid, since, curator_id),
+                   *_scout_story(s, pid, since, curator_id), *_run_stories(s, pid, since, curator_id)]
+    return sorted(all_stories, key=lambda x: x.get('at') or since, reverse=True)
