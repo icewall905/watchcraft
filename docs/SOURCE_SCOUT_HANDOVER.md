@@ -1,5 +1,30 @@
 # Source Scout handover — 2026-10-30
 
+
+## Deployment record — P5 Meme Radar (`51b5666`, 2026-10-31)
+
+- Covers `b5a9358..51b5666`: Meme Radar, Mastodon ingestion, image/text identity and deduplication,
+  visual format groups, counted trends, save/follow/hide, similar examples and optional AI explanations.
+  Review corrected a Cartesian trend query, daily/weekly baseline units, rolling-window sample counts,
+  dropped AI context and scalar title handling, filter loading/request loops, sensitive image metadata/previews,
+  and profile visibility for duplicate items and format/trend actions. Four new tables are additive.
+- Final full backend run: 390 passed, 6 skipped, two scheduler-related test failures (sitemap cursor and shared
+  polling). Both passed in an isolated rerun alongside Meme Radar: 25 passed. These suite races are tracked in
+  the vault. Svelte check: zero errors, three CSS compatibility warnings; production build passed; five browser
+  tests passed, including populated filters, empty topics and sensitive previews.
+- Backup: `/root/compose/watchcraft-backups/20261031T191525Z-pre-p5`, including verified online SQLite,
+  data extras and source/config archive, plus `immediately-before-rollout.sqlite3`. Rollback image:
+  `watchcraft:rollback-20261031T191525Z-b5a9358`. Separate media volume preserved.
+- Restored backup started twice with integrity `ok`, preserving 6 profiles, 6,157 videos, 3 curators, 69 content
+  items and 1 item-state row. Scheduling was disabled on the copy. Disposable profiles and five image fixtures
+  verified grouping, exact trend counts, save/follow, similar examples, profile isolation and child denial.
+  The acceptance container was removed.
+- API, worker and downloader run image `a350a482…` (`watchcraft:51b5666`, also tagged `latest`);
+  `DEPLOYED_COMMIT` is `51b5666`. Host override and all profile PIN records matched their pre-rollout hashes.
+  Local/public health, public `/memes`, live Meme Radar APIs and existing routes passed; DB quick check `ok`.
+  A saved video returned HTTP 206 and decoded 180 frames with 180 distinct hashes in three seconds.
+
+
 ## Deployment record — P4 content experiences (`b5a9358`, 2026-10-31)
 
 - Covers `7ea4edc..b5a9358`: Discover and Find filtering, conservative news grouping, topic organization,
@@ -20,7 +45,7 @@
 
 The user asked to stop at a good point and leave a handover. This is a tested Source Scout foundation; the larger
 Source Scout and research-team roadmap remains open. **Deployed 2026-10-31:** `10.0.10.73:6646` (public endpoint
-`https://wc.tdgs.org`) runs `b5a9358` as image `watchcraft:b5a9358` (also tagged `latest`) for the API, worker and
+`https://wc.tdgs.org`) runs `51b5666` as image `watchcraft:51b5666` (also tagged `latest`) for the API, worker and
 downloader. See "Deployment record" below. Pending work is tracked outside the repo (see the local `AGENTS.md`).
 
 ## What is implemented
