@@ -57,14 +57,29 @@ def subscribed_channels(s: Session, profile_id: int) -> list[ProfileChannel]:
                                                     ProfileChannel.blocked == False)).all())  # noqa: E712
 
 
+def title_key(title: str) -> str:
+    """Re-uploads keep the title; short generic titles ("Bengal cat") are not keyed."""
+    t = " ".join((title or "").casefold().split())
+    return t if len(t) >= 25 else ""
+
+
+def rejected_titles(s: Session, cat_id: int) -> set[str]:
+    rows = s.exec(select(Video.title).join(Candidate, Candidate.video_id == Video.id)
+                  .where(Candidate.category_id == cat_id, Candidate.status == "rejected",
+                         Candidate.dismissed == False)).all()  # noqa: E712
+    return {k for k in map(title_key, rows) if k}
+
+
 def prefilter(item: dict, cat: Category, ctx: ProfileCtx, hide_shorts: bool,
-              existing: Optional[set] = None) -> Optional[str]:
+              existing: Optional[set] = None, rejected: Optional[set] = None) -> Optional[str]:
     """Return a rejection reason, or None if the entry may proceed. `item` = entry dict or Video.model_dump()."""
     vid = item.get("id")
     if not vid:
         return "no id"
     if existing is not None and vid in existing:
         return "already a candidate"
+    if rejected and title_key(item.get("title")) in rejected:
+        return "same title rejected before"
     if item.get("is_live"):
         return "live stream"
     if hide_shorts and item.get("is_short"):
@@ -146,18 +161,26 @@ def recent_titles(s: Session, cat_id: int, status: str, n: int = 8) -> list[str]
     return [t for t in rows if t]
 
 
+def screened(c: Candidate) -> bool:
+    return str((c.red_flags or [""])[0]).startswith("off-topic:")
+
+
 def rejections_for(s: Session, cat_id: int, profile_id: int, n: int = 8) -> list[str]:
     """Recently rejected candidates in a category, with the reason. The family's own feedback
     (dislike chips/text) beats the AI's verdict note; the AI note is the fallback."""
     rows = s.exec(select(Candidate, Video).join(Video, Video.id == Candidate.video_id, isouter=True)
                   .where(Candidate.category_id == cat_id, Candidate.status == "rejected")
-                  .order_by(col(Candidate.judged_at).desc()).limit(n)).all()
+                  .order_by(col(Candidate.judged_at).desc()).limit(n * 4)).all()
     disliked = {f.video_id: f for f in s.exec(
         select(Feedback).where(Feedback.profile_id == profile_id, Feedback.rating < 0)
         .order_by(col(Feedback.created_at))).all()}  # last dislike per video wins
     out = []
     for c, v in rows:
         f = disliked.get(c.video_id)
+        if f is None and screened(c):
+            continue  # title-screen misses teach nothing about quality; discovery_yield counts them
+        if len(out) >= n:
+            break
         why = ""
         if f is not None:
             parts = [p for p in [", ".join(f.chips or []), (f.text or "").strip()] if p]
@@ -240,10 +263,12 @@ def discovery_yield(s: Session, cat_id: int, n: int = 120) -> list[str]:
                   .order_by(col(Candidate.judged_at).desc(), col(Candidate.id).desc()).limit(n)).all()
     groups = {}
     for c, title in rows:
-        group = groups.setdefault(c.source, {"accepted": 0, "rejected": 0, "examples": []})
+        group = groups.setdefault(c.source, {"accepted": 0, "rejected": 0, "off_topic": 0, "examples": []})
         group[c.status] += 1
+        group["off_topic"] += c.status == "rejected" and screened(c)
         if c.status == "rejected" and len(group["examples"]) < 2:
             group["examples"].append(title[:120])
     return [f"{source}: {g['accepted']} accepted, {g['rejected']} rejected"
+            + (f" ({g['off_topic']} off-topic)" if g["off_topic"] else "")
             + ("; rejected examples: " + "; ".join(g["examples"]) if g["examples"] else "")
             for source, g in list(groups.items())[:12]]

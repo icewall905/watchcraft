@@ -176,7 +176,9 @@ PLAN_SCHEMA = {
 PLANNER_SYSTEM = FAMILY + """
 
 You are the PLANNER. Propose YouTube searches that will surface excellent NEW videos for one category.
-- Give 4-6 specific search queries (2-6 words each), the way a person types them into YouTube. Treat every
+- Give 4-6 specific search queries (2-5 words each), the way a person types them into YouTube. Each query
+  must name the playlist's core subject (for example "cat" for a cat playlist): YouTube matches loosely, so a
+  query stuffed with side words ("cat fidget spinner toy obsessed") drifts to videos about those side words. Treat every
   distinct interest in the brief as a weighted target: allocate queries across the interests in proportion
   to their emphasis. Prioritise underrepresented interests; if there are more interests than queries,
   rotate coverage across plans instead of always favouring the first interests listed. Vary formats (for example
@@ -221,6 +223,43 @@ def planner_messages(cat, lessons: list, accepted: list[str], rejected: list[str
         parts.append("Queries already tried (do not repeat): " + "; ".join(tried))
     from .memory import apply
     return apply([{"role": "system", "content": PLANNER_SYSTEM}, {"role": "user", "content": "\n\n".join(parts)}], core, lessons_block(lessons))
+
+
+# ---------------------------------------------------------------- screen
+
+SCREEN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "off_topic": {"type": "array", "items": {
+            "type": "object",
+            "properties": {"n": {"type": "integer"}, "why": {"type": "string"}},
+            "required": ["n", "why"], "additionalProperties": False}},
+    },
+    "required": ["off_topic"],
+    "additionalProperties": False,
+}
+
+SCREEN_SYSTEM = FAMILY + """
+
+You are the SCREEN. A YouTube search for one playlist returned the numbered results below (title, channel,
+duration only). Before anything is researched, list the results that are clearly NOT about the playlist's
+subject: a different subject that merely shares a word ("cat leap" parkour, a robot piano for a cat playlist),
+news, music, or product ads unrelated to the brief. Judge the SUBJECT only: format (animation, compilation,
+voiceover, music video, sketch), quality and safety are for the full review later, never a reason here. A vague
+title that does not name its subject ("when you're overqualified for the job") may still fit: keep it. A title
+showing the subject itself (a singing cat, a cat cartoon) fits unless the word means something else. When a
+result could plausibly fit, keep it (leave it out of the list).
+Give each listed result a short reason (under 15 words). Output ONLY the JSON object."""
+
+
+def screen_messages(cat, entries: list[dict]) -> list[dict]:
+    lines = [f"PLAYLIST: {cat.name}", "Brief: " + _clip(cat.brief or "(none)", 1500)]
+    if cat.include_keywords:
+        lines.append("Good signs / topics: " + ", ".join(cat.include_keywords))
+    lines.append("RESULTS")
+    lines += [f"{i}. {_clip(e.get('title') or '', 160)} | {e.get('channel_name') or '?'} | {_fmt_dur(e.get('duration_s'))}"
+              for i, e in enumerate(entries, 1)]
+    return [{"role": "system", "content": SCREEN_SYSTEM}, {"role": "user", "content": "\n".join(lines)}]
 
 
 # ---------------------------------------------------------------- learner

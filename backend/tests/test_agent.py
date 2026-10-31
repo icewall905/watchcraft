@@ -114,6 +114,10 @@ class FakeLlm:
             raise llm.LlmError("boom")
         if schema_name == "plan":
             return {"queries": ["marble run build", "kids science experiment"], "channels": []}
+        if schema_name == "screen":
+            return {"off_topic": [{"n": n, "why": "No science, a pop song."} for n, line in
+                                  enumerate(messages[-1]["content"].split("RESULTS\n", 1)[1].splitlines(), 1)
+                                  if "pop song" in line.lower()]}
         if schema_name == "verdict":
             user = messages[-1]["content"]
             if "cat for views" in user:
@@ -1133,3 +1137,51 @@ def test_planner_receives_scoped_search_yield_not_just_latest_rejections():
     prompt = prompts.planner_messages(cat, [], [], [], [], [], search_yield=outcomes)[-1]["content"]
     assert "RECENT DISCOVERY OUTCOMES" in prompt and "Pop song" in prompt
     assert "Not judged" not in prompt and "Other playlist" not in prompt
+
+
+def test_screen_records_off_topic_results_without_research():
+    cat = make_category()
+    yt = FakeYt([entry("vidGOOD0001", "Building a giant marble run"),
+                 entry("vidPOP00001", "Official pop song music video")])
+    w = make_worker(yt)
+    for _ in range(8):
+        w.iterate()
+    cs = cands(cat.id)
+    assert cs["vidGOOD0001"].status == "accepted"
+    pop = cs["vidPOP00001"]
+    assert pop.status == "rejected" and pop.red_flags == ["off-topic: No science, a pop song."] and pop.judged_at
+    assert yt.calls.count("metadata") == 1  # the off-topic result was never researched or judged
+    assert not any("pop song" in c["messages"][-1]["content"].lower() for c in w.rt.llm.calls if c["schema"] == "verdict")
+    assert any(e.payload.get("screened") == 1 and "1 off-topic" in e.message for e in events("search"))
+    with session() as s:
+        assert data.rejections_for(s, cat.id, cat.profile_id) == []
+        assert any("1 off-topic" in line for line in data.discovery_yield(s, cat.id))
+
+
+def test_screen_failure_or_total_drop_keeps_every_result():
+    cat = make_category()
+    fl = FakeLlm()
+    yt = FakeYt([entry(f"vidPOP0000{i}", f"Pop song number {i}") for i in range(5)])
+    w = make_worker(yt, fl)
+    from bt.agent import planner
+    with session() as s:
+        cat = s.get(Category, cat.id)
+    assert planner._screen(w.rt, cat, yt.results) == {}  # dropping everything looks confused
+    fl.fail = True
+    assert planner._screen(w.rt, cat, yt.results[:2]) == {}
+
+
+def test_prefilter_skips_reuploads_of_rejected_titles():
+    cat = make_category()
+    long_title = "Funny Baby Moments with Cat | Non Stop Laughing"
+    with session() as s:
+        s.add(Video(id="vidREJ00001", title=long_title))
+        s.add(Video(id="vidREJ00002", title="Bengal cat"))
+        s.add(Candidate(category_id=cat.id, video_id="vidREJ00001", status="rejected"))
+        s.add(Candidate(category_id=cat.id, video_id="vidREJ00002", status="rejected"))
+        s.commit()
+        rejected = data.rejected_titles(s, cat.id)
+        ctx = data.profile_ctx(s, cat.profile_id)
+    pf = lambda e: data.prefilter(e, cat, ctx, True, rejected=rejected)  # noqa: E731
+    assert pf(entry("vidNEW00001", "funny baby moments with  CAT | non stop laughing")) == "same title rejected before"
+    assert pf(entry("vidNEW00002", "Bengal cat")) is None  # short generic titles are not keyed

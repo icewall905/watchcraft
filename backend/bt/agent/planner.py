@@ -90,33 +90,73 @@ def make_plan(rt: Runtime, cat: Category, plan: dict) -> bool:
     return True
 
 
+def _screen(rt: Runtime, cat: Category, entries: list[dict]) -> dict[str, str]:
+    """Cheap relevance pass on titles before research: {video_id: why} for clearly off-topic results.
+    Fails open: without an answer every result goes on to the full review."""
+    if not entries or not rt.llm_ok():
+        return {}
+    try:
+        out = rt.llm.chat_json(prompts.screen_messages(cat, entries), json_schema=prompts.SCREEN_SCHEMA,
+                               schema_name="screen", max_tokens=1500, temperature=0.1, abort=rt.check)
+    except Interrupt:
+        raise
+    except Exception as e:  # noqa: BLE001
+        rt.llm_failed(f"screening results for {cat.name}", e, category=cat)
+        return {}
+    off = {}
+    for row in out.get("off_topic") or []:
+        n = row.get("n") if isinstance(row, dict) else None
+        if isinstance(n, int) and 1 <= n <= len(entries):
+            off[entries[n - 1]["id"]] = str(row.get("why") or "").strip()[:200] or "not about this playlist"
+    if len(off) == len(entries) and len(entries) > 3:
+        return {}  # a screen that drops everything is more likely confused than right
+    return off
+
+
 def _insert(rt: Runtime, cat: Category, entries: list[dict], source: str) -> dict:
-    """Prefilter + insert found candidates. Returns counts."""
+    """Prefilter, screen and insert found candidates. Returns counts."""
     hide_shorts = bool(rt.settings()["extras"].get("hide_shorts", True))
-    added, skipped, reasons, new = 0, 0, {}, []
+    skipped, reasons, keep = 0, {}, []
+
+    def skip(why):
+        nonlocal skipped
+        skipped += 1
+        reasons[why.split(" (")[0]] = reasons.get(why.split(" (")[0], 0) + 1
+
     with session() as s:
         ctx = data.profile_ctx(s, cat.profile_id)
         existing = data.candidate_ids(s, cat.id)
-        room = data.FOUND_CAP - data.status_counts(s, cat.id).get("found", 0)
+        rejected = data.rejected_titles(s, cat.id)
         for e in entries:
-            why = data.prefilter(e, cat, ctx, hide_shorts, existing)
-            if why is None and room <= 0:
-                why = "backlog full"
+            why = data.prefilter(e, cat, ctx, hide_shorts, existing, rejected)
             if why:
-                skipped += 1
-                reasons[why.split(" (")[0]] = reasons.get(why.split(" (")[0], 0) + 1
+                skip(why)
+            else:
+                keep.append(e)
+                existing.add(e["id"])
+    off = _screen(rt, cat, keep)
+    added, screened, new = 0, 0, []
+    with session() as s:
+        room = data.FOUND_CAP - data.status_counts(s, cat.id).get("found", 0)
+        for e in keep:
+            if e["id"] not in off and room <= 0:
+                skip("backlog full")
                 continue
             rt.yt.upsert_video(s, e)
             cand = Candidate(category_id=cat.id, video_id=e["id"], status="found", source=source)
+            if e["id"] in off:
+                # Recorded so the same result is not screened again and planning sees the poor yield.
+                cand.status, cand.red_flags, cand.judged_at = "rejected", [f"off-topic: {off[e['id']]}"], now()
+                screened += 1
+            else:
+                new.append(cand)
+                added += 1
+                room -= 1
             s.add(cand)
-            new.append(cand)
-            existing.add(e["id"])
-            added += 1
-            room -= 1
         s.commit()
         ids = [c.id for c in new]
-    return {"found": len(entries), "added": added, "skipped": skipped, "skip_reasons": reasons,
-            "candidate_ids": ids}
+    return {"found": len(entries), "added": added, "skipped": skipped, "screened": screened,
+            "skip_reasons": reasons, "candidate_ids": ids}
 
 
 def discover(rt: Runtime, rl, cat: Category) -> Optional[dict]:
@@ -188,7 +228,8 @@ def discover(rt: Runtime, rl, cat: Category) -> Optional[dict]:
     counts = _insert(rt, cat, list(entries or []), source)
     counts.update(source=source)
     rt.event("search", f"➕ {counts['added']} new of {counts['found']} results for {cat.name}"
-             + (f" ({counts['skipped']} filtered)" if counts["skipped"] else ""),
+             + (f" ({counts['skipped']} filtered)" if counts["skipped"] else "")
+             + (f" ({counts['screened']} off-topic)" if counts["screened"] else ""),
              "info", cat, payload={**counts, "query": ref, "kind": kind})
     return counts
 
