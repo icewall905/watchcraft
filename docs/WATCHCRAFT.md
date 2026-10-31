@@ -212,15 +212,18 @@ runs in its own worker and is not counted. AI calls remain serialized per proces
 
 Curator cards, Source Scout and the Briefing Writer expose an expandable run timeline. Curator milestones record real source checks,
 reused fetches, matching, optional AI ranking, completion and report-writing steps as those operations occur. Source
-errors have expandable technical details. The existing event store retains up to 80 milestones per curator and shows
-the latest 12 from its latest run. Events belong to the profile and are excluded from the shared video-agent event/SSE
-feeds; deleting the curator/profile removes them. New runs gain milestones; earlier runs keep their existing summaries.
-Briefing milestones record discovery selection, AI writing or the source-linked fallback, saving and completion. The
-writer keeps up to 80 events per briefing, shows the latest run of the active briefing (or most recently recorded run
-while idle), and removes those events when the briefing is deleted. Completion follows the issue commit. Briefing
-generation rechecks profile access before saving and performs AI writing outside a database session. Narration modes
-remain planned.
-
+errors have expandable technical details. Timeline steps that name a source also carry live provider metrics
+(`bt/hub/api.py _source_metrics`): provider/mode, last check status/count/time, shared-cache reuse, the source's
+health summary (success rate, typical count, consecutive failures, trend, bounded signals) from the real check
+history, and the latest run reports its duration. The existing event store retains up to 80 milestones per curator
+and shows the latest 12 from its latest run. Events belong to the profile and are excluded from the shared video-agent
+event/SSE feeds; deleting the curator/profile removes them. New runs gain milestones; earlier runs keep their existing
+summaries. Briefing milestones record discovery selection, AI writing or the source-linked fallback, saving and
+completion. The writer keeps up to 80 events per briefing, shows the latest run of the active briefing (or most
+recently recorded run while idle), and removes those events when the briefing is deleted. Completion follows the issue
+commit. Briefing
+generation rechecks profile access before saving and performs AI writing outside a database session. Narration follows
+the per-agent voices described below.
 Recent curator discoveries expand into source previews: a bounded source summary, publisher/source label, published
 and discovery timestamps when known, the curator's separate note, an internal finding link and the original URL.
 Summaries come from stored source metadata; missing summaries are labeled instead of generated. Preview retrieval is
