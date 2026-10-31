@@ -1,4 +1,5 @@
 """Durable local capture and summary work for profile-visible discoveries."""
+import json
 import logging
 import subprocess
 import time
@@ -25,6 +26,33 @@ def asset_cap(s):
     return int(get_settings(s)['local_library'].get('asset_max_mb', 512)) * 1_000_000
 IMAGE_TYPES = ('image/jpeg', 'image/png', 'image/webp', 'image/gif')
 DOCUMENT_TYPES = ('application/pdf',)
+VIDEO_TYPES = ('video/mp4', 'video/webm')
+VIDEO_MAX_BYTES = 25_000_000
+VIDEO_MAX_SECONDS = 180
+
+
+def validate_video(data, mime):
+    if len(data) > VIDEO_MAX_BYTES:
+        raise ValueError('Meme video exceeds the 25 MB limit.')
+    signature = (mime == 'video/mp4' and data[4:8] == b'ftyp') or (mime == 'video/webm' and data.startswith(b'\x1a\x45\xdf\xa3'))
+    if not signature:
+        raise ValueError('Video does not match its advertised format.')
+    try:
+        result = subprocess.run(['ffprobe', '-v', 'error', '-protocol_whitelist', 'pipe',
+                                 '-show_entries', 'format=duration:stream=codec_type',
+                                 '-of', 'json', '-i', 'pipe:0'], input=data, capture_output=True, timeout=15, check=True)
+        decoded = subprocess.run(['ffmpeg', '-v', 'error', '-protocol_whitelist', 'pipe', '-i', 'pipe:0',
+                                  '-map', '0:v:0', '-frames:v', '1', '-f', 'framemd5', '-'],
+                                 input=data, capture_output=True, timeout=15, check=True)
+        if not any(line and not line.startswith(b'#') for line in decoded.stdout.splitlines()):
+            raise ValueError('Meme video contains no playable frames.')
+        info = json.loads(result.stdout)
+        duration = float(info.get('format', {}).get('duration') or 0)
+        if not 0 < duration <= VIDEO_MAX_SECONDS or not any(s.get('codec_type') == 'video' for s in info.get('streams', [])):
+            raise ValueError('Meme videos must have a video track and be at most 3 minutes long.')
+    except (subprocess.SubprocessError, ValueError, KeyError) as exc:
+        raise ValueError('Meme video is invalid or exceeds the 3 minute limit.') from exc
+
 
 
 def enqueue(s, pid, iid, retry=False):
@@ -66,6 +94,9 @@ def refill(limit=50):
 
 
 def _valid_asset(kind, mime, data):
+    if kind == 'video':
+        validate_video(data, mime)
+        return True
     if kind == 'document': return mime == 'application/pdf' and data.startswith(b'%PDF-')
     return ((mime == 'image/jpeg' and data.startswith(b'\xff\xd8\xff')) or
             (mime == 'image/png' and data.startswith(b'\x89PNG\r\n\x1a\n')) or
@@ -83,9 +114,28 @@ def save_asset(pid, iid, kind, url, data, mime):
         used = s.exec(select(func.coalesce(func.sum(CapturedAsset.size), 0))).one()
         if used - (old.size if old else 0) + len(data) > asset_cap(s):
             raise ValueError('Local asset storage limit reached.')
+        if kind == 'video':
+            # Posters may have been analyzed before the clip arrived, including by older releases.
+            from .models import MemeExample, MemeFormat
+            from .memes import _refresh_format
+            affected = s.exec(select(MemeExample).where((MemeExample.item_id == iid) | (MemeExample.dup_of == iid))).all()
+            formats = {ex.format_id for ex in affected if ex.format_id}
+            for ex in affected:
+                s.delete(ex)
+            s.flush()
+            for fid in formats:
+                fmt = s.get(MemeFormat, fid)
+                if fmt: _refresh_format(s, fmt)
         asset = old or CapturedAsset(item_id=iid, kind=kind, mime=mime, data=data)
         asset.mime, asset.data, asset.size, asset.source_url = mime, data, len(data), url
-        s.add(asset); s.commit()
+        s.add(asset); s.flush()
+        if kind == 'video':
+            from .memes import analyze_item
+            # Make newly playable clips visible immediately, even during the sweep throttle.
+            for item_id in {iid, *(ex.item_id for ex in affected)}:
+                item = s.get(ContentItem, item_id)
+                if item and item.type == 'meme': analyze_item(s, item)
+        s.commit()
 
 
 def full_summary(title, body):
@@ -116,13 +166,17 @@ def run(pid, iid, lease):
             return
         url, typ, title, image, body = item.url, item.type, item.title, item.image, item.body
         video_id = str(item.meta.get('video_id', ''))
+        meme_media = item.meta.get('media', {}) if typ == 'meme' else {}
+        mastodon_meme = typ == 'meme' and item.provider == 'mastodon'
     errors, summary_status = [], 'pending'
     page = None
     links = []
     has_document = False
     truncated = False
     try:
-        if typ == 'video' and VID_RE.fullmatch(video_id):
+        if mastodon_meme:
+            pass  # The public API already supplied the post body and attachment metadata.
+        elif typ == 'video' and VID_RE.fullmatch(video_id):
             with session() as s:
                 if not hub_allowed(s, pid) or not visible(s, pid, iid): return
                 video = s.get(Video, video_id)
@@ -166,6 +220,15 @@ def run(pid, iid, lease):
                 save_asset(pid, iid, 'image', final, data, meta['content_type'])
         except Exception as e:  # noqa: BLE001
             errors.append('Image: ' + _safe_error(e))
+    if isinstance(meme_media, dict) and meme_media.get('type') in ('video', 'gifv') and meme_media.get('url'):
+        try:
+            with session() as s: exists = s.get(CapturedAsset, (iid, 'video')) is not None
+            if not exists:
+                data, final, meta = curation.fetch(meme_media['url'], kinds=VIDEO_TYPES,
+                                                   limit=VIDEO_MAX_BYTES, with_metadata=True)
+                save_asset(pid, iid, 'video', final, data, meta['content_type'])
+        except Exception as e:  # noqa: BLE001 — poster and original remain available on failure
+            errors.append('Video: ' + _safe_error(e))
     summary = ''
     with session() as s:
         if not hub_allowed(s, pid) or not visible(s, pid, iid): return

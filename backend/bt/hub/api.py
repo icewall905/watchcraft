@@ -4,7 +4,7 @@ import re
 import time
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field as Input
 from sqlalchemy import func, or_, text
@@ -62,12 +62,13 @@ def serialize(s: Session, pid: int, items: list[ContentItem]) -> list[dict]:
                           .where(CuratorDiscovery.profile_id == pid, CuratorDiscovery.item_id.in_(ids))).all():
         finds.setdefault(d.item_id, []).append((d, name))
     images = set(s.exec(select(CapturedAsset.item_id).where(CapturedAsset.kind == 'image', CapturedAsset.item_id.in_(ids))).all())
+    videos = set(s.exec(select(CapturedAsset.item_id).where(CapturedAsset.kind == 'video', CapturedAsset.item_id.in_(ids))).all())
     out = []
     for i in items:
         f = sorted(finds.get(i.id, []), key=lambda x: -(x[0].score or 0))
         out.append({**i.model_dump(exclude={'body'}), 'state': state_dict(states.get(i.id)),
                     'score': f[0][0].score if f else None, 'reason': f[0][0].reason if f else '',
-                    'curator_names': list(dict.fromkeys(n for _, n in f)), 'local_image': i.id in images})
+                    'curator_names': list(dict.fromkeys(n for _, n in f)), 'local_image': i.id in images, 'local_video': i.id in videos})
     return out
 
 
@@ -320,17 +321,33 @@ def retry_failed_captures(pid: int = Depends(profile_id)):
         return {'queued': queued}
 
 
-@router.get('/items/{iid}/assets/{kind}')
-def item_asset(iid: int, kind: str, pid: int = Depends(profile_id)):
-    if kind not in ('image', 'document'):
+@router.api_route('/items/{iid}/assets/{kind}', methods=['GET', 'HEAD'])
+def item_asset(iid: int, kind: str, request: Request, pid: int = Depends(profile_id)):
+    if kind not in ('image', 'document', 'video'):
         raise HTTPException(404, 'Asset not found')
     with session() as s:
         asset = s.get(CapturedAsset, (iid, kind))
         if not asset or not can_see(s, pid, iid):
             raise HTTPException(404, 'Asset not found')
-        return Response(content=asset.data, media_type=asset.mime, headers={
-            'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox',
-            'Cache-Control': 'private, no-store'})
+        data, mime = asset.data, asset.mime
+    headers = {'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox',
+               'Cache-Control': 'private, no-store', 'Accept-Ranges': 'bytes'}
+    status = 200
+    length = len(data)
+    value = request.headers.get('range') if request.method == 'GET' else None
+    if value:
+        match = re.fullmatch(r'bytes=(\d*)-(\d*)', value)
+        if not match or not any(match.groups()):
+            return Response(status_code=416, headers={**headers, 'Content-Range': f'bytes */{length}'})
+        a, b = match.groups()
+        start = int(a) if a else max(0, length - int(b))
+        end = min(int(b), length - 1) if a and b else length - 1
+        if start >= length or end < start:
+            return Response(status_code=416, headers={**headers, 'Content-Range': f'bytes */{length}'})
+        headers['Content-Range'] = f'bytes {start}-{end}/{length}'
+        data, status = data[start:end + 1], 206
+    headers['Content-Length'] = str(len(data))
+    return Response(content=data if request.method != 'HEAD' else b'', status_code=status, media_type=mime, headers=headers)
 
 
 @router.post('/items/{iid}/capture/queue')

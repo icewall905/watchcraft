@@ -88,10 +88,13 @@ def analyze_item(s: Session, item: ContentItem) -> MemeExample | None:
     asset = s.get(CapturedAsset, (item.id, 'image'))
     ex = MemeExample(item_id=item.id, community=(item.meta or {}).get('community', '')[:200],
                      language=str((item.meta or {}).get('language', ''))[:8])
-    if asset:
+    is_video = (item.meta or {}).get('media', {}).get('type') in ('video', 'gifv')
+    video = s.get(CapturedAsset, (item.id, 'video')) if is_video else None
+    if asset or video:
         ex.has_media = True
-        ex.media_sha = media_sha(asset.data)
-        twin = s.exec(select(MemeExample).where(MemeExample.media_sha == ex.media_sha, MemeExample.item_id != item.id,
+        # A shared poster is not proof that two clips contain the same video.
+        ex.media_sha = media_sha(video.data) if video else ('' if is_video else media_sha(asset.data))
+        twin = s.exec(select(MemeExample).where(MemeExample.media_sha == ex.media_sha, MemeExample.media_sha != '', MemeExample.item_id != item.id,
                       MemeExample.dup_of == None).order_by(MemeExample.item_id)).first()  # noqa: E711
         if twin:
             ex.dup_of, ex.phash, ex.format_id = twin.item_id, '', twin.format_id
@@ -100,12 +103,15 @@ def analyze_item(s: Session, item: ContentItem) -> MemeExample | None:
                 _refresh_format(s, s.get(MemeFormat, twin.format_id))
             return ex
         try:
-            ex.phash = dhash(Image.open(io.BytesIO(asset.data)))
+            ex.phash = dhash(Image.open(io.BytesIO(asset.data))) if asset else ''
         except Exception:  # noqa: BLE001 — undecodable asset keeps exact-media dedup only
             ex.phash = ''
     else:
         if item.image:
             return None  # image not captured yet; retry on a later sweep
+        if is_video:
+            s.add(ex); s.flush()
+            return ex
         ex.text_sha = caption_sha(item)
         twin = s.exec(select(MemeExample).where(MemeExample.text_sha == ex.text_sha, MemeExample.item_id != item.id,
                       MemeExample.dup_of == None).order_by(MemeExample.item_id)).first()  # noqa: E711

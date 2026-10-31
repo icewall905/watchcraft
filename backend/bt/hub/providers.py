@@ -147,7 +147,7 @@ def _mastodon_tags(q: str) -> list[str]:
 
 def _mastodon_status(s: dict, instance: str) -> dict | None:
     """One public status → item dict. Replies and boosts are skipped; engagement counts are stored as observed."""
-    if not isinstance(s, dict) or s.get('in_reply_to_id') or s.get('reblog'):
+    if not isinstance(s, dict) or s.get('visibility') != 'public' or s.get('in_reply_to_id') or s.get('reblog'):
         return None
     url = s.get('url')
     if not isinstance(url, str) or not url.startswith('https://'):
@@ -156,23 +156,27 @@ def _mastodon_status(s: dict, instance: str) -> dict | None:
     text = strip_tags(s.get('content') or '')
     if not text and not media:
         return None
-    account = s.get('account') or {}
+    account = s.get('account') if isinstance(s.get('account'), dict) else {}
     tags = [str(t.get('name')) for t in (s.get('tags') or []) if isinstance(t, dict) and t.get('name')]
-    images = [m for m in media if m.get('type') in ('image', 'gifv') and safe_image(m.get('preview_url') or m.get('url') or '')]
-    first = images[0] if images else (media[0] if media else {})
-    preview = safe_image(first.get('preview_url') or '') or safe_image(first.get('url') or '')
+    # Prefer playable media, keeping its poster distinct from the video bytes.
+    playable = [m for m in media if m.get('type') in ('video', 'gifv') and safe_image(m.get('url'))]
+    images = [m for m in media if m.get('type') == 'image' and safe_image(m.get('url'))]
+    first = (playable or images or [{}])[0]
+    preview = safe_image(first.get('preview_url'))
+    if first.get('type') == 'image':
+        preview = preview or safe_image(first.get('url'))
     title = clean((text.split('\n')[0] if text else (first.get('description') or '')) or f'{instance} post', 500)
     community = f'#{tags[0]}' if tags else str(account.get('acct') or account.get('username') or instance)
     return {
         'url': url, 'type': 'meme', 'provider': 'mastodon', 'publisher': instance,
         'author': clean(f"{account.get('display_name') or account.get('username') or ''} ({account.get('acct') or ''})", 200),
         'title': title, 'summary': clean(text, 1000), 'body': text[:4000], 'image': preview,
-        'published_at': ts(s.get('created_at')), 'external_id': f"mstdn:{instance}:{s.get('id')}",
+        'published_at': ts(s.get('created_at')), 'external_id': f"mstdn:{instance}:{s.get('id') or url}",
         'meta': {'platform': 'mastodon', 'instance': instance, 'community': community[:200], 'tags': tags[:8],
                  'language': str(s.get('language') or '')[:8], 'sensitive': bool(s.get('sensitive')),
                  'spoiler': clean(s.get('spoiler_text'), 300),
                  'media': {'type': str(first.get('type') or ''), 'mime': str(first.get('mime_type') or ''),
-                           'url': str(first.get('url') or ''), 'preview_url': str(first.get('preview_url') or ''),
+                           'url': safe_image(first.get('url')), 'preview_url': safe_image(first.get('preview_url')),
                            'alt': clean(first.get('description'), 300)} if media else {},
                  'observations': {'replies': s.get('replies_count'), 'reblogs': s.get('reblogs_count'),
                                   'favourites': s.get('favourites_count')}},
@@ -180,18 +184,28 @@ def _mastodon_status(s: dict, instance: str) -> dict | None:
 
 
 def mastodon(url: str, q: str = '') -> list[dict]:
-    p = urlsplit(url)
-    if not p.hostname:
-        raise ValueError('Use the https:// URL of a Mastodon instance (e.g. https://mastodon.world).')
+    p = urlsplit(curation.canonical(url))
     instance = p.hostname
-    m = re.match(r'^/api/v1/timelines/tag/([^/?]+)', p.path)
-    tags = [unquote(m.group(1))] if m else []
-    tags += [t for t in _mastodon_tags(q) if t not in tags]
+    path = p.path.rstrip('/')
+    m = re.fullmatch(r'/(?:tags|tag|api/v1/timelines/tag)/([^/]+)', path)
+    if path not in ('', '/api/v1/timelines/public') and not m:
+        raise ValueError('Use an HTTPS Mastodon instance URL or a hashtag URL such as https://mastodon.world/tags/memes.')
+    # An explicit hashtag source is authoritative; curator keywords must not broaden it.
+    tags = [unquote(m.group(1))] if m else _mastodon_tags(q)
+    if any(not re.fullmatch(r'[^\W]+', tag, re.UNICODE) for tag in tags):
+        raise ValueError('Use a Mastodon hashtag containing letters, numbers or underscores.')
     endpoints = [f'https://{instance}/api/v1/timelines/tag/{quote(t, safe="")}?limit=30' for t in tags[:3]] \
         or [f'https://{instance}/api/v1/timelines/public?limit=30']
     out, seen = [], set()
     for endpoint in endpoints:
-        data = json.loads(curation.fetch(endpoint))
+        try:
+            data = json.loads(curation.fetch(endpoint, kinds=('application/json',)))
+        except ValueError as exc:
+            if 'HTTP 401' in str(exc) or 'HTTP 403' in str(exc):
+                raise ValueError('This Mastodon instance requires login for public timelines. Choose an instance that allows anonymous public or hashtag timelines.') from exc
+            raise
+        if isinstance(data, dict) and data.get('error'):
+            raise ValueError('Mastodon rejected this public timeline request. The instance may require login; choose an instance allowing anonymous timelines.')
         if not isinstance(data, list):
             raise ValueError('Unexpected Mastodon response.')
         for s in data[:40]:
@@ -437,6 +451,6 @@ PROVIDERS = {p.key: p for p in [
              ['url-extraction', 'structured-metadata'], needs_url=True, default_type='web'),
     Provider('page_watch', 'Page change watcher', 'feed', 'Track text changes on one public page, optionally limited to a content area.', page_watch,
              ['update-monitoring', 'page-changes'], needs_url=True, default_type='web'),
-    Provider('mastodon', 'Mastodon communities', 'query', 'Public posts and hashtags from a Mastodon instance (no login). Each query is tried as a hashtag.', mastodon,
+    Provider('mastodon', 'Mastodon communities', 'query', 'Public posts from an HTTPS instance or /tags/hashtag URL. Instance queries become hashtags; explicit hashtag URLs stay scoped. Requires anonymous timeline access.', mastodon,
              ['keyword-search', 'update-monitoring', 'structured-metadata'], needs_url=True, default_type='meme'),
 ]}

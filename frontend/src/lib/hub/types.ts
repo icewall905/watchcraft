@@ -5,7 +5,7 @@ export type ItemState = {
 };
 export type Item = {
 	id: number; url: string; type: string; title: string; summary: string; author: string; publisher: string;
-	image: string; local_image: boolean; published_at: number | null; first_seen: number; provider: string;
+	image: string; local_image: boolean; local_video?: boolean; published_at: number | null; first_seen: number; provider: string;
 	meta: Record<string, unknown>; enrichment: Record<string, unknown>;
 	state: ItemState; score: number | null; reason: string; curator_names: string[]; meme?: MemeMeta | null;
 };

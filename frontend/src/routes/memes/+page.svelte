@@ -8,6 +8,7 @@
 	import type { Item, MemeExplain, MemeFormat, MemeTrend, Topic } from '$lib/hub/types';
 	import MemeCard from '$lib/hub/MemeCard.svelte';
 	import LocalImage from '$lib/hub/LocalImage.svelte';
+	import LocalVideo from '$lib/hub/LocalVideo.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 
 	const LIMIT = 24;
@@ -33,6 +34,9 @@
 	let explanation = $state<MemeExplain | null>(null);
 	let explainError = $state('');
 	let explaining = $state(false);
+	let captureMessage = $state('');
+	let queuing = $state(false);
+	const isVideo = (it: Item) => ['video', 'gifv'].includes(String((it.meta?.media as { type?: string } | undefined)?.type ?? ''));
 
 	const feed = $derived(tab === 'examples' || tab === 'saved' || tab === 'history');
 	const params = $derived.by(() => {
@@ -82,6 +86,22 @@
 		search = page.url.searchParams.get('q') ?? '';
 		hub.memeFacets().then((f) => { communities = f.communities; languages = f.languages; }).catch(() => {});
 		hub.topics().then((t) => (topics = t)).catch(() => {});
+		let refreshing = false;
+		const timer = setInterval(async () => {
+			if (refreshing || !open || open.local_video || !isVideo(open)) return;
+			const iid = open.id;
+			refreshing = true;
+			try {
+				const detail = await hub.item(iid);
+				if (open?.id === iid) {
+					open = { ...detail, meme: open.meme };
+					if (detail.capture?.error) captureMessage = detail.capture.error;
+					else if (detail.local_video) captureMessage = '';
+				}
+			} catch { /* Keep the poster and original link available. */ }
+			finally { refreshing = false; }
+		}, 3000);
+		return () => clearInterval(timer);
 	});
 
 	async function toggleTrend(t: MemeTrend, patch: { followed?: boolean; hidden?: boolean }) {
@@ -104,22 +124,32 @@
 	}
 
 	async function openItem(it: Item) {
-		open = it; similar = []; explanation = (it.enrichment?.meme_explain as MemeExplain) ?? null; explainError = '';
-		hub.memeSimilar(it.id).then((r) => (similar = r.items)).catch(() => {});
+		open = it; captureMessage = ''; similar = []; explanation = (it.enrichment?.meme_explain as MemeExplain) ?? null; explainError = '';
+		hub.memeSimilar(it.id).then((r) => { if (open?.id === it.id) similar = r.items; }).catch(() => {});
+	}
+	async function captureVideo() {
+		if (!open || queuing) return;
+		queuing = true; captureMessage = '';
+		try { await hub.queueCapture(open.id); captureMessage = 'Video capture queued. Reopen Meme Radar shortly to check it.'; }
+		catch (e) { captureMessage = errMsg(e); }
+		finally { queuing = false; }
 	}
 	function closeDrawer() { open = null; }
 	function onKey(e: KeyboardEvent) { if (e.key === 'Escape' && open) closeDrawer(); }
 
 	async function toggleState(key: 'saved' | 'dismissed') {
 		if (!open) return;
-		const st = await hub.setState(open.id, { [key]: !open.state[key] });
+		const iid = open.id;
+		const st = await hub.setState(iid, { [key]: !open.state[key] });
+		if (open?.id !== iid) return;
 		open = { ...open, state: st };
 		if (st.dismissed) items = items.filter((x) => x.id !== open?.id);
 	}
 	async function explain() {
 		if (!open) return;
 		explaining = true; explainError = '';
-		try { explanation = (await hub.memeExplain(open.id)).explanation; }
+		const iid = open.id;
+		try { const result = await hub.memeExplain(iid); if (open?.id === iid) explanation = result.explanation; }
 		catch (e) { explainError = errMsg(e); }
 		finally { explaining = false; }
 	}
@@ -243,7 +273,9 @@
 		<div class="drawer">
 			<button class="btn ghost close" use:focusable onclick={closeDrawer} aria-label="Close"><Icon name="x" /></button>
 			<div class="shot">
-				{#if open.local_image}<LocalImage id={open.id} alt={open.meme?.spoiler || open.title} loading="eager" />
+				{#if open.local_video}
+					{#key open.id}<LocalVideo id={open.id} />{/key}
+				{:else if open.local_image}<LocalImage id={open.id} alt={open.meme?.spoiler || open.title} loading="eager" />
 				{:else}<p class="text-meme">{open.title || open.summary}</p>{/if}
 			</div>
 			<div class="body">
@@ -254,6 +286,11 @@
 					{#if open.meme?.format_id}· <button class="link" use:focusable onclick={() => { const f = open?.meme?.format_id; closeDrawer(); if (f) formatToFeed({ id: f } as MemeFormat); }}>in format “{open.meme?.format_name}”</button>{/if}
 				</p>
 				{#if open.meme?.sensitive}<p class="warn small">Marked sensitive by the source{open.meme.spoiler ? `: ${open.meme.spoiler}` : ''}.</p>{/if}
+				{#if isVideo(open) && !open.local_video}
+					<p class="muted">Video is not stored locally yet. Short clips up to 3 minutes and 25 MB can play here.</p>
+					<button class="btn" disabled={queuing} onclick={captureVideo}>{queuing ? 'Queuing…' : 'Capture video'}</button>
+				{/if}
+				{#if captureMessage}<p role="status">{captureMessage}</p>{/if}
 				<div class="acts">
 					<button class="btn" aria-pressed={open.state.saved} use:focusable onclick={() => toggleState('saved')}>{open.state.saved ? 'Saved' : 'Save'}</button>
 					<button class="btn ghost" aria-pressed={open.state.dismissed} use:focusable onclick={() => toggleState('dismissed')}>{open.state.dismissed ? 'Dismissed' : 'Dismiss'}</button>

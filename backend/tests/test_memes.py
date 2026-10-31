@@ -90,7 +90,7 @@ def _analyze_all():
 # ---------- provider parsing (offline fixtures)
 
 def test_mastodon_status_mapping_skips_replies_and_keeps_observed_counts():
-    status = {'url': 'https://m.test/@a/1', 'content': '<p>first line<br>second</p>', 'created_at': '2026-10-30T12:00:00.000Z',
+    status = {'visibility': 'public', 'url': 'https://m.test/@a/1', 'content': '<p>first line<br>second</p>', 'created_at': '2026-10-30T12:00:00.000Z',
               'account': {'acct': 'a@m.test', 'display_name': 'A'}, 'language': 'en', 'sensitive': True,
               'spoiler_text': 'watch out', 'replies_count': 1, 'reblogs_count': 2, 'favourites_count': 3,
               'tags': [{'name': 'linux'}, {'name': 'memes'}],

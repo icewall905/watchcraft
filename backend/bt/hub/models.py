@@ -199,7 +199,7 @@ class CaptureJob(SQLModel, table=True):
 
 class CapturedAsset(SQLModel, table=True):
     item_id: int = Field(primary_key=True)
-    kind: str = Field(primary_key=True)  # image | document
+    kind: str = Field(primary_key=True)  # image | document | video
     mime: str
     data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
     size: int = 0

@@ -18,6 +18,7 @@
 			<span class="text-meme" class:sensitive={meme?.sensitive}>{item.title || item.summary}</span>
 		{/if}
 		{#if meme?.format_name}<span class="fmt">{meme.format_name}</span>{/if}
+		{#if item.local_video}<span class="clip">▶ Video</span>{/if}
 		{#if meme?.dup_of}<span class="dup" title="Exact duplicate of another meme">dup</span>{/if}
 	</div>
 	<div class="meta">
@@ -39,6 +40,7 @@
 	.shot :global(img) { width: 100%; height: 100%; max-height: 22rem; object-fit: cover; display: block; }
 	.text-meme { padding: 1.4rem 1rem; font-size: 1.05rem; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
 	.shot.sensitive :global(img), .text-meme.sensitive { filter: blur(7px); }
+	.clip { position: absolute; bottom: .5rem; left: .5rem; padding: .2rem .6rem; border-radius: var(--r-pill); background: rgba(0, 0, 0, .7); }
 	.fmt, .dup { position: absolute; top: .5rem; font-size: .72rem; font-weight: 700; border-radius: var(--r-pill); padding: .15rem .55rem; background: rgba(0, 0, 0, .55); color: var(--fg); }
 	.fmt { left: .5rem; }
 	.dup { right: .5rem; color: var(--warning); }

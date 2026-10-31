@@ -168,3 +168,19 @@ POST memes/items/{id}/explain           {refresh?} → {ai,explanation:{what_sho
                                         needs AI; stored in enrichment.meme_explain, never overwrites source facts
 POST memes/sweep                        analyze pending examples + recount trends now
 ```
+
+
+### Meme video capture and Mastodon sources
+
+Meme Tracker accepts a public Mastodon instance or a scoped hashtag URL such as
+`https://mastodon.world/tags/memes`. A hashtag URL stays scoped to that hashtag;
+an instance URL uses curator queries as hashtag candidates. Only public original
+posts are collected. Instances that require timeline authentication report a source error.
+
+Video and GIFV attachments retain a separate poster and video URL. Local capture downloads
+MP4/WebM clips up to 25 MB and three minutes through the public HTTPS fetcher, validates a
+video stream and decoded frame, and counts them against the existing local asset storage cap.
+The Meme Radar drawer loads a captured clip on demand with native playback and seeking.
+Pending/failed clips offer capture/retry and the original post. Opening a pending clip refreshes
+capture state automatically. Local assets remain profile-authorized; video bytes support GET,
+HEAD and single byte-range requests at `/api/hub/items/{id}/assets/video`.
