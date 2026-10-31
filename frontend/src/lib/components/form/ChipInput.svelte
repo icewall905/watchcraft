@@ -7,14 +7,15 @@
 		hint?: string;
 		placeholder?: string;
 		group?: string;
+		splitCommas?: boolean;
 	}
-	let { values = $bindable([]), label, hint, placeholder = 'Add…', group }: Props = $props();
+	let { values = $bindable([]), label, hint, placeholder = 'Add…', group, splitCommas = true }: Props = $props();
 	let draft = $state('');
 	const g = $derived(group ?? `chips-${label}`);
 
 	function add() {
 		const parts = draft
-			.split(',')
+			.split(splitCommas ? /[,\n]/ : /\n/)
 			.map((s) => s.trim())
 			.filter((s) => s && !values.includes(s));
 		if (parts.length) values = [...values, ...parts];
@@ -37,7 +38,7 @@
 			aria-label={label}
 			bind:value={draft}
 			onkeydown={(e) => {
-				if (e.key === 'Enter' || e.key === ',') {
+				if (e.key === 'Enter' || (splitCommas && e.key === ',')) {
 					e.preventDefault();
 					add();
 				}

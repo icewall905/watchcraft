@@ -119,7 +119,7 @@ Simple, fun science for kids 5–9: Mark Rober, cat videos, experiments, space, 
 
 	<div class="two">
 		<div class="autofill-field">
-			<ChipInput label="Seed searches" hint="Starting points for the AI's YouTube searches. It will invent more." bind:values={f.seed_queries} placeholder="egg drop experiment" />
+			<ChipInput label="Seed searches" hint="Specific YouTube search phrases. Press Enter after each phrase; commas stay within a phrase." splitCommas={false} bind:values={f.seed_queries} placeholder="egg drop experiment" />
 			<button class="btn autofill" disabled={!!autofilling} use:focusable={{ group: 'cat-autofill', onSelect: () => autofill('seed_queries') }} aria-label="Autofill Seed searches with AI">{autofilling === 'seed_queries' ? 'Generating…' : '✨ Autofill with AI'}</button>
 		</div>
 		<div class="autofill-field">
