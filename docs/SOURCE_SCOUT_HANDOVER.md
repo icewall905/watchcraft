@@ -2,7 +2,7 @@
 
 The user asked to stop at a good point and leave a handover. This is a tested Source Scout foundation; the larger
 Source Scout and research-team roadmap remains open. **Deployed 2026-10-31:** `10.0.10.73:6646` (public endpoint
-`https://wc.tdgs.org`) runs `2cf0445` as image `watchcraft:2cf0445` (also tagged `latest`) for the API, worker and
+`https://wc.tdgs.org`) runs `7ea4edc` as image `watchcraft:7ea4edc` (also tagged `latest`) for the API, worker and
 downloader. See "Deployment record" below. Pending work is tracked outside the repo (see the local `AGENTS.md`).
 
 ## What is implemented
@@ -95,6 +95,20 @@ in the local `todo.md` (which is intentionally ignored by Git).
 - Rollback: `docker tag watchcraft:rollback-20261030T094200Z-880f732 watchcraft:latest` and rerun the compose command
   above (the new tables are additive and ignored by the old release). Restore the backup only if data must be reverted.
 - Still not done: physical TV remote pass and a real topic-search provider test.
+
+## Deployment record — curator feedback (`7ea4edc`, 2026-10-31)
+
+- Covers `8a9df18..7ea4edc`: "More/Less like this" on findings tunes curator scores; adds `curator.tuned_up` and
+  `curator.tuned_down` (JSON, default `[]`) through the additive hub migration.
+- Backup (online SQLite `.backup`, integrity `ok`, data extras, config, source, running images):
+  `/root/compose/watchcraft-backups/20261031T165936Z-pre-7ea4edc`. Rollback image:
+  `watchcraft:rollback-20261031T165936Z-2cf0445` (`3a2cd13f…`, the image production was running). The old release
+  ignores the two new columns.
+- Isolated copy on `127.0.0.1:6699` from the backup: started twice, no tracebacks; both columns added with `[]` on all
+  3 curators; feedback on the newest real finding returned 200 and learned two title words. The copy was removed.
+- Rollout with rsync without `--delete`; nothing missing from the live directory.
+- Production: API, worker and downloader run `watchcraft:7ea4edc` (`c9a54eb3…`); NVIDIA override checksum matches;
+  health passes locally and publicly; quick check `ok`; columns present; `/`, `/curators`, `/team` return 200; no errors.
 
 ## Deployment record — discovery stories, child casting, Play on seeking (`2cf0445`, 2026-10-31)
 
