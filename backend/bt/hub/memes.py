@@ -178,7 +178,7 @@ def label_state(counts: list[int], total: int, communities: int, days_since_firs
     sparse = total < 5
     last7, prev7 = sum(counts[-7:]), sum(counts[-14:-7])
     baseline_days = max(1, len(counts) - 14)
-    baseline_week = sum(counts[:-14]) / baseline_days if len(counts) > 14 else 0
+    baseline_week = sum(counts[:-14]) * 7 / baseline_days if len(counts) > 14 else 0
     base = max(baseline_week, 1)
     ratio = last7 / base
     last2 = sum(counts[-2:])
@@ -209,7 +209,7 @@ def label_state(counts: list[int], total: int, communities: int, days_since_firs
 
 def _metrics(counts: list[int], total: int, communities: int, first: float | None, last: float | None) -> dict:
     return {'last7': sum(counts[-7:]), 'prev7': sum(counts[-14:-7]),
-            'baseline_week': round(sum(counts[:-14]) / max(1, len(counts) - 14), 2) if len(counts) > 14 else 0.0,
+            'baseline_week': round(sum(counts[:-14]) * 7 / max(1, len(counts) - 14), 2) if len(counts) > 14 else 0.0,
             'samples': total, 'communities': communities, 'first_observed': first, 'last_observed': last,
             'sparse': total < 5}
 
@@ -229,13 +229,15 @@ def refresh_trends(s: Session) -> int:
         targets.append(('community', community, list(members)))
     changed = 0
     for kind, key, item_ids in targets:
-        rows = s.exec(select(ContentItem.first_seen, MemeExample.community).where(ContentItem.id.in_(item_ids))).all()
+        rows = s.exec(select(ContentItem.first_seen, MemeExample.community)
+                      .join(MemeExample, MemeExample.item_id == ContentItem.id)
+                      .where(ContentItem.id.in_(item_ids))).all()
         if not rows:
             continue
         observations = [r[0] or 0 for r in rows]
         counts = _days(observations, now)
-        total = len(rows)
-        communities = len({r[1] for r in rows if r[1]}) or 1
+        total = sum(counts)
+        communities = len({r[1] for r in rows if r[1] and 0 <= now - (r[0] or 0) < WINDOW_DAYS * 86400})
         first, last = min(observations), max(observations)
         state, evidence, _sparse = label_state(counts, total, communities, (now - first) / 86400)
         trend = s.exec(select(MemeTrend).where(MemeTrend.target_kind == kind, MemeTrend.target_key == key)).first()
@@ -276,12 +278,14 @@ def sweep(throttled=True) -> dict:
 def example_map(s: Session, ids: list[int]) -> dict[int, dict]:
     if not ids:
         return {}
-    rows = s.exec(select(MemeExample, MemeFormat.name).outerjoin(MemeFormat, MemeFormat.id == MemeExample.format_id)
+    rows = s.exec(select(MemeExample, MemeFormat.name, ContentItem.meta)
+                  .join(ContentItem, ContentItem.id == MemeExample.item_id).outerjoin(MemeFormat, MemeFormat.id == MemeExample.format_id)
                   .where(MemeExample.item_id.in_(ids))).all()
     return {ex.item_id: {'media_sha': ex.media_sha, 'has_media': ex.has_media, 'dup_of': ex.dup_of,
                          'format_id': ex.format_id, 'format_name': name or '', 'community': ex.community,
-                         'language': ex.language}
-            for ex, name in rows}
+                         'language': ex.language, 'handle': meta.get('handle', ''),
+                         'sensitive': bool(meta.get('sensitive')), 'spoiler': meta.get('spoiler', meta.get('spoiler_text', ''))}
+            for ex, name, meta in rows}
 
 
 def similar_ids(s: Session, item_id: int, limit=12) -> list[int]:

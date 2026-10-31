@@ -74,16 +74,15 @@
 			if (tab === 'trending') trends = (await hub.memeTrends({ state: 'trending,established' })).trends;
 			else if (tab === 'emerging') trends = (await hub.memeTrends({ state: 'newly_observed,emerging' })).trends;
 			else if (tab === 'formats') formats = (await hub.memeFormats({ sort: 'new' })).formats;
-			if (feed && !communities.length) {
-				const f = await hub.memeFacets();
-				communities = f.communities; languages = f.languages;
-			}
 		} catch (e) { error = error || errMsg(e); }
 	}
 	$effect(() => { if (feed) void loadFeed(false); else { loading = true; void loadSide().finally(() => (loading = false)); } });
-	$effect(() => { if (feed && !topics.length) hub.topics().then((t) => (topics = t)).catch(() => {}); });
 
-	onMount(() => { search = page.url.searchParams.get('q') ?? ''; });
+	onMount(() => {
+		search = page.url.searchParams.get('q') ?? '';
+		hub.memeFacets().then((f) => { communities = f.communities; languages = f.languages; }).catch(() => {});
+		hub.topics().then((t) => (topics = t)).catch(() => {});
+	});
 
 	async function toggleTrend(t: MemeTrend, patch: { followed?: boolean; hidden?: boolean }) {
 		const r = await hub.memeTrendState(t.id, patch);

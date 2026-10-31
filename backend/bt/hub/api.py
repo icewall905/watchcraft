@@ -1872,7 +1872,8 @@ def meme_items(view: str = 'examples', q: str = '', community: str = '', provide
                 .outerjoin(st, (st.item_id == ContentItem.id) & (st.profile_id == pid))
                 .where(ContentItem.type == 'meme', _visible_to(ContentItem.id, pid)))
         if view != 'history':
-            stmt = stmt.where(MemeExample.dup_of == None)  # noqa: E711
+            stmt = stmt.where(or_(MemeExample.dup_of == None,  # noqa: E711
+                                  ~_visible_to(MemeExample.dup_of, pid)))
         if view == 'examples':
             stmt = stmt.where(or_(st.dismissed == None, st.dismissed == False))  # noqa: E711
             hidden = [int(t.target_key) for t, ts in s.exec(
@@ -1952,7 +1953,8 @@ class TrendStateIn(BaseModel):
 @router.post('/memes/trends/{tid}/state')
 def meme_trend_state(tid: int, body: TrendStateIn, pid: int = Depends(profile_id)):
     with session() as s:
-        if not s.get(MemeTrend, tid):
+        trend = s.get(MemeTrend, tid)
+        if not trend or not memes.trend_dict(s, trend, pid)['example_ids']:
             raise HTTPException(404, 'Trend not found')
         st = s.get(MemeTrendState, (pid, tid)) or MemeTrendState(profile_id=pid, trend_id=tid)
         for k, v in body.model_dump(exclude_none=True).items():
@@ -1994,6 +1996,8 @@ def meme_format(fid: int, pid: int = Depends(profile_id)):
         members = s.exec(select(ContentItem).join(MemeExample, MemeExample.item_id == ContentItem.id)
                          .where(MemeExample.format_id == fid, _visible_to(ContentItem.id, pid))
                          .order_by(ContentItem.first_seen.desc()).limit(100)).all()
+        if not members:
+            raise HTTPException(404, 'Format not found')
         out = serialize(s, pid, list(members))
         _attach_meme(s, out)
         return {'id': f.id, 'name': f.name, 'kind': f.kind, 'example_count': f.example_count,
@@ -2036,8 +2040,9 @@ def meme_explain(iid: int, body: ExplainIn, pid: int = Depends(profile_id)):
                 it = s.get(ContentItem, iid)
                 meta = it.meta or {}
                 asset = s.get(CapturedAsset, (iid, 'image'))
-                titles = [t for (t,) in s.exec(select(ContentItem.title).where(
-                    ContentItem.id.in_(memes.similar_ids(s, iid) or [0]))).all()]
+                titles = list(s.exec(select(ContentItem.title).where(
+                    ContentItem.id.in_(memes.similar_ids(s, iid) or [0]),
+                    _visible_to(ContentItem.id, pid))).all())
                 result = ai.explain_meme({'title': it.title, 'summary': it.summary, 'platform': meta.get('platform', ''),
                                           'community': meta.get('community', ''), 'tags': meta.get('tags', []),
                                           'first_seen': it.first_seen}, titles,

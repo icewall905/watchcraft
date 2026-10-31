@@ -198,7 +198,7 @@ def test_trends_counted_from_collected_examples_with_follow_and_hide(client):
     assert len(mine) == 1
     t = mine[0]
     assert t['state'] in ('emerging', 'trending'), t['evidence']
-    assert t['metrics']['last7'] >= 5 and t['metrics']['communities'] == 5
+    assert t['metrics']['last7'] == 5 and t['metrics']['communities'] == 5
     assert any('independent communit' in e for e in t['evidence'])
     follow = client.post(f"/api/hub/memes/trends/{t['id']}/state", json={'followed': True, 'hidden': True}, headers=H).json()
     assert follow == {'followed': True, 'hidden': True}
@@ -276,3 +276,54 @@ def test_meme_template_is_an_ordinary_curator(client):
     assert cur['content_types'] == ['meme']
     assert client.delete(f"/api/hub/curators/{cur['id']}", headers=H).status_code == 200
     assert client.delete(f"/api/hub/sources/{src['id']}", headers=H).status_code == 200
+
+
+def test_trend_window_and_weekly_baseline(client):
+    now = time.time()
+    for k, days in enumerate([0, 1, 20, 21, 22, 23, 40]):
+        _seed_meme(f'https://m.test/@window/{k}', f'unique caption {k}', None, '#window', now - days * 86400)
+    _analyze_all()
+    client.post('/api/hub/memes/sweep', headers=H)
+    t = next(t for t in client.get('/api/hub/memes/trends', headers=H).json()['trends'] if t['target_key'] == '#window')
+    assert t['metrics']['last7'] == 2
+    assert t['metrics']['samples'] == 6
+    assert t['metrics']['baseline_week'] == 1.75
+    assert sum(o['count'] for o in t['observations']) == 6
+
+
+def test_explanation_receives_context_and_multiple_related_titles(client, monkeypatch):
+    from bt.hub import ai
+    ids = [_seed_meme(f'https://m.test/@context/{k}', f'caption {k}', img, '#context')
+           for k, img in enumerate(_images()[:3])]
+    _analyze_all()
+    prompts = []
+    monkeypatch.setattr(ai, 'enabled', lambda: True)
+    monkeypatch.setattr(ai, '_call', lambda system, user, schema, **kw: prompts.append(user) or {'origin': 'unknown'})
+    response = client.post(f'/api/hub/memes/items/{ids[0]}/explain', json={}, headers=H)
+    assert response.status_code == 200, response.text
+    assert all(value in prompts[0] for value in ['caption 0', 'caption 1', 'caption 2', '#context', 'similar_examples'])
+
+
+def test_sensitive_metadata_reaches_feed(client):
+    iid = _seed_meme('https://m.test/@safety/1', 'sensitive caption', _images()[0], '#safe')
+    with session() as s:
+        it = s.get(ContentItem, iid)
+        it.meta = {**it.meta, 'sensitive': True, 'spoiler': 'Content warning'}
+        s.add(it); s.commit()
+    _analyze_all()
+    meta = client.get('/api/hub/memes/items', headers=H).json()['items'][0]['meme']
+    assert meta['sensitive'] and meta['spoiler'] == 'Content warning'
+
+
+def test_duplicate_stays_visible_when_original_belongs_to_another_profile(client):
+    img = _images()[0]
+    a = _seed_meme('https://m.test/@dedup/1', 'original', img, '#one')
+    b = _seed_meme('https://m.test/@dedup/2', 'repost', img, '#two')
+    _analyze_all()
+    with session() as s:
+        other = Profile(name='Second'); s.add(other); s.flush()
+        s.add(ItemState(profile_id=other.id, item_id=b)); s.commit()
+        pid = other.id
+    out = client.get('/api/hub/memes/items', headers={'X-Profile-Id': str(pid)}).json()
+    assert [it['id'] for it in out['items']] == [b]
+    assert client.get('/api/hub/memes/items', headers=H).json()['items'][0]['id'] == a

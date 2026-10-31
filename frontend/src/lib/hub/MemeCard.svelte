@@ -11,7 +11,7 @@
 </script>
 
 <button class="meme-card" use:focusable onclick={() => onopen(item)} aria-label={`Open meme: ${item.title}`}>
-	<div class="shot">
+	<div class="shot" class:sensitive={meme?.sensitive}>
 		{#if item.local_image}
 			<LocalImage id={item.id} alt={meme?.spoiler || item.title} />
 		{:else}
@@ -38,7 +38,7 @@
 	.shot { position: relative; display: grid; place-items: center; min-height: 12rem; max-height: 22rem; background: rgba(255, 255, 255, .04); overflow: hidden; }
 	.shot :global(img) { width: 100%; height: 100%; max-height: 22rem; object-fit: cover; display: block; }
 	.text-meme { padding: 1.4rem 1rem; font-size: 1.05rem; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
-	.text-meme.sensitive { filter: blur(7px); }
+	.shot.sensitive :global(img), .text-meme.sensitive { filter: blur(7px); }
 	.fmt, .dup { position: absolute; top: .5rem; font-size: .72rem; font-weight: 700; border-radius: var(--r-pill); padding: .15rem .55rem; background: rgba(0, 0, 0, .55); color: var(--fg); }
 	.fmt { left: .5rem; }
 	.dup { right: .5rem; color: var(--warning); }

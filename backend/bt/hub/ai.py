@@ -337,7 +337,7 @@ def explain_meme(item: dict, similar: list[str], image: bytes | None = None, mim
                 'plus widely shared internet culture for background. "origin" must describe how the meme started: if '
                 'the data does not establish that, write exactly "unknown" — never invent an origin story. Put anything '
                 'you are unsure about in "uncertain". Keep each field under 50 words.',
-                f'{_data([rows])}\nFields: what_shows (what the image/text shows), why_funny (why people find it '
+                f'<data>\n{_esc(json.dumps(rows, ensure_ascii=False))}\n</data>\nFields: what_shows (what the image/text shows), why_funny (why people find it '
                 'funny), referencing (event/person/format it refers to, or unknown), origin, why_now (why it may be '
                 'spreading now, or unknown), uncertain.',
                 MEME_EXPLAIN_SCHEMA, max_tokens=900, images=images)
