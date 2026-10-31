@@ -96,8 +96,12 @@ export type TeamAgent = {
 	role?: 'watch' | 'research'; error?: string; enabled?: boolean; found_today?: number; plans?: number;
 	finds?: { id: number; title: string; found_at: number; url?: string; summary?: string; publisher?: string;
 		type?: string; published_at?: number | null; source_name?: string; reason?: string; score?: number | null }[];
-	timeline?: { id?: number; step: string; message: string; at: number; detail?: string }[];
-	last?: { status: string; new_items?: number; seen_items?: number; suggestions?: number; query?: string; error?: string; finished_at: number | null } | null;
+	timeline?: { id?: number; step: string; message: string; at: number; detail?: string;
+		source_id?: number | null; source?: { id: number; name: string; provider: string; mode: string; shared: boolean;
+			last_checked_at: number | null; last_status: string; item_count: number; last_error: string; last_success: number | null;
+			health: { status: string; success_rate: number | null; trend: string; typical_count: number | null;
+				consecutive_failures: number; signals: { key: string; message: string }[] } } | null }[];
+	last?: { status: string; new_items?: number; seen_items?: number; suggestions?: number; query?: string; error?: string; finished_at: number | null; started_at?: number | null; duration_s?: number | null } | null;
 };
 export type TeamEntry = {
 	at: number; agent: string; name: string; icon: string; kind: 'curator_run' | 'scout_run' | 'briefing'; status: string;

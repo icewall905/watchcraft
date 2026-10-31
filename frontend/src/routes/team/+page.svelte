@@ -196,7 +196,16 @@
 						<summary use:focusable>Run timeline</summary>
 						<ol>{#each a.timeline as step}
 							<li><p>{step.message}</p><time class="small muted">{ago(step.at)}</time>
-								{#if step.detail}<details><summary use:focusable>Technical details</summary><p class="small">{step.detail}</p></details>{/if}
+								<details><summary use:focusable>Technical details</summary>
+									{#if step.source}
+										<p class="small">{step.source.provider}{step.source.mode ? ` (${step.source.mode})` : ''} · last check: {step.source.last_status || 'none'}{step.source.item_count ? `, ${step.source.item_count} items` : ''}{step.source.last_checked_at ? `, ${ago(step.source.last_checked_at)}` : ''}</p>
+										<p class="small">Health: {step.source.health.status}{step.source.health.success_rate != null ? `, success ${(step.source.health.success_rate * 100).toFixed(0)}%` : ''}{step.source.health.typical_count ? `, usually ${step.source.health.typical_count} items` : ''} · trend {step.source.health.trend}</p>
+										{#each step.source.health.signals as sig}
+											<p class="small">Signal: {sig.message}</p>
+										{/each}
+									{/if}
+									{#if step.detail}<p class="small">{step.detail}</p>{/if}
+								</details>
 							</li>
 						{/each}</ol>
 					</details>

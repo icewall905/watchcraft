@@ -15,7 +15,7 @@ from ..access import hub_allowed, require_admin, require_hub
 from ..api.core import profile_id
 from ..db import get_settings, save_setting, session
 from ..models import AgentEvent, Download
-from . import activity, ai, engine, polling, scout, slots, watchers
+from . import activity, ai, engine, polling, repair, scout, slots, watchers
 from .models import (Alert, Briefing, BriefingIssue, CaptureJob, CapturedAsset, CapturedPage, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
                      CuratorRun, CuratorSource, ItemState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, ScoutReportConfig, ScoutReportIssue, SitemapEntry, Source, SourceCheck, Topic, TopicItem, WatcherRevision)
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
@@ -546,6 +546,41 @@ def _norm_source(provider: str, url: str) -> str:
         raise HTTPException(422, str(e))
 
 
+def _source_metrics(s, pid: int, timeline: list[dict]) -> None:
+    """Attach live provider metrics to timeline steps that name a source. Real state only."""
+    seen = []
+    for step in timeline:
+        sid = step.get('source_id')
+        if sid and sid not in seen:
+            seen.append(sid)
+    for sid in seen:
+        row = s.exec(select(SourceCheck).where(SourceCheck.source_id == sid, SourceCheck.profile_id == pid)
+                     .order_by(SourceCheck.id.desc()).limit(20)).all()
+        src = s.get(Source, sid)
+        if not src or src.profile_id != pid:
+            continue
+        health = watchers.health(row, src.enabled, src.provider, repair.counts_matter(src.provider)) if row \
+            else repair.source_health(s, src)
+        latest = row[0] if row else None
+        for step in timeline:
+            if step.get('source_id') == sid:
+                step['source'] = {
+                    'id': src.id, 'name': src.name or src.provider, 'provider': src.provider,
+                    'mode': PROVIDERS[src.provider].mode if src.provider in PROVIDERS else '',
+                    'shared': latest is not None and latest.trigger == 'shared',
+                    'last_checked_at': latest.checked_at if latest else None,
+                    'last_status': latest.status if latest else '',
+                    'item_count': latest.item_count if latest else 0,
+                    'last_error': latest.error if latest else '',
+                    'last_success': src.last_success,
+                    'health': {'status': health['status'], 'success_rate': health['success_rate'],
+                               'trend': health['trend'], 'typical_count': health['typical_count'],
+                               'consecutive_failures': health['consecutive_failures'],
+                               'signals': [{'key': x['key'], 'message': x['message']}
+                                           for x in health['signals'][:3]]},
+                }
+
+
 def get_or_create_source(s, pid: int, provider: str, url: str = '', name: str = '') -> Source:
     url = _norm_source(provider, url)
     src = s.exec(select(Source).where(Source.profile_id == pid, Source.provider == provider, Source.url == url)).first()
@@ -841,6 +876,8 @@ def team(pid: int = Depends(profile_id)):
             found_today = s.exec(select(func.count()).select_from(CuratorDiscovery)
                                  .where(CuratorDiscovery.curator_id == c.id, CuratorDiscovery.found_at >= day)).one()
             timeline = activity.recent(s, pid, c.id, last.id) if last else []
+            if timeline:
+                _source_metrics(s, pid, timeline)
             agents.append({'key': f'curator-{c.id}', 'kind': 'curator', 'id': c.id, 'name': c.name, 'icon': c.icon,
                            'color': c.color, 'mission': c.description or c.instructions[:200], 'role': c.kind,
                            'tone': c.tone, 'status': status, 'since': job['since'] if job else None, 'error': c.error,
@@ -848,7 +885,8 @@ def team(pid: int = Depends(profile_id)):
                            'last_run': c.last_run, 'found_today': found_today, 'finds': _finds(s, pid, c.id),
                            'timeline': timeline, 'doing': timeline[-1]['message'] if timeline else None,
                            'last': {'status': last.status, 'new_items': last.new_items, 'seen_items': last.seen_items,
-                                    'finished_at': last.finished_at} if last else None})
+                                    'started_at': last.started_at, 'finished_at': last.finished_at,
+                                    'duration_s': round(last.finished_at - last.started_at, 1) if last.finished_at is not None and last.started_at is not None else None} if last else None})
         for r in s.exec(select(CuratorRun, Curator.name, Curator.icon).join(Curator, Curator.id == CuratorRun.curator_id)
                         .where(CuratorRun.profile_id == pid, CuratorRun.finished_at != None)
                         .order_by(CuratorRun.finished_at.desc()).limit(12)).all():

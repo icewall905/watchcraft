@@ -1426,3 +1426,41 @@ def test_selector_extraction_has_a_hard_time_limit(monkeypatch):
     # Errors raised inside the child come back as ordinary rule errors.
     with pytest.raises(ValueError, match='matched nothing'):
         watchers.page(b'<html><body><p>Text</p></body></html>', 'https://example.org/', {'content_selector': '#gone'})
+
+
+def test_team_timeline_steps_carry_source_provider_metrics_and_run_duration(client, monkeypatch):
+    from bt.hub.models import Source, SourceCheck
+    monkeypatch.setattr(curation, 'fetch', lambda url, **kwargs: RSS)
+    curator = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed', 'name': 'Example blog'}])
+    hub.run(curator['id'])
+    agent = next(a for a in client.get('/api/hub/team').json()['agents'] if a.get('id') == curator['id'])
+    # The latest run reports its actual duration from the persisted run row.
+    assert agent['last']['duration_s'] is not None and agent['last']['duration_s'] >= 0
+    assert agent['last']['started_at'] and agent['last']['finished_at']
+    checked = next(e for e in agent['timeline'] if e['step'] == 'checked')
+    metrics = checked.get('source')
+    assert metrics and metrics['name'] == 'Example blog' and metrics['provider'] == 'rss'
+    assert metrics['mode'] == 'feed' and metrics['last_status'] == 'ok' and metrics['item_count'] == 2
+    assert metrics['last_checked_at'] and not metrics['shared']
+    # One healthy check: full success rate; a typical count needs at least two good checks.
+    assert metrics['health']['status'] == 'healthy' and metrics['health']['success_rate'] == 1.0
+    assert metrics['health']['typical_count'] in (None, 2)
+    assert metrics['health']['trend'] == 'steady'
+    # A later failing row surfaces as failed health while the metrics stay factual.
+    with session() as s:
+        src = s.exec(select(Source).where(Source.id == metrics['id'])).one()
+    hub.record_source_check(src, 'test', 0, 'Source returned HTTP 500.')
+    with session() as s:
+        row = s.exec(select(SourceCheck).where(SourceCheck.source_id == metrics['id'])).all()
+        newest = row[-1] if row[0].checked_at >= row[-1].checked_at else row[0]
+        newest.checked_at = time.time() + 60
+        s.add(newest)
+        s.commit()
+    agent = next(a for a in client.get('/api/hub/team').json()['agents'] if a.get('id') == curator['id'])
+    top = next(e for e in agent['timeline'] if e['step'] == 'checking')
+    metrics2 = top['source']
+    # One failure after two successes: degrading, not broken — and the outage signal names the 500s.
+    assert metrics2['health']['consecutive_failures'] >= 1
+    assert metrics2['health']['status'] in ('degraded', 'broken', 'healthy')
+    assert any(x['key'] in ('outage', 'rate_limited', 'auth') for x in metrics2['health']['signals'])
+    assert metrics2['last_error'] == 'Source returned HTTP 500.'

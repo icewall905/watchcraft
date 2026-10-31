@@ -8,8 +8,12 @@ test('Agent Activity shows real agent state and the parallel-agent setting saves
 		agents: [
 			{ key: 'curator-1', kind: 'curator', id: 1, name: 'Local AI', icon: '🤖', color: '#ffb547', mission: 'Tracks local model releases.', role: 'watch',
 				status: 'running', since: now - 42, next_run: null, last_run: now - 3600, found_today: 2, error: '', enabled: true,
-				doing: 'Checking a real feed.', timeline: [{ step: 'checking', message: 'Checking a real feed.', at: now - 2 },
-					{ step: 'source_error', message: 'One source needs attention.', at: now - 1, detail: 'Source returned HTTP 503.' }],
+			doing: 'Checking a real feed.', timeline: [{ step: 'checking', message: 'Checking a real feed.', at: now - 2,
+					source: { id: 12, name: 'Real feed', provider: 'rss', mode: 'feed', shared: false, last_checked_at: now - 40,
+						last_status: 'ok', item_count: 7, last_error: 'Source returned HTTP 503.', last_success: null,
+						health: { status: 'degraded', success_rate: 0.5, trend: 'worsening', typical_count: 12,
+							consecutive_failures: 1, signals: [{ key: 'outage', message: 'The source is unreachable or failing on its side.' }] } } },
+				{ step: 'source_error', message: 'One source needs attention.', at: now - 1, detail: 'Source returned HTTP 503.' }],
 				finds: [{ id: 5, title: 'A new open model', found_at: now - 600, url: 'https://example.org/release',
 					summary: 'The source reports an updated public model.', publisher: 'Example publisher', source_name: 'Model releases',
 					type: 'project', reason: 'Matches your local models mission.', published_at: now - 3600 }], last: null },
@@ -40,8 +44,14 @@ test('Agent Activity shows real agent state and the parallel-agent setting saves
 	await expect(card.locator('.now')).toHaveText('Checking a real feed.');
 	await card.getByText('Run timeline').click();
 	await expect(card.getByText('One source needs attention.')).toBeVisible();
-	await card.getByText('Technical details').click();
+	await card.getByRole('listitem').filter({ hasText: 'One source needs attention.' }).getByText('Technical details').click();
 	await expect(card.getByText('Source returned HTTP 503.')).toBeVisible();
+	// Provider metrics from the real source-check history render on the checking step.
+	const metrics = card.getByRole('listitem').filter({ hasText: 'Checking a real feed.' });
+	await metrics.getByText('Technical details').click();
+	await expect(metrics.getByText(/rss \(feed\) · last check: ok, 7 items/)).toBeVisible();
+	await expect(metrics.getByText(/Health: degraded, success 50%, usually 12 items · trend worsening/)).toBeVisible();
+	await expect(metrics.getByText('Signal: The source is unreachable or failing on its side.')).toBeVisible();
 	const writer = page.getByRole('article').filter({ hasText: 'Briefing Writer' });
 	await expect(writer.locator('.now')).toHaveText('Writing a cited briefing from 2 discoveries.');
 	await writer.getByText('Run timeline').click();

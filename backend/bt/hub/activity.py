@@ -44,7 +44,8 @@ def recent(s, pid: int, curator_id: int, run_id: int) -> list[dict]:
                     .order_by(AgentEvent.id.desc()).limit(12)).all()
     return [{'id': e.id, 'step': e.payload.get('step', ''), 'message': e.message,
              'at': e.ts.replace(tzinfo=timezone.utc).timestamp(),
-             'detail': e.payload.get('error', '')} for e in reversed(events)]
+             'detail': e.payload.get('error', ''),
+             'source_id': e.payload.get('source_id')} for e in reversed(events)]
 
 
 def briefing_recent(s, pid: int, briefing_ids: list[int]) -> list[dict]:
