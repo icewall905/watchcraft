@@ -2,7 +2,7 @@
 
 The user asked to stop at a good point and leave a handover. This is a tested Source Scout foundation; the larger
 Source Scout and research-team roadmap remains open. **Deployed 2026-10-31:** `10.0.10.73:6646` (public endpoint
-`https://wc.tdgs.org`) runs `40a9025` as image `watchcraft:40a9025` (also tagged `latest`) for the API, worker and
+`https://wc.tdgs.org`) runs `f514f64` as image `watchcraft:f514f64` (also tagged `latest`) for the API, worker and
 downloader. See "Deployment record" below. Pending work is tracked outside the repo (see the local `AGENTS.md`).
 
 ## What is implemented
@@ -95,6 +95,28 @@ in the local `todo.md` (which is intentionally ignored by Git).
 - Rollback: `docker tag watchcraft:rollback-20261030T094200Z-880f732 watchcraft:latest` and rerun the compose command
   above (the new tables are additive and ignored by the old release). Restore the backup only if data must be reverted.
 - Still not done: physical TV remote pass and a real topic-search provider test.
+
+## Deployment record — search relevance screen, playback pairing (`f514f64`, 2026-10-31)
+
+- Covers `40a9025..f514f64`: off-topic title screen before research, skipping re-uploads of rejected titles,
+  subject-anchored planner queries (`287faa0`, `f514f64`); playback sender pairing codes and child restrictions
+  (`2618535`, `9dd082e`, `69f2174`); dead downloads response shapes removed (`9e3ac7a`).
+- Backup (online SQLite `.backup`, integrity `ok`, data extras, config, source, running images):
+  `/root/compose/watchcraft-backups/20261031T133341Z-pre-69f2174`. Rollback image:
+  `watchcraft:rollback-20261031T133341Z-40a9025` (`ebfce570…`, the image production was running).
+- Isolated copy on `127.0.0.1:6699`, first with `69f2174`, then from a fresh restore with `f514f64`; started twice
+  each, no tracebacks, quick check `ok`, 6 profiles and 5,844 videos kept. Playback targets gained `pair`/`rate` and
+  both existing screens received 6-digit pairing codes. `/`, `/sources`, `/team` returned 200.
+- Acceptance with real YouTube searches and the production LLM on the copy: "cat leap" dropped two parkour
+  tutorials; "wintergatan marble machine" dropped six music-only/reaction uploads for the engineering playlist;
+  on-topic results ("unlikely animal friends", a cat riding a Roomba) were kept. The first copy showed the judge
+  itself sometimes writes `off-topic:` red flags, so `f514f64` identifies screen rejections by their missing score.
+  The copy and its data were removed.
+- Production: API, worker and downloader run `watchcraft:f514f64` (`9cf874c2…`); NVIDIA override checksum matches;
+  health passes locally and publicly; quick check `ok`; no tracebacks after start.
+- The rsync rollout with `--delete` removed nine untracked operational files from the live directory (incident
+  backups, deploy notes); they were restored from the backup's `source.tar.gz`. Future rollouts must exclude them
+  or skip `--delete`.
 
 ## Deployment record — P1 watchers, narration modes, planner search yield (`40a9025`, 2026-10-31)
 
