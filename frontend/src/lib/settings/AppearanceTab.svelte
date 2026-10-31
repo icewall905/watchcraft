@@ -8,6 +8,17 @@
 	import Section from './Section.svelte';
 
 	let saving = $state(false);
+	let savingShelf = $state(false);
+	async function saveShelf(patch: Record<string, unknown>) {
+		const profile = session.profile;
+		if (!profile || savingShelf) return;
+		savingShelf = true;
+		try {
+			const updated = await api.updateProfile(profile.id, { prefs: { ...profile.prefs, ...patch } });
+			session.profiles = session.profiles.map(p => p.id === updated.id ? updated : p);
+		} catch { /* The API client displays the error. */ }
+		finally { savingShelf = false; }
+	}
 	const selected = $derived(session.settings?.appearance?.theme ?? 'projector');
 	async function select(id: string) {
 		if (saving || id === selected || !session.settings) return;
@@ -36,6 +47,19 @@
 	</div>
 </Section>
 </div>
+
+{#if session.hubAllowed}
+<div class="device-section">
+<Section title="Home activity shelf" intro="Show research activity and recent discoveries on this profile's home page.">
+ <div class="themes" aria-label="Scouts shelf settings">
+  <button class="theme-card" class:selected={session.profile?.prefs?.scouts_home === true} aria-pressed={session.profile?.prefs?.scouts_home === true} disabled={savingShelf} use:focusable={{ group: 'scouts-settings', onSelect: () => saveShelf({ scouts_home: session.profile?.prefs?.scouts_home !== true }) }}><span class="details"><span class="name">Scouts shelf: {session.profile?.prefs?.scouts_home === true ? 'On' : 'Off'}</span><span class="small muted">Optional for each profile; off by default.</span></span></button>
+  {#if session.profile?.prefs?.scouts_home === true}
+   <button class="theme-card" disabled={savingShelf} use:focusable={{ group: 'scouts-settings', onSelect: () => saveShelf({ scouts_home_position: session.profile?.prefs?.scouts_home_position === 'bottom' ? 'top' : 'bottom' }) }}><span class="details"><span class="name">Position: {session.profile?.prefs?.scouts_home_position === 'bottom' ? 'After video rows' : 'Before video rows'}</span><span class="small muted">Select to change the shelf position.</span></span></button>
+  {/if}
+ </div>
+</Section>
+</div>
+{/if}
 
 <Section title="Appearance" intro="Choose a look for WatchCraft. Your selection is shared across profiles and devices and applies immediately.">
 	<div class="themes" aria-label="Themes">

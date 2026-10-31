@@ -15,6 +15,7 @@
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import OfflineButton from '$lib/components/OfflineButton.svelte';
 	import ScoutReportPreview from '$lib/hub/ScoutReportPreview.svelte';
+	import ScoutsShelf from '$lib/hub/ScoutsShelf.svelte';
 	import LookingPlaceholder from '$lib/components/LookingPlaceholder.svelte';
 	import AgentGlyph from '$lib/components/AgentGlyph.svelte';
 
@@ -199,6 +200,7 @@
 	{/if}
 
 	<ScoutReportPreview />
+	{#if session.profile?.prefs?.scouts_home_position !== 'bottom'}<ScoutsShelf />{/if}
 
 	{#if failed}
 		<p class="page muted">Could not load your rows. Check that the server is running, then press OK to retry.</p>
@@ -286,6 +288,7 @@
 			</Row>
 		{/if}
 	{/each}
+	{#if session.profile?.prefs?.scouts_home_position === 'bottom'}<ScoutsShelf />{/if}
 	<div class="end"></div>
 {/if}
 

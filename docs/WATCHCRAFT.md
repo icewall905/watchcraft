@@ -258,3 +258,7 @@ summaries/metadata, original links and separate curator notes. Briefing Writer s
 saving and completion milestones. Backend 286 passed/six skipped; frontend checks/build and ten browser checks passed.
 Restored-copy and real-source briefing-fallback acceptance, production health/assets/APIs and saved-video delivery/decode
 passed with original profile/PIN data and checked counts preserved. Backup and rollback are in the handover document.
+
+### Optional home activity shelf
+
+Each adult profile can enable the Scouts shelf under Settings → Appearance. It is off by default and can be placed before or after the video rows. It loads independently of the video feed and shows active or waiting agents, then recent real discoveries when the team is idle. The shelf links to Agent Activity and Scout Report; it is unavailable to child profiles. The current placement control chooses the beginning or end of the video rows rather than arbitrary ordering among individual rows.
