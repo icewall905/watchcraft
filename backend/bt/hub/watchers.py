@@ -430,8 +430,12 @@ SIGNALS = [
 ]
 
 
-def health(checks: list, enabled: bool = True, provider: str = '') -> dict:
-    """Diagnose a source from its recent checks (newest first)."""
+def health(checks: list, enabled: bool = True, provider: str = '', counts: bool | None = None) -> dict:
+    """Diagnose a source from its recent checks (newest first).
+
+    `counts`: whether item counts mean anything. A watched page is always one item, and a search or lookup can
+    rightly find nothing, so only list-style sources are judged on empty or shrinking results."""
+    counts = provider != 'page_watch' if counts is None else counts
     out = {'status': 'unknown', 'signals': [], 'checks': len(checks), 'success_rate': None, 'empty_rate': None,
            'consecutive_failures': 0, 'typical_count': None, 'trend': 'steady'}
     if not enabled:
@@ -445,9 +449,9 @@ def health(checks: list, enabled: bool = True, provider: str = '') -> dict:
         if c.status != 'failed':
             break
         out['consecutive_failures'] += 1
-    counts = [c.item_count for c in ok[1:] if c.item_count]
-    if counts:
-        out['typical_count'] = int(statistics.median(counts))
+    sizes = [c.item_count for c in ok[1:] if c.item_count]
+    if sizes:
+        out['typical_count'] = int(statistics.median(sizes))
     signals = {}
     for c in checks[:3]:
         for key, pattern, message in SIGNALS:
@@ -455,10 +459,10 @@ def health(checks: list, enabled: bool = True, provider: str = '') -> dict:
                 signals[key] = message
     latest = checks[0]
     if (latest.status != 'failed' and out['typical_count'] and out['typical_count'] >= 5
-            and latest.item_count < 0.3 * out['typical_count'] and provider != 'page_watch'):
+            and latest.item_count < 0.3 * out['typical_count'] and counts):
         signals['structure_change'] = (f'Only {latest.item_count} items extracted where {out["typical_count"]} '
                                        'are typical; the page structure may have changed.')
-    if len(ok) >= 3 and all(not c.item_count for c in ok[:3]) and provider != 'page_watch':
+    if len(ok) >= 3 and all(not c.item_count for c in ok[:3]) and counts:
         signals.setdefault('empty_extraction', 'The last checks extracted nothing.')
     if len(checks) >= 6:
         half = len(checks) // 2
@@ -469,7 +473,7 @@ def health(checks: list, enabled: bool = True, provider: str = '') -> dict:
     if enabled:
         broken = (out['consecutive_failures'] >= 3
                   or ('empty_extraction' in signals and out['consecutive_failures'] >= 2)
-                  or (len(ok) >= 3 and all(not c.item_count for c in ok[:3]) and provider != 'page_watch'))
+                  or (len(ok) >= 3 and all(not c.item_count for c in ok[:3]) and counts))
         out['status'] = 'broken' if broken else 'degraded' if signals or out['success_rate'] < 0.7 \
             or out['trend'] == 'worsening' else 'healthy'
     return out

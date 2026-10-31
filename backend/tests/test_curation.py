@@ -1219,6 +1219,10 @@ def test_source_health_diagnoses_failures_and_structure_changes():
     h = watchers.health([ok(1)] + [ok(20)] * 5, provider='html_listing')
     assert h['status'] == 'degraded' and h['signals'][0]['key'] == 'structure_change' and h['typical_count'] == 20
     assert watchers.health([ok(1)] + [ok(20)] * 5, provider='page_watch')['status'] == 'healthy'
+    from bt.hub import repair
+    assert not repair.counts_matter('rdap') and not repair.counts_matter('page_watch') and repair.counts_matter('rss')
+    assert watchers.health([ok(0)] * 4, provider='rdap', counts=False)['status'] == 'healthy'  # lookups may find nothing
+    assert watchers.health([ok(0)] * 4, provider='rss', counts=True)['status'] == 'broken'
     h = watchers.health([bad('No article links were found in the listing.')] + [ok(5)] * 3, provider='html_listing')
     assert h['status'] == 'degraded'  # one empty extraction may be a blip
     h = watchers.health([bad('No article links were found in the listing.')] * 2 + [ok(5)] * 3, provider='html_listing')

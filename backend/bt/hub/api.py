@@ -525,7 +525,8 @@ class SourceIn(BaseModel):
 
 def source_dict(s, src: Source, checks: list | None = None) -> dict:
     from . import repair
-    health = watchers.health(checks, src.enabled, src.provider) if checks is not None else repair.source_health(s, src)
+    health = (watchers.health(checks, src.enabled, src.provider, repair.counts_matter(src.provider))
+              if checks is not None else repair.source_health(s, src))
     return {**src.model_dump(), 'config': src.config or {}, 'configurable': src.provider in watchers.CONFIGURABLE,
             'health': health,
             'curator_ids': list(s.exec(select(CuratorSource.curator_id).where(CuratorSource.source_id == src.id)).all())}

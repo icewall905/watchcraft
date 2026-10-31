@@ -28,7 +28,12 @@ def recent_checks(s, src: Source, n: int = 20) -> list[SourceCheck]:
 
 
 def source_health(s, src: Source) -> dict:
-    return watchers.health(recent_checks(s, src), src.enabled, src.provider)
+    return watchers.health(recent_checks(s, src), src.enabled, src.provider, counts_matter(src.provider))
+
+
+def counts_matter(provider: str) -> bool:
+    prov = PROVIDERS.get(provider)
+    return bool(prov and prov.mode == 'feed' and provider != 'page_watch')
 
 
 def test(src: Source, config: dict | None) -> dict:
