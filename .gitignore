@@ -12,4 +12,5 @@ media/
 backups/
 
 # Local notes and Markdown documents
+AGENTS.md
 *.md
