@@ -1,6 +1,32 @@
 # Source Scout handover — 2026-10-30
 
 
+
+## Deployment record — meme videos and live Mastodon (`c72081b`, 2026-10-31)
+
+- Covers `51b5666..c72081b`: local MP4/WebM meme playback with native controls and seeking, capture status
+  refresh/retry, 25 MB/three-minute clip limits, decoded-frame validation with network protocols disabled,
+  exact video identity rebuilt after late capture, and authenticated GET/HEAD/single-range video assets.
+  Reuses existing asset tables and storage cap; no schema migration.
+- Mastodon ingestion validates the original HTTPS source, accepts public original posts only, supports instance
+  and explicit hashtag URLs without broadening the latter, selects playable attachments with separate posters,
+  and reports instances requiring authenticated timeline access. Independent provider and video reviews approved.
+- Full backend suite: 412 passed, 6 skipped. Final video-specific regression run: 5 passed. Svelte check: zero
+  errors, three CSS compatibility warnings; production build and six browser tests passed, including actual MP4
+  playback, seeking and drawer cleanup.
+- Backup: `/root/compose/watchcraft-backups/20261031T192708Z-pre-meme-video`, including verified SQLite,
+  data extras and source/config archive, plus the immediate pre-rollout DB. Rollback image:
+  `watchcraft:rollback-20261031T192708Z-51b5666`. Separate media volume preserved.
+- Isolated restored backup started twice with integrity `ok` and unchanged original counts: 6 profiles,
+  6,157 videos, 3 curators, 69 content items and 1 item-state row. Background work was disabled on the copy.
+  A temporary Meme Tracker on the production host collected 30 real public Mastodon posts; a second run added
+  zero duplicates. A real 83,978-byte clip was downloaded, frame-validated and served with HTTP 206. Real image
+  captures produced a counted, sparse `newly_observed` trend. No sources were added to real profiles.
+- API, worker and downloader use image `88052757…` (`watchcraft:c72081b`, also `latest`);
+  `DEPLOYED_COMMIT` is `c72081b`. Local/public health and DB quick check passed; host override and profile PIN
+  hashes matched their pre-rollout values. Existing route/API and saved-video playback checks passed.
+
+
 ## Deployment record — P5 Meme Radar (`51b5666`, 2026-10-31)
 
 - Covers `b5a9358..51b5666`: Meme Radar, Mastodon ingestion, image/text identity and deduplication,
@@ -45,7 +71,7 @@
 
 The user asked to stop at a good point and leave a handover. This is a tested Source Scout foundation; the larger
 Source Scout and research-team roadmap remains open. **Deployed 2026-10-31:** `10.0.10.73:6646` (public endpoint
-`https://wc.tdgs.org`) runs `51b5666` as image `watchcraft:51b5666` (also tagged `latest`) for the API, worker and
+`https://wc.tdgs.org`) runs `c72081b` as image `watchcraft:c72081b` (also tagged `latest`) for the API, worker and
 downloader. See "Deployment record" below. Pending work is tracked outside the repo (see the local `AGENTS.md`).
 
 ## What is implemented
