@@ -44,7 +44,7 @@ VOICE: dict[str, dict[str, list[str]]] = {
         'playful': ['{label} handed over {got}, with a check error attached.'],
     },
     'curator.reviewing': {
-        'professional': ['Reviewing {got} of the mission.'],
+        'professional': ['Reviewing {got} against the mission.'],
         'friendly': ['Reviewing {got} against the mission.'],
         'playful': ['{got} on the workbench, measured against the mission.'],
     },
@@ -66,7 +66,7 @@ VOICE: dict[str, dict[str, list[str]]] = {
     'curator.completed': {
         'professional': ['Run complete. New: {new}; checked: {seen}; issues: {issues}.'],
         'friendly': ['Finished: {new}, {seen} checked, {issues}.'],
-        'playful': ['Found {new} among {seen} checked items, {issues}.'],
+        'playful': ['Found {new} among {seen} checked, {issues}.'],
     },
     'curator.writing_report': {
         'professional': ['Writing a cited report from the research findings.'],
@@ -109,10 +109,15 @@ VOICE: dict[str, dict[str, list[str]]] = {
         'friendly': ['Writing a cited briefing from {new}.'],
         'playful': ['Drafting the briefing now from {new}.'],
     },
+    'briefing.saving': {
+        'professional': ['Saving the briefing and its source references.'],
+        'friendly': ['Saving the briefing and its source references.'],
+        'playful': ['Filing the briefing with its sources attached.'],
+    },
     'briefing.saved': {
-        'professional': ['The briefing is saved.'],
-        'friendly': ['The briefing is saved.'],
-        'playful': ['The briefing is saved.'],
+        'professional': ['Briefing saved with {refs}.'],
+        'friendly': ['Briefing saved with {refs}.'],
+        'playful': ['Briefing saved, with {refs} to back it up.'],
     },
     'briefing.fallback': {
         'professional': ['AI writing was unavailable; saved a plain digest instead.'],
@@ -186,16 +191,11 @@ VOICE: dict[str, dict[str, list[str]]] = {
         'playful': ['{found} came home, checked and ready.'],
     },
     'scout.sitemaps': {
-        'professional': ['Found {count} sitemap links; validated sitemaps appear in the suggestions.'],
-        'friendly': ['Found {count} sitemap links; validated sitemaps appear in the suggestions.'],
-        'playful': ['Followed {count} sitemap trails; the checked ones show up below.'],
+        'professional': ['Found {links}; validated sitemaps appear in the suggestions.'],
+        'friendly': ['Found {links}; validated sitemaps appear in the suggestions.'],
+        'playful': ['Followed {links}; the checked ones show up below.'],
     },
 }
-
-
-def s(count: int) -> str:
-    """'' or 's' for templates that embed a short noun after a count."""
-    return '' if count == 1 else 's'
 
 
 def phrase(count: int, noun: str, plural: str | None = None) -> str:

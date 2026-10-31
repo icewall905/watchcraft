@@ -308,7 +308,8 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
                 x[3], x[4] = score, reason or x[4]
         except Exception as e:  # noqa: BLE001 — AI is optional; keep keyword scores
             errors.append({'source': 'AI relevance', 'message': f'AI scoring unavailable ({_safe_error(e)}); used keyword scores.'})
-            activity.emit(c, r.id, 'ranking_error', 'AI ranking was unavailable; kept the keyword scores.', error=_safe_error(e))
+            activity.emit(c, r.id, 'ranking_error', narrate.say(c.tone, 'curator.ranking_error', seed=str(r.id)),
+                          error=_safe_error(e))
     new = 0
     with session() as s:
         c = s.get(Curator, cid)

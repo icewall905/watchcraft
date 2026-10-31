@@ -899,7 +899,7 @@ def research_run(body: ScoutInput, pid: int, scheduled: bool = False):
                 if row: row.created_at = time.time(); s.add(row); s.commit()
             suggestions, sitemaps = scout.research(query, emit, tone)
         if sitemaps:
-            emit('sitemaps', narrate.say(tone, 'scout.sitemaps', seed=str(rid), count=len(sitemaps)))
+            emit('sitemaps', narrate.say(tone, 'scout.sitemaps', seed=str(rid), links=narrate.phrase(len(sitemaps), 'sitemap link')))
         emit('complete', narrate.say(tone, 'scout.complete', seed=str(rid),
                                      found=narrate.phrase(len(suggestions), 'validated source')))
         with session() as s:
@@ -1012,6 +1012,8 @@ def curator_dict(s, c: Curator) -> dict:
 def apply(s, c: Curator, body: CuratorIn, pid: int) -> None:
     data = body.model_dump(exclude_unset=True)
     sids = data.pop('source_ids', None)
+    if data.get('tone') is None:
+        data.pop('tone', None)  # null keeps the current voice; the column stays a valid tone
     for k in ('queries', 'keywords', 'exclusions', 'alert_keywords', 'aliases'):
         if k in data:
             data[k] = _clip_list(data[k])

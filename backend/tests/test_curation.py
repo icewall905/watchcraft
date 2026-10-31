@@ -1019,15 +1019,32 @@ def test_narration_voice_covers_every_milestone_in_all_tones():
     facts = {'sources': narrate.phrase(2, 'source'), 'label': 'A blog', 'got': narrate.phrase(1, 'item'),
              'fresh': narrate.phrase(2, 'unseen matching item'), 'new': narrate.phrase(2, 'new item'),
              'seen': narrate.phrase(10, 'source item'), 'issues': narrate.phrase(1, 'issue'),
-             's': narrate.s(2), 'name': 'Morning briefing', 'sites': narrate.phrase(2, 'candidate site'),
+             'name': 'Morning briefing', 'sites': narrate.phrase(2, 'candidate site'),
              'sample': narrate.phrase(3, 'sample item'), 'urls': narrate.phrase(2, 'sample URL'),
-             'count': 4, 'found': narrate.phrase(4, 'validated source')}
+             'links': narrate.phrase(4, 'sitemap link'), 'refs': narrate.phrase(2, 'source reference'), 'found': narrate.phrase(4, 'validated source')}
     for key, tones in narrate.VOICE.items():
         spoken = {tone: narrate.say(tone, key, seed='seed', **facts) for tone in narrate.TONES}
         assert all(v and not v.startswith(' ') and not v.startswith('{') for v in spoken.values()), key
         # Every voice states the same numbers; the voices differ in wording only.
         digits = {tuple(re.findall(r'\d+', v)) for v in spoken.values()}
         assert len(digits) == 1, (key, spoken)
+        for v in spoken.values():
+            # A counted phrase already carries its noun; templates must not repeat it.
+            assert not re.search(r'\b(\w{3,})\W+(?:\w+\W+)?\1\b', v), (key, v)
+            assert 'of the mission' not in v, (key, v)
+
+
+def test_every_narration_milestone_is_used_and_counts_agree():
+    from bt.hub import narrate
+    import pathlib
+    code = ''.join(f.read_text() for f in pathlib.Path(narrate.__file__).parent.glob('*.py') if f.name != 'narrate.py')
+    assert not [k for k in narrate.VOICE if f"'{k}'" not in code]
+    assert narrate.say('playful', 'curator.completed', new=narrate.phrase(3, 'new item'),
+                       seen=narrate.phrase(10, 'source item'), issues=narrate.phrase(0, 'issue')) == \
+        'Found 3 new items among 10 source items checked, 0 issues.'
+    assert narrate.say('friendly', 'scout.sitemaps', links=narrate.phrase(1, 'sitemap link')).startswith('Found 1 sitemap link;')
+    assert narrate.say('professional', 'briefing.saved', refs=narrate.phrase(1, 'source reference')) == \
+        'Briefing saved with 1 source reference.'
 
 
 def test_narration_is_deterministic_and_unknown_tone_falls_back():
@@ -1058,3 +1075,5 @@ def test_curator_tone_is_validated_and_narrated(client, monkeypatch):
     assert 'Run started; checking 1 source.' in [x['message'] for x in straight if x['step'] == 'started'][0]
     changed = client.patch(f"/api/hub/curators/{playful['id']}", json={'tone': 'professional'}).json()
     assert changed['tone'] == 'professional'
+    assert client.patch(f"/api/hub/curators/{playful['id']}", json={'tone': None}).json()['tone'] == 'professional'
+    assert client.post('/api/hub/curators', json={'name': 'Unset', 'tone': None}).json()['tone'] == 'friendly'

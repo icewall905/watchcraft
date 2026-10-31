@@ -266,7 +266,7 @@ def _generate_briefing(bid: int, progress, tone: str = 'friendly', run_id: str =
             log.info('briefing AI failed: %s', e)
             progress('fallback', narrate.say(tone, 'briefing.fallback', seed=run_id))
             content, used_ai = fallback_digest(items), False
-    progress('saving', 'Saving the briefing and its source references.')
+    progress('saving', narrate.say(tone, 'briefing.saving', seed=run_id))
     with session() as s:
         current = s.get(Briefing, bid)
         if not current or current.profile_id != b.profile_id or not hub_allowed(s, b.profile_id):
@@ -276,6 +276,6 @@ def _generate_briefing(bid: int, progress, tone: str = 'friendly', run_id: str =
         b.last_generated = time.time()
         b.next_run = time.time() + (86400 if b.frequency == 'daily' else 7 * 86400) if b.frequency != 'manual' else None
         s.add(issue); s.add(b); s.commit(); s.refresh(issue)
-    progress('completed', narrate.say(tone, 'briefing.saved', seed=run_id) if items
+    progress('completed', narrate.say(tone, 'briefing.saved', seed=run_id, refs=narrate.phrase(len(items), 'source reference')) if items
              else narrate.say(tone, 'briefing.empty', seed=run_id))
     return issue
