@@ -193,22 +193,8 @@ export const api = {
 
 	// offline cache (Ticket D)
 	downloads: async (): Promise<DownloadsResponse> => {
-		// Accept a bare list or {items|downloads, totals, downloader|downloader_state}.
-		const r = await get<unknown>('/downloads', { toast: false });
-		const o = (Array.isArray(r) ? { items: r } : (r ?? {})) as Record<string, unknown>;
-		const items = (o.items ?? o.downloads ?? []) as DownloadItem[];
-		const dl = (o.downloader ?? o.downloader_state ?? o.state ?? null) as DownloaderState | null;
-		const t = (o.totals ?? {}) as DownloadsResponse['totals'];
-		return {
-			items,
-			reencode: o.reencode as DownloadsResponse['reencode'],
-			downloader: dl,
-			totals: {
-				...t,
-				used_bytes: t.used_bytes ?? dl?.used_bytes ?? items.filter((i) => i.status === 'done').reduce((a, i) => a + (i.size_bytes || 0), 0),
-				max_bytes: t.max_bytes ?? dl?.max_bytes ?? 0
-			}
-		};
+		const r = await get<{ items: DownloadItem[]; reencode?: DownloadsResponse['reencode']; totals: DownloadsResponse['totals']; state?: DownloaderState }>('/downloads', { toast: false });
+		return { items: r.items, reencode: r.reencode, totals: r.totals, downloader: r.state ?? null };
 	},
 	saveOffline: (video_id: string) => post<DownloadItem>('/downloads', { video_id }),
 	reencodeDownloads: () => post<{ queued: number }>('/downloads/reencode', {}),
