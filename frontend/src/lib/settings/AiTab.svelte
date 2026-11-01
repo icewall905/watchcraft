@@ -101,6 +101,26 @@
 		}
 	}
 
+	// One probe per role. The worker is a chat model; embeddings report their vector size,
+	// which is the only thing the app needs to know about them.
+	let roleResult = $state<Record<string, LlmTestResult | null>>({});
+	let roleBusy = $state('');
+	async function testRole(role: 'worker' | 'embed') {
+		if (roleBusy) return;
+		roleBusy = role;
+		roleResult = { ...roleResult, [role]: null };
+		try {
+			roleResult = { ...roleResult, [role]: await api.llmTest({
+				role,
+				base_url: role === 'worker' ? llm.value.worker_base_url : llm.value.embed_base_url,
+				model: role === 'worker' ? llm.value.worker_model : llm.value.embed_model,
+				api_key: role === 'worker' ? llm.value.worker_api_key : llm.value.embed_api_key
+			}) };
+		} catch (e) {
+			roleResult = { ...roleResult, [role]: { ok: false, error: (e as Error).message } };
+		} finally { roleBusy = ''; }
+	}
+
 	async function connectAndContinue() {
 		if (connecting) return;
 		connecting = true;
@@ -238,11 +258,35 @@
 				<TextField label="Worker model" hint="Empty = the judge model does everything." bind:value={llm.value.worker_model} placeholder="same as judge" group="llm-worker" />
 				<TextField label="Worker API key" hint="Only needed when the worker server differs. Shown as ******** once saved." type="password" bind:value={llm.value.worker_api_key} placeholder="none" group="llm-worker" />
 			</div>
+			<div class="test-row">
+				<button class="btn" disabled={roleBusy === 'worker'} use:focusable={{ group: 'llm-worker', onSelect: () => testRole('worker') }}>
+					{roleBusy === 'worker' ? 'Testing…' : 'Test worker'}
+				</button>
+				{#if roleResult.worker}
+					<p class="small" class:ok={roleResult.worker.ok} class:bad={!roleResult.worker.ok} role="status">
+						{roleResult.worker.ok ? `Worker replied: ${roleResult.worker.reply || '(empty reply)'}` : `Worker failed: ${roleResult.worker.error}`}
+					</p>
+				{:else}
+					<p class="small faint">Sends one short prompt to the worker. Empty fields use the judge's server and key.</p>
+				{/if}
+			</div>
 			<p class="small muted">Embeddings: optional. Enables Search by meaning in Find; without a model only keyword search runs.</p>
 			<div class="grid">
 				<TextField label="Embeddings server" hint="Any OpenAI-compatible /v1/embeddings endpoint." bind:value={llm.value.embed_base_url} placeholder="same as judge" type="url" group="llm-embed" />
 				<TextField label="Embeddings model" hint="Changing it re-indexes everything." bind:value={llm.value.embed_model} placeholder="text-embedding-3-small" group="llm-embed" />
 				<TextField label="Embeddings API key" hint="Only needed when the embeddings server differs. Shown as ******** once saved." type="password" bind:value={llm.value.embed_api_key} placeholder="none" group="llm-embed" />
+			</div>
+			<div class="test-row">
+				<button class="btn" disabled={roleBusy === 'embed'} use:focusable={{ group: 'llm-embed', onSelect: () => testRole('embed') }}>
+					{roleBusy === 'embed' ? 'Testing…' : 'Test embeddings'}
+				</button>
+				{#if roleResult.embed}
+					<p class="small" class:ok={roleResult.embed.ok} class:bad={!roleResult.embed.ok} role="status">
+						{roleResult.embed.ok ? `Embeddings work: ${roleResult.embed.dimensions} dimensions` : `Embeddings failed: ${roleResult.embed.error}`}
+					</p>
+				{:else}
+					<p class="small faint">Embeds one word and reports the vector size. No dimensions to configure.</p>
+				{/if}
 			</div>
 		{/if}
 		<div class="test-row">
@@ -456,6 +500,13 @@
 	.result.bad {
 		background: rgba(255, 92, 122, 0.08);
 		border: 1px solid rgba(255, 92, 122, 0.45);
+	}
+	/* Inline role probe results: colour only, no box, so the row stays compact. */
+	.test-row .ok {
+		color: rgb(61, 220, 151);
+	}
+	.test-row .bad {
+		color: rgb(255, 92, 122);
 	}
 	.rh {
 		display: flex;

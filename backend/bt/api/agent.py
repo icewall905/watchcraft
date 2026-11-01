@@ -2,7 +2,7 @@
 import asyncio
 import json
 from datetime import timedelta
-from typing import Optional
+from typing import Literal, Optional
 from urllib.parse import urlsplit
 
 import httpx
@@ -192,21 +192,33 @@ class LlmTest(BaseModel):
     base_url: Optional[str] = None
     model: Optional[str] = None
     api_key: Optional[str] = None
+    # Which role is being tested. The worker and embeddings roles fall back to the judge's
+    # endpoint and key when their own are empty, exactly as the runtime does.
+    role: Literal["judge", "worker", "embed"] = "judge"
+
+
+def _role_connection(cfg: dict, role: str) -> tuple[str, str]:
+    """The saved endpoint and key a role actually uses, after fallbacks."""
+    if role == "judge":
+        return cfg["base_url"].strip().rstrip("/"), cfg.get("api_key", "")
+    base = (cfg.get(f"{role}_base_url") or "").strip().rstrip("/") or cfg["base_url"].strip().rstrip("/")
+    key = (cfg.get(f"{role}_api_key") or "").strip() or cfg.get("api_key", "")
+    return base, key
 
 
 def _llm_connection(body: LlmTest, cfg: dict) -> tuple[str, dict]:
-    base = (body.base_url if body.base_url is not None else cfg["base_url"]).strip().rstrip("/")
+    saved_base, saved_key = _role_connection(cfg, body.role)
+    base = (body.base_url if body.base_url is not None else saved_base).strip().rstrip("/")
     parsed = urlsplit(base)
     if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise HTTPException(400, "Enter a valid server URL without credentials or query parameters")
-    saved_base = cfg["base_url"].strip().rstrip("/")
     key = body.api_key
     if key == "********":
         if base != saved_base:
             raise HTTPException(400, "Enter the API key for this server; the saved key belongs to another server")
-        key = cfg.get("api_key", "")
+        key = saved_key
     elif key is None:
-        key = cfg.get("api_key", "") if base == saved_base else ""
+        key = saved_key if base == saved_base else ""
     return base, {"Authorization": f"Bearer {key}"} if key else {}
 
 
@@ -243,10 +255,35 @@ async def llm_models(body: LlmTest):
         return {"ok": False, "models": [], "error": str(e)}
 
 
+async def _embed_test(base: str, headers: dict, model: str) -> dict:
+    """Probe an embeddings endpoint and report the vector size, which is all the app needs to know."""
+    if not model:
+        return {"ok": False, "error": "Enter an embeddings model first."}
+    try:
+        async with httpx.AsyncClient(timeout=60) as c:
+            r = await c.post(f"{base}/embeddings", headers=headers, json={"model": model, "input": ["pong"]})
+            r.raise_for_status()
+            data = r.json()
+        rows = data.get("data") if isinstance(data, dict) else None
+        vec = rows[0].get("embedding") if isinstance(rows, list) and rows and isinstance(rows[0], dict) else None
+        if not isinstance(vec, list) or not vec:
+            return {"ok": False, "error": "The server returned no vector for that model."}
+        return {"ok": True, "dimensions": len(vec), "reply": f"{len(vec)} dimensions"}
+    except Exception as e:  # noqa: BLE001 — report the failure, never a traceback
+        return {"ok": False, "error": str(e)}
+
+
 @router.post("/agent/llm-test", dependencies=[Depends(require_admin)])
 async def llm_test(body: LlmTest):
     cfg = (await run_in_threadpool(get_settings))["llm"]
     base, headers = _llm_connection(body, cfg)
+    if body.role == "embed":
+        return await _embed_test(base, headers, (body.model or cfg.get("embed_model") or "").strip())
+    # The worker falls back to the judge's model, exactly as the runtime does.
+    model = (body.model or "").strip()
+    if not model and body.role != "judge":
+        model = (cfg.get(f"{body.role}_model") or "").strip()
+    model = model or cfg["model"]
     try:
         async with httpx.AsyncClient(timeout=60) as c:
             # Some compatible servers do not expose a model listing; testing chat
@@ -256,7 +293,7 @@ async def llm_test(body: LlmTest):
             except (httpx.HTTPError, ValueError):
                 models = []
             from ..llm import prepare_chat_body
-            payload = {"model": body.model or cfg["model"], "max_tokens": 512,
+            payload = {"model": model, "max_tokens": 512,
                        "messages": [{"role": "user", "content": "Reply with just: pong"}]}
             if cfg.get("thinking") is False:
                 payload["chat_template_kwargs"] = {"enable_thinking": False}

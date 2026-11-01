@@ -118,3 +118,57 @@ def test_the_worker_key_is_redacted_and_survives_a_save(client):
     # Pointing the worker at a new server without a key is refused rather than silently reusing one.
     assert client.put('/api/settings/llm', json={'worker_api_key': '********',
                                                  'worker_base_url': 'http://other:9000/v1'}, headers=H).status_code == 400
+
+
+def _mock_http(monkeypatch, handler):
+    import httpx
+    from bt.api import agent
+    real = httpx.AsyncClient
+    monkeypatch.setattr(agent.httpx, 'AsyncClient', lambda **kw: real(transport=httpx.MockTransport(handler), **kw))
+
+
+def test_the_embeddings_probe_reports_the_vector_size(client, monkeypatch):
+    """Dimensions are read from the server, so there is nothing to configure."""
+    seen = []
+
+    def handler(request):
+        seen.append((str(request.url), request.headers.get('authorization')))
+        return __import__('httpx').Response(200, json={'data': [{'embedding': [0.1] * 8}]})
+
+    _mock_http(monkeypatch, handler)
+    _llm(embed_model='e', embed_base_url='http://embed:8082/v1', embed_api_key='embed-key')
+    got = client.post('/api/agent/llm-test', json={'role': 'embed'}, headers=H).json()
+    assert got['ok'] is True and got['dimensions'] == 8
+    assert seen[0][0] == 'http://embed:8082/v1/embeddings'
+    assert seen[0][1] == 'Bearer embed-key'
+
+
+def test_the_embeddings_probe_needs_a_model(client):
+    _llm(embed_model='')
+    got = client.post('/api/agent/llm-test', json={'role': 'embed'}, headers=H).json()
+    assert got['ok'] is False and 'embeddings model' in got['error']
+
+
+def test_the_worker_probe_uses_the_worker_endpoint_and_key(client, monkeypatch):
+    seen = []
+
+    def handler(request):
+        seen.append((str(request.url), request.headers.get('authorization'), request.content.decode()))
+        return __import__('httpx').Response(200, json={'choices': [{'message': {'content': 'pong'}}]})
+
+    _mock_http(monkeypatch, handler)
+    _llm(model='big', base_url='http://judge:8080/v1', api_key='judge-key',
+         worker_model='small', worker_base_url='http://worker:8081/v1', worker_api_key='worker-key')
+    got = client.post('/api/agent/llm-test', json={'role': 'worker'}, headers=H).json()
+    assert got['ok'] is True and got['reply'] == 'pong'
+    chat = [s for s in seen if s[0].endswith('/chat/completions')]
+    assert chat and chat[0][0] == 'http://worker:8081/v1/chat/completions'
+    assert chat[0][1] == 'Bearer worker-key'
+    assert '"small"' in chat[0][2]
+
+
+def test_a_saved_worker_key_is_not_sent_to_a_different_server(client):
+    _llm(worker_base_url='http://worker:8081/v1', worker_api_key='worker-key')
+    got = client.post('/api/agent/llm-test', json={'role': 'worker', 'base_url': 'http://other:9000/v1',
+                                                   'api_key': '********'}, headers=H)
+    assert got.status_code == 400

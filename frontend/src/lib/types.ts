@@ -379,6 +379,8 @@ export interface LlmTestResult {
 	models?: string[];
 	reply?: string;
 	error?: string;
+	/** Embeddings only: the vector size the server returned. */
+	dimensions?: number;
 }
 
 export interface ProxyRegion {
