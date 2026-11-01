@@ -1732,3 +1732,56 @@ def test_json_feed_images_fall_back_to_banner_and_body():
     assert got['https://example.org/3'] == 'https://cdn.example.org/3.jpg'
 
 
+
+def test_accepting_a_suggestion_can_create_the_curator_too(client, monkeypatch):
+    """Adding a site should not need a separate trip to the curator form."""
+    page = b'<html><head><title>Example</title></head></html>'
+    def fetch(url, **kwargs):
+        data, kind = (RSS, 'application/rss+xml') if url.endswith('/feed') else (page, 'text/html')
+        meta = {'content_type': kind, 'link': '</feed>; rel="alternate"; type="application/rss+xml"'}
+        return (data, url, meta) if kwargs.get('with_metadata') else data
+    monkeypatch.setattr(curation, 'fetch', fetch)
+    run = client.post('/api/hub/scout/runs', json={'query': 'https://example.org/'}).json()
+    got = client.post(f"/api/hub/scout/runs/{run['id']}/accept",
+                      json={'index': 0, 'curator_name': 'Example news'}).json()
+    assert got['curator']['name'] == 'Example news'
+    assert got['curator']['source_ids'] == [got['id']]
+    assert [c['name'] for c in client.get('/api/hub/curators').json()] == ['Example news']
+    # An existing curator still wins when one is named, and no second curator appears.
+    other = make_curator(client, [], name='Other')
+    run2 = client.post('/api/hub/scout/runs', json={'query': 'https://example.org/'}).json()
+    got2 = client.post(f"/api/hub/scout/runs/{run2['id']}/accept",
+                       json={'index': 0, 'curator_id': other['id'], 'curator_name': 'Ignored'}).json()
+    assert got2['curator']['id'] == other['id']
+    assert len(client.get('/api/hub/curators').json()) == 2
+
+
+def test_an_item_picture_is_served_through_us_and_cached(client, monkeypatch):
+    """The household's address never reaches the publisher, and a second view is a cache hit."""
+    from bt.hub.models import ContentItem, CuratorDiscovery
+    png = b'\x89PNG\r\n\x1a\n' + b'0' * 32
+    calls = []
+
+    def fetch(url, **kwargs):
+        calls.append(url)
+        return png, url, {'content_type': 'image/png'}
+
+    monkeypatch.setattr(curation, 'fetch', fetch)
+    with session() as s:
+        it = ContentItem(url='https://example.org/pic', type='news', title='Pic',
+                         image='https://cdn.example.org/pic.png')
+        s.add(it); s.flush()
+        s.add(CuratorDiscovery(curator_id=1, item_id=it.id, profile_id=1, query='q', score=50))
+        bare = ContentItem(url='https://example.org/bare', type='news', title='Bare')
+        s.add(bare); s.flush()
+        s.add(CuratorDiscovery(curator_id=1, item_id=bare.id, profile_id=1, query='q', score=50))
+        s.commit()
+        iid, bare_id = it.id, bare.id
+    r = client.get(f'/api/hub/items/{iid}/image')
+    assert r.status_code == 200 and r.headers['content-type'] == 'image/png' and r.content == png
+    assert calls == ['https://cdn.example.org/pic.png']
+    assert client.get(f'/api/hub/items/{iid}/image').status_code == 200
+    assert calls == ['https://cdn.example.org/pic.png']  # served from the cache, not fetched again
+    # An item with no picture, and an unknown item, are both 404 rather than an error.
+    assert client.get(f'/api/hub/items/{bare_id}/image').status_code == 404
+    assert client.get('/api/hub/items/999999/image').status_code == 404

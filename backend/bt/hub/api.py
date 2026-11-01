@@ -958,6 +958,9 @@ class ScoutInput(BaseModel):
 class ScoutAccept(BaseModel):
     index: int = Input(ge=0, le=14)
     curator_id: int | None = None
+    # A new curator to create and attach in the same step, so adding a site does not need a
+    # separate trip to the curator form.
+    curator_name: str | None = Input(default=None, max_length=100)
 
 
 def _scout_events(s: Session, pid: int, rid: int):
@@ -1267,10 +1270,18 @@ def scout_accept(rid: int, body: ScoutAccept, pid: int = Depends(profile_id)):
         curator = owned(s, Curator, body.curator_id, pid) if body.curator_id is not None else None
         src = get_or_create_source(s, pid, provider, url, suggestion.get('name', ''))
         src.last_checked = src.last_success = validation.fetched_at; src.last_error = ''; src.item_count = len(items)
+        if curator is None and body.curator_name:
+            if s.exec(select(func.count()).select_from(Curator).where(Curator.profile_id == pid)).one() >= MAX_CURATORS:
+                raise HTTPException(422, f'Maximum {MAX_CURATORS} curators per profile.')
+            curator = Curator(profile_id=pid, name=body.curator_name, next_run=0)
+            s.add(curator); s.flush()
         if curator and not s.get(CuratorSource, (curator.id, src.id)):
             s.add(CuratorSource(curator_id=curator.id, source_id=src.id))
         s.add(src); s.commit(); s.refresh(src)
         result = source_dict(s, src)
+        if curator:
+            s.refresh(curator)
+            result['curator'] = curator_dict(s, curator)
     engine.record_source_check(src, 'validation', len(items), checked_at=validation.fetched_at)
     return result
 
