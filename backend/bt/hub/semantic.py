@@ -175,8 +175,11 @@ def status() -> dict:
     with session() as s:
         indexed = s.exec(select(ItemVector.item_id).where(ItemVector.model == cfg['model'])).all() if ok else []
         total = s.exec(select(ContentItem.id)).all()
+    # Past MAX_COMPARE the oldest vectors stop being compared, silently. Reporting both numbers
+    # is the only way that cliff is visible before it starts costing answers.
     return {'available': ok, 'reason': reason, 'model': cfg['model'],
-            'indexed': len(indexed), 'items': len(total)}
+            'indexed': len(indexed), 'items': len(total),
+            'compared': min(len(indexed), MAX_COMPARE), 'cap': MAX_COMPARE}
 
 
 def sweep(throttled=True) -> dict:

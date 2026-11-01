@@ -40,10 +40,14 @@
 	let webError = $state('');
 	let meaning = $state<{ available: boolean; reason: string; items: (Item & { similarity?: number })[] } | null>(null);
 	let meaningBusy = $state(false);
+	let index = $state<{ indexed: number; items: number; compared: number; cap: number } | null>(null);
 	async function searchByMeaning() {
 		if (!q.trim() || meaningBusy) return;
 		meaningBusy = true;
-		try { meaning = await hub.semanticSearch(q.trim()); }
+		try {
+			meaning = await hub.semanticSearch(q.trim());
+			index = await hub.semanticStatus().catch(() => null);
+		}
 		catch { meaning = { available: false, reason: 'Semantic search failed. Try again.', items: [] }; }
 		finally { meaningBusy = false; }
 	}
@@ -222,6 +226,12 @@
 					{/each}
 				</ul>
 			{/if}
+			{#if index && index.indexed}
+				<p class="small faint index-note">
+					{index.indexed} of {index.items} items indexed{#if index.compared < index.indexed},
+						comparing the newest {index.compared} of {index.cap}{/if}.
+				</p>
+			{/if}
 		</section>
 	{/if}
 
@@ -334,6 +344,7 @@
 	.main, .results { display: grid; gap: 1.5rem; }
 	.meaning { display: grid; gap: .6rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--r-card); background: var(--surface); }
 	.meaning h2 { margin: 0; font-size: 1.05rem; }
+	.index-note { margin: 0; }
 	.mlist { display: grid; gap: .5rem; margin: 0; padding: 0; list-style: none; }
 	.mlist li { display: grid; gap: .1rem; }
 	.results.busy { opacity: .6; }

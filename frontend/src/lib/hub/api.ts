@@ -102,6 +102,7 @@ export const hub = {
 
 	/** Rank by meaning instead of words. Reports why it is unavailable when no embeddings model is set. */
 	semanticSearch: (q: string, limit = 20) => get<{ available: boolean; reason: string; items: (Item & { similarity?: number })[] }>('/search/semantic' + qs({ q, limit })),
+	semanticStatus: () => get<{ available: boolean; reason: string; model: string; indexed: number; items: number; compared: number; cap: number }>('/search/semantic/status'),
 	alerts: (state = 'new', severity?: string, curator_id?: number) => get<Page<Alert>>('/alerts' + qs({ state, severity, curator_id })),
 	alertState: (id: number, state: string, snooze_hours?: number) => send<{ ok: boolean }>('POST', `/alerts/${id}/state`, { state, snooze_hours }),
 

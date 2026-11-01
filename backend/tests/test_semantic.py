@@ -274,3 +274,18 @@ def test_a_pasted_embeddings_url_is_not_doubled(client):
         save_setting('llm', {**base, 'embed_base_url': given})
         assert semantic.config()['base_url'] == expected, given
     assert semantic.base_url('') == '' and semantic.base_url('http://x/v1/') == 'http://x/v1'
+
+
+def test_status_reports_how_many_vectors_a_query_actually_compares(client, monkeypatch):
+    """Past the cap the oldest vectors stop being compared, silently; the status must show it."""
+    _model()
+    monkeypatch.setattr(semantic, 'embed', lambda texts: [[1.0, 0.0] for _ in texts])
+    _item('https://example.org/one', 'rust one')
+    _item('https://example.org/two', 'rust two')
+    semantic.embed_pending()
+    st = semantic.status()
+    assert st['indexed'] == 2 and st['items'] == 2
+    assert st['compared'] == 2 and st['cap'] == semantic.MAX_COMPARE
+    # With the cap below the index size, the reported comparison count is the cap.
+    monkeypatch.setattr(semantic, 'MAX_COMPARE', 1)
+    assert semantic.status()['compared'] == 1
