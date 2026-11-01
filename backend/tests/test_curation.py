@@ -1,4 +1,5 @@
 import os
+import json
 import re
 import time
 import sqlite3
@@ -381,11 +382,13 @@ def test_private_network_and_entity_rejection(monkeypatch):
     with pytest.raises(ValueError, match='entities'): providers._xml(b'<!DOCTYPE x [<!ENTITY a "b">]><x/>')
 
 
-def test_v1_database_migrates_to_v2(tmp_path):
+def test_v1_database_migrates_to_v2(tmp_path, monkeypatch):
     """A v1 database (single-source curator + discovery rows) gains sources, items and saved state."""
     from sqlalchemy import create_engine
     from sqlmodel import Session, select
     from bt.hub.models import ContentItem, CuratorDiscovery, CuratorSource, ItemState, Source
+    # Assert the structured version, independently of digits in the migration timestamp.
+    monkeypatch.setattr(migrate.time, 'time', lambda: 1000.0)
     db = tmp_path / 'v1.db'
     con = sqlite3.connect(db)
     con.executescript('''
@@ -410,7 +413,8 @@ def test_v1_database_migrates_to_v2(tmp_path):
         item = s.exec(select(ContentItem)).one()
         assert item.type == 'project' and s.exec(select(CuratorDiscovery)).one().item_id == item.id
         assert s.get(ItemState, (1, item.id)).saved
-        assert s.exec(text("SELECT value FROM setting WHERE key='watchcraft_schema_version'")).one()[0].count('2')
+        version = json.loads(s.exec(text("SELECT value FROM setting WHERE key='watchcraft_schema_version'")).one()[0])
+        assert version == {'version': migrate.VERSION, 'migrated_at': 1000.0}
         assert s.exec(text("SELECT rowid FROM content_fts WHERE content_fts MATCH 'v1'")).first()
         assert s.exec(text('SELECT count(*) FROM discovery')).one()[0] == 1  # v1 table kept for rollback
 
