@@ -1,0 +1,25 @@
+import { expect, test } from '@playwright/test';
+import { freshPage, resetBackend } from './helpers';
+test('a feed has independent configuration and second based durations, separate from playlists', async ({ page, request }) => {
+	await resetBackend(request);
+	await request.post('/api/agent/pause');
+	await freshPage(page, '/settings?tab=feeds&new=1');
+	await page.getByLabel('Name', { exact: true }).fill('Workshop quick clips');
+	await page.getByLabel('Brief for the AI').fill('Short woodworking tips, no tool advertisements');
+	await expect(page.getByRole('spinbutton', { name: 'Shortest video', exact: true })).toHaveAttribute('aria-valuenow', '1');
+	await expect(page.getByRole('spinbutton', { name: 'Longest video', exact: true })).toHaveAttribute('aria-valuenow', '180');
+	await page.getByRole('button', { name: 'Create feed', exact: true }).click();
+	await expect(page.getByText('Workshop quick clips', { exact: true })).toBeVisible();
+	const profiles = await (await request.get('/api/profiles')).json();
+	const headers = { 'X-Profile-Id': String(profiles[0].id) };
+	const categories = await (await request.get('/api/categories', { headers })).json();
+	const feed = categories.find((c: any) => c.name === 'Workshop quick clips');
+	expect(feed.kind).toBe('shorts');
+	expect(feed.min_duration_s).toBe(1);
+	expect(feed.max_duration_s).toBe(180);
+	await page.goto('/settings?tab=categories');
+	await expect(page.getByText('Workshop quick clips', { exact: true })).toHaveCount(0);
+	await page.goto('/shorts');
+	await expect(page.getByRole('button', { name: /Workshop quick clips/ })).toBeVisible();
+	await expect(page.locator('video')).toHaveCount(0);
+});

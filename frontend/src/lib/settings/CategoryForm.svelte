@@ -13,9 +13,11 @@
 	import EmojiPicker from '$lib/components/EmojiPicker.svelte';
 	import ColorPicker from '$lib/components/ColorPicker.svelte';
 
-	let { category = null, preset = null, onDone }: { category?: Category | null; preset?: Partial<CategoryInput> | null; onDone: (saved?: Category) => void } = $props();
+	let { category = null, preset = null, kind = 'playlist', onDone }: { kind?: 'playlist' | 'shorts'; category?: Category | null; preset?: Partial<CategoryInput> | null; onDone: (saved?: Category) => void } = $props();
 
-	const DEFAULTS: CategoryInput = {
+	const DEFAULTS: CategoryInput = defaults();
+	function defaults(): CategoryInput { return {
+		kind,
 		name: '',
 		emoji: '✨',
 		color: '#7c5cff',
@@ -24,8 +26,8 @@
 		seed_channels: [],
 		include_keywords: [],
 		exclude_keywords: [],
-		min_duration_s: 120,
-		max_duration_s: 1800,
+		min_duration_s: kind === 'shorts' ? 1 : 120,
+		max_duration_s: kind === 'shorts' ? 180 : 1800,
 		language: '',
 		max_age_days: 0,
 		target_queue: 20,
@@ -33,7 +35,7 @@
 		priority: 2,
 		kid_safe: false,
 		enabled: true
-	};
+	}; }
 	// svelte-ignore state_referenced_locally
 	let f = $state<CategoryInput>({ ...DEFAULTS, ...(preset ?? {}), ...(category ? pick(category) : {}) });
 	let busy = $state(false);
@@ -58,8 +60,10 @@
 	}
 	let playlistUrl = $state('');
 	let confirmDel = $state(false);
-	let minMin = $state(Math.round(f.min_duration_s / 60));
-	let maxMin = $state(Math.round(f.max_duration_s / 60));
+	// svelte-ignore state_referenced_locally
+	let minMin = $state(kind === 'shorts' ? f.min_duration_s : Math.round(f.min_duration_s / 60));
+	// svelte-ignore state_referenced_locally
+	let maxMin = $state(kind === 'shorts' ? f.max_duration_s : Math.round(f.max_duration_s / 60));
 
 	function pick(c: Category): CategoryInput {
 		const { id: _i, profile_id: _p, position: _po, created_at: _c, last_worked_at: _l, stats: _s, ...rest } = c;
@@ -67,10 +71,10 @@
 	}
 
 	async function save() {
-		if (!f.name.trim()) return toast.warn('Give the playlist a name.');
+		if (!f.name.trim()) return toast.warn(`Give the ${kind === 'shorts' ? 'feed' : 'playlist'} a name.`);
 		if (!f.brief.trim() && (category || !playlistUrl.trim())) return toast.warn('Describe what you want in the brief. The AI uses it for every decision.');
 		busy = true;
-		const body = { ...$state.snapshot(f), name: f.name.trim(), min_duration_s: minMin * 60, max_duration_s: Math.max(minMin, maxMin) * 60 };
+		const body = { ...$state.snapshot(f), name: f.name.trim(), min_duration_s: minMin * (kind === 'shorts' ? 1 : 60), max_duration_s: Math.max(minMin, maxMin) * (kind === 'shorts' ? 1 : 60) };
 		try {
 			const saved = category ? await api.updateCategory(category.id, body) : await api.createCategory({ ...body, playlist_url: playlistUrl.trim() || undefined });
 			await session.loadCategories();
@@ -137,11 +141,11 @@ Simple, fun science for kids 5–9: Mark Rober, cat videos, experiments, space, 
 	</div>
 
 	<div class="one">
-		<Stepper label="Shortest video" bind:value={minMin} min={0} max={180} step={1} format={(v) => (v ? `${v} min` : 'any')} />
-		<Stepper label="Longest video" bind:value={maxMin} min={1} max={600} step={5} format={(v) => `${v} min`} />
+		<Stepper label="Shortest video" bind:value={minMin} min={kind === 'shorts' ? 1 : 0} max={180} step={1} format={(v) => kind === 'shorts' ? `${v} sec` : (v ? `${v} min` : 'any')} />
+		<Stepper label="Longest video" bind:value={maxMin} min={1} max={kind === 'shorts' ? 180 : 600} step={kind === 'shorts' ? 1 : 5} format={(v) => `${v} ${kind === 'shorts' ? 'sec' : 'min'}`} />
 		<Stepper label="Max age" hint="Only videos newer than this." bind:value={f.max_age_days} min={0} max={3650} step={30} format={(v) => (v ? `${v} days` : 'any age')} />
 		<Select label="Language" bind:value={f.language} options={LANGS} />
-		<Stepper label="Keep ready" hint="The AI stops searching when this many unwatched picks are waiting." bind:value={f.target_queue} min={3} max={200} step={10} format={(v) => `${v} videos`} />
+		<Stepper label="Keep ready" hint="Accepted videos are downloaded automatically. The AI pauses when this many unwatched picks are waiting." bind:value={f.target_queue} min={3} max={200} step={10} format={(v) => `${v} videos`} />
 		<Stepper label="Priority" hint="Higher gets more of the AI's time." bind:value={f.priority} min={1} max={5} step={1} format={(v) => '●'.repeat(v) + '○'.repeat(5 - v)} />
 	</div>
 
@@ -149,7 +153,7 @@ Simple, fun science for kids 5–9: Mark Rober, cat videos, experiments, space, 
 
 	<div class="two">
 		<Toggle label="Kid-safe" hint="Reject anything the AI considers unsuitable for children, whatever the score." bind:checked={f.kid_safe} />
-		<Toggle label="Enabled" hint="Disabled playlists are hidden from Home and the AI ignores them." bind:checked={f.enabled} />
+		<Toggle label="Enabled" hint={kind === 'shorts' ? "Disabled feeds stop collecting new clips; stored clips stay available." : "Disabled playlists are hidden from Home and the AI ignores them."} bind:checked={f.enabled} />
 	</div>
 
 	<div class="field"><span class="label">Emoji</span><EmojiPicker bind:value={f.emoji} group="cat-emoji" /></div>
@@ -157,11 +161,11 @@ Simple, fun science for kids 5–9: Mark Rober, cat videos, experiments, space, 
 
 	<div class="actions">
 		{#if category}
-			<button class="btn danger" use:focusable={{ group: 'cat-form-acts', onSelect: remove }}>{confirmDel ? 'Press again: deletes all its picks' : 'Delete playlist'}</button>
+			<button class="btn danger" use:focusable={{ group: 'cat-form-acts', onSelect: remove }}>{confirmDel ? 'Press again: deletes all its picks' : kind === 'shorts' ? 'Delete feed' : 'Delete playlist'}</button>
 		{/if}
 		<span class="spacer"></span>
 		<button class="btn" use:focusable={{ group: 'cat-form-acts', onSelect: () => onDone() }}>Cancel</button>
-		<button class="btn primary big" disabled={busy} use:focusable={{ group: 'cat-form-acts', id: 'cat-save', onSelect: save }}>{busy ? (playlistUrl.trim() && !category ? 'Importing & generating prompt…' : 'Saving…') : category ? 'Save playlist' : 'Create playlist'}</button>
+		<button class="btn primary big" disabled={busy} use:focusable={{ group: 'cat-form-acts', id: 'cat-save', onSelect: save }}>{busy ? (playlistUrl.trim() && !category ? 'Importing & generating prompt…' : 'Saving…') : category ? (kind === 'shorts' ? 'Save feed' : 'Save playlist') : (kind === 'shorts' ? 'Create feed' : 'Create playlist')}</button>
 	</div>
 </div>
 

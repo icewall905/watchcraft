@@ -216,6 +216,7 @@ export const api = {
 	deleteLesson: (id: number) => del<{ ok: boolean }>(`/lessons/${id}`),
 
 	// shorts
+	shortsFeeds: () => get<import('./types').ShortsFeed[]>('/shorts/feeds'),
 	shorts: (params: { limit?: number; offset?: number; category_id?: number; exclude_ids?: string[] } = {}) =>
 		get<{ items: (Candidate & { video: Video })[]; total: number; next_offset: number | null }>('/shorts' + q({ ...params, exclude_ids: params.exclude_ids?.join(',') })),
 

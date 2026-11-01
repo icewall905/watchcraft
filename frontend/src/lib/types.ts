@@ -22,6 +22,7 @@ export interface CategoryStats {
 }
 
 export interface Category {
+	kind?: 'playlist' | 'shorts';
 	id: number;
 	profile_id: number;
 	name: string;
@@ -563,3 +564,5 @@ export interface StatsExploreItem {
 export interface StatsExploreData {
 	items: StatsExploreItem[]; total: number; offset: number; limit: number;
 }
+
+export interface ShortsFeed extends Category { ready_count: number; pending_count: number; error_count: number }

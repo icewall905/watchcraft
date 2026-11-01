@@ -9,10 +9,11 @@
 	import Section from './Section.svelte';
 	import CategoryForm from './CategoryForm.svelte';
 
+	const playlists = $derived(session.categories.filter((c) => c.kind !== 'shorts'));
 	const editParam = $derived(page.url.searchParams.get('edit'));
 	const isNew = $derived(page.url.searchParams.get('new') === '1');
 	let preset = $state<Partial<CategoryInput> | null>(null);
-	const editing = $derived(editParam ? (session.categories.find((c) => c.id === Number(editParam)) ?? null) : null);
+	const editing = $derived(editParam ? (playlists.find((c) => c.id === Number(editParam)) ?? null) : null);
 
 	function open(q: string) {
 		goto(`/settings?tab=categories${q}`, { noScroll: false });
@@ -23,13 +24,14 @@
 	}
 
 	async function move(c: Category, d: -1 | 1) {
-		const ids = session.categories.map((x) => x.id);
+		const ids = playlists.map((x) => x.id);
 		const i = ids.indexOf(c.id);
 		const j = i + d;
 		if (j < 0 || j >= ids.length) return;
 		[ids[i], ids[j]] = [ids[j], ids[i]];
-		session.categories = ids.map((id) => session.categories.find((x) => x.id === id)!);
-		await api.reorderCategories(ids);
+		const allIds = session.categories.map((x) => x.kind === 'shorts' ? x.id : ids.shift()!);
+		await api.reorderCategories(allIds);
+		await session.loadCategories();
 	}
 	async function toggle(c: Category) {
 		await api.updateCategory(c.id, { enabled: !c.enabled });
@@ -77,14 +79,14 @@
 		{#snippet actions()}
 			<button class="btn primary" use:focusable={{ group: 'cat-top', id: 'cat-new', onSelect: () => open('&new=1') }}>＋ New playlist</button>
 		{/snippet}
-		{#if session.categories.length === 0}
+		{#if playlists.length === 0}
 			<div class="empty">
 				<span class="big-emoji">🗂️</span>
 				<p>No playlists yet. Create one to give the AI something to look for.</p>
 			</div>
 		{/if}
 		<div class="list">
-			{#each session.categories as c, i (c.id)}
+			{#each playlists as c, i (c.id)}
 				<div class="item" class:off={!c.enabled} style:--cat={c.color}>
 					<span class="e">{c.emoji}</span>
 					<div class="info">
@@ -92,7 +94,7 @@
 						<span class="small muted">{c.stats?.accepted ?? 0} ready, {(c.stats?.found ?? 0) + (c.stats?.enriched ?? 0)} in review, {c.stats?.rejected ?? 0} rejected{c.kid_safe ? ', kid-safe' : ''}{c.created_at ? `, created ${timeAgo(c.created_at)}` : ''}</span>
 					</div>
 					<button class="btn mini" aria-label="Move up" disabled={i === 0} use:focusable={{ group: `cat-${c.id}`, disabled: i === 0, onSelect: () => move(c, -1) }}>▲</button>
-					<button class="btn mini" aria-label="Move down" disabled={i === session.categories.length - 1} use:focusable={{ group: `cat-${c.id}`, disabled: i === session.categories.length - 1, onSelect: () => move(c, 1) }}>▼</button>
+					<button class="btn mini" aria-label="Move down" disabled={i === playlists.length - 1} use:focusable={{ group: `cat-${c.id}`, disabled: i === playlists.length - 1, onSelect: () => move(c, 1) }}>▼</button>
 					<button class="btn mini" use:focusable={{ group: `cat-${c.id}`, onSelect: () => toggle(c) }}>{c.enabled ? 'On' : 'Off'}</button>
 					<button class="btn mini primary" use:focusable={{ group: `cat-${c.id}`, id: `cat-edit-${c.id}`, onSelect: () => open(`&edit=${c.id}`) }}>Edit</button>
 				</div>

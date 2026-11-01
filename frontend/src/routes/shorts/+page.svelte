@@ -1,201 +1,227 @@
 <script lang="ts">
-	// A swipe feed of the shorts the profile's curators accepted. One video at a time, one player
-	// at a time: the previous manifest is destroyed before the next loads, so a long session does
-	// not accumulate decoders.
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { api } from '$lib/api';
-	import { toast } from '$lib/stores/toast.svelte';
 	import { session } from '$lib/stores/session.svelte';
+	import { toast } from '$lib/stores/toast.svelte';
 	import { focusable, nav } from '$lib/nav';
-	import { loadShaka } from '$lib/player/shaka';
 	import { errMsg } from '$lib/hub/ui';
-	import type { Candidate, Video } from '$lib/types';
-
-	type Short = Candidate & { video: Video };
-
-	const MAX_HEIGHT = 720;
-	let items = $state<Short[]>([]);
-	let index = $state(0);
-	let loading = $state(true);
-	let error = $state('');
-	let playbackError = $state('');
-	let alive = true;
-	let generation = 0;
-	let lifecycle = Promise.resolve();
-	let fetching: Promise<void> | null = null;
-	let activeId: string | null = null;
-	let navigation = 0;
-	let nextOffset = $state<number | null>(null);
-	let videoEl = $state<HTMLVideoElement>();
-	let player: { destroy: () => Promise<void>; load: (u: string) => Promise<void>; configure: (c: unknown) => void } | null = null;
-	let needsTap = $state(false);
-	let progress = $state(0);
-	let busy = $state(false);
-	let touchStart: { y: number; x: number } | null = null;
-
+	import type { Candidate, Video, ShortsFeed } from '$lib/types';
+	type Short = Candidate & {
+		video: Video;
+	};
+	let feeds = $state<ShortsFeed[]>([]), selected = $state<ShortsFeed | null>(null);
+	let items = $state<Short[]>([]), index = $state(0), loading = $state(true), error = $state(''), playbackError = $state('');
+	let nextOffset = $state<number | null>(null), videoEl = $state<HTMLVideoElement>(), needsTap = $state(false), progress = $state(0), busy = $state(false);
+	let alive = true, generation = 0, navigation = 0, selectionEpoch = 0, activeId: string | null = null, fetching = false;
+	let touchStart: {
+		y: number;
+		x: number;
+	} | null = null;
 	const current = $derived(items[index] ?? null);
-	// Shorts are hidden by default, so an empty feed is usually a setting rather than a bug.
-	const hidden = $derived(session.settings?.extras.hide_shorts ?? true);
-
-	async function load(append = false) {
-		if (fetching) return fetching;
-		fetching = (async () => {
-			try {
-				const page = await api.shorts({ limit: 10, offset: 0, exclude_ids: append ? items.map((item) => item.video.id) : [] });
-				if (!alive) return;
-				items = append ? [...items, ...page.items.filter((item) => !items.some((old) => old.video.id === item.video.id))] : page.items;
-				nextOffset = page.next_offset;
-				error = '';
-			} catch (e) {
-				if (alive) error = errMsg(e);
-			} finally {
-				if (alive) loading = false;
-				fetching = null;
-			}
-		})();
-		return fetching;
-	}
-
-	async function destroyPlayer() {
-		const old = player;
-		player = null;
+	let observedVersion = session.version;
+	$effect(() => {
+		const version = session.version;
+		if (version !== observedVersion) {
+			observedVersion = version;
+			reset();
+			void loadFeeds();
+		}
+	});
+	function stop() {
+		generation++;
 		activeId = null;
-		if (old) {
-			try { await old.destroy(); } catch { /* already gone */ }
+		if (videoEl) {
+			videoEl.pause();
+			videoEl.removeAttribute('src');
+			videoEl.load();
 		}
 	}
-
-	function play(i: number) {
-		const item = items[i];
-		const request = ++generation;
+	function reset() {
+		stop();
+		navigation++;
+		selectionEpoch++;
+		selected = null;
+		items = [];
+		index = 0;
+		nextOffset = null;
+		busy = false;
+		fetching = false;
+		error = '';
+		playbackError = '';
+	}
+	async function loadFeeds() {
+		loading = true;
+		const profile = session.version, epoch = selectionEpoch;
+		try {
+			const result = await api.shortsFeeds();
+			if (alive && profile === session.version && epoch === selectionEpoch) {
+				feeds = result;
+				error = '';
+			}
+		}
+		catch (e) {
+			if (alive && profile === session.version && epoch === selectionEpoch)
+				error = errMsg(e);
+		}
+		finally {
+			if (alive && profile === session.version && epoch === selectionEpoch)
+				loading = false;
+		}
+	}
+	async function load(append = false) {
+		if (!selected || fetching)
+			return;
+		const feed = selected.id, profile = session.version, epoch = selectionEpoch;
+		fetching = true;
+		try {
+			const page = await api.shorts({ category_id: feed, limit: 10, offset: 0, exclude_ids: append ? items.map(i => i.video.id) : [] });
+			if (!alive || selected?.id !== feed || profile !== session.version || epoch !== selectionEpoch)
+				return;
+			items = append ? [...items, ...page.items.filter(i => !items.some(old => old.video.id === i.video.id))] : page.items;
+			nextOffset = page.next_offset;
+			error = '';
+		}
+		catch (e) {
+			if (alive && selected?.id === feed && profile === session.version && epoch === selectionEpoch)
+				error = errMsg(e);
+		}
+		finally {
+			if (alive && selected?.id === feed && profile === session.version && epoch === selectionEpoch) {
+				fetching = false;
+				loading = false;
+			}
+		}
+	}
+	async function choose(feed: ShortsFeed) {
+		reset();
+		const epoch = selectionEpoch;
+		selected = feed;
+		loading = true;
+		await load();
+		if (alive && epoch === selectionEpoch && selected?.id === feed.id && items.length)
+			void play(0);
+	}
+	async function play(i: number) {
+		stop();
+		const request = generation, item = items[i];
 		needsTap = false;
 		playbackError = '';
 		progress = 0;
-		// Serialize attach/destroy, but let destroy cancel a previous in-flight manifest load.
-		lifecycle = lifecycle.then(async () => {
-			await destroyPlayer();
-			await tick();
-			if (!alive || request !== generation || !item || !videoEl) return;
-			const el = videoEl;
-			try {
-				const shaka = await loadShaka();
-				if (!alive || request !== generation) return;
-				if (!shaka.Player.isBrowserSupported()) throw new Error('This browser cannot play these videos.');
-				const p = new shaka.Player();
-				const profileId = session.profileId;
-				p.getNetworkingEngine()?.registerRequestFilter((_type, request) => {
-					if (profileId !== null && request.uris.length && request.uris.every((uri) => {
-						const url = new URL(uri, location.href);
-						return url.origin === location.origin && /^\/api\/video\/[^/]+\/manifest\.mpd$/.test(url.pathname);
-					})) request.headers['X-Profile-Id'] = String(profileId);
-				});
-				// Publish before attach so every constructed player has a destruction owner.
-				player = p as unknown as typeof player;
-				await p.attach(el);
-				if (!alive || request !== generation) { await destroyPlayer(); return; }
-				p.configure({
-					streaming: { bufferingGoal: 20, rebufferingGoal: 2, bufferBehind: 10 },
-					abr: { enabled: true, restrictions: { maxHeight: MAX_HEIGHT } }
-				});
-				void (async () => {
-					try {
-						await p.load(api.manifestUrl(item.video.id, MAX_HEIGHT));
-						if (!alive || request !== generation) return;
-						activeId = item.video.id;
-						await el.play().catch(() => { if (alive && request === generation) needsTap = true; });
-						if (alive && request === generation) prefetchNext();
-					} catch (e) {
-						if (alive && request === generation) playbackError = errMsg(e);
-					}
-				})();
-			} catch (e) {
-				if (alive && request === generation) playbackError = errMsg(e);
-			}
-		}).catch(() => { /* a failed teardown must not poison subsequent requests */ });
-		return lifecycle;
+		await tick();
+		if (!alive || request !== generation || !item || !videoEl)
+			return;
+		const el = videoEl;
+		activeId = item.video.id;
+		el.src = api.fileUrl(item.video.id);
+		el.load();
+		try {
+			await el.play();
+		}
+		catch {
+			if (alive && request === generation)
+				needsTap = true;
+		}
 	}
-
-	async function retryFeed() {
-		await load(false);
-		if (alive && items.length) await play(index = 0);
-	}
-
-	function prefetchNext() {
-		const next = items[index + 1];
-		if (next) void fetch(api.manifestUrl(next.video.id, MAX_HEIGHT), { cache: 'no-store', headers: session.profileId === null ? {} : { 'X-Profile-Id': String(session.profileId) } }).catch(() => {});
-	}
-
-	/** Save where the viewer got to, so a finished short leaves the feed. */
 	function record() {
-		const item = items[index];
-		if (!item || !videoEl || activeId !== item.video.id) return;
-		const duration = item.video.duration_s || videoEl.duration || 0;
-		const position = videoEl.currentTime || 0;
-		api.saveHistory({
-			video_id: item.video.id, position_s: position, duration_s: duration,
-			category_id: item.category_id, finished: duration > 0 && position >= duration - 1
-		}).catch(() => {});
+		const item = current;
+		if (!item || !videoEl || activeId !== item.video.id)
+			return;
+		const duration = videoEl.duration || item.video.duration_s || 0, position = videoEl.currentTime || 0;
+		void api.saveHistory({ video_id: item.video.id, category_id: item.category_id, position_s: position, duration_s: duration, finished: duration > 0 && position >= duration - 1 }).catch(() => {
+		});
 	}
-
 	async function go(delta: number) {
-		const action = ++navigation;
-		const origin = current?.video.id;
-		const next = index + delta;
-		if (next < 0) return;
+		if (!selected)
+			return;
+		const action = ++navigation, origin = current?.video.id, next = index + delta;
+		if (next < 0)
+			return;
 		if (next >= items.length) {
-			if (nextOffset === null) return;
+			if (nextOffset === null)
+				return;
 			await load(true);
-			if (!alive || action !== navigation || current?.video.id !== origin || next >= items.length) return;
+			if (!alive || action !== navigation || origin !== current?.video.id || next >= items.length)
+				return;
 		}
 		record();
 		index = next;
-		void play(next);
+		void play(index);
 	}
-
+	async function retry() {
+		const epoch = ++selectionEpoch;
+		navigation++;
+		fetching = false;
+		record();
+		stop();
+		items = [];
+		index = 0;
+		loading = true;
+		await load();
+		if (alive && epoch === selectionEpoch && items.length)
+			void play(0);
+	}
+	async function picker() {
+		record();
+		reset();
+		await loadFeeds();
+	}
 	async function rate(rating: 1 | -1) {
-		const item = items[index];
-		if (!item || busy) return;
+		const item = current, feed = selected?.id, profile = session.version, epoch = selectionEpoch;
+		if (!item || busy)
+			return;
 		busy = true;
 		try {
 			await api.feedback({ video_id: item.video.id, category_id: item.category_id, rating });
-			if (!alive) return;
-			if (rating < 0) {
-				const selected = current?.video.id;
-				items = items.filter((entry) => entry.video.id !== item.video.id);
-				if (!items.length) {
-					// Tear down immediately, including while a replacement page is in flight.
-					void play(0);
-					if (nextOffset !== null) await load(true);
-					if (!alive) return;
-				}
-				const retained = items.findIndex((entry) => entry.video.id === selected);
-				index = retained >= 0 ? retained : Math.min(index, Math.max(0, items.length - 1));
-				toast.success('Noted — fewer like this');
-				if (selected === item.video.id || !items.length) {
-					navigation++;
-					void play(index);
-				}
-			} else {
+			if (!alive || selected?.id !== feed || profile !== session.version || epoch !== selectionEpoch)
+				return;
+			if (rating > 0) {
 				toast.success('More like this');
-				if (current?.video.id === item.video.id) void go(1);
+				if (current?.video.id === item.video.id)
+					void go(1);
 			}
-		} catch {
-			if (alive) toast.error('Could not save that.');
-		} finally {
-			busy = false;
+			else {
+				const retainedId = current?.video.id, wasCurrent = retainedId === item.video.id;
+				items = items.filter(i => i.video.id !== item.video.id);
+				if (!wasCurrent)
+					index = Math.max(0, items.findIndex(i => i.video.id === retainedId));
+				if (wasCurrent) {
+					stop();
+					index = Math.min(index, Math.max(0, items.length - 1));
+					if (!items.length && nextOffset !== null)
+						await load(true);
+					if (alive && selected?.id === feed && profile === session.version && epoch === selectionEpoch)
+						void play(index);
+				}
+				toast.success('Noted — fewer like this');
+			}
+		}
+		catch {
+			if (alive && selected?.id === feed && epoch === selectionEpoch)
+				toast.error('Could not save that.');
+		}
+		finally {
+			if (alive && selected?.id === feed && profile === session.version && epoch === selectionEpoch)
+				busy = false;
 		}
 	}
-
 	function onKey(e: KeyboardEvent) {
-		if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); go(1); }
-		else if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); go(-1); }
+		if (!selected)
+			return;
+		if (e.key === 'ArrowDown' || e.key === 'j') {
+			e.preventDefault();
+			void go(1);
+		}
+		else if (e.key === 'ArrowUp' || e.key === 'k') {
+			e.preventDefault();
+			void go(-1);
+		}
+		else if (e.key === 'Escape') {
+			e.preventDefault();
+			void picker();
+		}
 	}
-	// The nav engine listens in the capture phase, so a plain window listener never sees the
-	// arrows: register as a raw listener instead.
-	let offRaw: (() => void) | null = null;
 	function onTouchStart(e: TouchEvent) {
-		// A tap on a control is a tap, not a swipe.
-		if ((e.target as HTMLElement | null)?.closest('button, a, input, select, textarea')) {
+		if ((e.target as HTMLElement)?.closest('button,a,input,select,textarea')) {
 			touchStart = null;
 			return;
 		}
@@ -203,116 +229,68 @@
 		touchStart = { y: t.clientY, x: t.clientX };
 	}
 	function onTouchEnd(e: TouchEvent) {
-		if (!touchStart) return;
-		const t = e.changedTouches[0];
-		const dy = t.clientY - touchStart.y;
-		const dx = t.clientX - touchStart.x;
+		if (!touchStart)
+			return;
+		const t = e.changedTouches[0], dy = t.clientY - touchStart.y, dx = t.clientX - touchStart.x;
 		touchStart = null;
-		// Vertical intent only: a sideways drag is not a swipe between videos.
-		if (Math.abs(dy) < 40 || Math.abs(dy) < Math.abs(dx)) return;
-		go(dy < 0 ? 1 : -1);
+		if (Math.abs(dy) > 40 && Math.abs(dy) > Math.abs(dx))
+			void go(dy < 0 ? 1 : -1);
 	}
-	function onTouchCancel() { touchStart = null; }
 	function onTime() {
-		if (!videoEl || activeId !== current?.video.id) return;
-		const d = videoEl.duration || 0;
-		progress = d > 0 ? Math.min(1, videoEl.currentTime / d) : 0;
+		if (videoEl && activeId === current?.video.id)
+			progress = videoEl.duration > 0 ? Math.min(1, videoEl.currentTime / videoEl.duration) : 0;
 	}
 	function onEnded() {
-		if (!current || activeId !== current.video.id) return;
-		record();
-		go(1);
+		if (activeId === current?.video.id) {
+			record();
+			void go(1);
+		}
 	}
-
-	onMount(async () => {
+	let offRaw: (() => void) | null = null;
+	onMount(() => {
 		offRaw = nav.onRawKey(onKey);
-		await load(false);
-		await tick();
-		if (alive && items.length) await play(0);
+		void loadFeeds();
 	});
 	onDestroy(() => {
-		offRaw?.();
 		record();
 		alive = false;
-		generation++;
 		navigation++;
-		lifecycle = lifecycle.then(destroyPlayer);
+		stop();
+		offRaw?.();
 	});
 </script>
-
 <svelte:head><title>Shorts · WatchCraft</title></svelte:head>
-
-<div class="feed" role="region" aria-label="Shorts feed"
-	ontouchstart={onTouchStart} ontouchend={onTouchEnd} ontouchcancel={onTouchCancel}>
-	{#if loading}
-		<div class="state"><p class="muted">Loading shorts…</p></div>
-	{:else if error && !items.length}
-		<div class="state"><p class="err" role="alert">{error}</p><button class="btn primary" use:focusable onclick={retryFeed}>Try again</button></div>
-	{:else if !items.length}
-		<div class="state">
-			<span class="big" aria-hidden="true">▶</span>
-			{#if hidden}
-				<h1>Shorts are hidden</h1>
-				<p class="muted">"Hide Shorts" is on, so curators skip vertical clips under a minute and this feed stays empty. Turn it off to let them collect shorts.</p>
-				<a class="btn primary" href="/settings?tab=extras" use:focusable>Open Settings → Extras</a>
-			{:else}
-				<h1>No shorts yet</h1>
-				<p class="muted">Shorts appear here once a curator accepts some. A playlist also needs a minimum duration that allows clips under a minute.</p>
-				<a class="btn primary" href="/curators/new" use:focusable>Create a curator</a>
-				<a class="btn ghost" href="/settings?tab=categories" use:focusable>Check playlist durations</a>
-			{/if}
-		</div>
-	{:else if current}
-		<video
-			bind:this={videoEl}
-			class="stage"
-			playsinline
-			preload="metadata"
-			ontimeupdate={onTime}
-			onended={onEnded}
-			onclick={() => videoEl?.paused && videoEl.play().catch(() => {})}
-		></video>
-
-		{#if playbackError}
-			<div class="playback-error" role="alert"><p>{playbackError}</p><button class="btn primary" use:focusable onclick={() => play(index)}>Retry playback</button></div>
-		{:else if error}
-			<div class="playback-error" role="alert"><p>{error}</p><button class="btn primary" use:focusable onclick={() => go(1)}>Retry next short</button></div>
+<div class="feed" role="region" aria-label="Shorts feed" ontouchstart={onTouchStart} ontouchend={onTouchEnd} ontouchcancel={()=>touchStart=null}>
+	{#if !selected}
+		<div class="state picker"><h1>Choose a feed</h1><p class="muted">Only videos stored locally are played.</p>
+		{#if loading}<p>Loading feeds…</p>{:else if error}<p class="err" role="alert">{error}</p><button class="btn" onclick={loadFeeds} use:focusable>Try again</button>{:else}
+			{#each feeds as feed (feed.id)}<button class="feed-choice" use:focusable onclick={()=>choose(feed)}><strong>{feed.emoji} {feed.name}</strong><span class="small muted">{feed.ready_count} ready locally · {feed.pending_count} waiting for local files{feed.error_count ? ` · ${feed.error_count} download errors` : ''}{!feed.enabled ? ' · Collection paused' : ''}</span></button>{/each}
+			{#if !feeds.length}<p>No feeds yet. Give your curator a brief to start collecting local clips.</p>{/if}
 		{/if}
-		{#if needsTap && !playbackError}
-			<button class="tap" use:focusable onclick={() => videoEl?.play().then(() => (needsTap = false)).catch(() => {})}>
-				<span aria-hidden="true">▶</span> Tap to play
-			</button>
-		{/if}
-
-		<a class="btn round back" href="/" aria-label="Leave shorts" use:focusable={{ group: 'shorts' }}>←</a>
-
-		<div class="bar" aria-hidden="true"><span style:width={`${progress * 100}%`}></span></div>
-
-		<div class="meta">
-			<h1>{current.video.title}</h1>
-			<p class="small muted">
-				{current.video.channel_name || current.video.channel_id}
-				{#if current.score !== null} · {current.score}% match{/if}
-			</p>
-			{#if current.summary}<p class="small why">{current.summary}</p>{/if}
-		</div>
-
-		<div class="acts">
-			<button class="btn round" aria-label="Not for me" disabled={busy} use:focusable={{ group: 'shorts', onSelect: () => rate(-1) }}>👎</button>
-			<button class="btn round" aria-label="More like this" disabled={busy} use:focusable={{ group: 'shorts', onSelect: () => rate(1) }}>👍</button>
-			<a class="btn round" href={`/watch/${current.video.id}`} aria-label="Open the full page" use:focusable={{ group: 'shorts' }}>⤢</a>
-		</div>
-
+		<a class="btn primary" href="/settings?tab=feeds&new=1" use:focusable>New feed</a><a class="btn" href="/settings?tab=feeds" use:focusable>Manage feeds</a><a class="btn ghost" href="/" use:focusable>Leave Shorts</a></div>
+	{:else}
+		<button class="btn back" use:focusable onclick={picker}>← Feeds</button>
+		{#if loading}<div class="state"><p>Checking local videos…</p></div>
+		{:else if !current}<div class="state"><h1>{selected.name}</h1>{#if error}<p role="alert" class="err">{error}</p>{:else}<p>No local clips ready yet.</p>{#if !session.settings?.cache.enabled}<p class="muted">Enable Storage → Offline cache in Settings so accepted clips can download.</p>{/if}{#if !session.settings?.agent.enabled}<p class="muted">Enable the AI agent in Settings to collect new clips.</p>{/if}<p class="muted">{selected.pending_count} waiting for local files{selected.error_count ? `; ${selected.error_count} download errors` : ''}. Refresh once downloads finish.</p>{/if}<button class="btn primary" use:focusable onclick={retry}>Refresh availability</button><a class="btn" href={`/settings?tab=feeds&edit=${selected.id}`} use:focusable>Edit feed</a></div>
+		{:else}
+		<video bind:this={videoEl} class="stage" playsinline preload="metadata" ontimeupdate={onTime} onended={onEnded} onerror={()=>{if(activeId===current?.video.id)playbackError='This local file is unavailable or cannot be played. Refresh availability to check stored clips.';}} onclick={()=>videoEl?.paused && videoEl.play().catch(()=>{})}></video>
+		{#if playbackError}<div class="playback-error" role="alert"><p>{playbackError}</p><button class="btn primary" use:focusable onclick={retry}>Refresh availability</button></div>
+		{:else if error}<div class="playback-error" role="alert"><p>{error}</p><button class="btn" use:focusable onclick={()=>go(1)}>Retry next short</button></div>
+		{:else if needsTap}<button class="tap" use:focusable onclick={()=>videoEl?.play().then(()=>needsTap=false).catch(()=>{})}>▶ Tap to play</button>{/if}
+		<div class="bar" aria-hidden="true"><span style:width={`${progress*100}%`}></span></div>
+		<div class="meta"><p class="small muted">{selected.name} · Stored locally</p><h1>{current.video.title}</h1><p class="small muted">{current.video.channel_name||current.video.channel_id}{current.score!==null ? ` · ${current.score}% match` : ''}</p>{#if current.summary}<p class="small why">{current.summary}</p>{/if}</div>
+		<div class="acts"><button class="btn round" aria-label="Not for me" disabled={busy} use:focusable={{group:'shorts',onSelect:()=>rate(-1)}}>👎</button><button class="btn round" aria-label="More like this" disabled={busy} use:focusable={{group:'shorts',onSelect:()=>rate(1)}}>👍</button></div>
 		<p class="hint small faint">Swipe up, or press ↓</p>
+		{/if}
 	{/if}
 </div>
-
 <style>
+	.picker { width: min(100%, 40rem); max-height: 100%; overflow-y:auto; touch-action:pan-y; }.feed-choice {display:grid;gap:.4rem;text-align:left;width:100%;padding:1rem;border:1px solid var(--line);border-radius:var(--r-md);background:rgba(255,255,255,.04);color:inherit;cursor:pointer;}
+
 	.feed { position: fixed; inset: 0; z-index: 140; background: #05040c; display: grid; place-items: center; overflow: hidden; touch-action: none; }
 	.stage { width: 100%; height: 100%; object-fit: contain; background: #000; }
 	.state { display: grid; gap: .8rem; justify-items: center; text-align: center; padding: 2rem; max-width: 34rem; }
 	.state h1 { margin: 0; font-size: 1.4rem; }
-	.big { font-size: 3rem; color: var(--accent); }
 	.err { color: var(--bad); }
 	.playback-error { position: absolute; z-index: 3; top: 20%; padding: 1rem; max-width: 90%; background: #201528; color: #fff; text-align: center; }
 	.tap { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; gap: .5rem; background: rgba(5, 4, 12, .55); color: #fff; border: 0; font-size: 1.1rem; cursor: pointer; }
