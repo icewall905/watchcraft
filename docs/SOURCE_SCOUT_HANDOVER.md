@@ -1,6 +1,26 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — role probes and embeddings URL (`30ed766`, 2026-11-01)
+
+- Covers `43cc914..30ed766`. `/agent/llm-test` takes a role, so the worker and embeddings servers can be
+  tested from Settings → AI instead of waiting for a run; the probe resolves the same endpoint, key and model
+  the runtime would use. The embeddings probe posts one word to `/embeddings` and reports the vector size —
+  dimensions are read from the response and stored per model, so there is nothing to configure.
+- Fixed a real defect found while checking the live configuration: a pasted `.../v1/embeddings` was posted to as
+  `.../v1/embeddings/embeddings` and answered 404, so semantic search could never have worked with that value.
+  `semantic.base_url()` strips a trailing `/embeddings`, and the role probe uses the same normalisation.
+- No schema change.
+- Backend suite: 461 passed, 6 skipped, no failures. Svelte check: zero errors, three CSS compatibility warnings.
+  Browser tests: settings-walk 14, llm-providers 3 and welcome 3 passed.
+- Backup: `/root/compose/watchcraft-backups/20261101T075743Z-pre-role-tests` (online SQLite, integrity `ok`;
+  config archive). Rollback image: `watchcraft:rollback-20261101T075743Z-43cc914`.
+- Rollout used rsync **without** `--delete`; all four containers healthy. `DEPLOYED_COMMIT` is `30ed766`; API,
+  worker and downloader run `watchcraft:30ed766` (`sha256:3c0e15824e0a…`). Health passes locally and publicly,
+  no tracebacks after start.
+- Live acceptance: the configured embeddings server (`http://10.0.10.73:8082/v1`, model `embeddinggemma`)
+  resolves correctly and `semantic.available()` is true; the scheduler sweep embedded 32 items at 768 dimensions.
+
 ## Deployment record — three AI roles (`43cc914`, 2026-11-01)
 
 - Covers `40aa983..43cc914`. The AI tab now groups Judge, Worker and Embeddings, each with its own optional server
