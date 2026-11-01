@@ -29,9 +29,16 @@ export async function resetBackend(request: APIRequestContext) {
 	for (const l of await (await request.get('/api/lessons', { headers })).json()) await request.delete(`/api/lessons/${l.id}`, { headers });
 }
 
-/** Load a URL with a clean localStorage. */
+/** Load a URL with fresh preferences and the default profile explicitly selected.
+ * Specs share a backend, so another spec may have created additional profiles.
+ * Profile-picker/onboarding tests use their own navigation and storage setup.
+ */
 export async function freshPage(page: Page, url = '/') {
+	const profiles = await (await page.request.get('/api/profiles')).json();
 	await page.goto(url);
-	await page.evaluate(() => localStorage.clear());
+	await page.evaluate((profileId: number) => {
+		localStorage.clear();
+		localStorage.setItem('bt.profile', String(profileId));
+	}, profiles[0].id);
 	await page.reload();
 }

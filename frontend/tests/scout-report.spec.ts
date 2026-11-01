@@ -13,21 +13,23 @@ test('Scout Report produces source-linked history and an opt-in home preview', a
 	execFileSync(join(backend!, '.venv/bin/python'), ['-c', `
 import sys, time
 from bt.db import session
-from bt.hub.models import ContentItem, CuratorDiscovery, CuratorRun, Alert
+from bt.hub.models import ContentItem, CuratorDiscovery, CuratorRun, Curator, Alert
 cid, wid = int(sys.argv[1]), int(sys.argv[2])
 with session() as s:
+    pid = s.get(Curator, cid).profile_id
     item = ContentItem(url='https://example.org/report-evidence', title='A verifiable discovery', summary='A source-provided summary', publisher='Example')
     s.add(item); s.flush()
-    s.add(CuratorDiscovery(curator_id=cid, item_id=item.id, profile_id=1, found_at=time.time()))
-    s.add(CuratorRun(curator_id=cid, profile_id=1, status='ok', new_items=1, seen_items=3, finished_at=time.time()))
-    s.add(Alert(curator_id=wid, profile_id=1, item_id=item.id, title='Widget CVE-2026-9001 published',
+    s.add(CuratorDiscovery(curator_id=cid, item_id=item.id, profile_id=pid, found_at=time.time()))
+    s.add(CuratorRun(curator_id=cid, profile_id=pid, status='ok', new_items=1, seen_items=3, finished_at=time.time()))
+    s.add(Alert(curator_id=wid, profile_id=pid, item_id=item.id, title='Widget CVE-2026-9001 published',
                 severity='critical', reason='A new advisory touched your keywords.'))
     s.commit()
 `, String(curator.id), String(watcher.id)], { cwd: backend, env: { ...process.env, BT_DATA_DIR: data! } });
 	await freshPage(page, '/scout-report');
 	await page.getByRole('button', { name: 'Generate report' }).click();
 	await expect(page.getByRole('link', { name: 'A verifiable discovery' })).toBeVisible();
-	await expect(page.getByRole('link', { name: 'Original source ↗' })).toHaveAttribute('href', 'https://example.org/report-evidence');
+	const finding = page.locator('.findings li').filter({ has: page.getByRole('link', { name: 'A verifiable discovery', exact: true }) });
+	await expect(finding.getByRole('link', { name: 'Original source ↗' })).toHaveAttribute('href', 'https://example.org/report-evidence');
 	// Discovery stories render with fact links; nothing invented, only persisted rows are retold.
 	await expect(page.getByText('1 high-severity alert came in.')).toBeVisible();
 	await expect(page.getByText('Newest: "Widget CVE-2026-9001 published" (critical).', { exact: false })).toBeVisible();
