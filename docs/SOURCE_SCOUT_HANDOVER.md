@@ -1,6 +1,38 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — P7 hardening (`168c120`, 2026-11-01)
+
+- Covers `a0e551a..168c120`, completing P7. Mostly verification that had never been written down, plus one
+  real defect the new guard found. `tests/test_recovery.py`: interrupted curator runs are failed and their lease
+  released, a stale capture lease is re-claimed, a live one is left alone, and a job for a profile that lost
+  access is failed rather than run. `tests/test_performance.py` counts SQL statements instead of timing and
+  found the home feed issuing four statements per playlist, two of them redundant — `_watched_ids` is now cached
+  per request and the home feed skips the ownership lookup it had already proved, so four became two.
+  `tests/tv.spec.ts` covers TV mode (collapsed sidebar, small drawer, video search instead of the command
+  palette, remote-only navigation, switching back). `tests/mobile.spec.ts` covers the phone bottom bar, no
+  sideways scroll on five pages, 40px tap targets and top bar reachability. `tests/a11y.spec.ts` covers
+  accessible names on seven pages, alt text, labelled fields, no positive tabindex, one h1 and a visible focus
+  ring. `tests/pwa.spec.ts` covers the manifest fields, the maskable icon, every icon resolving as a real PNG,
+  and the declared theme colour and viewport. `docs/SECURITY.md` records the trust boundaries, what each control
+  covers, and the known limits stated plainly.
+- No schema change in this range: `models.py`, `hub/models.py`, `hub/migrate.py`, `db.py` and `config.py` are
+  untouched.
+- Backend suite: 446 passed, 6 skipped, no failures. Svelte check: zero errors, three CSS compatibility
+  warnings. Full Playwright suite: 123 passed and the five known B-011 flakes (`scout-report`, `team`,
+  `watchers` ×3), which fail identically on a stashed clean tree. The 22 new browser tests all pass.
+- Backup: `/root/compose/watchcraft-backups/20261101T044247Z-pre-p7` (online SQLite, integrity `ok`, 6 profiles,
+  6,581 videos, 6 curators, 151 content items, 20 meme examples; config archive). Rollback image:
+  `watchcraft:rollback-20261101T044247Z-a0e551a`. Separate media volume preserved.
+- Isolated restore on `127.0.0.1:6699` with the new image: health 200, no tracebacks, integrity `ok`, 6 profiles.
+  The copy was removed.
+- Rollout used rsync **without** `--delete`; compose project `watchcraft` with `compose.yaml`,
+  `compose.watchcraft.yaml` and `compose.host.yaml`; all four containers healthy. `DEPLOYED_COMMIT` is
+  `168c120`; API, worker and downloader run `watchcraft:168c120` (`sha256:587f491e0312…`). Health passes
+  locally and publicly, no tracebacks after start, and `/`, `/memes`, `/sources`, `/settings` and `/find` all
+  return 200.
+
+
 ## Deployment record — P6 advanced (`a0e551a`, 2026-11-01)
 
 - Covers `c4ce003..a0e551a`, completing P6. Notifications (`fad2d39`): alert delivery to a JSON webhook, a Home
