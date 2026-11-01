@@ -81,7 +81,7 @@
 		}
 	});
 
-	const fullscreen = $derived(page.url.pathname.startsWith('/watch/'));
+	const fullscreen = $derived(page.url.pathname.startsWith('/watch/') || page.url.pathname === '/shorts');
 </script>
 
 {#if !session.ready}

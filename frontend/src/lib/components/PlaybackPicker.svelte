@@ -123,6 +123,7 @@
 <style>
 	.cast { white-space: nowrap; min-width: 2.6rem; padding: 0.5rem 0.7rem; }
 	.cast.active { border-color: var(--accent); color: var(--accent); }
+	:global(html[data-modality='keys']) .floating:focus { position: fixed; z-index: 110; }
 	.floating { position: fixed; top: 1rem; right: 1rem; z-index: 110; background: var(--bg-2); opacity: 0.8; }
 	.choices { display: grid; gap: 0.6rem; }
 	.target { justify-content: space-between; }
