@@ -81,14 +81,15 @@ def max_bytes(cfg: dict) -> int:
 
 
 def sync_queue(s: Session, cfg: dict) -> int:
-    """Queue every accepted, non-dismissed candidate that has no Download row yet (auto == 'accepted').
+    """Queue accepted candidates without a Download row; Shorts feeds always need local copies.
     Rows that were evicted or deleted by the user are not re-queued automatically; videos finished-watched
     by any profile are never queued."""
-    if cfg.get("auto", "accepted") != "accepted":
-        return 0
     have = select(Download.video_id)
     seen = select(WatchHistory.video_id).where(WatchHistory.finished == True)  # noqa: E712
-    ids = s.exec(select(Candidate.video_id).where(Candidate.status == "accepted",
+    eligible = select(Candidate.video_id).join(Category, Category.id == Candidate.category_id).where(Category.enabled == True)  # noqa: E712
+    if cfg.get("auto", "accepted") != "accepted":
+        eligible = eligible.where(Category.kind == "shorts")
+    ids = s.exec(eligible.where(Candidate.status == "accepted",
                                                   Candidate.dismissed == False,  # noqa: E712
                                                   col(Candidate.video_id).not_in(have),
                                                   col(Candidate.video_id).not_in(seen)).distinct()).all()

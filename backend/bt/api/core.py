@@ -15,7 +15,7 @@ from .. import profile_pins
 from ..access import profile_id, require_admin, validate_household
 from ..config import COOKIES_PATH, DEFAULT_SETTINGS
 from ..db import emit, get_session, get_settings, save_setting, session, yt_request_counts
-from ..downloader.service import drop_unwanted
+from ..downloader.service import abs_path, drop_unwanted
 from ..playlist import order_playlist
 from ..models import (AgentEvent, Candidate, Category, Channel, Download, Feedback, Lesson, LessonEvidenceState, LessonRevision, PlaybackTarget, Profile, ProfileChannel, ReencodeJob, ReencodeResult, Video,
                       WatchHistory, YtRequest, now)
@@ -232,6 +232,7 @@ def _404():
 # ---------- categories
 
 class CategoryIn(BaseModel):
+    kind: Literal["playlist", "shorts"] = "playlist"
     name: str
     emoji: str = "✨"
     color: str = "#7c5cff"
@@ -301,6 +302,11 @@ class CategoryCreateIn(CategoryIn):
 @router.post("/categories")
 def create_category(body: CategoryCreateIn, pid: int = Depends(profile_id), s: Session = Depends(get_session)):
     values = body.model_dump(exclude={"playlist_url"})
+    if body.kind == "shorts":
+        if "min_duration_s" not in body.model_fields_set:
+            values["min_duration_s"] = 1
+        if "max_duration_s" not in body.model_fields_set:
+            values["max_duration_s"] = 180
     if body.playlist_url and body.playlist_url.strip():
         from .ytimport import FeedImportBody, _import_feed
         result = _import_feed(FeedImportBody(playlist_name=body.name, source="playlist",
@@ -324,6 +330,8 @@ def get_category(cid: int, pid: int = Depends(profile_id), s: Session = Depends(
 @router.patch("/categories/{cid}")
 def patch_category(cid: int, body: dict, pid: int = Depends(profile_id), s: Session = Depends(get_session)):
     c = _own_category(s, pid, cid)
+    if "kind" in body and body["kind"] != c.kind:
+        raise HTTPException(400, "Create a separate feed or playlist instead of changing its kind")
     allowed = set(CategoryIn.model_fields) | {"position"}
     _apply(c, {k: v for k, v in body.items() if k in allowed})
     s.add(c)
@@ -409,46 +417,67 @@ def _category_items(s: Session, pid: int, cid: int, status: str = "accepted", in
     return out
 
 
+def _local_short_rows(s: Session, pid: int, cid: int):
+    watched = _watched_ids(s, pid)
+    rows = s.exec(select(Candidate, Video, Download)
+        .join(Video, Video.id == Candidate.video_id)
+        .join(Download, Download.video_id == Candidate.video_id)
+        .where(Candidate.category_id == cid, Candidate.status == "accepted",
+               Candidate.dismissed == False, Video.is_short == True, Download.status == "done")
+        .order_by(col(Candidate.score).desc(), col(Candidate.judged_at).desc(), Candidate.id)).all()  # noqa: E712
+    ready = []
+    for c, v, d in rows:
+        if v.id in watched:
+            continue
+        path = abs_path(d.path) if d.path else None
+        try:
+            if path and path.is_file() and path.stat().st_size > 0:
+                with path.open("rb") as f:
+                    if f.read(1):
+                        ready.append((c, v))
+        except OSError:
+            continue
+    return ready
+
+
+@router.get("/shorts/feeds")
+def shorts_feeds(pid: int = Depends(profile_id), s: Session = Depends(get_session)):
+    out = []
+    for c in s.exec(select(Category).where(Category.profile_id == pid, Category.kind == "shorts")
+                    .order_by(Category.position, Category.id)).all():
+        ready = len(_local_short_rows(s, pid, c.id))
+        accepted = s.exec(select(Candidate, Download).outerjoin(Download, Download.video_id == Candidate.video_id)
+            .join(Video, Video.id == Candidate.video_id)
+            .where(Candidate.category_id == c.id, Candidate.status == "accepted",
+                   Candidate.dismissed == False, Video.is_short == True)).all()  # noqa: E712
+        accepted = [(a, d) for a, d in accepted if a.video_id not in _watched_ids(s, pid)]
+        errors = sum(1 for _, d in accepted if d and d.status == "error")
+        out.append({**c.model_dump(), "stats": _category_stats(s, c.id), "ready_count": ready,
+                    "pending_count": max(0, len(accepted) - ready - errors), "error_count": errors})
+    return out
+
+
 @router.get("/shorts")
 def shorts_feed(limit: int = 10, offset: int = 0, category_id: Optional[int] = None,
                 pid: int = Depends(profile_id), s: Session = Depends(get_session),
                 exclude_ids: str = Query(default="", max_length=120000)):
-    """A swipe feed of short videos the profile's curators accepted, best first.
-
-    Sourced from the same accepted candidates as the playlist feeds, so the topics a household
-    already curates are the topics it swipes through. A like or dislike goes through the normal
-    feedback path, which is what teaches the curators.
-    """
-    limit = max(1, min(limit, 30))
-    offset = max(0, offset)
+    """Only readable local copies from an explicitly selected, owned Shorts feed."""
+    if category_id is None:
+        raise HTTPException(400, "Select a Shorts feed")
+    cat = _own_category(s, pid, category_id)
+    if cat.kind != "shorts":
+        _404()
     excluded = set(filter(None, exclude_ids.split(',')))
     if any(not re.fullmatch(r'[A-Za-z0-9_-]{11}', vid) for vid in excluded):
         raise HTTPException(400, 'Invalid excluded video id')
-    owned = select(Category.id).where(Category.profile_id == pid, Category.enabled == True)  # noqa: E712
-    if category_id is not None:
-        _own_category(s, pid, category_id)
-        owned = select(Category.id).where(Category.id == category_id)
-    # Choose each video's best candidate before paging, regardless of playlist duplication.
-    ranked = (select(Candidate.id.label('cid'), func.row_number().over(
-        partition_by=Candidate.video_id,
-        order_by=(col(Candidate.score).desc(), col(Candidate.judged_at).desc(), Candidate.id)
-    ).label('rank')).join(Video, Video.id == Candidate.video_id)
-        .where(col(Candidate.category_id).in_(owned), Candidate.status == "accepted",
-               Candidate.dismissed == False, Video.is_short == True))  # noqa: E712
-    omitted = _watched_ids(s, pid) | excluded
-    if omitted:
-        ranked = ranked.where(col(Candidate.video_id).not_in(omitted))
-    ranked = ranked.subquery()
-    q = (select(Candidate, Video).join(Video, Video.id == Candidate.video_id)
-         .join(ranked, ranked.c.cid == Candidate.id).where(ranked.c.rank == 1)
-         .order_by(col(Candidate.score).desc(), col(Candidate.judged_at).desc(), Candidate.id))
-    total = s.exec(select(func.count()).select_from(ranked).where(ranked.c.rank == 1)).one()
-    page = s.exec(q.offset(offset).limit(limit)).all()
-    st = _download_statuses([v.id for _, v in page], s)
+    limit, offset = max(1, min(limit, 30)), max(0, offset)
+    rows = [(c, v) for c, v in _local_short_rows(s, pid, category_id) if v.id not in excluded]
+    total = len(rows)
     items = []
-    for c, v in page:
+    for c, v in rows[offset:offset + limit]:
         d = candidate_out(c, None)
-        d["video"] = video_out(v, offline=st.get(v.id) == "done", download_status=st.get(v.id))
+        d["video"] = {**video_out(v, offline=True, download_status="done"),
+                      "file_url": f"/api/video/{v.id}/file"}
         items.append(d)
     return {"items": items, "total": total, "next_offset": offset + limit if total > offset + limit else None}
 
@@ -462,7 +491,7 @@ def home_feed(per_row: int = 20, pid: int = Depends(profile_id), s: Session = De
             Feedback.profile_id == pid, Feedback.rating != 0).group_by(Feedback.video_id)))
     # Continue watching
     hist = s.exec(select(WatchHistory, Video).join(Video, Video.id == WatchHistory.video_id)
-                  .where(WatchHistory.profile_id == pid, WatchHistory.finished == False,  # noqa: E712
+                  .where(WatchHistory.profile_id == pid, WatchHistory.finished == False, Video.is_short == False,  # noqa: E712
                          WatchHistory.position_s > 15, col(WatchHistory.video_id).not_in(disliked))
                   .order_by(col(WatchHistory.updated_at).desc()).limit(per_row)).all()
     st = _download_statuses([v.id for _, v in hist], s)
@@ -472,7 +501,7 @@ def home_feed(per_row: int = 20, pid: int = Depends(profile_id), s: Session = De
              "position_s": h.position_s, "category_id": h.category_id}
             for h, v in hist]})
     # Categories
-    for c in s.exec(select(Category).where(Category.profile_id == pid, Category.enabled == True)  # noqa: E712
+    for c in s.exec(select(Category).where(Category.profile_id == pid, Category.kind == "playlist", Category.enabled == True)  # noqa: E712
                     .order_by(Category.position, Category.id)).all():
         # The query above already filtered by profile, so the ownership lookup would be redundant.
         rows.append({"kind": "category", "category_id": c.id, "title": c.name, "emoji": c.emoji, "color": c.color,

@@ -176,6 +176,8 @@ def _import_feed(body: FeedImportBody, pid: int, s: Session, category_values: di
                "already watched" if e["id"] in ctx.watched else
                "disliked before" if e["id"] in ctx.disliked else
                "blocked/distrusted channel" if e.get("channel_id") in ctx.blocked else None)
+        if not why and cat.kind == "shorts":
+            why = data.prefilter(e, cat, ctx, False)
         if why:
             skipped += 1
             key = why.split(" (")[0]

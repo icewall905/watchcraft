@@ -82,7 +82,11 @@ def prefilter(item: dict, cat: Category, ctx: ProfileCtx, hide_shorts: bool,
         return "same title rejected before"
     if item.get("is_live"):
         return "live stream"
-    if hide_shorts and item.get("is_short"):
+    if cat.kind == "shorts":
+        # Discovery may have only an id/title; enrichment applies this again with metadata.
+        if not item.get("is_short") and int(item.get("duration_s") or 0) > 0:
+            return "not a short"
+    elif hide_shorts and item.get("is_short"):
         return "short"
     dur = int(item.get("duration_s") or 0)
     if dur:

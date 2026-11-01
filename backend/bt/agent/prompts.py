@@ -87,6 +87,8 @@ def _fmt_dur(s: Optional[int]) -> str:
 
 def category_block(cat) -> str:
     lines = [f"PLAYLIST {cat.id}: {cat.name}", f"Brief: {cat.brief or '(none)'}"]
+    if cat.kind == "shorts":
+        lines.append("This is a Shorts feed: discover only YouTube Shorts, never long-form videos.")
     if cat.include_keywords:
         lines.append("Good signs / topics: " + ", ".join(cat.include_keywords))
     if cat.exclude_keywords:

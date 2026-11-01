@@ -31,6 +31,7 @@ class Profile(SQLModel, table=True):
 
 
 class Category(SQLModel, table=True):
+    kind: str = "playlist"  # playlist | shorts (independently configured local feed)
     id: Optional[int] = Field(default=None, primary_key=True)
     profile_id: int = Field(foreign_key="profile.id", index=True)
     name: str

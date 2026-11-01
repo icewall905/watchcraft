@@ -32,6 +32,8 @@ def init_db() -> None:
         from . import curation  # noqa: F401  (registers v1 + hub tables)
         from .hub import migrate, models as _hub_models  # noqa: F401
         SQLModel.metadata.create_all(connection)
+        if 'kind' not in {c['name'] for c in inspect(connection).get_columns('category')}:
+            connection.exec_driver_sql("ALTER TABLE category ADD COLUMN kind VARCHAR NOT NULL DEFAULT 'playlist'")
         # Additive household-access migration, before querying the updated Profile model.
         # Existing households retain one administrator: their first profile.
         if 'role' not in {c['name'] for c in inspect(connection).get_columns('profile')}:

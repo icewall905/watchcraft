@@ -524,12 +524,14 @@ def test_a_card_reports_a_queued_download_not_just_a_finished_one():
     assert card["offline"] is True and card["download_status"] == "done"
 
 
-def test_shorts_feed_returns_only_accepted_unwatched_shorts():
+def test_shorts_feed_returns_only_accepted_unwatched_shorts(tmp_path, monkeypatch):
     """The swipe feed is the playlist queue filtered to shorts, and a dislike removes one."""
+    from bt.downloader import service
+    monkeypatch.setattr(service, "MEDIA_DIR", tmp_path)
     c = client()
     profile = c.post("/api/profiles", json={"name": "Swiper"}).json()
     h = {"X-Profile-Id": str(profile["id"])}
-    cat = c.post("/api/categories", json={"name": "Clips", "brief": "short clips"}, headers=h).json()
+    cat = c.post("/api/categories", json={"name": "Clips", "kind": "shorts", "brief": "short clips"}, headers=h).json()
     with session() as s:
         s.add(Video(id="short000001", title="A short", channel_id="UC1", duration_s=30, is_short=True))
         s.add(Video(id="long0000001", title="A long one", channel_id="UC1", duration_s=900, is_short=False))
@@ -541,44 +543,52 @@ def test_shorts_feed_returns_only_accepted_unwatched_shorts():
         s.add(Candidate(category_id=cat["id"], video_id="short000003", status="accepted", score=99, dismissed=True))
         s.add(WatchHistory(profile_id=profile["id"], video_id="short000002", finished=True))
         s.commit()
-    got = c.get("/api/shorts", headers=h).json()
+    (tmp_path / "short000001.mp4").write_bytes(b"local movie")
+    with session() as s:
+        s.add(Download(video_id="short000001", status="done", path="short000001.mp4"))
+        s.commit()
+    got = c.get("/api/shorts", params={"category_id": cat["id"]}, headers=h).json()
     # Not the long video, not the watched one, not the dismissed one.
     assert [i["video"]["id"] for i in got["items"]] == ["short000001"]
     assert got["items"][0]["video"]["is_short"] is True
     # A dislike goes through the normal feedback path, so the curator learns from it.
     assert c.post("/api/feedback", json={"video_id": "short000001", "category_id": cat["id"], "rating": -1},
                   headers=h).status_code == 200
-    assert c.get("/api/shorts", headers=h).json()["items"] == []
+    assert c.get("/api/shorts", params={"category_id": cat["id"]}, headers=h).json()["items"] == []
     # Another profile sees none of it.
     other = c.post("/api/profiles", json={"name": "Other"}).json()
-    assert c.get("/api/shorts", headers={"X-Profile-Id": str(other["id"])}).json()["items"] == []
+    assert c.get("/api/shorts", params={"category_id": cat["id"]}, headers={"X-Profile-Id": str(other["id"])}).status_code == 404
 
 
-def test_shorts_page_deduplicates_before_limit_and_excludes_loaded_videos():
+def test_shorts_page_deduplicates_before_limit_and_excludes_loaded_videos(tmp_path, monkeypatch):
+    from bt.downloader import service
+    monkeypatch.setattr(service, "MEDIA_DIR", tmp_path)
     c = client()
     profile = c.post('/api/profiles', json={'name': 'Paged swiper'}).json()
     h = {'X-Profile-Id': str(profile['id'])}
-    cats = [c.post('/api/categories', json={'name': f'Clips {n}', 'brief': 'clips'}, headers=h).json()['id']
+    cats = [c.post('/api/categories', json={'name': f'Clips {n}', 'kind': 'shorts', 'brief': 'clips'}, headers=h).json()['id']
             for n in range(5)]
     ids = [f'page{i:07d}' for i in range(25)]
     with session() as s:
         for i, vid in enumerate(ids):
             s.add(Video(id=vid, title=vid, duration_s=30, is_short=True))
+            (tmp_path / f"{vid}.mp4").write_bytes(b"local")
+            s.add(Download(video_id=vid, status="done", path=f"{vid}.mp4"))
             for cid in cats:
                 s.add(Candidate(category_id=cid, video_id=vid, status='accepted', score=100-i))
         s.commit()
-    first = c.get('/api/shorts?limit=10', headers=h).json()
+    first = c.get('/api/shorts', params={'limit': 10, 'category_id': cats[0]}, headers=h).json()
     assert [x['video']['id'] for x in first['items']] == ids[:10]
     assert first['total'] == 25 and first['next_offset'] == 10
     with session() as s:
         for vid in ids[:7]:
             s.add(WatchHistory(profile_id=profile['id'], video_id=vid, finished=True))
         s.commit()
-    second = c.get('/api/shorts', params={'limit': 10, 'exclude_ids': ','.join(ids[:10])}, headers=h).json()
+    second = c.get('/api/shorts', params={'limit': 10, 'category_id': cats[0], 'exclude_ids': ','.join(ids[:10])}, headers=h).json()
     assert [x['video']['id'] for x in second['items']] == ids[10:20]
     assert second['next_offset'] == 10
-    last = c.get('/api/shorts', params={'limit': 10, 'exclude_ids': ','.join(ids[:20])}, headers=h).json()
+    last = c.get('/api/shorts', params={'limit': 10, 'category_id': cats[0], 'exclude_ids': ','.join(ids[:20])}, headers=h).json()
     assert [x['video']['id'] for x in last['items']] == ids[20:]
     assert last['next_offset'] is None
-    assert c.get('/api/shorts', params={'exclude_ids': 'bad'}, headers=h).status_code == 400
+    assert c.get('/api/shorts', params={'category_id': cats[0], 'exclude_ids': 'bad'}, headers=h).status_code == 400
     assert c.get('/api/shorts', params={'category_id': cats[0]}, headers={'X-Profile-Id': '1'}).status_code == 404
