@@ -1,6 +1,48 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — basic reliability (`693fd02`, 2026-11-01)
+
+- Covers `a8f7c81..693fd02`: scanned-PDF OCR integration, explicit OCR truncation notices,
+  official NVD API recovery, browser rendering refused on every host, complete-word curator
+  feedback, and the screen-forgetting pairing race. Tests now isolate background dispatch,
+  compare structured migration versions, reset memory fixtures, select a profile explicitly,
+  and check the intended report finding and loaded video card.
+- Release verification: **515 backend tests passed, six skipped; all 128 browser tests passed**
+  together in 5.9 minutes. Frontend check/build passed with the existing three CSS compatibility
+  warnings. Independent review approved the fixes and acceptance checks.
+- Backup: `/root/compose/watchcraft-backups/20261101T1515-basics-a65a79e` contains a verified
+  online database, data extras, private configuration, previous source and a stopped-service
+  `final-before-rollout.sqlite3`. Rollback tag: `watchcraft:rollback-20261101T1515-basics`.
+  Final snapshot: six profiles, 7,012 videos, 200 content items and 200 capture jobs.
+- The backup initialized twice with the final image on an isolated restore. A release candidate
+  also passed two server starts against that copy with networking disabled. A real image-only PDF was read by the shipped OCR binaries
+  (76 characters, no truncation); a failed NVD advisory recovered 1,078 characters through its
+  official API. The restored profile checksum matched the backup. Disposable data and intermediate
+  release images were removed afterward.
+- Source copied with rsync **without `--delete`**. `.env` and the NVIDIA host override were
+  unchanged. API, worker and downloader run image `sha256:cffebd09cb0f1139…`; `DEPLOYED_COMMIT`
+  is `693fd02`. Public and local health pass, all three app containers have zero restarts, database
+  integrity is `ok`, and profile/PIN records match the final stopped-service snapshot.
+- Live acceptance: `/`, `/sources`, `/team`, `/settings` and `/tv` return 200; a saved video returns
+  HTTP 206 and decodes 20 frames from a bounded range. Both tracked YouTube cases (`dQw4w9WgXcQ`,
+  `BYVZh5kqaFg`) served video/audio range requests and decoded five video frames at 360p during
+  validation. Those probes do not establish physical-device acceptance or eliminate intermittent
+  upstream restrictions. Physical TV/phone checks were deferred at the user's request.
+- Requeued 38 failed NVD captures with staggered initial due times. The original job state is
+  archived as `nvd-retry-before.json` beside the deployment backup. **All 38 recovered:** all 44
+  NVD items now have local text and complete jobs, with no NVD errors. A scheduled curator also
+  found and captured 20 additional items. Final state: 220 items/vectors, 198 complete captures,
+  13 failed and nine partial; all vectors have valid binary lengths and integrity is `ok`. The
+  remaining failures include publisher access restrictions, a certificate failure, an unreadable
+  page, a timeout and a page over the HTML size limit; those limits were not weakened.
+- No schema change. Rollback to the retained `a8f7c81` image is database-compatible: tag
+  `watchcraft:rollback-20261101T1515-basics` as `watchcraft:latest`, then run the existing three-file
+  Compose command with `up -d --no-build --wait`, and restore the prior `DEPLOYED_COMMIT` marker.
+  Restore the backed-up source before rebuilding the old release. Do not restore the database
+  merely to revert this image, because that would discard subsequent discoveries and captures.
+
+
 ## Deployment record — semantic storage, bug fixes, news pictures, capture rescue (`a8f7c81`, 2026-11-01)
 
 - Covers `30ed766..a8f7c81`, twelve commits: semantic vectors as float32 BLOB with migration v3 and
