@@ -177,6 +177,7 @@ def run(pid, iid, lease):
     page = None
     links = []
     has_document = False
+    is_pdf = False
     truncated = False
     payload = b''
     try:
@@ -196,19 +197,25 @@ def run(pid, iid, lease):
                 if d.status in ('evicted', 'error'): d.status, d.attempts, d.error = 'queued', 0, ''
                 s.add(d); s.commit()
         else:
+            # A stored feed excerpt is not proof that this capture read the article.
+            body = ''
             data, final, meta = curation.fetch(url, kinds=curation.HTML_TYPES + DOCUMENT_TYPES,
                                                 limit=20_000_000, with_metadata=True)
             payload = data
             if meta['content_type'] == 'application/pdf':
-                save_asset(pid, iid, 'document', final, data, 'application/pdf')
-                has_document = True
+                is_pdf = True
+                try:
+                    save_asset(pid, iid, 'document', final, data, 'application/pdf')
+                    has_document = True
+                except Exception as e:  # noqa: BLE001 — text recovery can still succeed
+                    errors.append('Document: ' + _safe_error(e))
                 result = subprocess.run(['pdftotext', '-f', '1', '-l', '100', '-layout', '-', '-'],
                                         input=data, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                         timeout=30, check=True)
                 extracted = result.stdout.decode('utf-8', 'replace').strip()
                 truncated = len(extracted) > TEXT_LIMIT or extracted.count('\f') >= 100
                 body = extracted[:TEXT_LIMIT]
-                if not body: errors.append('Document has no extractable text.')
+                if not body: raise ValueError('Document has no extractable text.')
             else:
                 if len(data) > 3_000_000: raise ValueError('HTML page exceeds 3 MB limit.')
                 page = extract_page(data, final)
@@ -220,12 +227,14 @@ def run(pid, iid, lease):
     except Exception as e:  # noqa: BLE001
         primary_error = _safe_error(e)
         errors.append(primary_error)
-    if not body and not has_document and typ not in ('video', 'meme') and not mastodon_meme \
+    if not body and typ not in ('video', 'meme') and not mastodon_meme \
             and get_settings()['local_library'].get('rescue', True):
         # The plain fetch could not read it. Try the other ways before giving up on the item.
         try:
-            got = rescue.rescue({'url': url, 'title': title, 'html': payload, 'data': payload,
-                                 'feed_url': feed_url}, primary_error)
+            ctx = {'url': url, 'title': title, 'html': payload, 'data': payload, 'feed_url': feed_url}
+            # A downloaded PDF needs local OCR, not article refetches or a browser.
+            got = ({'body': rescue.tool_ocr(ctx), 'tool': 'ocr'} if is_pdf
+                   else rescue.rescue(ctx, primary_error))
             if got['body']:
                 body = got['body']
                 # The failure is resolved, so it is no longer an error: the job is complete.
