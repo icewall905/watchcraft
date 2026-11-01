@@ -12,9 +12,9 @@ from ..access import hub_allowed
 from ..db import get_settings, session
 from ..downloader.service import VID_RE
 from ..models import Download, Profile, Video
-from . import ai, slots
+from . import ai, rescue, slots
 from .extract import TEXT_LIMIT, extract_page, page_links
-from .models import CaptureJob, CapturedAsset, CapturedPage, ContentItem, CuratorDiscovery, ItemState
+from .models import CaptureJob, CapturedAsset, CapturedPage, ContentItem, CuratorDiscovery, ItemState, Source
 
 log = logging.getLogger(__name__)
 LEASE = 3600
@@ -169,11 +169,16 @@ def run(pid, iid, lease):
         video_id = str(item.meta.get('video_id', ''))
         meme_media = item.meta.get('media', {}) if typ == 'meme' else {}
         mastodon_meme = typ == 'meme' and item.provider == 'mastodon'
+        # The feed that found this item may carry the whole article even when the page will not.
+        feed_url = s.exec(select(Source.url).join(CuratorDiscovery, CuratorDiscovery.source_id == Source.id)
+                          .where(CuratorDiscovery.item_id == iid, Source.provider == 'rss')).first() or ''
     errors, summary_status = [], 'pending'
+    primary_error = ''
     page = None
     links = []
     has_document = False
     truncated = False
+    payload = b''
     try:
         if mastodon_meme:
             pass  # The public API already supplied the post body and attachment metadata.
@@ -193,6 +198,7 @@ def run(pid, iid, lease):
         else:
             data, final, meta = curation.fetch(url, kinds=curation.HTML_TYPES + DOCUMENT_TYPES,
                                                 limit=20_000_000, with_metadata=True)
+            payload = data
             if meta['content_type'] == 'application/pdf':
                 save_asset(pid, iid, 'document', final, data, 'application/pdf')
                 has_document = True
@@ -212,7 +218,21 @@ def run(pid, iid, lease):
                 if not body: raise ValueError('No readable text was found on this page.')
                 image = page.get('image') or image
     except Exception as e:  # noqa: BLE001
-        errors.append(_safe_error(e))
+        primary_error = _safe_error(e)
+        errors.append(primary_error)
+    if not body and not has_document and typ not in ('video', 'meme') and not mastodon_meme \
+            and get_settings()['local_library'].get('rescue', True):
+        # The plain fetch could not read it. Try the other ways before giving up on the item.
+        try:
+            got = rescue.rescue({'url': url, 'title': title, 'html': payload, 'data': payload,
+                                 'feed_url': feed_url}, primary_error)
+            if got['body']:
+                body = got['body']
+                # The failure is resolved, so it is no longer an error: the job is complete.
+                errors = [e for e in errors if e != primary_error]
+                log.info('capture %s recovered with %s', iid, got['tool'])
+        except Exception as e:  # noqa: BLE001 — recovery is best effort
+            errors.append('Rescue: ' + _safe_error(e))
     if image:
         try:
             with session() as s: exists = s.get(CapturedAsset, (iid, 'image')) is not None

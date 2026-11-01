@@ -7,6 +7,10 @@ x-bt: &bt
   volumes:
     - ${BT_DATA_HOST_DIR:-./data}:/data
     - ${BT_MEDIA_HOST_DIR:-./media}:/media
+  # bubblewrap creates namespaces, which Docker's default seccomp profile blocks. The sandbox is
+  # what keeps a rendered page away from /data and /media, so it has to be able to start.
+  security_opt:
+    - seccomp=unconfined
   depends_on:
     - pot
 

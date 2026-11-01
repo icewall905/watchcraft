@@ -12,9 +12,10 @@
 
 	let team = $state<Team | null>(null);
 	let error = $state('');
-	let capture = $state<{ counts: Record<string, number>; asset_bytes: number; asset_limit: number; enabled: boolean; asset_max_mb: number } | null>(null);
+	let capture = $state<{ counts: Record<string, number>; asset_bytes: number; asset_limit: number; enabled: boolean; asset_max_mb: number; rescue: boolean } | null>(null);
 	let retrying = $state(false);
 	let assetLimit = $state(512);
+	let rescueOn = $state(true);
 	let assetLimitChanged = $state(false);
 	let loading = $state(true);
 	let now = $state(Date.now() / 1000);
@@ -22,7 +23,7 @@
 	async function load() {
 		try {
 			team = await hub.team();
-			hub.captureStatus().then((value) => { capture = value; if (!assetLimitChanged) assetLimit = value.asset_max_mb; }).catch(() => {});
+			hub.captureStatus().then((value) => { capture = value; if (!assetLimitChanged) assetLimit = value.asset_max_mb; rescueOn = value.rescue ?? true; }).catch(() => {});
 			error = '';
 		} catch (e) {
 			error = errMsg(e);
@@ -32,7 +33,7 @@
 	}
 	async function saveCaptureSettings(enabled: boolean) {
 		if (!capture) return;
-		try { await hub.setCaptureSettings(enabled, assetLimit); assetLimitChanged = false; capture = await hub.captureStatus(); }
+		try { await hub.setCaptureSettings(enabled, assetLimit, rescueOn); assetLimitChanged = false; capture = await hub.captureStatus(); }
 		catch (e) { error = errMsg(e); }
 	}
 	async function retryCaptures() {
@@ -157,7 +158,7 @@
 				<div class="top"><span class="avatar emoji">📚</span><div class="ttl"><h2>Local library</h2><span class="role">Captures and summaries</span></div></div>
 				<p class="now">{capture.counts.complete || 0} ready · {(capture.counts.queued || 0) + (capture.counts.running || 0)} processing · {(capture.counts.partial || 0) + (capture.counts.failed || 0)} need attention</p>
 				<p class="foot muted small">Images and documents: {(capture.asset_bytes / 1000000).toFixed(1)} / {(capture.asset_limit / 1000000).toFixed(0)} MB shared storage</p>
-				{#if session.isAdmin}<div class="hstack"><button class="btn" use:focusable onclick={() => saveCaptureSettings(!capture!.enabled)}>{capture.enabled ? 'Pause local capture' : 'Resume local capture'}</button><label class="small">Asset limit (MB) <input type="number" min="50" max="10000" bind:value={assetLimit} oninput={() => assetLimitChanged = true} /></label><button class="btn" use:focusable onclick={() => saveCaptureSettings(capture!.enabled)}>Save limit</button></div>{/if}
+				{#if session.isAdmin}<div class="hstack"><button class="btn" use:focusable onclick={() => saveCaptureSettings(!capture!.enabled)}>{capture.enabled ? 'Pause local capture' : 'Resume local capture'}</button><label class="small">Asset limit (MB) <input type="number" min="50" max="10000" bind:value={assetLimit} oninput={() => assetLimitChanged = true} /></label><label class="small"><input type="checkbox" bind:checked={rescueOn} /> Recover unreadable pages</label><button class="btn" use:focusable onclick={() => saveCaptureSettings(capture!.enabled)}>Save</button></div>{/if}
 				{#if (capture.counts.partial || 0) + (capture.counts.failed || 0)}<button class="btn" disabled={retrying} use:focusable onclick={retryCaptures}>Retry unsuccessful captures</button>{/if}
 			</article>
 		{/if}

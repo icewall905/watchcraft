@@ -184,3 +184,22 @@ The Meme Radar drawer loads a captured clip on demand with native playback and s
 Pending/failed clips offer capture/retry and the original post. Opening a pending clip refreshes
 capture state automatically. Local assets remain profile-authorized; video bytes support GET,
 HEAD and single byte-range requests at `/api/hub/items/{id}/assets/video`.
+
+### Capture rescue
+
+Local capture reads a page once and gives up after three attempts. When that read yields no
+text — the article is rendered in JavaScript, hidden behind a cookie or bot wall, or shipped as
+a scan — `hub/rescue.py` tries other ways to get the same text before the item is marked failed.
+
+The tools, in the order a fixed run uses them: `refetch` (a different browser identity),
+`variants` (the AMP or print view), `json_api` (the site's WordPress REST API or the JSON-LD
+`articleBody`), `feed_full` (the `content:encoded` the source feed already carries), `wayback`
+(the nearest archived snapshot), `render` (headless Chromium inside bubblewrap) and `ocr`
+(tesseract on a scanned PDF). A tool that returns less than 200 characters counts as a miss, so
+a cookie notice is not mistaken for an article.
+
+When a model is configured it chooses which untried tool to run next, given the failure reason
+and what has already been tried; without one the fixed order runs. A successful rescue clears
+the failure, so the job completes rather than being retried. The pass is on by default and can
+be turned off per household with the "Recover unreadable pages" toggle on the Team page
+(`local_library.rescue`). See `docs/SECURITY.md` for the sandbox.

@@ -305,6 +305,8 @@ def capture_status(pid: int = Depends(profile_id)):
 class CaptureSettingsIn(BaseModel):
     enabled: bool
     asset_max_mb: int = Input(ge=50, le=10000)
+    # Saving replaces the whole setting, so every field has to be here or it is lost.
+    rescue: bool = True
 
 
 @router.put('/capture/settings', dependencies=[Depends(require_admin)])

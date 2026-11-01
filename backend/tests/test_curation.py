@@ -1785,3 +1785,52 @@ def test_an_item_picture_is_served_through_us_and_cached(client, monkeypatch):
     # An item with no picture, and an unknown item, are both 404 rather than an error.
     assert client.get(f'/api/hub/items/{bare_id}/image').status_code == 404
     assert client.get('/api/hub/items/999999/image').status_code == 404
+
+
+def test_capture_recovers_a_page_it_could_not_read(client, monkeypatch):
+    """A page with no readable text is retried through the rescue tools, and the job completes."""
+    from bt.hub import capture, rescue
+    from bt.hub.models import CaptureJob, ContentItem, ItemState
+    shell = b'<html><body><div id="app"></div></body></html>'  # renders its article in JavaScript
+    monkeypatch.setattr(curation, 'fetch', lambda url, **kw: (shell, url, {'content_type': 'text/html'}))
+    monkeypatch.setattr(ai, 'enabled', lambda: False)
+    monkeypatch.setitem(rescue.TOOLS, 'refetch', ('nothing', lambda ctx: ''))
+    monkeypatch.setitem(rescue.TOOLS, 'variants', ('works', lambda ctx: 'Recovered article text. ' * 20))
+    with session() as s:
+        item = ContentItem(url='https://example.org/js', title='JS page', type='news')
+        s.add(item); s.flush(); iid = item.id
+        s.add(ItemState(profile_id=1, item_id=iid)); s.add(CaptureJob(profile_id=1, item_id=iid)); s.commit()
+    capture.run(1, iid, 0)
+    detail = client.get(f'/api/hub/items/{iid}').json()
+    assert detail['body'].startswith('Recovered article text.')
+    with session() as s:
+        job = s.get(CaptureJob, (1, iid))
+        # The failure was resolved, so it is not reported as an error and the job is not retried.
+        assert job.status == 'complete' and job.error == ''
+
+
+def test_capture_rescue_can_be_turned_off(client, monkeypatch):
+    from bt.hub import capture, rescue
+    from bt.hub.models import CaptureJob, ContentItem, ItemState
+    shell = b'<html><body><div id="app"></div></body></html>'
+    monkeypatch.setattr(curation, 'fetch', lambda url, **kw: (shell, url, {'content_type': 'text/html'}))
+    monkeypatch.setattr(ai, 'enabled', lambda: False)
+    monkeypatch.setitem(rescue.TOOLS, 'variants', ('works', lambda ctx: 'Recovered article text. ' * 20))
+    from bt.db import get_settings, save_setting
+    save_setting('local_library', {**get_settings()['local_library'], 'rescue': False})
+    with session() as s:
+        item = ContentItem(url='https://example.org/js2', title='JS page', type='news')
+        s.add(item); s.flush(); iid = item.id
+        s.add(ItemState(profile_id=1, item_id=iid)); s.add(CaptureJob(profile_id=1, item_id=iid)); s.commit()
+    capture.run(1, iid, 0)
+    with session() as s:
+        job = s.get(CaptureJob, (1, iid))
+        assert job.status == 'queued' and 'No readable text' in job.error  # still retrying, not rescued
+
+
+def test_capture_settings_keep_the_rescue_flag(client):
+    """Saving the asset limit must not silently drop the other capture settings."""
+    assert client.put('/api/hub/capture/settings', json={'enabled': True, 'asset_max_mb': 256, 'rescue': False},
+                      headers={'X-Profile-Id': '1'}).status_code == 200
+    got = client.get('/api/hub/capture/status').json()
+    assert got['asset_max_mb'] == 256 and got['rescue'] is False

@@ -93,6 +93,30 @@ cannot close the block. Model output is schema-validated before use, and summari
 citations back to stored items. A model that ignores the guard can still produce a wrong
 summary; it cannot execute anything, because nothing in the pipeline evaluates model output.
 
+## Capture rescue and the browser sandbox
+
+When a page defeats the plain fetch — it renders its article in JavaScript, hides it behind a
+cookie or bot wall, or ships a scan — `hub/rescue.py` tries other ways to get the same text.
+Most tools are ordinary bounded fetches through `curation.fetch`, so they inherit the SSRF rules
+above. Two are different:
+
+- **`render`** runs the page's JavaScript in headless Chromium. That executes untrusted code, so
+  it runs inside **bubblewrap** with the host filesystem read-only, `/data` and `/media` masked
+  by tmpfs, a private PID namespace, and a 45-second wall clock. It refuses to run at all when
+  `bwrap` is missing rather than falling back to a bare browser.
+- **`ocr`** runs `pdftoppm` and `tesseract` on a PDF already fetched through `curation.fetch`,
+  in a temporary directory, bounded to ten pages.
+
+Enabling bubblewrap required `security_opt: [seccomp=unconfined]` in `compose.yaml`, because
+Docker's default seccomp profile blocks the namespace syscalls it needs. That relaxes the
+container's syscall filter for the whole service. The trade is deliberate: the sandbox is what
+keeps a rendered page away from the database, and it cannot start without it.
+
+The model chooses which tool to try next, but it can only name a tool that exists. It never
+supplies a command, a URL to fetch, or a shell string, so a hostile page cannot turn the choice
+into execution. Adding a script runner later would break that property and needs its own
+sandbox review.
+
 ## Known limits
 
 - **No CSRF token.** The session cookie is `samesite=lax`, which blocks cross-site form posts
@@ -104,6 +128,8 @@ summary; it cannot execute anything, because nothing in the pipeline evaluates m
   access, including administrator actions.
 - **Notification webhooks can reach the LAN.** That is the point (Home Assistant), but it means
   an administrator can make the server POST to any internal address.
+- **The container runs with `seccomp=unconfined`** so bubblewrap can create namespaces. The
+  browser sandbox is what protects the data directory, not the container's syscall filter.
 - **No audit log of administrator actions** beyond the agent event stream.
 - **Media files are served by id**, not by signed URL. Anyone with the session can fetch any
   stored video; there is no per-profile media authorization.

@@ -47,6 +47,26 @@ def _call(system: str, user: str, schema: dict, max_tokens=1500, images: list[st
                          images=images, role=role)
 
 
+RESCUE_SCHEMA = {'type': 'object', 'properties': {'tool': {'type': 'string'}}, 'required': ['tool']}
+
+
+def choose_rescue_tool(ctx: dict, reason: str, remaining: list[str], notes: list[str]) -> str:
+    """Pick the next recovery tool for a page the plain fetch could not read. '' means stop."""
+    from .rescue import TOOLS
+    listing = '\n'.join(f'- {n}: {TOOLS[n][0]}' for n in remaining)
+    try:
+        out = _call('You recover the text of a web page that a plain fetch could not read. Choose the single '
+                    'most promising untried tool. Answer with its name only.',
+                    f'<data>\nurl: {_esc(ctx.get("url") or "")}\ntitle: {_esc(ctx.get("title") or "")}\n'
+                    f'failure: {_esc(reason)}\nalready tried: {_esc("; ".join(notes) or "nothing")}\n'
+                    f'available tools:\n{listing}\n</data>',
+                    RESCUE_SCHEMA, max_tokens=100, role='worker')
+    except Exception:  # noqa: BLE001 — no model means the fixed order runs instead
+        return ''
+    pick = str(out.get('tool') or '').strip()
+    return pick if pick in remaining else ''
+
+
 RANK_SCHEMA = {'type': 'object', 'properties': {'scores': {'type': 'array', 'items': {'type': 'object', 'properties': {
     'n': {'type': 'integer'}, 'score': {'type': 'integer', 'minimum': 0, 'maximum': 100}, 'reason': {'type': 'string'}},
     'required': ['n', 'score', 'reason']}}}, 'required': ['scores']}
