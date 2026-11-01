@@ -20,6 +20,7 @@ from .providers import PROVIDERS
 log = logging.getLogger(__name__)
 LEASE_S = 900
 SEVERITY = ['info', 'low', 'medium', 'high', 'critical']
+TYPE_BLOCKED = 'Content type not selected'
 TRACKING = re.compile(r'^(utm_[a-z]+|fbclid|gclid|mc_cid|mc_eid|ref|ref_src)$', re.I)
 
 
@@ -221,7 +222,7 @@ def keyword_score(c: Curator, data: dict) -> tuple[float | None, str]:
             return None, f'Excluded term "{x}"'
     kws = _terms(c.keywords)
     if c.content_types and data.get('type') not in c.content_types:
-        return None, 'Content type not selected'
+        return None, TYPE_BLOCKED
     if not kws:
         score, reason = 50.0, ''
     else:
@@ -395,7 +396,7 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
     # Score: keywords first (cheap), then optional AI over the survivors.
     activity.emit(c, r.id, 'reviewing', narrate.say(c.tone, 'curator.reviewing', seed=str(r.id),
                                                    got=narrate.phrase(len(candidates), 'source item')))
-    scored = []
+    scored, type_blocked = [], 0
     seen_urls = set()
     for src, q, d in candidates:
         try:
@@ -406,10 +407,17 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
             continue
         seen_urls.add(key)
         score, reason = keyword_score(c, d)
+        if score is None:
+            type_blocked += reason == TYPE_BLOCKED
+            continue
         # Feeds are unfiltered firehoses: with keywords set, keep matches only. Query results already match a query.
-        if score is None or (score == 0 and (PROVIDERS[src.provider].mode != 'query' or _feed_needs_keywords(src.provider))):
+        if score == 0 and (PROVIDERS[src.provider].mode != 'query' or _feed_needs_keywords(src.provider)):
             continue
         scored.append([src, q, d, score, reason])
+    # Every item discarded for its type means no attached source can ever feed this curator.
+    if not scored and type_blocked and type_blocked == len(seen_urls):
+        errors.append({'source': 'Content types',
+                       'message': f'No attached source can produce {", ".join(c.content_types)}; add one that can.'})
     with session() as s:
         known = set(s.exec(select(ContentItem.url).join(CuratorDiscovery, CuratorDiscovery.item_id == ContentItem.id)
                                       .where(CuratorDiscovery.curator_id == cid)).all())

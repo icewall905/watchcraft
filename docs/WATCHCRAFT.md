@@ -43,7 +43,8 @@ drafts, cited research reports and briefings. Without AI: keyword relevance, heu
 - `content_fts` (SQLite FTS5) indexes title, summary, extracted text and people; private notes are searched per profile only.
 - Scheduler runs in the API process every 30 s; a conditional `next_run` lease (15 min) prevents overlapping runs across
   processes and recovers after crashes. Each source fails independently; runs record `ok`/`partial`/`failed` with
-  per-source messages that never include URLs or credentials.
+  per-source messages that never include URLs or credentials. A run whose every item was discarded for its
+  content type reports that no attached source can produce the curator's types, instead of a silent `ok`.
 - Meme Radar upkeep (analyze new examples, recount trends) runs at the top of every scheduler tick, before the agent
   slots are checked, so a busy agent cannot starve it. It is throttled to once per 30 minutes and can be forced from
   the page. A meme curator whose Mastodon source is missing or returning nothing probes a short list of public

@@ -444,3 +444,18 @@ def test_autopilot_does_not_override_a_source_the_user_just_added(client, monkey
     monkeypatch.setattr(providers, 'mastodon', lambda *a, **k: pytest.fail('an untried source must not be probed'))
     with session() as s:
         assert memes.ensure_source(s.get(Curator, cur['id'])) == ''
+
+
+def test_a_meme_curator_with_only_wrong_type_sources_says_why(client, monkeypatch):
+    """hackernews and web_search cannot produce memes; a run must not report a silent ok."""
+    from bt.hub import engine, providers
+    src = client.post('/api/hub/sources', json={'provider': 'hackernews', 'url': ''}, headers=H).json()
+    cur = client.post('/api/hub/curators', json={'name': 'Meme Tracker', 'queries': ['memes'],
+                                                 'content_types': ['meme'], 'source_ids': [src['id']]}, headers=H).json()
+    monkeypatch.setattr(providers.PROVIDERS['hackernews'], 'fetch',
+                        lambda url, q='': [{'url': 'https://news.test/a', 'title': 'a story', 'type': 'news'}])
+    # No public instance answers, so the autopilot cannot rescue this run.
+    monkeypatch.setattr(providers, 'mastodon', lambda *a, **k: (_ for _ in ()).throw(ValueError('HTTP 403')))
+    r = engine.run(cur['id'], 'manual')
+    assert r.status == 'partial' and r.new_items == 0
+    assert any('can produce meme' in e['message'] for e in r.errors)
