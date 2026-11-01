@@ -81,6 +81,21 @@ drafts, cited research reports and briefings. Without AI: keyword relevance, heu
   child pauses its curator and briefing schedules while retaining data. Workers also check the profile policy.
 - Local PIN recovery generates a replacement adult PIN when child profiles exist; it never leaves a parent
   profile unprotected. Old PIN sessions are revoked. Without child profiles, the existing remove-PIN behavior remains.
+- The full review — trust boundaries, what each control covers, and the known limits (no CSRF token, no login
+  throttle, open API without `BT_PASSWORD`, media served by id) — is in `docs/SECURITY.md`.
+
+## Verification suites
+
+| Suite | Command | Covers |
+|---|---|---|
+| Backend | `cd backend && .venv/bin/python -m pytest -q` | API contracts, access control, providers, recovery, query budgets |
+| Types | `cd frontend && npx svelte-check` | Svelte + TypeScript |
+| Browser | `cd frontend && npm run build && npm run test:e2e` | TV mode, phone layout, accessibility, PWA install contract, playback, Hub |
+
+`tests/tv.spec.ts` covers the TV drawer and remote-only navigation, `tests/mobile.spec.ts` the phone bottom bar,
+sideways-scroll and tap-target rules, `tests/a11y.spec.ts` accessible names, labels, alt text, tabindex and the
+focus ring, and `tests/pwa.spec.ts` the manifest and icon contract. `tests/test_performance.py` counts SQL
+statements rather than wall-clock time, so it fails on an N+1 regression instead of on a busy machine.
 
 ## Migration and rollback
 

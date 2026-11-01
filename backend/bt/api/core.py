@@ -341,8 +341,12 @@ def reorder_categories(ids: list[int], pid: int = Depends(profile_id), s: Sessio
 # ---------- feeds
 
 def _watched_ids(s: Session, pid: int) -> set[str]:
-    return set(s.exec(select(WatchHistory.video_id).where(WatchHistory.profile_id == pid,
-                                                           WatchHistory.finished == True)).all())  # noqa: E712
+    """Finished videos for one profile. Cached per request: the home feed asks once per playlist."""
+    cache = s.info.setdefault('watched_ids', {})
+    if pid not in cache:
+        cache[pid] = set(s.exec(select(WatchHistory.video_id).where(WatchHistory.profile_id == pid,
+                                                                    WatchHistory.finished == True)).all())  # noqa: E712
+    return cache[pid]
 
 
 @router.get("/feed/category/{cid}")
@@ -350,6 +354,12 @@ def category_feed(cid: int, status: str = "accepted", include_watched: bool = Fa
                   limit: int = 40, pid: int = Depends(profile_id), s: Session = Depends(get_session),
                   after: Optional[str] = None):
     _own_category(s, pid, cid)
+    return _category_items(s, pid, cid, status, include_watched, offset, limit, after)
+
+
+def _category_items(s: Session, pid: int, cid: int, status: str = "accepted", include_watched: bool = False,
+                    offset: int = 0, limit: int = 40, after: Optional[str] = None) -> list[dict]:
+    """The feed body. Callers that already proved ownership skip the extra lookup."""
     q = select(Candidate, Video).join(Video, Video.id == Candidate.video_id).where(Candidate.category_id == cid)
     if status == "pending":
         q = q.where(col(Candidate.status).in_(["found", "enriched"]), Candidate.dismissed == False)  # noqa: E712
@@ -407,8 +417,9 @@ def home_feed(per_row: int = 20, pid: int = Depends(profile_id), s: Session = De
     # Categories
     for c in s.exec(select(Category).where(Category.profile_id == pid, Category.enabled == True)  # noqa: E712
                     .order_by(Category.position, Category.id)).all():
+        # The query above already filtered by profile, so the ownership lookup would be redundant.
         rows.append({"kind": "category", "category_id": c.id, "title": c.name, "emoji": c.emoji, "color": c.color,
-                     "items": category_feed(c.id, "accepted", False, 0, per_row, pid, s)})
+                     "items": _category_items(s, pid, c.id, "accepted", False, 0, per_row)})
     # New from subscriptions
     subs = s.exec(select(ProfileChannel.channel_id).where(ProfileChannel.profile_id == pid,
                                                            ProfileChannel.subscribed == True)).all()  # noqa: E712
