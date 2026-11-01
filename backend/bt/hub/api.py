@@ -81,9 +81,14 @@ _STOPWORDS = frozenset('the a an and or of for to in on with from this that your
 
 
 def _salient(item, c) -> list[str]:
-    """Up to three distinctive title words, skipping words the curator is set up to follow."""
+    """Up to three distinctive title words, skipping words the curator is set up to follow.
+
+    Hyphens split rather than join. A title that is a URL slug would otherwise be learned as
+    one long token like "university-ai-assistant-lec", which matches nothing else it is meant
+    to describe.
+    """
     own = ' '.join([c.name, c.subject, *c.keywords, *c.queries, *c.aliases]).lower()
-    words = re.findall(r"[a-z][a-z'’\-]{2,}", (item.title or '').lower())
+    words = re.findall(r"[a-z][a-z'’]{2,}", (item.title or '').lower().replace('-', ' '))
     return [w for w in dict.fromkeys(words) if w not in _STOPWORDS and w not in own][:3]
 
 

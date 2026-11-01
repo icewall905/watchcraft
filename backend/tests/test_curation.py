@@ -1676,3 +1676,23 @@ def test_profile_taste_learns_from_saves_and_dismissals(client):
     score, reason = engine._taste_nudge({'title': 'Celebrity gossip again'}, 50.0, '', liked, disliked)
     assert score == 45.0 and 'You dismiss' in reason
     assert engine._taste_nudge({'title': 'Rust gossip'}, 50.0, '', liked, disliked) == (50.0, '')
+
+
+def test_curator_feedback_does_not_learn_a_url_slug(client, monkeypatch):
+    """A slug title must not be learned as one hyphenated token that matches nothing else."""
+    from bt.hub.models import ContentItem, CuratorDiscovery
+    monkeypatch.setattr(curation, 'fetch', lambda url, **kwargs: RSS)
+    curator = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}])
+    with session() as s:
+        it = ContentItem(url='https://example.org/slug', type='news',
+                         title='university-ai-assistant-lec-notes', summary='')
+        s.add(it); s.flush()
+        s.add(CuratorDiscovery(curator_id=curator['id'], item_id=it.id, profile_id=1, query='q', score=50))
+        s.commit()
+        iid = it.id
+    r = client.post(f'/api/hub/items/{iid}/curator-feedback',
+                    json={'curator_id': curator['id'], 'verdict': 'less'})
+    assert r.status_code == 200
+    added = r.json()['added']
+    assert all('-' not in w for w in added), added
+    assert 'university' in added and 'assistant' in added, added
