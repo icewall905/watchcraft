@@ -1,6 +1,44 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — reviewed features (`ebc5588`, 2026-11-01)
+
+- Reviewed `db3a28c..8ac84a1`: curated YouTube Shorts swipe feed, capture work in its
+  own bounded lane, and semantic search reporting its comparison capacity. TikTok and
+  other short-video providers are outside this shipped implementation and tracked in
+  the external vault.
+- Review fixes `624727b..ebc5588`: deduplicate Shorts in SQL before paging; exclude
+  loaded IDs so finished clips cannot shift later pages; serialize player attachment
+  and destruction, discard stale async completions, preserve playback retry, advance
+  automatically at page boundaries, and keep delayed feedback tied to its original clip.
+  Busy capture dispatch no longer consumes a retry attempt. Shorts manifests carry the
+  selected profile only to the same-origin manifest endpoint. Fullscreen layout removes
+  the shell sidebar; scoped keyboard-focus rules preserve fixed/absolute control positions.
+- Independent review approved the final changes. Backend: **550 passed, six skipped**.
+  Frontend check/build passed with the existing three CSS warnings. All **12 focused
+  Shorts checks** passed, including actual FFmpeg DASH media with distinct decoded sizes,
+  advancing playback time, manifest recovery, stale load/unmount races, feedback,
+  pagination and phone gestures. Rendered screenshots were inspected. The complete
+  browser suite passed **144 tests**, with one opt-in live-service test skipped, in 6.7 minutes.
+- Fresh backup: `/root/compose/watchcraft-backups/20261101-pre-reviewed-features` with
+  verified online/stopped-service SQLite snapshots, private configuration, source and
+  data extras. Rollback tag: `watchcraft:rollback-20261101-reviewed-features` (previous
+  `3b4a03c`). The final image initialized an isolated backup twice with unchanged profile,
+  settings, video, content, capture and generated-subtitle rows. A network-isolated server
+  passed health and `/shorts` startup checks; copied production feed queries returned
+  12/1/0/0/0/12 unwatched Shorts without duplicates, and semantic capacity reporting passed.
+- Deployment used rsync without deletion and preserved `.env` and `compose.host.yaml`.
+  `DEPLOYED_COMMIT=ebc5588`; API, worker and downloader use image `sha256:28f7cd7d23e8aa31…`
+  with zero restarts. Public/local health passed; database integrity is `ok`; profile/PIN
+  checksums match the stopped-service baseline of six profiles, 7,116 videos, 223 content
+  items and 223 capture jobs. The running image returned 12 eligible Shorts for profile 1;
+  semantic capacity/lane reporting checks passed. Public `/shorts`, `/find` and `/team`
+  returned 200; a saved video returned HTTP 206 and decoded 20 frames.
+- Physical phone/TV acceptance remains deferred by the user and tracked externally.
+  The Shorts feed follows existing playlist duration and Hide Shorts preferences; this
+  release preserves those preferences. Disable Hide Shorts in Settings → Extras and allow
+  short durations in playlists to keep curators collecting new clips.
+
 ## Deployment record — generated subtitles (`3b4a03c`, 2026-11-01)
 
 - Release `8e62bcb..3b4a03c` adds a Subs menu with on-demand local STT generation,
