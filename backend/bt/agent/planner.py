@@ -97,7 +97,7 @@ def _screen(rt: Runtime, cat: Category, entries: list[dict]) -> dict[str, str]:
         return {}
     try:
         out = rt.llm.chat_json(prompts.screen_messages(cat, entries), json_schema=prompts.SCREEN_SCHEMA,
-                               schema_name="screen", max_tokens=1500, temperature=0.1, abort=rt.check)
+                               schema_name="screen", max_tokens=1500, temperature=0.1, abort=rt.check, role="worker")
     except Interrupt:
         raise
     except Exception as e:  # noqa: BLE001

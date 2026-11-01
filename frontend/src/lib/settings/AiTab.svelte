@@ -231,6 +231,11 @@
 			<TextField label="API key" hint="Leave empty for local servers. Stored on the server, never shown again." type="password" bind:value={llm.value.api_key} placeholder="none" group="llm-model" oninput={clearModels} />
 			<TextField label="Embeddings model" hint="Optional. Enables Search by meaning in Find. Leave empty to keep keyword search only." bind:value={llm.value.embed_model} placeholder="text-embedding-3-small" group="llm-model" />
 		</div>
+		<div class="grid">
+			<TextField label="Worker model" hint="Optional cheap model for screening, summaries and imports. The model above keeps judging, planning and reports. Empty = use the model above for everything." bind:value={llm.value.worker_model} placeholder="same as above" group="llm-worker" />
+			<TextField label="Worker server" hint="Optional. Point the worker at a different endpoint, for example a small local model." bind:value={llm.value.worker_base_url} placeholder="same as above" group="llm-worker" />
+			<TextField label="Worker API key" hint="Only needed when the worker server differs. Shown as ******** once saved." type="password" bind:value={llm.value.worker_api_key} placeholder="none" group="llm-worker" />
+		</div>
 		<div class="test-row">
 			<button class="btn" disabled={modelsLoading || !llm.value.base_url} use:focusable={{ group: 'llm-test', id: 'llm-model-list', onSelect: loadModels }}>
 				{modelsLoading ? 'Loading models…' : 'Load available models'}

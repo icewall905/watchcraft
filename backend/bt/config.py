@@ -59,6 +59,10 @@ DEFAULT_SETTINGS: dict = {
         "vision": True,
         "temperature": 0.4,
         "embed_model": os.environ.get("BT_LLM_EMBED_MODEL", ""),  # empty = semantic search off
+        # Optional cheap model for grunt work (screening, summaries, imports). Empty = use the model above.
+        "worker_model": os.environ.get("BT_LLM_WORKER_MODEL", ""),
+        "worker_base_url": os.environ.get("BT_LLM_WORKER_BASE_URL", ""),
+        "worker_api_key": os.environ.get("BT_LLM_WORKER_API_KEY", ""),
     },
     "throttle": {
         "min_delay_s": 20,

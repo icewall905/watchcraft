@@ -102,9 +102,23 @@ def parse_json(text: str) -> dict:
     raise LlmParseError(f"no JSON object in model output: {t[:200]!r}")
 
 
-def _cfg() -> dict:
+ROLES = ("judge", "worker")
+
+
+def _cfg(role: str = "judge") -> dict:
+    """Settings for one role.
+
+    The judge does the thinking: verdicts, planning, review, reports. The worker does the grunt
+    work: screening, summaries, imports. A worker that is not configured falls back to the judge's
+    model, endpoint and key, so a single-model setup behaves exactly as before.
+    """
     from .db import get_settings
-    return get_settings()["llm"]
+    cfg = dict(get_settings()["llm"])
+    if role == "worker":
+        cfg["model"] = (cfg.get("worker_model") or "").strip() or cfg["model"]
+        cfg["base_url"] = (cfg.get("worker_base_url") or "").strip() or cfg["base_url"]
+        cfg["api_key"] = (cfg.get("worker_api_key") or "").strip() or cfg.get("api_key", "")
+    return cfg
 
 
 def _with_images(messages: list[dict], images: list[str] | None) -> list[dict]:
@@ -229,10 +243,10 @@ def prepare_chat_body(base: str, body: dict) -> dict:
 
 def _request(messages, json_schema, max_tokens, images, temperature, schema_name, abort=None,
              no_think: bool = False, timeout_s: float | None = None,
-             reasoning_effort: str | None = None) -> str:
+             reasoning_effort: str | None = None, role: str = "judge") -> str:
     if abort:
         abort()
-    cfg = dict(_cfg())
+    cfg = _cfg(role)
     if timeout_s is not None:
         cfg["timeout_s"] = timeout_s
     body: dict = {"model": cfg["model"], "messages": _with_images(messages, images), "max_tokens": max_tokens,
@@ -315,13 +329,13 @@ def _loop(fn, attempts: int, max_tokens: int, abort):
 
 def chat(messages: list[dict], json_schema: dict | None = None, max_tokens: int = 1024,
          images: list[str] | None = None, temperature: float | None = None, schema_name: str = "result",
-         retries: int | None = None, abort: Callable[[], None] | None = None) -> str:
+         retries: int | None = None, abort: Callable[[], None] | None = None, role: str = "judge") -> str:
     """Return the assistant text (think blocks stripped). Retries on transport/HTTP errors.
 
     `abort()` is called before every attempt, during retry sleeps and while waiting for the response;
     any exception it raises propagates immediately (used for pause/stop)."""
     return _loop(lambda mt, nt: strip_think(_request(messages, json_schema, mt, images, temperature, schema_name,
-                                                     abort, nt)),
+                                                     abort, nt, role=role)),
                  _attempts(retries), max_tokens, abort)
 
 
@@ -329,7 +343,7 @@ def chat_json(messages: list[dict], json_schema: dict | None = None, max_tokens:
               images: list[str] | None = None, temperature: float | None = None, schema_name: str = "result",
               retries: int | None = None, abort: Callable[[], None] | None = None,
               timeout_s: float | None = None, no_think: bool = False,
-              reasoning_effort: str | None = None) -> dict:
+              reasoning_effort: str | None = None, role: str = "judge") -> dict:
     """Like chat() but returns a parsed dict; parse failures count as a failed attempt."""
     msgs = messages
     if json_schema is not None:
@@ -342,5 +356,6 @@ def chat_json(messages: list[dict], json_schema: dict | None = None, max_tokens:
         else:
             msgs.insert(0, {"role": "system", "content": hint})
     return _loop(lambda mt, nt: parse_json(_request(msgs, json_schema, mt, images, temperature, schema_name,
-                                                    abort, no_think or (nt and reasoning_effort is None), timeout_s, reasoning_effort)),
+                                                    abort, no_think or (nt and reasoning_effort is None), timeout_s,
+                                                    reasoning_effort, role=role)),
                  _attempts(retries), max_tokens, abort)

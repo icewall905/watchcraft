@@ -41,6 +41,13 @@ whether its results are worth the run.
 AI (optional, uses the existing OpenAI-compatible endpoint): relevance scoring with evidence-based reasons, curator
 drafts, cited research reports and briefings. Without AI: keyword relevance, heuristic drafts, grouped digests.
 
+Two model roles share one configuration. The **judge** model does the thinking — verdicts, planning, review, reports,
+briefings, meme explanations. An optional **worker** model does the grunt work — screening search results, summarizing
+captured text, suggesting playlist keywords — and may point at its own endpoint and key, so a small local model can
+absorb the volume while a big model handles judgement. An unset worker falls back to the judge's model, endpoint and
+key, so a single-model setup behaves exactly as before. Settings → AI configures both, and the existing "Context by
+model" table shows what each one actually cost.
+
 ## Architecture
 
 - `backend/bt/hub/`: `models` (tables), `migrate` (versioned migrations), `providers` (registry/adapters),
