@@ -111,8 +111,8 @@
 				{@const rest = g.items.length - 1}
 				<section class="story" aria-label={g.title}>
 					<div class="story-head">
-						<h2>{g.title}</h2>
-						<span class="muted small">{g.items.length} article{g.items.length === 1 ? '' : 's'} · {ago(g.latest)}</span>
+						<h2><a href={`/item/${g.items[0].id}`} use:focusable>{g.title}</a></h2>
+						<span class="story-meta">{g.items.length} article{g.items.length === 1 ? '' : 's'} · {ago(g.latest)}</span>
 					</div>
 					<ContentCard bind:item={groups[idx].items[0]} layout="row" />
 					{#if rest > 0}
@@ -145,10 +145,16 @@
 	.sm { min-height: 2.75rem; padding: .2rem .6rem; font-size: .8rem; }
 	.follow { flex: 1; min-width: 14rem; max-width: 26rem; }
 	.pub { width: auto; min-width: 11rem; background: rgba(10, 8, 25, .85); }
-	.stories { display: grid; gap: 1.2rem; max-width: 62rem; }
-	.story { display: grid; gap: .3rem; }
+	.stories { display: grid; gap: 1rem; max-width: 62rem; }
+	.story { display: grid; gap: .55rem; padding: 1rem 1.1rem 1.1rem; border: 1px solid var(--line);
+		border-radius: var(--r-lg); background: var(--surface); transition: border-color .2s; }
+	.story:hover { border-color: var(--line-strong); }
 	.story-head { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; }
-	.story-head h2 { font-size: 1.15rem; margin: 0; }
+	.story-head h2 { font-size: 1.2rem; line-height: 1.25; margin: 0; letter-spacing: -.01em; }
+	.story-head h2 a { color: var(--text); text-decoration: none; }
+	.story-head h2 a:hover { color: var(--accent-2); }
+	.story-meta { flex: none; padding: .15rem .55rem; border-radius: var(--r-pill); background: var(--bg-2);
+		color: var(--muted); font-size: .75rem; white-space: nowrap; }
 	.more { display: grid; gap: .5rem; padding-left: 1.2rem; border-left: 2px solid var(--line-strong); }
 	.sk { height: 9rem; }
 	.err { color: var(--bad); font-size: .85rem; }

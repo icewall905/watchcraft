@@ -1696,3 +1696,39 @@ def test_curator_feedback_does_not_learn_a_url_slug(client, monkeypatch):
     added = r.json()['added']
     assert all('-' not in w for w in added), added
     assert 'university' in added and 'assistant' in added, added
+
+
+def test_feed_images_come_from_the_body_html_and_media_groups():
+    """Most news feeds carry the picture only inside the description HTML, not in a media tag."""
+    rss = b'''<rss xmlns:media="http://search.yahoo.com/mrss/"><channel><title>Example</title>
+    <item><title>Body image</title><link>https://example.org/a</link>
+      <description>&lt;p&gt;Text&lt;/p&gt;&lt;img src="/img/hero.jpg"&gt;</description></item>
+    <item><title>Tracking pixel</title><link>https://example.org/b</link>
+      <description>&lt;img src="https://t.example/p.gif" width="1" height="1"&gt;</description></item>
+    <item><title>Media group</title><link>https://example.org/c</link>
+      <media:group><media:content url="https://cdn.example.org/c.jpg" type="image/jpeg"/></media:group></item>
+    <item><title>Video content</title><link>https://example.org/d</link>
+      <media:content url="https://cdn.example.org/d.mp4" type="video/mp4"/></item>
+    <item><title>Protocol relative</title><link>https://example.org/e</link>
+      <description>&lt;img src="//cdn.example.org/e.jpg"&gt;</description></item>
+    </channel></rss>'''
+    got = {i['title']: i['image'] for i in providers.parse_feed(rss, 'https://example.org/feed.xml')}
+    assert got['Body image'] == 'https://example.org/img/hero.jpg'  # relative to the feed
+    assert got['Tracking pixel'] == ''  # a 1x1 pixel is not a picture
+    assert got['Media group'] == 'https://cdn.example.org/c.jpg'
+    assert got['Video content'] == ''  # a video is not an image
+    assert got['Protocol relative'] == 'https://cdn.example.org/e.jpg'
+
+
+def test_json_feed_images_fall_back_to_banner_and_body():
+    feed = b'''{"version": "https://jsonfeed.org/version/1.1", "title": "Example", "items": [
+      {"id": "1", "url": "https://example.org/1", "content_text": "one", "image": "https://cdn.example.org/1.jpg"},
+      {"id": "2", "url": "https://example.org/2", "content_text": "two", "banner_image": "https://cdn.example.org/2.jpg"},
+      {"id": "3", "url": "https://example.org/3", "content_html": "<p>three</p><img src=\\"https://cdn.example.org/3.jpg\\">"}
+    ]}'''
+    got = {i['url']: i['image'] for i in providers.parse_feed(feed, 'https://example.org/feed.json')}
+    assert got['https://example.org/1'] == 'https://cdn.example.org/1.jpg'
+    assert got['https://example.org/2'] == 'https://cdn.example.org/2.jpg'
+    assert got['https://example.org/3'] == 'https://cdn.example.org/3.jpg'
+
+

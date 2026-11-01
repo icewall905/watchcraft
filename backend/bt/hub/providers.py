@@ -70,6 +70,41 @@ def _local(tag: str) -> str:
     return tag.split('}')[-1]
 
 
+_IMG_TAG = re.compile(r'<img\b([^>]*)>', re.I)
+_IMG_SRC = re.compile(r'\bsrc\s*=\s*["\']([^"\']+)["\']', re.I)
+_TINY_IMG = re.compile(r'\b(?:width|height)\s*=\s*["\']?1["\']?(?!\d)', re.I)
+
+
+def _html_image(html: str, base: str) -> str:
+    """First real <img> in a feed's HTML body. Most news feeds carry the picture only here."""
+    for tag in _IMG_TAG.finditer(html or ''):
+        attrs = tag.group(1)
+        if _TINY_IMG.search(attrs):
+            continue  # a tracking pixel, not a picture
+        src = _IMG_SRC.search(attrs)
+        if not src:
+            continue
+        ref = src.group(1).strip()
+        if ref.startswith('//'):
+            ref = 'https:' + ref
+        image = safe_image(urljoin(base, ref))
+        if image:
+            return image
+    return ''
+
+
+def _media_image(el) -> str:
+    """A media:thumbnail or media:content element that actually points at an image."""
+    url = el.get('url', '')
+    if not url.startswith('https://'):
+        return ''
+    kind = (el.get('type') or '').lower()
+    medium = (el.get('medium') or '').lower()
+    if (kind and not kind.startswith('image/')) or (medium and medium != 'image'):
+        return ''
+    return safe_image(url)
+
+
 def parse_feed(data: bytes, url: str) -> list[dict]:
     if data.lstrip().startswith(b'{'):
         feed = json.loads(data)
@@ -90,9 +125,14 @@ def parse_feed(data: bytes, url: str) -> list[dict]:
             if not isinstance(link, str) or not title or not content: continue
             author = item.get('authors') or feed.get('authors') or []
             if not isinstance(author, list): author = []
+            image = safe_image(item['image']) if isinstance(item.get('image'), str) else ''
+            if not image and isinstance(item.get('banner_image'), str):
+                image = safe_image(item['banner_image'])
+            if not image:
+                image = _html_image(html_content, url)
             out.append({'url': urljoin(url, link), 'title': title, 'type': 'news', 'provider': 'rss',
                         'publisher': clean(feed['title'], 200), 'summary': clean(item.get('summary') or content, 1000),
-                        'published_at': ts(item.get('date_published')), 'image': safe_image(item['image']) if isinstance(item.get('image'), str) else '',
+                        'published_at': ts(item.get('date_published')), 'image': image,
                         'author': ', '.join(clean(a.get('name'), 100) for a in author[:3] if isinstance(a, dict) and a.get('name')),
                         'external_id': clean(item['id'], 500), 'meta': {'updated_at': ts(item.get('date_modified'))}})
         return out
@@ -113,16 +153,23 @@ def parse_feed(data: bytes, url: str) -> list[dict]:
             tag, text = _local(c.tag), ''.join(c.itertext())
             if tag == 'title': f['title'] = clean(text, 500)
             elif tag == 'link' and c.get('rel', 'alternate') == 'alternate': f['url'] = (c.get('href') or c.text or '').strip()
-            elif tag in ('thumbnail', 'content') and c.get('url', '').startswith('https://'): f['image'] = safe_image(c.get('url'))
-            elif tag in ('description', 'summary', 'content') and not f.get('summary'): f['summary'] = strip_tags(text)
+            elif tag in ('thumbnail', 'content') and (media := _media_image(c)):
+                if not f.get('image'): f['image'] = media
+            elif tag in ('description', 'summary', 'content'):
+                if not f.get('summary'): f['summary'] = strip_tags(text)
+                if not f.get('image'): f['image'] = _html_image(text, url)
             elif tag in ('pubDate', 'published', 'date') and not f.get('published_at'): f['published_at'] = ts(text)
             elif tag == 'updated': f['meta']['updated_at'] = ts(text)
             elif tag in ('author', 'creator'): f['author'] = clean(text, 200)
             elif tag == 'videoId': f['meta']['video_id'] = text.strip()
             elif tag == 'group':
                 for g in c.iter():
-                    if _local(g.tag) == 'thumbnail': f['image'] = safe_image(g.get('url', ''))
-                    if _local(g.tag) == 'description' and not f.get('summary'): f['summary'] = clean(''.join(g.itertext()), 1000)
+                    if _local(g.tag) in ('thumbnail', 'content') and (media := _media_image(g)):
+                        if not f.get('image'): f['image'] = media
+                    if _local(g.tag) == 'description':
+                        inner = ''.join(g.itertext())
+                        if not f.get('summary'): f['summary'] = clean(inner, 1000)
+                        if not f.get('image'): f['image'] = _html_image(inner, url)
             elif tag == 'enclosure' and (c.get('type') or '').startswith('image/'): f['image'] = safe_image(c.get('url', ''))
         if not f.get('title') or not f.get('url'):
             continue

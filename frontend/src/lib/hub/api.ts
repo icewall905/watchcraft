@@ -55,7 +55,8 @@ export const hub = {
 	scoutPlanDelete: (id: number) => send<{ ok: boolean }>('DELETE', `/scout/plans/${id}`),
 	scoutRuns: () => get<ScoutRun[]>('/scout/runs'),
 	scoutRun: (query: string) => send<ScoutRun>('POST', '/scout/runs', { query }),
-	scoutAccept: (id: number, index: number, curator_id: number | null) => send<Source>('POST', `/scout/runs/${id}/accept`, { index, curator_id }),
+	scoutAccept: (id: number, index: number, curator_id: number | null, curator_name?: string) =>
+		send<Source>('POST', `/scout/runs/${id}/accept`, { index, curator_id, curator_name }),
 	scoutDelete: (id: number) => send<{ ok: boolean }>('DELETE', `/scout/runs/${id}`),
 	sources: () => get<Source[]>('/sources'),
 	createSource: (body: Partial<Source>) => send<Source>('POST', '/sources', body),

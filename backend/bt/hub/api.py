@@ -1,4 +1,5 @@
 """/api/hub — WatchCraft Hub endpoints. Contract: docs/HUB.md. All data is profile-scoped."""
+import hashlib
 import json
 import re
 import time
@@ -13,6 +14,7 @@ from sqlmodel import Session, delete, select
 from .. import curation
 from ..access import hub_allowed, require_admin, require_hub
 from ..api.core import profile_id
+from ..config import DATA_DIR
 from ..db import get_settings, save_setting, session
 from ..models import AgentEvent, Download
 from . import activity, ai, engine, memes, polling, repair, scout, slots, watchers
@@ -324,6 +326,81 @@ def retry_failed_captures(pid: int = Depends(profile_id)):
                 queued += 1
         s.commit()
         return {'queued': queued}
+
+
+IMG_CACHE = DATA_DIR / 'imgcache'
+IMG_MAX_BYTES = 5_000_000
+IMG_TYPES = ('image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif')
+IMG_CACHE_FILES = 2000
+_img_pruned_at = [0.0]
+
+
+def _image_mime(data: bytes) -> str:
+    """Trust the bytes, not the Content-Type header."""
+    if data.startswith(b'\xff\xd8\xff'):
+        return 'image/jpeg'
+    if data.startswith(b'\x89PNG\r\n\x1a\n'):
+        return 'image/png'
+    if data.startswith((b'GIF87a', b'GIF89a')):
+        return 'image/gif'
+    if data.startswith(b'RIFF') and data[8:12] == b'WEBP':
+        return 'image/webp'
+    if data[4:12] in (b'ftypavif', b'ftypavis'):
+        return 'image/avif'
+    return ''
+
+
+def _prune_img_cache(now: float) -> None:
+    """Keep the cache bounded; a household sees thousands of pictures over a year."""
+    if now - _img_pruned_at[0] < 3600:
+        return
+    _img_pruned_at[0] = now
+    files = [p for p in IMG_CACHE.rglob('*') if p.is_file()]
+    if len(files) <= IMG_CACHE_FILES:
+        return
+    files.sort(key=lambda p: p.stat().st_mtime)
+    for old in files[:len(files) - IMG_CACHE_FILES]:
+        old.unlink(missing_ok=True)
+
+
+@router.get('/items/{iid}/image')
+def item_image(iid: int, pid: int = Depends(profile_id)):
+    """Serve the publisher's picture through us, so the household's address never reaches them.
+
+    Only an item's own stored image is served: this is not a general URL fetcher. Cached on
+    disk by URL, because a feed re-renders the same pictures on every visit.
+    """
+    with session() as s:
+        item = s.get(ContentItem, iid)
+        if not item or not item.image or not can_see(s, pid, iid):
+            raise HTTPException(404, 'No picture for this item.')
+        url = item.image
+    try:
+        url = curation.canonical(url)
+    except ValueError:
+        raise HTTPException(404, 'No picture for this item.')
+    key = hashlib.sha256(url.encode()).hexdigest()
+    path = IMG_CACHE / key[:2] / key
+    if path.is_file():
+        data = path.read_bytes()
+        mime = _image_mime(data)
+        if mime:
+            return Response(data, media_type=mime, headers={'Cache-Control': 'private, max-age=86400'})
+        path.unlink(missing_ok=True)
+    try:
+        data, _, _ = curation.fetch(url, kinds=IMG_TYPES, limit=IMG_MAX_BYTES, with_metadata=True)
+    except Exception:  # noqa: BLE001 — a missing picture is not an error worth surfacing
+        raise HTTPException(404, 'That picture could not be fetched.')
+    mime = _image_mime(data)
+    if not mime:
+        raise HTTPException(404, 'That picture is not a supported image.')
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        _prune_img_cache(time.time())
+    except OSError:
+        pass  # a full disk must not break the card
+    return Response(data, media_type=mime, headers={'Cache-Control': 'private, max-age=86400'})
 
 
 @router.api_route('/items/{iid}/assets/{kind}', methods=['GET', 'HEAD'])

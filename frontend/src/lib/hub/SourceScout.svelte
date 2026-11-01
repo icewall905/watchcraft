@@ -15,6 +15,7 @@
 	let curators = $state<Curator[]>([]);
 	let selected = $state<number | null>(null);
 	let curator = $state('');
+	let newCurator = $state('');
 	let interval = $state('0');
 	let plans = $state<ScoutPlan[]>([]);
 	let busy = $state(false);
@@ -60,9 +61,14 @@
 		if (!run || accepting !== null) return;
 		accepting = index; error = '';
 		try {
-			await hub.scoutAccept(run.id, index, curator ? Number(curator) : null);
+			const creating = curator === 'new';
+			if (creating && !newCurator.trim()) { error = 'Give the new curator a name.'; return; }
+			await hub.scoutAccept(run.id, index, creating || !curator ? null : Number(curator),
+				creating ? newCurator.trim() : undefined);
 			await onAdded();
-			toast.success(curator ? 'Source added to your curator' : 'Source added');
+			toast.success(creating ? `Source added, and ${newCurator.trim()} will follow it`
+				: curator ? 'Source added to your curator' : 'Source added');
+			if (creating) newCurator = '';
 		} catch (e) { error = errMsg(e); } finally { accepting = null; }
 	}
 	async function remove(id: number) {
@@ -120,7 +126,10 @@
 			{#if run.suggestions.length}
 				<div class="assign">
 					<Select label="Add to curator (optional)" bind:value={curator} group="scout-assign"
-						options={[{ value: '', label: 'Source library only' }, ...curators.map(c => ({ value: String(c.id), label: c.name }))]} />
+						options={[{ value: '', label: 'Source library only' }, { value: 'new', label: '＋ New curator…' },
+							...curators.map(c => ({ value: String(c.id), label: c.name }))]} />
+					{#if curator === 'new'}<TextField label="New curator name" bind:value={newCurator}
+						placeholder="e.g. Local news" group="scout-assign" />{/if}
 				</div>
 				<div class="results">
 					{#each run.suggestions as suggestion, index}

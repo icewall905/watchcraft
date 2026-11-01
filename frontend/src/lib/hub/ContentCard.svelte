@@ -12,6 +12,8 @@
 	} = $props();
 
 	let why = $state(false);
+	// A picture that will not load leaves no empty frame behind.
+	let noPicture = $state(false);
 	let busy = $state(false);
 	let failed = $state('');
 
@@ -44,9 +46,9 @@
 </script>
 
 <article class="cc {layout}" class:unread class:dim={item.state.dismissed} data-type={item.type}>
-	{#if item.local_image && layout !== 'compact'}
+	{#if (item.local_image || (item.image && !noPicture)) && layout !== 'compact'}
 		<a class="thumb" href={href} tabindex="-1" aria-hidden="true" onclick={opened}>
-			<LocalImage id={item.id} />
+			<LocalImage id={item.id} remote={!item.local_image} onfail={() => (noPicture = true)} />
 			{#if item.type === 'video' && dur}<span class="dur">{dur}</span>{/if}
 		</a>
 	{/if}
