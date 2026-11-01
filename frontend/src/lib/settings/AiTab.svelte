@@ -225,17 +225,26 @@
 <Section title="AI model" intro="WatchCraft talks to any OpenAI-compatible server: llama.cpp, Ollama, vLLM, LM Studio or a hosted API. The model reads transcripts and comments, so a long context window helps.">
 	<div class="conn panel">
 		<Select label="Provider" hint="Choose a service or keep your own server." bind:value={provider} options={LLM_PROVIDERS} onchange={pickLlmProvider} group="llm-url" />
-		<TextField label="Server URL" hint="For local servers, use an address reachable from the WatchCraft server." bind:value={llm.value.base_url} placeholder="http://10.0.10.23:8080/v1" type="url" group="llm-url" id="llm-url" oninput={urlChanged} />
+		<p class="small muted">Judge: verdicts, planning, review and reports.</p>
+		<TextField label="Judge server" hint="For local servers, use an address reachable from the WatchCraft server." bind:value={llm.value.base_url} placeholder="http://10.0.10.23:8080/v1" type="url" group="llm-url" id="llm-url" oninput={urlChanged} />
 		<div class="two">
-			<TextField label="Model" hint="Load the available models below, or type a model name." bind:value={llm.value.model} placeholder="currentmodel" group="llm-model" />
-			<TextField label="API key" hint="Leave empty for local servers. Stored on the server, never shown again." type="password" bind:value={llm.value.api_key} placeholder="none" group="llm-model" oninput={clearModels} />
-			<TextField label="Embeddings model" hint="Optional. Enables Search by meaning in Find. Leave empty to keep keyword search only." bind:value={llm.value.embed_model} placeholder="text-embedding-3-small" group="llm-model" />
+			<TextField label="Judge model" hint="Load the available models below, or type a model name." bind:value={llm.value.model} placeholder="currentmodel" group="llm-model" />
+			<TextField label="Judge API key" hint="Leave empty for local servers. Stored on the server, never shown again." type="password" bind:value={llm.value.api_key} placeholder="none" group="llm-model" oninput={clearModels} />
 		</div>
-		<div class="grid">
-			<TextField label="Worker model" hint="Optional cheap model for screening, summaries and imports. The model above keeps judging, planning and reports. Empty = use the model above for everything." bind:value={llm.value.worker_model} placeholder="same as above" group="llm-worker" />
-			<TextField label="Worker server" hint="Optional. Point the worker at a different endpoint, for example a small local model." bind:value={llm.value.worker_base_url} placeholder="same as above" group="llm-worker" />
-			<TextField label="Worker API key" hint="Only needed when the worker server differs. Shown as ******** once saved." type="password" bind:value={llm.value.worker_api_key} placeholder="none" group="llm-worker" />
-		</div>
+		{#if !connectionOnly}
+			<p class="small muted">Worker: optional cheap model for screening, summaries and imports. Empty fields use the judge's.</p>
+			<div class="grid">
+				<TextField label="Worker server" hint="For example a small local model." bind:value={llm.value.worker_base_url} placeholder="same as judge" type="url" group="llm-worker" />
+				<TextField label="Worker model" hint="Empty = the judge model does everything." bind:value={llm.value.worker_model} placeholder="same as judge" group="llm-worker" />
+				<TextField label="Worker API key" hint="Only needed when the worker server differs. Shown as ******** once saved." type="password" bind:value={llm.value.worker_api_key} placeholder="none" group="llm-worker" />
+			</div>
+			<p class="small muted">Embeddings: optional. Enables Search by meaning in Find; without a model only keyword search runs.</p>
+			<div class="grid">
+				<TextField label="Embeddings server" hint="Any OpenAI-compatible /v1/embeddings endpoint." bind:value={llm.value.embed_base_url} placeholder="same as judge" type="url" group="llm-embed" />
+				<TextField label="Embeddings model" hint="Changing it re-indexes everything." bind:value={llm.value.embed_model} placeholder="text-embedding-3-small" group="llm-embed" />
+				<TextField label="Embeddings API key" hint="Only needed when the embeddings server differs. Shown as ******** once saved." type="password" bind:value={llm.value.embed_api_key} placeholder="none" group="llm-embed" />
+			</div>
+		{/if}
 		<div class="test-row">
 			<button class="btn" disabled={modelsLoading || !llm.value.base_url} use:focusable={{ group: 'llm-test', id: 'llm-model-list', onSelect: loadModels }}>
 				{modelsLoading ? 'Loading models…' : 'Load available models'}
@@ -398,6 +407,12 @@
 	.two {
 		display: grid;
 		grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+		gap: 0.9rem;
+	}
+	/* The worker and embeddings groups: three fields that share a row when there is room. */
+	.grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
 		gap: 0.9rem;
 	}
 	/* Steppers use Left/Right to change values, so they sit in one column: Up/Down reaches every one. */

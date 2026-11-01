@@ -816,8 +816,9 @@ def _redact(st: dict) -> dict:
         st["search"]["brave_api_key"] = "********"
     if st["llm"].get("api_key"):
         st["llm"]["api_key"] = "********"
-    if st["llm"].get("worker_api_key"):
-        st["llm"]["worker_api_key"] = "********"
+    for k in ("worker_api_key", "embed_api_key"):
+        if st["llm"].get(k):
+            st["llm"][k] = "********"
     if st["notify"].get("email_password"):
         st["notify"]["email_password"] = "********"
     if st["throttle"].get("proxy") and "@" in st["throttle"]["proxy"]:
@@ -859,11 +860,15 @@ def write_settings(key: str, value: dict, s: Session = Depends(get_session)):
         if value.get("base_url", cur["base_url"]).strip().rstrip("/") != cur["base_url"].strip().rstrip("/"):
             raise HTTPException(400, "Enter the API key for the new server")
         value["api_key"] = cur.get("api_key", "")
-    if key == "llm" and value.get("worker_api_key") == "********":
-        if value.get("worker_base_url", cur.get("worker_base_url", "")).strip().rstrip("/") != \
-                cur.get("worker_base_url", "").strip().rstrip("/"):
-            raise HTTPException(400, "Enter the API key for the new worker server")
-        value["worker_api_key"] = cur.get("worker_api_key", "")
+    for role, label in (("worker", "worker"), ("embed", "embeddings")) if key == "llm" else ():
+        if value.get(f"{role}_api_key") == "********":
+            if value.get(f"{role}_base_url", cur.get(f"{role}_base_url", "")).strip().rstrip("/") != \
+                    cur.get(f"{role}_base_url", "").strip().rstrip("/"):
+                raise HTTPException(400, f"Enter the API key for the new {label} server")
+            value[f"{role}_api_key"] = cur.get(f"{role}_api_key", "")
+        url = str(value.get(f"{role}_base_url", cur.get(f"{role}_base_url", "")) or "").strip()
+        if url and not url.startswith(("http://", "https://")):
+            raise HTTPException(400, f"The {label} server must start with http:// or https://")
     if key == "search":
         if value.get("brave_api_key") == "********":
             value["brave_api_key"] = cur.get("brave_api_key", "")

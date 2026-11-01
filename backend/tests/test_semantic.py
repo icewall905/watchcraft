@@ -106,3 +106,44 @@ def test_an_unreachable_endpoint_reports_a_reason(client, monkeypatch):
         semantic.embed(['x'])
     _item('https://example.org/pending', 'needs a vector')
     assert 'unreachable' in semantic.sweep(throttled=False)['error']
+
+
+def test_embeddings_use_their_own_server_and_key_or_fall_back_to_the_judge(client):
+    base = {**db.get_settings()['llm'], 'base_url': 'http://judge:8080/v1/', 'api_key': 'judge-key', 'embed_model': 'e'}
+    save_setting('llm', {**base, 'embed_base_url': '', 'embed_api_key': ''})
+    cfg = semantic.config()
+    assert cfg['base_url'] == 'http://judge:8080/v1' and cfg['api_key'] == 'judge-key'
+    save_setting('llm', {**base, 'embed_base_url': 'http://embed:8082/v1/', 'embed_api_key': ''})
+    cfg = semantic.config()
+    # A separate server never receives the judge's key.
+    assert cfg['base_url'] == 'http://embed:8082/v1' and cfg['api_key'] == ''
+    save_setting('llm', {**base, 'embed_base_url': 'http://embed:8082/v1', 'embed_api_key': 'embed-key'})
+    assert semantic.config()['api_key'] == 'embed-key'
+
+
+def test_the_embeddings_key_is_redacted_and_survives_a_save(client):
+    assert client.put('/api/settings/llm', json={'embed_model': 'e', 'embed_api_key': 'embed-key',
+                                                 'embed_base_url': 'http://embed:8082/v1'}, headers=H).status_code == 200
+    assert client.get('/api/settings').json()['llm']['embed_api_key'] == '********'
+    assert client.put('/api/settings/llm', json={'embed_api_key': '********'}, headers=H).status_code == 200
+    with session() as s:
+        assert db.get_settings(s)['llm']['embed_api_key'] == 'embed-key'
+    assert client.put('/api/settings/llm', json={'embed_api_key': '********',
+                                                 'embed_base_url': 'http://other:9000/v1'}, headers=H).status_code == 400
+
+
+def test_an_embeddings_key_on_the_judge_server_is_used(client):
+    """A key without a separate server means "same server, different credential"."""
+    base = {**db.get_settings()['llm'], 'base_url': 'http://judge:8080/v1', 'api_key': 'judge-key',
+            'embed_model': 'e', 'embed_base_url': ''}
+    save_setting('llm', {**base, 'embed_api_key': 'embed-key'})
+    cfg = semantic.config()
+    assert cfg['base_url'] == 'http://judge:8080/v1' and cfg['api_key'] == 'embed-key'
+    save_setting('llm', {**base, 'embed_api_key': ''})
+    assert semantic.config()['api_key'] == 'judge-key'
+
+
+def test_a_bad_server_url_is_refused_rather_than_saved(client):
+    assert client.put('/api/settings/llm', json={'embed_base_url': 'embed:8082/v1'}, headers=H).status_code == 400
+    assert client.put('/api/settings/llm', json={'worker_base_url': 'ftp://nope'}, headers=H).status_code == 400
+    assert client.put('/api/settings/llm', json={'embed_base_url': 'http://embed:8082/v1'}, headers=H).status_code == 200

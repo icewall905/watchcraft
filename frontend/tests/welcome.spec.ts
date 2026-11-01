@@ -36,8 +36,8 @@ test('connection failure keeps the guide open; successful test saves AI and a fi
 	await page.route('**/api/agent/llm-test', route => route.fulfill({ json: ok ? { ok: true, reply: 'pong', models: ['home-model'] } : { ok: false, error: 'Model server is not reachable' } }));
 	await page.goto('/welcome');
 	await page.getByRole('button', { name: 'Save profile and continue' }).click();
-	await page.getByLabel('Server URL').fill('http://host.docker.internal:8080/v1');
-	await page.getByLabel('Model', { exact: true }).fill('home-model');
+	await page.getByLabel('Judge server').fill('http://host.docker.internal:8080/v1');
+	await page.getByLabel('Judge model', { exact: true }).fill('home-model');
 	await page.getByRole('button', { name: 'Test, save and continue' }).click();
 	await expect(page.getByText('Could not reach the model')).toBeVisible();
 	expect((await (await request.get('/api/settings')).json()).agent.enabled).toBe(false);

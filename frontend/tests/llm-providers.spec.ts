@@ -10,9 +10,9 @@ test('choose a provider, discover models with its key, and keep the custom conne
 	});
 	await page.goto('/settings?tab=ai');
 	const provider = page.getByRole('button', { name: /^Provider/ });
-	const server = page.getByLabel('Server URL');
-	const key = page.getByLabel('API key', { exact: true });
-	const model = page.getByLabel('Model', { exact: true });
+	const server = page.getByLabel('Judge server');
+	const key = page.getByLabel('Judge API key', { exact: true });
+	const model = page.getByLabel('Judge model', { exact: true });
 	await expect(server).toHaveValue(original.base_url);
 	await expect(key).toHaveValue('********');
 	await provider.click();

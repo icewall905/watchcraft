@@ -20,10 +20,17 @@ THROTTLE = 120.0
 
 
 def config() -> dict:
+    """Embeddings may live on their own server; an empty endpoint falls back to the judge's.
+
+    A separate server never receives the judge's key — it uses only its own, so a typo cannot
+    send one service's credential to another. On the judge's server its own key wins if set.
+    """
     llm = get_settings()['llm']
-    return {'base_url': (llm.get('base_url') or '').rstrip('/'),
+    own = (llm.get('embed_base_url') or '').strip()
+    key = (llm.get('embed_api_key') or '').strip()
+    return {'base_url': (own or llm.get('base_url') or '').rstrip('/'),
             'model': (llm.get('embed_model') or '').strip(),
-            'api_key': llm.get('api_key') or '',
+            'api_key': key if own else (key or (llm.get('api_key') or '')),
             'timeout_s': 60}
 
 

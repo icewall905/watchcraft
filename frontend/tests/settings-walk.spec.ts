@@ -40,7 +40,16 @@ for (const tab of TABS) {
 		while (queue.length) {
 			const id = queue.shift()!;
 			for (const dir of DIRS) {
-				await page.evaluate((i) => document.querySelector<HTMLElement>(`[data-walk="${i}"]`)?.focus(), id);
+				// A text field consumes Left/Right to move its caret, so put the caret at the end first:
+				// that is where it sits when a remote arrows into the field, and it lets Right navigate on.
+				await page.evaluate((i) => {
+					const el = document.querySelector<HTMLElement>(`[data-walk="${i}"]`);
+					el?.focus();
+					if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+						const end = el.value.length;
+						el.setSelectionRange(end, end);
+					}
+				}, id);
 				await page.keyboard.press(dir);
 				const next = await page.evaluate(() => (document.activeElement as HTMLElement)?.dataset.walk);
 				if (next !== undefined && !seen.has(next)) {

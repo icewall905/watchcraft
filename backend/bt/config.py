@@ -59,6 +59,9 @@ DEFAULT_SETTINGS: dict = {
         "vision": True,
         "temperature": 0.4,
         "embed_model": os.environ.get("BT_LLM_EMBED_MODEL", ""),  # empty = semantic search off
+        # Optional separate embeddings server. Empty = use the endpoint and key above.
+        "embed_base_url": os.environ.get("BT_LLM_EMBED_BASE_URL", ""),
+        "embed_api_key": os.environ.get("BT_LLM_EMBED_API_KEY", ""),
         # Optional cheap model for grunt work (screening, summaries, imports). Empty = use the model above.
         "worker_model": os.environ.get("BT_LLM_WORKER_MODEL", ""),
         "worker_base_url": os.environ.get("BT_LLM_WORKER_BASE_URL", ""),
