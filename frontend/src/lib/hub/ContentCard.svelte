@@ -120,6 +120,9 @@
 	.cc :global(img) { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: var(--bg-2); }
 	.cc.row :global(img) { height: 100%; aspect-ratio: auto; min-height: 7rem; }
 	.cc[data-type='recipe'] :global(img), .cc[data-type='pattern'] :global(img) { aspect-ratio: 4/3; }
+	/* A meme is the picture: show all of it instead of a 16:9 crop, and keep the caption short. */
+	.cc[data-type='meme'] :global(img) { aspect-ratio: auto; height: auto; max-height: 30rem; object-fit: contain; }
+	.cc[data-type='meme'] .summary { display: none; }
 	.dur { position: absolute; right: .4rem; bottom: .4rem; background: rgba(0,0,0,.75); color: #fff; font-size: .72rem; font-weight: 700; padding: .1rem .4rem; border-radius: .3rem; font-variant-numeric: tabular-nums; }
 	.body { padding: .9rem 1.05rem 1rem; min-width: 0; }
 	.compact .body { padding: .6rem .85rem; }

@@ -114,6 +114,7 @@ def save_asset(pid, iid, kind, url, data, mime):
         used = s.exec(select(func.coalesce(func.sum(CapturedAsset.size), 0))).one()
         if used - (old.size if old else 0) + len(data) > asset_cap(s):
             raise ValueError('Local asset storage limit reached.')
+        affected = []
         if kind == 'video':
             # Posters may have been analyzed before the clip arrived, including by older releases.
             from .models import MemeExample, MemeFormat
@@ -129,9 +130,9 @@ def save_asset(pid, iid, kind, url, data, mime):
         asset = old or CapturedAsset(item_id=iid, kind=kind, mime=mime, data=data)
         asset.mime, asset.data, asset.size, asset.source_url = mime, data, len(data), url
         s.add(asset); s.flush()
-        if kind == 'video':
+        if kind in ('image', 'video'):
             from .memes import analyze_item
-            # Make newly playable clips visible immediately, even during the sweep throttle.
+            # Make a new meme visible immediately, even during the sweep throttle.
             for item_id in {iid, *(ex.item_id for ex in affected)}:
                 item = s.get(ContentItem, item_id)
                 if item and item.type == 'meme': analyze_item(s, item)

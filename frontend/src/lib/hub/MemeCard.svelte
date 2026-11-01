@@ -36,19 +36,21 @@
 <style>
 	.meme-card { display: grid; gap: .5rem; text-align: start; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); padding: 0; overflow: hidden; color: inherit; cursor: pointer; }
 	.meme-card:hover { border-color: var(--accent); }
-	.shot { position: relative; display: grid; place-items: center; min-height: 12rem; max-height: 22rem; background: rgba(255, 255, 255, .04); overflow: hidden; }
-	.shot :global(img) { width: 100%; height: 100%; max-height: 22rem; object-fit: cover; display: block; }
-	.text-meme { padding: 1.4rem 1rem; font-size: 1.05rem; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+	/* The picture is the content: show all of it, letterboxed rather than cropped. */
+	.shot { position: relative; display: grid; place-items: center; min-height: 6rem; background: rgba(255, 255, 255, .04); overflow: hidden; }
+	.shot :global(img) { width: 100%; height: auto; max-height: 34rem; object-fit: contain; display: block; }
+	.text-meme { padding: 1.2rem 1rem; font-size: .95rem; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 	.shot.sensitive :global(img), .text-meme.sensitive { filter: blur(7px); }
 	.clip { position: absolute; bottom: .5rem; left: .5rem; padding: .2rem .6rem; border-radius: var(--r-pill); background: rgba(0, 0, 0, .7); }
 	.fmt, .dup { position: absolute; top: .5rem; font-size: .72rem; font-weight: 700; border-radius: var(--r-pill); padding: .15rem .55rem; background: rgba(0, 0, 0, .55); color: var(--fg); }
 	.fmt { left: .5rem; }
 	.dup { right: .5rem; color: var(--warning); }
-	.meta { display: grid; gap: .25rem; padding: 0 .8rem .8rem; }
-	.title { margin: 0; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+	.meta { display: grid; gap: .15rem; padding: 0 .7rem .5rem; }
+	/* Caption is a label, not the point of the page: one quiet line. */
+	.title { margin: 0; font-size: .82rem; font-weight: 500; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
 	.title.sensitive { filter: blur(7px); }
 	.warn { margin: 0; color: var(--warning); }
 	.acts { display: flex; gap: .4rem; justify-content: end; }
-	.icon-btn { display: inline-grid; place-items: center; width: 2.4rem; height: 2.4rem; border-radius: 50%; color: var(--muted); }
+	.icon-btn { display: inline-grid; place-items: center; width: 2rem; height: 2rem; border-radius: 50%; color: var(--muted); }
 	.icon-btn:hover { color: var(--fg); background: var(--surface); }
 </style>

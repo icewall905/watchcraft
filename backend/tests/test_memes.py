@@ -123,7 +123,7 @@ def test_exact_media_duplicates_are_linked_not_relisted(client):
     img = _images()[0]
     a = _seed_meme('https://m.test/@a/1', 'same post', img, '#one')
     b = _seed_meme('https://m.test/@b/2', 'same post reposted', img, '#two')
-    assert _analyze_all() == 2
+    assert _analyze_all() == 0  # analyzed inline when the image landed, so the sweep has nothing left
     with session() as s:
         ea = s.get(MemeExample, a); eb = s.get(MemeExample, b)
         assert ea.media_sha and eb.media_sha == ea.media_sha and eb.dup_of == a
@@ -138,7 +138,7 @@ def test_near_duplicates_form_a_template_group(client):
     ids = [_seed_meme(f'https://m.test/@v/{k}', f'variant {k}', img, f'#{c}')
            for k, (img, c) in enumerate(zip(variants[:3], ('one', 'two', 'three')))]
     odd = _seed_meme('https://m.test/@v/9', 'unrelated checkerboard', variants[5], '#nine')
-    assert _analyze_all() == 4
+    assert _analyze_all() == 0  # analyzed inline when the image landed, so the sweep has nothing left
     with session() as s:
         examples = {i: s.get(MemeExample, i) for i in ids + [odd]}
         grouped = [examples[i].format_id for i in ids]
@@ -459,3 +459,24 @@ def test_a_meme_curator_with_only_wrong_type_sources_says_why(client, monkeypatc
     r = engine.run(cur['id'], 'manual')
     assert r.status == 'partial' and r.new_items == 0
     assert any('can produce meme' in e['message'] for e in r.errors)
+
+
+def test_an_image_meme_is_analyzed_as_soon_as_its_image_lands(client):
+    """Image memes used to wait for the 30-minute sweep; only clips were analyzed inline."""
+    img = _images()[0]
+    with session() as s:
+        cur = s.exec(select(Curator).where(Curator.profile_id == 1)).first()
+        if not cur:
+            cur = Curator(profile_id=1, name='Meme Tracker', next_run=0)
+            s.add(cur); s.flush()
+        it = ContentItem(url='https://m.test/@inline/1', type='meme', title='inline meme', summary='inline meme',
+                         provider='mastodon', image='https://cdn.test/inline.jpg',
+                         meta={'community': '#inline', 'platform': 'mastodon'})
+        s.add(it); s.flush()
+        s.add(CuratorDiscovery(curator_id=cur.id, item_id=it.id, profile_id=1, query='memes', score=60))
+        s.add(ItemState(profile_id=1, item_id=it.id))
+        s.commit()
+        iid = it.id
+    capture.save_asset(1, iid, 'image', 'https://cdn.test/inline.jpg', img, 'image/jpeg')
+    with session() as s:
+        assert s.get(MemeExample, iid) is not None
