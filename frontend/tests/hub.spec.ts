@@ -38,3 +38,17 @@ test('import a page into the library and find it', async ({ page, request }) => 
 	await freshPage(page, '/curators/new?goal=Find%20beginner%20knitting%20patterns');
 	await expect(page.locator('main')).toContainText(/knitting/i);
 });
+
+test('the curator form can add a Mastodon source', async ({ page, request }) => {
+	await freshPage(page, '/curators/new');
+	// The Meme Tracker template is the one that needs a Mastodon source.
+	await page.getByRole('button', { name: /Meme Tracker/ }).click();
+	const group = page.locator('.grp').filter({ hasText: 'Mastodon communities' });
+	await expect(group).toBeVisible();
+	await group.getByLabel('Add Mastodon communities URL').fill('https://mastodon.world');
+	await group.getByRole('button', { name: 'Add instance' }).click();
+	// The new source becomes a selectable row for this curator.
+	await expect(group.getByRole('checkbox')).toHaveCount(1);
+	for (const s of await (await request.get('/api/hub/sources')).json())
+		if (s.provider === 'mastodon') await request.delete(`/api/hub/sources/${s.id}`);
+});

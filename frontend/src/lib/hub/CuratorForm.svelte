@@ -46,11 +46,12 @@
 	const prov = (k: string) => providers.find((p) => p.key === k);
 	const isYt = (s: Source) => /youtube\.com\/feeds|youtube\.com\/(channel|@)/.test(s.url);
 
-	type Group = { title: string; keys: string[]; yt?: boolean; add?: string; addHint?: string };
+	type Group = { title: string; keys: string[]; yt?: boolean; add?: string; addHint?: string; addLabel?: string };
 	const GROUPS: Group[] = [
 		{ title: 'Search the web', keys: ['web_search'] },
 		{ title: 'YouTube channel feeds (RSS)', keys: ['rss'], yt: true, add: 'rss', addHint: 'https://www.youtube.com/feeds/videos.xml?channel_id=…' },
 		{ title: 'RSS', keys: ['rss'], yt: false, add: 'rss', addHint: 'https://example.org/feed.xml' },
+		{ title: 'Mastodon communities', keys: ['mastodon'], add: 'mastodon', addHint: 'https://mastodon.world', addLabel: 'Add instance' },
 		{ title: 'GitHub', keys: ['github_releases', 'github_search'], add: 'github_releases', addHint: 'https://github.com/owner/repository' },
 		{ title: 'Security advisories', keys: ['nvd', 'cisa_kev'] },
 		{ title: 'Research papers', keys: ['arxiv'] },
@@ -185,7 +186,7 @@
 				{#if g.add && prov(g.add)?.available !== false}
 					<div class="addrow">
 						<input class="input" type="url" placeholder={g.addHint} aria-label={`Add ${g.title} URL`} bind:value={addUrl[g.title]} use:focusable onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addFeed(g); } }} />
-						<button type="button" class="btn" disabled={addBusy === g.title || !(addUrl[g.title] ?? '').trim()} use:focusable onclick={() => addFeed(g)}>Add feed URL</button>
+						<button type="button" class="btn" disabled={addBusy === g.title || !(addUrl[g.title] ?? '').trim()} use:focusable onclick={() => addFeed(g)}>{g.addLabel ?? 'Add feed URL'}</button>
 					</div>
 				{/if}
 			</div>
