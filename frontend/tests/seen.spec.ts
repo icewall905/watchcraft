@@ -108,9 +108,13 @@ test("Don't like channel clears its cards and blocks it", async ({ page, request
 test('remote reaches the action strip: Down from a card dives in', async ({ page, request }) => {
 	const id = await getCatId(request);
 	await freshPage(page, `/category/${id}`);
-	// Walk Down from wherever focus starts until a video card is focused (its strip is revealed by focus-within)
-	await moveUntil(page, 'ArrowDown', /Video /);
-	// Down again dives into that card's action buttons
+	// Wait for the actual card, then reach it with the remote. A broad /Video /
+	// match can stop on the Video AI navigation entry while the page is loading.
+	const card = page.getByRole('link', { name: 'Video still fresh', exact: true });
+	await expect(card).toBeVisible();
+	await moveUntil(page, 'ArrowDown', /Video still fresh/);
+	await expect(card).toBeFocused();
+	// Down dives into that card's action buttons
 	await page.keyboard.press('ArrowDown');
 	await expectFocus(page, /Why picked|Details|Seen it|Don't like channel|Save offline/);
 	// Activating one works (opens the candidate drawer)
