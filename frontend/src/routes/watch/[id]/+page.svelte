@@ -13,7 +13,7 @@
 	import { loadShaka } from '$lib/player/shaka';
 	import { prepareSegments, type Segment } from '$lib/player/sponsorblock';
 	import { warmVideo } from '$lib/prefetch';
-	import type { Candidate, CaptionTrack, VideoDetail } from '$lib/types';
+	import type { Candidate, CaptionTrack, SubtitleStatus, VideoDetail } from '$lib/types';
 	import Icon from '$lib/components/Icon.svelte';
 	import OfflineButton from '$lib/components/OfflineButton.svelte';
 
@@ -38,6 +38,12 @@
 	let qualities = $state<number[]>([]);
 	let quality = $state<number | 'auto'>('auto');
 	let captions = $state<CaptionTrack[]>([]);
+	let generated = $state<SubtitleStatus | null>(null);
+	let subtitleBusy = $state(false);
+	let subtitleError = $state('');
+	let subtitlePoll: ReturnType<typeof setTimeout> | null = null;
+	let selectGenerated = false;
+	let captionChoiceMade = false;
 	let captionKey = $state<string | null>(null);
 	let segments = $state<Segment[]>([]);
 	let ended = $state(false);
@@ -98,6 +104,13 @@
 		countdown = null;
 		detail = null;
 		segments = [];
+		if (subtitlePoll) clearTimeout(subtitlePoll);
+		subtitlePoll = null;
+		generated = null;
+		subtitleBusy = false;
+		subtitleError = '';
+		selectGenerated = false;
+		captionChoiceMade = false;
 		captions = [];
 		captionKey = null;
 		handled.clear();
@@ -150,12 +163,13 @@
 		poke();
 
 		// Side data, all optional.
+		refreshSubtitles(vid, seq);
 		api.sponsorblock(vid).then((raw) => seq === loadSeq && (segments = prepareSegments(raw, session.settings?.sponsorblock)), () => {});
 		api.captions(vid).then((c) => {
 			if (seq !== loadSeq) return;
-			captions = c;
+			captions = [...c, ...(generated?.track ? [generated.track] : [])];
 			const pref = session.settings?.player.captions_lang;
-			if (pref) {
+			if (pref && !captionChoiceMade) {
 				const m = c.find((t) => t.lang === pref && !t.auto) ?? c.find((t) => t.lang.startsWith(pref));
 				if (m) setCaption(m.key);
 			}
@@ -358,7 +372,52 @@
 		menu = null;
 	}
 
+	function applySubtitleStatus(status: SubtitleStatus, vid: string, seq: number) {
+		if (seq !== loadSeq || vid !== id) return;
+		generated = status;
+		captions = [...captions.filter(c => c.key !== 'generated'), ...(status.track ? [status.track] : [])];
+		if (status.status === 'ready' && status.track && selectGenerated) {
+			selectGenerated = false;
+			setCaption(status.track.key);
+		}
+		if (status.status === 'queued' || status.status === 'running') {
+			if (subtitlePoll) clearTimeout(subtitlePoll);
+			subtitlePoll = setTimeout(() => refreshSubtitles(vid, seq), 2000);
+		}
+	}
+
+	async function refreshSubtitles(vid: string, seq: number) {
+		if (seq !== loadSeq || vid !== id) return;
+		try {
+			const status = await api.subtitleStatus(vid);
+			if (seq !== loadSeq || vid !== id) return;
+			subtitleError = '';
+			applySubtitleStatus(status, vid, seq);
+		} catch (e: any) {
+			if (seq !== loadSeq || vid !== id) return;
+			subtitleError = e?.message || 'Could not check subtitle generation.';
+		}
+	}
+
+	async function generateSubtitles() {
+		if (subtitleBusy || generated?.status === 'queued' || generated?.status === 'running') return;
+		const vid = id, seq = loadSeq;
+		subtitleBusy = true;
+		subtitleError = '';
+		selectGenerated = true;
+		try {
+			const status = await api.generateSubtitles(vid);
+			applySubtitleStatus(status, vid, seq);
+		} catch (e: any) {
+			if (seq === loadSeq && vid === id) subtitleError = e?.message || 'Could not generate subtitles.';
+		} finally {
+			if (seq === loadSeq && vid === id) subtitleBusy = false;
+		}
+	}
+
 	function setCaption(key: string | null) {
+		captionChoiceMade = true;
+		selectGenerated = false;
 		captionKey = key;
 		menu = null;
 		if (!video) return;
@@ -613,6 +672,7 @@
 		if (hideTimer) clearTimeout(hideTimer);
 		if (cdTimer) clearInterval(cdTimer);
 		if (slowTimer) clearTimeout(slowTimer);
+		if (subtitlePoll) clearTimeout(subtitlePoll);
 		loadSeq++;
 		teardown();
 	});
@@ -758,7 +818,7 @@
 					<button class="btn fb" aria-label="Dislike" use:focusable={{ group: 'p-btns', scroll: 'none', onSelect: () => feedback(-1), onKey: downOpensInfo }}>👎</button>
 					<button class="btn fb" aria-label="Write feedback" use:focusable={{ group: 'p-btns', scroll: 'none', onSelect: () => feedback(), onKey: downOpensInfo }}>📝</button>
 					<span class="sep"></span>
-					<button class="btn" class:on={!!captionKey} aria-label="Captions" disabled={!captions.length} use:focusable={{ group: 'p-btns', scroll: 'none', disabled: !captions.length, onSelect: () => (menu = 'captions'), onKey: downOpensInfo }}><Icon name="cc" /><span class="lbl">CC</span></button>
+					<button class="btn" class:on={!!captionKey} aria-label="Subs" use:focusable={{ group: 'p-btns', scroll: 'none', onSelect: () => (menu = 'captions'), onKey: downOpensInfo }}><Icon name="cc" /><span class="lbl">Subs</span></button>
 					<button class="btn" aria-label="Speed" use:focusable={{ group: 'p-btns', scroll: 'none', onSelect: () => (menu = 'speed'), onKey: downOpensInfo }}><Icon name="speed" /><span class="lbl">{speed}×</span></button>
 					<button class="btn" aria-label="Quality" use:focusable={{ group: 'p-btns', scroll: 'none', onSelect: () => (menu = 'quality'), onKey: downOpensInfo }}>
 						<Icon name="quality" /><span class="lbl">{mode === 'offline' ? `Offline ${detail?.download?.height || video?.videoHeight || ''}p` : mode === 'fallback' ? 'Basic' : quality === 'auto' ? 'Auto' : `${quality}p`}</span>
@@ -795,8 +855,22 @@
 				<h3>Captions</h3>
 				<button class="opt" class:sel={!captionKey} use:focusable={{ autofocus: !captionKey, onSelect: () => setCaption(null) }}>Off</button>
 				{#each captions as c}
-					<button class="opt" class:sel={captionKey === c.key} use:focusable={{ autofocus: captionKey === c.key, onSelect: () => setCaption(c.key) }}>{c.name}{c.auto ? ' (auto)' : ''}</button>
+					<button class="opt" class:sel={captionKey === c.key} use:focusable={{ autofocus: captionKey === c.key, onSelect: () => setCaption(c.key) }}>{c.name}{c.auto ? ' (auto)' : ''}{c.key === 'generated' && generated?.timing_approximate ? ' — Approximate timing' : ''}</button>
 				{/each}
+				{#if generated?.timing_approximate && generated.track}<p class="small muted">Generated subtitles use approximate timing.</p>{/if}
+				{#if subtitleError}
+					<p class="small" role="alert">{subtitleError}</p>
+					<button class="opt" use:focusable={{ onSelect: () => refreshSubtitles(id, loadSeq) }}>Check subtitle status again</button>
+				{/if}
+				{#if generated?.status === 'queued' || generated?.status === 'running'}
+					<p class="small muted" role="status">{generated.status === 'queued' ? 'Subtitles queued' : `Generating subtitles: ${Math.round(generated.progress)}%`}. You can keep watching or leave this page.</p>
+				{:else if generated?.enabled}
+					{#if generated.status === 'failed'}<p class="small" role="alert">{generated.error || 'Subtitle generation failed.'}</p>{/if}
+					{#if generated.status !== 'ready'}<button class="opt" disabled={subtitleBusy} use:focusable={{ disabled: subtitleBusy, onSelect: generateSubtitles }}>{subtitleBusy ? 'Starting…' : generated.status === 'failed' ? 'Retry subtitle generation' : 'Generate subtitles using STT'}</button>{/if}
+				{:else if generated}
+					<p class="small muted">Set up speech recognition in Settings → Player to generate alternative subtitles.</p>
+					<a class="opt" href="/settings?tab=player" use:focusable>Subtitle settings</a>
+				{/if}
 			{/if}
 		</div>
 	{/if}

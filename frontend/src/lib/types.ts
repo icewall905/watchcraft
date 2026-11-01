@@ -354,6 +354,7 @@ export interface Settings {
 	team: { max_parallel: number };
 	appearance: { theme: string };
 	memory: { enabled: boolean; time: string; timezone: string; max_core_tokens: number };
+	stt: { base_url: string; model: string; api_key: string; language: string; subtitles_enabled: boolean };
 	player: { max_height: number; prefer_codec: string; autoplay_next: boolean; default_speed: number; captions_lang: string };
 	sponsorblock: { enabled: boolean; categories: Record<string, SbAction>; min_segment_s: number };
 	extras: { dearrow: boolean; dearrow_thumbnails: boolean; ryd: boolean; hide_shorts: boolean };
@@ -374,6 +375,15 @@ export interface CaptionTrack {
 	name: string;
 	auto: boolean;
 	url: string;
+}
+
+export interface SubtitleStatus {
+	enabled: boolean;
+	status: 'idle' | 'queued' | 'running' | 'ready' | 'failed';
+	progress: number;
+	error: string;
+	track: CaptionTrack | null;
+	timing_approximate?: boolean;
 }
 
 export interface LlmTestResult {
