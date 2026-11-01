@@ -1,6 +1,47 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — semantic storage, bug fixes, news pictures, capture rescue (`a8f7c81`, 2026-11-01)
+
+- Covers `30ed766..a8f7c81`, twelve commits: semantic vectors as float32 BLOB with migration v3 and
+  `MAX_COMPARE` 20,000; six bug fixes (playing copies never evicted, card download status, live
+  download progress, stacked Save bars, `httpx2`, slug words in curator feedback); news pictures and
+  feed presentation; curator creation during Source Scout accept; capture rescue.
+- Backend suite: 489 passed, 6 skipped. `test_sitemap_cursor_is_per_curator` failed in the full run and
+  passes solo and per-module — the known B-012 flake, unrelated. Svelte check: zero errors, three CSS
+  compatibility warnings. Browser tests: team, hub, content, source-scout, navigation, offline,
+  settings-walk, category-playlist all passed.
+- Backup: `/root/compose/watchcraft-backups/20261101T100114Z-pre-rescue` — online SQLite backup
+  (integrity `ok`, 6 profiles, 6,856 videos, 177 content items, 6 curators, 9 sources, 177 vectors,
+  177 capture jobs, schema v2) plus the three compose files, `DEPLOYED_COMMIT` and the env archive.
+  Rollback image: `watchcraft:rollback-20261101T100114Z-30ed766` (`3c0e15824e0a`).
+- Rollout used rsync **without** `--delete`; 53 source files changed, nothing removed. Image rebuilt
+  (1.2 GB → 1.94 GB) and now carries chromium, tesseract-ocr and bubblewrap. All four containers
+  healthy. `DEPLOYED_COMMIT` is `a8f7c81`; API, worker and downloader run `watchcraft:latest`
+  (`sha256:43f9b5677b18`).
+- Migration v3 ran on start: schema version 3, all 177 vectors stored as `blob`, zero rows whose
+  length disagrees with `dim`, and every table count unchanged. `PRAGMA quick_check` is `ok`.
+- Verified after rollout: health 200 locally and publicly; `semantic.available()` true with 177 of 177
+  items indexed and a live search returning hits; `MAX_COMPARE` 20,000; `/hub/items/118/image` returns
+  a real 2,902-byte PNG through the proxy; the deployed bundle contains the news `story-meta`, the
+  "Recover unreadable pages" toggle and "New curator"; `local_library` kept `asset_max_mb` 4096 and
+  gained `rescue: true`; no tracebacks.
+- **`render` does not work in this container.** bubblewrap cannot create a mount namespace: the host's
+  `/` is a shared mount and the container lacks `CAP_SYS_ADMIN`, so bwrap exits "Failed to make /
+  slave". Making it work needs `cap_add: [SYS_ADMIN]` plus seccomp and apparmor unconfined — the
+  capability that enables container escape, for one of seven rescue tools. Not granted.
+  `sandbox_works()` probes once and `render` declines; the other six tools run. Recorded in
+  `docs/SECURITY.md` and `compose.yaml`.
+- Not verified: the hub UI flows were checked at the bundle and API-function level, not by clicking
+  through as an administrator. Profile 1 is a child, so hub endpoints correctly return 403 for it, and
+  real profile PINs were not touched.
+- Rollback: `docker tag watchcraft:rollback-20261101T100114Z-30ed766 watchcraft:latest` and rerun
+  `docker compose -p watchcraft -f compose.yaml -f compose.watchcraft.yaml -f compose.host.yaml up -d
+  --no-build --wait` from `/root/compose/watchcraft`. The vector repack was **in place**, so the old
+  image reads JSON text and would fail on the repacked rows: restoring
+  `20261101T100114Z-pre-rescue/bt.sqlite3` is required, with the application services stopped first.
+
+
 ## Deployment record — role probes and embeddings URL (`30ed766`, 2026-11-01)
 
 - Covers `43cc914..30ed766`. `/agent/llm-test` takes a role, so the worker and embeddings servers can be
