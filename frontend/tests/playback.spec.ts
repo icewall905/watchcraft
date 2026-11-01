@@ -99,8 +99,25 @@ test('phone pairs, sends one-tap playback to a persistent browser receiver and c
 		await phone.getByRole('button', { name: 'Play on', exact: true }).click();
 		await phone.getByRole('button', { name: /Living room test/ }).click();
 		await phone.getByRole('button', { name: 'Play on', exact: true }).click();
+		// Hold the deletion open: selecting stale paired state must not dismiss the dialog.
+		let releaseForget!: () => void;
+		let sawForget!: () => void;
+		const forgetGate = new Promise<void>(resolve => (releaseForget = resolve));
+		const forgetStarted = new Promise<void>(resolve => (sawForget = resolve));
+		let postForget = false;
+		// The successful DELETE must remain authoritative even if the follow-up list fails.
+		await phone.route('**/api/playback/targets', route => postForget && route.request().method() === 'GET'
+			? route.fulfill({ status: 503, json: { detail: 'Temporary refresh failure' } }) : route.continue());
+		await phone.route('**/api/playback/targets/*/pair', async route => {
+			if (route.request().method() === 'DELETE') { sawForget(); await forgetGate; postForget = true; }
+			await route.continue();
+		});
 		await phone.getByRole('button', { name: 'Forget this screen', exact: true }).click();
-		await phone.getByRole('button', { name: /Living room test/ }).click();
+		await forgetStarted;
+		const forgottenScreen = phone.getByRole('button', { name: /Living room test/ });
+		try { await expect(forgottenScreen).toBeDisabled(); }
+		finally { releaseForget(); }
+		await forgottenScreen.click();
 		await expect(phone.getByLabel('Pairing code', { exact: true })).toBeVisible();
 	} finally {
 		if (registration) await request.delete(`/api/playback/targets/${registration.id}`, {

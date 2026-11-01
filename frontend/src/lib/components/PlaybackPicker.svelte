@@ -56,9 +56,9 @@
 {#if playback.open}
 	<Modal title="Play on" subtitle="Choose where videos play when you tap them." onClose={() => (playback.open = false)} size="sm">
 		<div class="choices">
-			<button class="btn" class:primary={!playback.selectedId} use:focusable={{ group: 'cast', autofocus: true, onSelect: () => { playback.select(null); playback.open = false; } }}>This device</button>
+			<button class="btn" class:primary={!playback.selectedId} disabled={working} use:focusable={{ group: 'cast', autofocus: true, onSelect: () => { playback.select(null); playback.open = false; } }}>This device</button>
 			{#each playback.targets.filter(t => t.id !== playback.receiver?.id) as target (target.id)}
-				<button class="btn target" class:primary={target.id === playback.selectedId} disabled={!target.online}
+				<button class="btn target" class:primary={target.id === playback.selectedId} disabled={working || !target.online}
 					use:focusable={{ group: 'cast', onSelect: () => { playback.select(target.id); if (target.paired) playback.open = false; } }}>
 					<span>{target.name}</span><small>{target.online ? (playback.needsPair === target.id ? 'Needs pairing' : 'Online') : 'Offline'}</small>
 				</button>

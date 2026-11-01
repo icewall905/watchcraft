@@ -31,6 +31,7 @@ class Playback {
 	private running = false;
 	private busy = false;
 	private sending = false;
+	private targetsRevision = 0;
 
 	start() {
 		if (this.running) return () => {};
@@ -108,12 +109,20 @@ class Playback {
 
 	/** Screens change from other devices too, so the settings tab refreshes on demand. */
 	async refresh() {
-		this.targets = await request<PlaybackTarget[]>('/playback/targets', { toast: false, signal: AbortSignal.timeout(8000) });
+		const revision = ++this.targetsRevision;
+		const targets = await request<PlaybackTarget[]>('/playback/targets', { toast: false, signal: AbortSignal.timeout(8000) });
+		// A poll that started before pairing changed must not restore stale permissions.
+		if (revision === this.targetsRevision) this.targets = targets;
 	}
 
 	/** Stop sending from this profile; the screen keeps its other pairings. */
 	async forget(id: string) {
+		this.targetsRevision++;
 		await request(`/playback/targets/${id}/pair`, { method: 'DELETE' });
+		// Revoke local permission immediately, even if refresh fails or is superseded by a poll.
+		this.targetsRevision++;
+		this.targets = this.targets.map(t => t.id === id ? { ...t, paired: false,
+			paired_profiles: t.paired_profiles?.filter(pid => pid !== session.profileId) } : t);
 		if (this.selectedId === id) this.select(null);
 		await this.refresh();
 	}
@@ -203,7 +212,7 @@ class Playback {
 				}
 			}
 			if (this.open || this.selectedId) {
-				this.targets = await request<PlaybackTarget[]>('/playback/targets', { toast: false, signal: AbortSignal.timeout(8000) });
+				await this.refresh();
 			}
 		} catch (e) {
 			if (e instanceof ApiError && e.status === 403 && this.receiver) {
