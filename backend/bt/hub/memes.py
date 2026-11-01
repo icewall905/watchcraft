@@ -10,19 +10,27 @@ import io
 import re
 import time
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from sqlalchemy import func
 from sqlmodel import Session, select
 
 from PIL import Image
 
+from ..access import hub_allowed
 from ..db import get_kv, save_setting, session
-from .models import (CapturedAsset, ContentItem, CuratorDiscovery, ItemState, MemeExample, MemeFormat,
-                     MemeTrend, MemeTrendState)
+from .models import (CapturedAsset, ContentItem, Curator, CuratorDiscovery, CuratorSource, ItemState, MemeExample,
+                     MemeFormat, MemeTrend, MemeTrendState, Source)
 
 PHASH_FORMAT_DIST = 10   # Hamming distance under which two images count as the same template
 PHASH_SIMILAR_DIST = 12  # distance used when answering "find similar"
 WINDOW_DAYS = 30
+
+# Public instances that serve anonymous hashtag timelines, probed in order. The first one
+# that returns posts for the curator's own queries wins; nothing is invented.
+DEFAULT_INSTANCES = ('mastodon.social', 'mastodon.world', 'fosstodon.org')
+AUTOPILOT_EVERY = 6 * 3600  # one automatic source change per curator per window
+PROBE_QUERIES = 2           # queries tried per instance before moving on
 
 STATES = ('newly_observed', 'emerging', 'trending', 'established', 'fading')
 
@@ -265,6 +273,84 @@ def refresh_trends(s: Session) -> int:
         changed += 1 if moved else 0
     s.commit()
     return changed
+
+
+# ---------- autonomy: keep a meme curator pointed at a source that returns posts
+
+def is_meme_curator(c) -> bool:
+    """A curator that collects memes: the Meme Tracker template and anything else typed 'meme'."""
+    return c.kind == 'watch' and 'meme' in (c.content_types or [])
+
+
+def _autopilot_key(cid: int) -> str:
+    return f'watchcraft_meme_autopilot_{cid}'
+
+
+def _probe(instance: str, queries: list[str]) -> int:
+    """How many public posts one instance returns for the curator's own hashtags."""
+    from .providers import mastodon
+    # No queries means the instance's public timeline, which is what the provider does too.
+    for q in (queries[:PROBE_QUERIES] or ['']):
+        try:
+            got = len(mastodon(f'https://{instance}', q))
+        except Exception:  # noqa: BLE001 — an instance that refuses is simply not a candidate
+            continue
+        if got:
+            return got
+    return 0
+
+
+def _working_instance(queries: list[str], skip: set[str]) -> str:
+    for instance in DEFAULT_INSTANCES:
+        if instance not in skip and _probe(instance, queries):
+            return instance
+    return ''
+
+
+def ensure_source(c) -> str:
+    """Point a meme curator at a public Mastodon source that actually returns posts.
+
+    Returns a short note when it changed something and '' when the curator already works,
+    the cooldown has not passed, or no public instance answered. A source the user set up
+    and that returns posts is never touched.
+    """
+    with session() as s:
+        row = s.get(Curator, c.id)
+        if not row or not hub_allowed(s, row.profile_id):
+            return ''
+        sources = s.exec(select(Source).join(CuratorSource, CuratorSource.source_id == Source.id)
+                         .where(CuratorSource.curator_id == c.id, Source.provider == 'mastodon')).all()
+        # A source that returns posts, or that has not been tried yet, needs no help.
+        if any(x.enabled and not x.last_error and (x.item_count > 0 or x.last_checked is None) for x in sources):
+            return ''
+        if time.time() - float(get_kv(_autopilot_key(c.id), {}).get('at') or 0) < AUTOPILOT_EVERY:
+            return ''
+        queries = [q for q in (row.queries or []) if q.strip()]
+        instance = _working_instance(queries, {urlsplit(x.url).hostname or '' for x in sources})
+        if not instance:
+            save_setting(_autopilot_key(c.id), {'at': time.time(), 'result': 'no public instance answered'})
+            return ''
+        url = f'https://{instance}'
+        target = s.exec(select(Source).where(Source.profile_id == row.profile_id, Source.provider == 'mastodon',
+                                             Source.url == url)).first()
+        if not target:
+            # Re-point this curator's own broken source rather than piling up new ones.
+            broken = [x for x in sources if not x.enabled or x.last_error or x.item_count == 0]
+            target = next((x for x in broken if list(s.exec(select(CuratorSource.curator_id)
+                                                            .where(CuratorSource.source_id == x.id)).all()) == [c.id]), None)
+        if not target:
+            target = Source(profile_id=row.profile_id, provider='mastodon', name=instance, url=url)
+            s.add(target)
+            s.flush()
+        target.url, target.name, target.enabled = url, instance, True
+        target.last_error, target.item_count, target.last_checked = '', 0, None
+        if not s.get(CuratorSource, (c.id, target.id)):
+            s.add(CuratorSource(curator_id=c.id, source_id=target.id))
+        s.add(target)
+        s.commit()
+    note = f'following {instance} for public memes'
+    save_setting(_autopilot_key(c.id), {'at': time.time(), 'result': note})
+    return note
 
 
 def sweep(throttled=True) -> dict:

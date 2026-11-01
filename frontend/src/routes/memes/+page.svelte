@@ -36,6 +36,8 @@
 	let explaining = $state(false);
 	let captureMessage = $state('');
 	let queuing = $state(false);
+	let sweeping = $state(false);
+	let sweepNote = $state('');
 	const isVideo = (it: Item) => ['video', 'gifv'].includes(String((it.meta?.media as { type?: string } | undefined)?.type ?? ''));
 
 	const feed = $derived(tab === 'examples' || tab === 'saved' || tab === 'history');
@@ -153,6 +155,18 @@
 		catch (e) { explainError = errMsg(e); }
 		finally { explaining = false; }
 	}
+	// Analysis runs on the scheduler tick; this forces it now so a fresh run shows up immediately.
+	async function refreshRadar() {
+		if (sweeping) return;
+		sweeping = true; sweepNote = '';
+		try {
+			const r = await hub.memeSweep();
+			sweepNote = r.analyzed ? `Analyzed ${r.analyzed} new example${r.analyzed === 1 ? '' : 's'}.`
+				: 'Nothing new to analyze yet — give your curators a run first.';
+			if (feed) await loadFeed(false); else await loadSide();
+		} catch (e) { sweepNote = errMsg(e); }
+		finally { sweeping = false; }
+	}
 	function applySearch(e: SubmitEvent) {
 		e.preventDefault();
 		setParam('q', search.trim());
@@ -170,8 +184,12 @@
 			<h1>Meme Radar</h1>
 			<p class="muted">What your curators see spreading — counted, not guessed.</p>
 		</div>
-		<a class="btn ghost" href="/curators" use:focusable>Manage curators</a>
+		<div class="head-acts">
+			<button class="btn" disabled={sweeping} use:focusable onclick={refreshRadar}>{sweeping ? 'Refreshing…' : 'Refresh radar'}</button>
+			<a class="btn ghost" href="/curators" use:focusable>Manage curators</a>
+		</div>
 	</header>
+	{#if sweepNote}<p class="small muted" role="status">{sweepNote}</p>{/if}
 
 	<div class="tabs" role="tablist" aria-label="Meme Radar views">
 		{#each TABS as [k, name]}
@@ -325,6 +343,7 @@
 <style>
 	.page { display: grid; gap: 1rem; align-content: start; }
 	.head { display: flex; justify-content: space-between; align-items: end; gap: 1rem; flex-wrap: wrap; }
+	.head-acts { display: flex; gap: .6rem; flex-wrap: wrap; }
 	.tabs { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
 	.tab { min-height: 2.75rem; padding: .4rem 1rem; }
 	.count { margin-left: auto; }

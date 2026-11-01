@@ -14,7 +14,8 @@ from sqlmodel import SQLModel, select
 from bt import db
 from bt.db import init_db, session
 from bt.hub import capture, memes
-from bt.hub.models import ContentItem, Curator, CuratorDiscovery, ItemState, MemeExample, MemeFormat
+from bt.hub.models import (ContentItem, Curator, CuratorDiscovery, CuratorSource, ItemState, MemeExample, MemeFormat,
+                           Source)
 from bt.hub.providers import _mastodon_status, _mastodon_tags, mastodon
 from bt.main import app
 from bt.models import Profile
@@ -327,3 +328,119 @@ def test_duplicate_stays_visible_when_original_belongs_to_another_profile(client
     out = client.get('/api/hub/memes/items', headers={'X-Profile-Id': str(pid)}).json()
     assert [it['id'] for it in out['items']] == [b]
     assert client.get('/api/hub/memes/items', headers=H).json()['items'][0]['id'] == a
+
+
+# ---------- autonomy: the radar keeps itself fed
+
+def test_sweep_runs_even_when_every_agent_slot_is_taken(monkeypatch):
+    """A busy agent used to starve the radar: every dispatch branch returned before the sweep."""
+    from bt.hub import engine, slots
+    calls = []
+    monkeypatch.setattr(slots, 'free', lambda: 0)
+    monkeypatch.setattr(memes, 'sweep', lambda *a, **k: calls.append(1) or {'analyzed': 0})
+    engine.dispatch_due()
+    assert calls == [1]
+
+
+def test_meme_curator_finds_its_own_public_source(client, monkeypatch):
+    from bt.hub import providers
+    cur = client.post('/api/hub/curators', json={'name': 'Meme Tracker', 'queries': ['memes'],
+                                                 'content_types': ['meme'], 'interval_hours': 12}, headers=H).json()
+    probed = []
+
+    def fake(url, q=''):
+        probed.append((url, q))
+        if 'mastodon.world' in url:
+            return [{'url': 'https://mastodon.world/@a/1', 'type': 'meme', 'title': 'a meme'}]
+        raise ValueError('HTTP 403')
+
+    monkeypatch.setattr(providers, 'mastodon', fake)
+    with session() as s:
+        note = memes.ensure_source(s.get(Curator, cur['id']))
+    assert 'mastodon.world' in note
+    # The refusing instance is skipped, and the working one is linked to the curator.
+    assert probed[0][0] == 'https://mastodon.social'
+    with session() as s:
+        src = s.exec(select(Source).join(CuratorSource, CuratorSource.source_id == Source.id)
+                     .where(CuratorSource.curator_id == cur['id'])).one()
+        assert src.url == 'https://mastodon.world' and src.enabled and src.provider == 'mastodon'
+    # The cooldown stops a second probe on the next run.
+    probed.clear()
+    with session() as s:
+        assert memes.ensure_source(s.get(Curator, cur['id'])) == ''
+    assert probed == []
+
+
+def test_autopilot_leaves_a_working_source_alone(client, monkeypatch):
+    from bt.hub import providers
+    src = client.post('/api/hub/sources', json={'provider': 'mastodon', 'url': 'https://mastodon.world'}, headers=H).json()
+    cur = client.post('/api/hub/curators', json={'name': 'Meme Tracker', 'queries': ['memes'],
+                                                 'content_types': ['meme'], 'source_ids': [src['id']]}, headers=H).json()
+    with session() as s:
+        row = s.get(Source, src['id'])
+        row.item_count, row.last_error = 12, ''
+        s.add(row); s.commit()
+    monkeypatch.setattr(providers, 'mastodon', lambda *a, **k: pytest.fail('a working source must not be probed'))
+    with session() as s:
+        assert memes.ensure_source(s.get(Curator, cur['id'])) == ''
+
+
+def test_autopilot_reports_when_no_public_instance_answers(client, monkeypatch):
+    from bt.hub import providers
+    cur = client.post('/api/hub/curators', json={'name': 'Meme Tracker', 'queries': ['memes'],
+                                                 'content_types': ['meme']}, headers=H).json()
+
+    def refuse(*_a, **_k):
+        raise ValueError('HTTP 403')
+
+    monkeypatch.setattr(providers, 'mastodon', refuse)
+    with session() as s:
+        assert memes.ensure_source(s.get(Curator, cur['id'])) == ''
+    with session() as s:
+        assert s.exec(select(Source).where(Source.provider == 'mastodon')).all() == []
+    assert 'no public instance answered' in db.get_kv(f'watchcraft_meme_autopilot_{cur["id"]}')['result']
+
+
+def test_autopilot_ignores_curators_that_do_not_collect_memes(client):
+    cur = client.post('/api/hub/curators', json={'name': 'News', 'queries': ['news'],
+                                                 'content_types': ['news']}, headers=H).json()
+    with session() as s:
+        assert memes.is_meme_curator(s.get(Curator, cur['id'])) is False
+
+
+def test_a_meme_curator_with_no_source_collects_on_its_own(client, monkeypatch):
+    """The Meme Tracker template ships without a source; the run finds a public one and collects."""
+    from bt.hub import engine, providers
+    cur = client.post('/api/hub/curators', json={'name': 'Meme Tracker', 'queries': ['memes'],
+                                                 'content_types': ['meme'], 'interval_hours': 12}, headers=H).json()
+    # Text-only, so the sweep can analyze it without waiting for an image capture.
+    post = {'id': '1', 'visibility': 'public', 'url': 'https://mastodon.world/@a/1', 'content': '<p>a meme</p>',
+            'created_at': '2026-10-30T12:00:00.000Z', 'account': {'acct': 'a'}, 'tags': [{'name': 'memes'}],
+            'media_attachments': []}
+
+    def fake(url, q=''):
+        if 'mastodon.world' in url:
+            return [providers._mastodon_status(post, 'mastodon.world')]
+        raise ValueError('HTTP 403')
+
+    # The registry holds the function object, so patch both the module name and the provider.
+    monkeypatch.setattr(providers, 'mastodon', fake)
+    monkeypatch.setattr(providers.PROVIDERS['mastodon'], 'fetch', fake)
+    r = engine.run(cur['id'], 'manual')
+    assert r.status == 'ok' and r.new_items == 1
+    agent = next(a for a in client.get('/api/hub/team').json()['agents'] if a['kind'] == 'curator')
+    assert 'source_repaired' in [e['step'] for e in agent['timeline']]
+    assert client.get('/api/hub/memes/items', headers=H).json()['total'] == 0  # not analyzed until a sweep
+    client.post('/api/hub/memes/sweep', headers=H)
+    assert client.get('/api/hub/memes/items', headers=H).json()['total'] == 1
+
+
+def test_autopilot_does_not_override_a_source_the_user_just_added(client, monkeypatch):
+    """A fresh source has no checks yet; it must get its first run before anything replaces it."""
+    from bt.hub import providers
+    src = client.post('/api/hub/sources', json={'provider': 'mastodon', 'url': 'https://mastodon.social'}, headers=H).json()
+    cur = client.post('/api/hub/curators', json={'name': 'Meme Tracker', 'queries': ['memes'],
+                                                 'content_types': ['meme'], 'source_ids': [src['id']]}, headers=H).json()
+    monkeypatch.setattr(providers, 'mastodon', lambda *a, **k: pytest.fail('an untried source must not be probed'))
+    with session() as s:
+        assert memes.ensure_source(s.get(Curator, cur['id'])) == ''

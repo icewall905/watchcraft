@@ -1082,7 +1082,8 @@ def test_narration_voice_covers_every_milestone_in_all_tones():
              'seen': narrate.phrase(10, 'source item'), 'issues': narrate.phrase(1, 'issue'),
              'name': 'Morning briefing', 'sites': narrate.phrase(2, 'candidate site'),
              'sample': narrate.phrase(3, 'sample item'), 'urls': narrate.phrase(2, 'sample URL'),
-             'links': narrate.phrase(4, 'sitemap link'), 'refs': narrate.phrase(2, 'source reference'), 'found': narrate.phrase(4, 'validated source')}
+             'links': narrate.phrase(4, 'sitemap link'), 'refs': narrate.phrase(2, 'source reference'),
+             'found': narrate.phrase(4, 'validated source'), 'note': 'following mastodon.world for public memes'}
     for key, tones in narrate.VOICE.items():
         spoken = {tone: narrate.say(tone, key, seed='seed', **facts) for tone in narrate.TONES}
         assert all(v and not v.startswith(' ') and not v.startswith('{') for v in spoken.values()), key

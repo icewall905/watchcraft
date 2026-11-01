@@ -13,7 +13,7 @@ the default and is unchanged. Design, route map, provider registry and API contr
 | News | `/news` | News/article items by **publication** time (discovery time shown separately), conservatively grouped by shared headline terms, follow/mute topics. |
 | Knowledge | `/knowledge` | Searchable topics ordered by pin and recent additions: overview, user notes, linked items, recent matching finds (FTS), relevant curators, related topics. |
 | Library | `/library` | Saved, favorites, read later, archive, collections with descriptions, private item notes, URL import with page extraction, JSON export. |
-| Meme Radar | `/memes` | Image-first meme feed from Mastodon curators: exact (media hash) and near (perceptual hash) dedup, template/format grouping, counted trend observations with evidence strings and follow/hide, community/language/topic/time filters, saved + dismissed + history views, similar-meme lookup, optional AI "why is this funny?" explanations stored apart from source facts (422 without AI; never invents origins), sensitive posts blurred. Child profiles are blocked from the whole section. |
+| Meme Radar | `/memes` | Image-first meme feed from Mastodon curators: exact (media hash) and near (perceptual hash) dedup, template/format grouping, counted trend observations with evidence strings and follow/hide, community/language/topic/time filters, saved + dismissed + history views, similar-meme lookup, optional AI "why is this funny?" explanations stored apart from source facts (422 without AI; never invents origins), sensitive posts blurred. A **Refresh radar** action forces analysis instead of waiting for the scheduler tick. A Meme Tracker with no working public source finds one itself (see below). Child profiles are blocked from the whole section. |
 | Item | `/item/[id]` | Detail with source facts vs AI enrichment kept apart, structured recipe and craft pattern facts and steps, provenance, notes, tags, collections, topics, related items. |
 | Briefings | `/briefings` | Manual/daily/weekly cited briefings over selected curators/topics; never repeats items from earlier issues; non-AI fallback digest. |
 | Alerts | `/alerts` | Per-curator rules (min severity, keywords); severity and curator filters; new/read/resolved/snooze; advisories say "possibly relevant — verify affected versions". |
@@ -44,6 +44,11 @@ drafts, cited research reports and briefings. Without AI: keyword relevance, heu
 - Scheduler runs in the API process every 30 s; a conditional `next_run` lease (15 min) prevents overlapping runs across
   processes and recovers after crashes. Each source fails independently; runs record `ok`/`partial`/`failed` with
   per-source messages that never include URLs or credentials.
+- Meme Radar upkeep (analyze new examples, recount trends) runs at the top of every scheduler tick, before the agent
+  slots are checked, so a busy agent cannot starve it. It is throttled to once per 30 minutes and can be forced from
+  the page. A meme curator whose Mastodon source is missing or returning nothing probes a short list of public
+  instances with its own queries, then creates or re-points its source at the first one that answers — at most once
+  per six hours, never touching a source that already returns posts, and narrated in the run timeline.
 
 ## Security
 

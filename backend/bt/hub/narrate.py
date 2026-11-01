@@ -38,6 +38,11 @@ VOICE: dict[str, dict[str, list[str]]] = {
         'friendly': ['Reused a recent fetch from {label}: {got}.'],
         'playful': ['{label}\'s recent fetch is still warm — reused {got}.'],
     },
+    'curator.source_repaired': {
+        'professional': ['Source adjusted: {note}.'],
+        'friendly': ['Fixed the source: {note}.'],
+        'playful': ['The source was being shy — {note}.'],
+    },
     'curator.source_error': {
         'professional': ['Checked {label}: {got}, with a check error.'],
         'friendly': ['Checked {label}: {got}, but with a check error.'],

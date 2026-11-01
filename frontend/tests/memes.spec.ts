@@ -64,3 +64,20 @@ test('stored meme video plays, seeks, and closes in the drawer', async ({ page }
 	await page.getByRole('button', { name: 'Close', exact: true }).click();
 	await expect(video).toHaveCount(0);
 });
+
+test('Refresh radar forces analysis now and reports what it did', async ({ page }) => {
+	let sweeps = 0;
+	await page.route('**/api/hub/memes/sweep', (route) => {
+		sweeps += 1;
+		return route.fulfill({ json: { analyzed: 3, transitions: 1, formats: 2 } });
+	});
+	await freshPage(page, '/memes?tab=examples');
+	await page.getByRole('button', { name: 'Refresh radar' }).click();
+	await expect(page.getByText('Analyzed 3 new examples.')).toBeVisible();
+	expect(sweeps).toBe(1);
+	// A second press with nothing new says so instead of claiming work.
+	await page.unroute('**/api/hub/memes/sweep');
+	await page.route('**/api/hub/memes/sweep', (route) => route.fulfill({ json: { analyzed: 0, transitions: 0, formats: 2 } }));
+	await page.getByRole('button', { name: 'Refresh radar' }).click();
+	await expect(page.getByText('Nothing new to analyze yet — give your curators a run first.')).toBeVisible();
+});

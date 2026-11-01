@@ -314,14 +314,26 @@ def recover_stale() -> None:
         s.commit()
 
 
+def _sources(cid: int) -> list[Source]:
+    with session() as s:
+        return s.exec(select(Source).join(CuratorSource, CuratorSource.source_id == Source.id)
+                      .where(CuratorSource.curator_id == cid, Source.enabled == True)).all()
+
+
 def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
     cid = c.id
-    with session() as s:
-        sources = s.exec(select(Source).join(CuratorSource, CuratorSource.source_id == Source.id)
-                         .where(CuratorSource.curator_id == cid, Source.enabled == True)).all()
+    sources = _sources(cid)
     errors, candidates = [], []
     activity.emit(c, r.id, 'started', narrate.say(c.tone, 'curator.started', seed=str(r.id),
                                                   sources=narrate.phrase(len(sources), 'source')))
+    # A meme curator with no working public source finds one itself instead of failing every run.
+    from . import memes
+    if memes.is_meme_curator(c):
+        note = memes.ensure_source(c)
+        if note:
+            activity.emit(c, r.id, 'source_repaired', narrate.say(c.tone, 'curator.source_repaired',
+                                                                  seed=str(r.id), note=note))
+            sources = _sources(cid)
     queries = [q for q in (c.queries or []) if q.strip()][:8] or ([c.subject] if c.subject else [])
     for src in sources:
         label = (src.name or src.provider)[:100]
@@ -509,7 +521,13 @@ async def scheduler() -> None:
 
 def dispatch_due() -> None:
     """Start due agents in the background, never more than the free agent slots."""
-    from . import scout
+    from . import memes, scout
+    # Radar upkeep is bounded database work, not an agent: a busy agent used to starve it
+    # because every branch below returns early once the slots are taken.
+    try:
+        memes.sweep()
+    except Exception:  # noqa: BLE001 — radar upkeep never stops the scheduler
+        log.exception('meme sweep failed')
     free = slots.free()
     if free <= 0:
         return
@@ -554,9 +572,8 @@ def dispatch_due() -> None:
             free -= 1
 
     if free > 0:
-        from . import capture, memes
+        from . import capture
         capture.dispatch()
-        memes.sweep()
 
 
 slots.after_release = dispatch_due

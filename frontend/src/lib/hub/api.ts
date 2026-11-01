@@ -114,7 +114,9 @@ export const hub = {
 	memeFormats: (params: Params) => get<{ formats: MemeFormat[]; total: number }>('/memes/formats' + qs(params)),
 	memeFormat: (id: number) => get<MemeFormat & { items: Item[] }>(`/memes/formats/${id}`),
 	memeSimilar: (id: number) => get<{ items: Item[] }>(`/memes/items/${id}/similar`),
-	memeExplain: (id: number, refresh = false) => send<{ ai: boolean; explanation: MemeExplain }>('POST', `/memes/items/${id}/explain`, { refresh })
+	memeExplain: (id: number, refresh = false) => send<{ ai: boolean; explanation: MemeExplain }>('POST', `/memes/items/${id}/explain`, { refresh }),
+	/** Analyze collected examples and recount trends now instead of on the next scheduler tick. */
+	memeSweep: () => send<{ analyzed: number; transitions: number; formats: number }>('POST', '/memes/sweep')
 };
 
 const span = (s: number) => s < 3600 ? `${Math.max(1, Math.floor(s / 60))}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`;
