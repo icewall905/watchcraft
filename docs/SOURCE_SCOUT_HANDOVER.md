@@ -1,6 +1,38 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — P6 advanced (`a0e551a`, 2026-11-01)
+
+- Covers `c4ce003..a0e551a`, completing P6. Notifications (`fad2d39`): alert delivery to a JSON webhook, a Home
+  Assistant webhook and SMTP email, driven from the scheduler past a stored cursor so a restart neither replays
+  nor loses alerts; one failing channel never blocks the others and a broken channel never fails a curator run.
+  Settings → Notifications configures them with a Send test action, and the email password is redacted. Desktop
+  notifications are opt-in per browser and poll the alerts endpoint; there is no push server. Source quality
+  (`fad2d39`): discoveries, acceptance rate and last contribution counted from `CuratorDiscovery`, with a
+  productive/thin/noisy/idle verdict beside health on the Sources page. Providers (`fad2d39`): dev.to (the first
+  query word becomes a tag) and Lobste.rs stories; Bluesky and Reddit were evaluated first and both answer 403 to
+  datacenter IPs, so neither is offered. Relevance and search (`a0e551a`): profile-wide taste learned from saved,
+  favourite, rated and dismissed items nudges a score ±5 and never past the keyword gate; semantic search indexes
+  items through an optional embeddings model and powers Search by meaning in Find.
+- Schema: one additive table, `itemvector` (item_id + model primary key, vector, dim). No existing column changed.
+- Backend suite: 439 passed, 6 skipped, plus the known B-012 flake in the full run (passes solo). Svelte check:
+  zero errors, three CSS compatibility warnings. Browser tests for the touched areas: settings-walk 20 (now
+  covering the Search and Notifications tabs), hub 4, source-scout 1 passed.
+- Backup: `/root/compose/watchcraft-backups/20261101T041605Z-pre-p6` (online SQLite, integrity `ok`, 6 profiles,
+  6,543 videos, 6 curators, 151 content items, 20 meme examples, 0 alerts; config archive). Rollback image:
+  `watchcraft:rollback-20261101T041605Z-c4ce003`. Separate media volume preserved.
+- Isolated restore on `127.0.0.1:6699` with the new image: health 200, no tracebacks, integrity `ok`, counts
+  unchanged, and `itemvector` created. The copy was removed.
+- Rollout used rsync **without** `--delete`; compose project `watchcraft` with `compose.yaml`,
+  `compose.watchcraft.yaml` and `compose.host.yaml`; all four containers healthy. `DEPLOYED_COMMIT` is `a0e551a`;
+  API, worker and downloader run `watchcraft:a0e551a` (`sha256:ac125099bfb6…`). Health passes locally and
+  publicly; no tracebacks after start; `itemvector` exists on production.
+- In-container acceptance (the hub and admin routes need a PIN-unlocked profile, and four child profiles exist):
+  `semantic.available()` reports "Set an embeddings model under Settings → AI." with 151 items and 0 indexed,
+  `notify.channels()` reports every channel off, and `notify.dispatch()` skips with "no channels configured" —
+  the honest unconfigured state rather than a silent failure.
+
+
 ## Deployment record — screen management and Meme Radar autonomy (`c4ce003`, 2026-11-01)
 
 - Covers `c72081b..c4ce003`. Screen management (`e3619bf`): administrators remove a screen from the sender
