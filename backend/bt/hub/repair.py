@@ -31,6 +31,35 @@ def source_health(s, src: Source) -> dict:
     return watchers.health(recent_checks(s, src), src.enabled, src.provider, counts_matter(src.provider))
 
 
+def quality(s, src: Source, checks: list | None = None) -> dict:
+    """Is this source worth keeping? Counted from what it actually contributed, not from what it fetched.
+
+    Health says whether a source still works; quality says whether its results are worth the run.
+    """
+    from sqlalchemy import func
+    from .models import CuratorDiscovery
+    checks = recent_checks(s, src) if checks is None else checks
+    found = int(s.exec(select(func.count()).select_from(CuratorDiscovery)
+                       .where(CuratorDiscovery.source_id == src.id)).one() or 0)
+    last = s.exec(select(func.max(CuratorDiscovery.found_at))
+                  .where(CuratorDiscovery.source_id == src.id)).one()
+    fetched = sum(c.item_count for c in checks if c.status != 'failed')
+    out = {'discoveries': found, 'fetched': fetched, 'checks': len(checks), 'last_discovery': last,
+           'acceptance': round(found / fetched, 2) if fetched else None,
+           'per_check': round(found / len(checks), 2) if checks else None, 'verdict': 'unknown'}
+    if not checks:
+        return out
+    if not found:
+        out['verdict'] = 'idle' if len(checks) >= 3 else 'unknown'
+    elif fetched >= 50 and (out['acceptance'] or 0) < 0.05:
+        out['verdict'] = 'noisy'  # fetches a lot, keeps almost none of it
+    elif found >= 5:
+        out['verdict'] = 'productive'
+    else:
+        out['verdict'] = 'thin'
+    return out
+
+
 def counts_matter(provider: str) -> bool:
     prov = PROVIDERS.get(provider)
     return bool(prov and prov.mode == 'feed' and provider != 'page_watch')

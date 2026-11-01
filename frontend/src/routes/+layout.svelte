@@ -7,6 +7,7 @@
 	import { nav, focusable } from '$lib/nav';
 	import { session } from '$lib/stores/session.svelte';
 	import { agent } from '$lib/stores/agent.svelte';
+	import { browserNotify } from '$lib/stores/browserNotify.svelte';
 	import { dialogs } from '$lib/stores/dialogs.svelte';
 	import Sidebar from '$lib/components/Sidebar.svelte';
 	import { deviceMode } from '$lib/stores/deviceMode.svelte';
@@ -69,7 +70,9 @@
 		deviceMode.init();
 		session.init();
 		agent.start();
-		return playback.start();
+		const stopNotify = browserNotify.start();
+		const stopPlayback = playback.start();
+		return () => { stopNotify(); stopPlayback(); };
 	});
 	$effect(() => { applyTheme(session.settings?.appearance?.theme); });
 	$effect(() => {

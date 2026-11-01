@@ -37,6 +37,18 @@ DEFAULT_SETTINGS: dict = {
         "brave_api_key": os.environ.get("WC_BRAVE_API_KEY", ""),
         "hub_ai": True,  # use the configured LLM for curator relevance, drafts, reports and briefings
     },
+    # Alert delivery. An empty URL or host disables that channel; the password is redacted in responses.
+    "notify": {
+        "webhook_url": "",
+        "ha_webhook_url": "",
+        "email_host": "",
+        "email_port": 587,
+        "email_user": "",
+        "email_password": "",
+        "email_to": "",
+        "email_starttls": True,
+        "min_severity": "high",
+    },
     "llm": {
         "base_url": os.environ.get("BT_LLM_BASE_URL", "http://10.0.10.23:8080/v1"),
         "model": os.environ.get("BT_LLM_MODEL", "currentmodel"),

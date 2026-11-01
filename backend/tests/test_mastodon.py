@@ -76,3 +76,40 @@ def test_login_required_errors_are_actionable(monkeypatch, code):
     monkeypatch.setattr('bt.hub.providers.curation.fetch', fetch)
     with pytest.raises(ValueError, match='requires login'):
         mastodon('https://social.example')
+
+
+def test_devto_uses_the_first_query_word_as_a_tag(monkeypatch):
+    from bt.hub import providers
+    seen = []
+
+    def fetch(url, **kwargs):
+        seen.append(url)
+        return json.dumps([{'id': 1, 'title': 'A post', 'url': 'https://dev.to/a/post', 'description': 'd',
+                            'published_at': '2026-10-30T10:00:00Z', 'tag_list': ['python'],
+                            'user': {'name': 'Ada'}, 'positive_reactions_count': 3, 'comments_count': 1}])
+
+    monkeypatch.setattr(providers.curation, 'fetch', fetch)
+    items = providers.devto('', 'Python asyncio')
+    assert 'tag=python' in seen[0]
+    assert items[0]['type'] == 'article' and items[0]['author'] == 'Ada'
+    assert items[0]['meta']['tags'] == ['python']
+    # A query with no usable word still returns the general feed rather than failing.
+    providers.devto('', '!!!')
+    assert 'tag=' not in seen[1]
+
+
+def test_lobsters_maps_stories_and_keeps_the_discussion(monkeypatch):
+    from bt.hub import providers
+
+    def fetch(url, **kwargs):
+        assert url == 'https://lobste.rs/hottest.json'
+        return json.dumps([{'short_id': 'abc', 'title': 'A story', 'url': 'https://example.org/story',
+                            'created_at': '2026-10-30T10:00:00-05:00', 'score': 12, 'comment_count': 4,
+                            'submitter_user': 'ada', 'tags': ['python'],
+                            'comments_url': 'https://lobste.rs/s/abc/story'}])
+
+    monkeypatch.setattr(providers.curation, 'fetch', fetch)
+    items = providers.lobsters('https://lobste.rs/hottest.json')
+    assert items[0]['type'] == 'news' and items[0]['external_id'] == 'lobsters:abc'
+    assert items[0]['meta']['discussion'] == 'https://lobste.rs/s/abc/story'
+    assert items[0]['meta']['score'] == 12

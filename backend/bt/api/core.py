@@ -799,11 +799,14 @@ def mark_seen(body: SeenIn, pid: int = Depends(profile_id), s: Session = Depends
 # ---------- settings
 
 def _redact(st: dict) -> dict:
-    st = {**st, "llm": {**st["llm"]}, "throttle": {**st["throttle"]}, "search": {**st["search"]}}
+    st = {**st, "llm": {**st["llm"]}, "throttle": {**st["throttle"]}, "search": {**st["search"]},
+          "notify": {**st["notify"]}}
     if st["search"].get("brave_api_key"):
         st["search"]["brave_api_key"] = "********"
     if st["llm"].get("api_key"):
         st["llm"]["api_key"] = "********"
+    if st["notify"].get("email_password"):
+        st["notify"]["email_password"] = "********"
     if st["throttle"].get("proxy") and "@" in st["throttle"]["proxy"]:
         st["throttle"]["proxy"] = "********"  # proxy URLs can carry user:pass
     return st
@@ -857,11 +860,37 @@ def write_settings(key: str, value: dict, s: Session = Depends(get_session)):
             raise HTTPException(400, "Allow between 1 and 8 parallel agents")
     if key == "throttle" and value.get("proxy") == "********":
         value["proxy"] = cur.get("proxy", "")
+    if key == "notify":
+        if value.get("email_password") == "********":
+            value["email_password"] = cur.get("email_password", "")
+        for field in ("webhook_url", "ha_webhook_url"):
+            url = str(value.get(field, cur.get(field, "")) or "").strip()
+            if url and not url.startswith(("http://", "https://")):
+                raise HTTPException(400, "Webhook URLs must start with http:// or https://")
+        port = value.get("email_port", cur.get("email_port", 587))
+        if type(port) is not int or not 1 <= port <= 65535:
+            raise HTTPException(400, "Use an email port between 1 and 65535")
+        if value.get("min_severity", cur.get("min_severity")) not in ("info", "low", "medium", "high", "critical"):
+            raise HTTPException(400, "Unknown minimum severity")
+        if type(value.get("email_starttls", cur.get("email_starttls"))) is not bool:
+            raise HTTPException(400, "StartTLS must be on or off")
     save_setting(key, {**cur, **value}, s)
     if key == "team":
         from ..hub import slots
         slots.invalidate()
     return _redact(get_settings(s))[key]
+
+
+@router.post("/notify/test", dependencies=[Depends(require_admin)])
+def test_notification():
+    """Send one synthetic alert through every configured channel."""
+    from ..hub import notify
+    try:
+        return {"results": notify.test()}
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+    except Exception as e:  # noqa: BLE001 — report the channel failure, never a traceback
+        raise HTTPException(502, f"Could not deliver the test notification ({type(e).__name__}).")
 
 
 @router.put("/cookies", dependencies=[Depends(require_admin)])

@@ -56,6 +56,8 @@
 		{ title: 'Security advisories', keys: ['nvd', 'cisa_kev'] },
 		{ title: 'Research papers', keys: ['arxiv'] },
 		{ title: 'Hacker News', keys: ['hackernews'] },
+		{ title: 'dev.to', keys: ['devto'] },
+		{ title: 'Lobste.rs', keys: ['lobsters'], add: 'lobsters', addHint: 'https://lobste.rs/hottest.json', addLabel: 'Add list' },
 		{ title: 'Wikipedia', keys: ['wikipedia'] },
 		{ title: 'Domain registration', keys: ['rdap'] }
 	];

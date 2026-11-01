@@ -27,8 +27,15 @@ export type Source = {
 	id: number; provider: string; name: string; url: string; enabled: boolean; last_success: number | null;
 	last_error: string; last_checked: number | null; item_count: number; curator_ids: number[];
 	config?: WatcherConfig; configurable?: boolean; last_repair?: number | null; health?: SourceHealth;
+	quality?: SourceQuality;
 };
 export type HealthStatus = 'healthy' | 'degraded' | 'broken' | 'paused' | 'unknown';
+/** What a source actually contributed, not what it fetched. */
+export type SourceQuality = {
+	discoveries: number; fetched: number; checks: number; last_discovery: number | null;
+	acceptance: number | null; per_check: number | null;
+	verdict: 'productive' | 'thin' | 'noisy' | 'idle' | 'unknown';
+};
 export type SourceHealth = {
 	status: HealthStatus; signals: { key: string; message: string }[]; checks: number; success_rate: number | null;
 	empty_rate: number | null; consecutive_failures: number; typical_count: number | null; trend: 'steady' | 'worsening' | 'improving';

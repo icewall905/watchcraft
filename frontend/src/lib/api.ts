@@ -224,6 +224,7 @@ export const api = {
 	// settings
 	settings: () => get<Settings>('/settings'),
 	saveSettings: <K extends keyof Settings>(key: K, value: Partial<Settings[K]>) => put<Settings[K]>(`/settings/${key}`, value),
+	testNotification: () => post<{ results: Record<string, string> }>('/notify/test'),
 	uploadCookies: (text: string) => request<{ present: boolean }>('/cookies', { method: 'PUT', raw: text, headers: { 'Content-Type': 'text/plain' } }),
 	deleteCookies: () => del<{ present: boolean }>('/cookies'),
 	testCookies: () => post<CookieTestResult>('/cookies/test', {}, { toast: false }),

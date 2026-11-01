@@ -529,13 +529,17 @@ async def scheduler() -> None:
 
 def dispatch_due() -> None:
     """Start due agents in the background, never more than the free agent slots."""
-    from . import memes, scout
-    # Radar upkeep is bounded database work, not an agent: a busy agent used to starve it
-    # because every branch below returns early once the slots are taken.
+    from . import memes, notify, scout
+    # Radar upkeep and alert delivery are bounded work, not agents: a busy agent used to
+    # starve them because every branch below returns early once the slots are taken.
     try:
         memes.sweep()
     except Exception:  # noqa: BLE001 — radar upkeep never stops the scheduler
         log.exception('meme sweep failed')
+    try:
+        notify.dispatch()
+    except Exception:  # noqa: BLE001 — a broken channel never stops the scheduler
+        log.exception('alert delivery failed')
     free = slots.free()
     if free <= 0:
         return

@@ -337,6 +337,17 @@ export interface Settings {
 		max_comments: number;
 		transcript_max_chars: number;
 	};
+	notify: {
+		webhook_url: string;
+		ha_webhook_url: string;
+		email_host: string;
+		email_port: number;
+		email_user: string;
+		email_password: string;
+		email_to: string;
+		email_starttls: boolean;
+		min_severity: 'info' | 'low' | 'medium' | 'high' | 'critical';
+	};
 	agent: { enabled: boolean };
 	team: { max_parallel: number };
 	appearance: { theme: string };

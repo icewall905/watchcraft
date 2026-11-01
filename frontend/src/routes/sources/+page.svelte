@@ -96,6 +96,20 @@ if (h.consecutive_failures > 1) parts.push(`${h.consecutive_failures} failures i
 if (h.trend !== 'steady') parts.push(h.trend);
 return parts.join(' · ');
 }
+// Quality is about results, not uptime: what this source actually contributed.
+const QUALITY: Record<string, { label: string; dot: string }> = {
+	productive: { label: 'Productive', dot: 'ok' }, thin: { label: 'Thin', dot: 'warn' },
+	noisy: { label: 'Noisy', dot: 'warn' }, idle: { label: 'Never contributes', dot: 'bad' },
+	unknown: { label: 'No results yet', dot: 'new' }
+};
+function qualitySummary(s: Source) {
+	const q = s.quality;
+	if (!q || q.verdict === 'unknown') return '';
+	const parts = [`${q.discoveries} kept`];
+	if (q.acceptance !== null) parts.push(`${Math.round(q.acceptance * 100)}% of ${q.fetched} fetched`);
+	if (q.last_discovery) parts.push(`last ${ago(q.last_discovery)}`);
+	return parts.join(' · ');
+}
 </script>
 
 <svelte:head><title>Sources · WatchCraft</title></svelte:head>
@@ -158,6 +172,9 @@ return parts.join(' · ');
 									· {s.item_count} items · {s.curator_ids.length} curator{s.curator_ids.length === 1 ? '' : 's'}
 								</span>
 								{#if s.health && healthSummary(s)}<span class="small faint">{healthSummary(s)}{#if s.last_repair} · repaired {ago(s.last_repair)}{/if}</span>{/if}
+								{#if s.quality && s.quality.verdict !== 'unknown'}
+									<span class="small faint"><span class="hl {QUALITY[s.quality.verdict].dot}">{QUALITY[s.quality.verdict].label}</span> · {qualitySummary(s)}</span>
+								{/if}
 								{#if s.health?.signals.length}
 									<ul class="signals">{#each s.health.signals as sig (sig.key)}<li class="small warnc">{sig.message}</li>{/each}</ul>
 								{/if}

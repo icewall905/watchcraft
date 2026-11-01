@@ -1635,3 +1635,18 @@ def test_curator_feedback_terms_tune_scoring(client, monkeypatch):
     other = client.post('/api/profiles', json={'name': 'Feedback stranger'}).json()
     assert client.post(url, json={'curator_id': curator['id'], 'verdict': 'less'},
                        headers={'X-Profile-Id': str(other['id'])}).status_code in (403, 404)
+
+
+def test_source_quality_counts_what_a_source_contributed(client, monkeypatch):
+    """Health says a source still works; quality says whether its results are worth the run."""
+    monkeypatch.setattr(curation, 'fetch', lambda url, **k: RSS)
+    c = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}])
+    hub.run(c['id'], 'manual')
+    src = next(s for s in client.get('/api/hub/sources').json() if s['provider'] == 'rss')
+    q = src['quality']
+    assert q['discoveries'] >= 1 and q['fetched'] >= 1
+    assert q['acceptance'] is not None and 0 < q['acceptance'] <= 1
+    assert q['verdict'] in ('thin', 'productive') and q['last_discovery']
+    # A source that has never been checked reports nothing rather than a verdict.
+    fresh = client.post('/api/hub/sources', json={'provider': 'rss', 'url': 'https://example.org/other.xml'}).json()
+    assert fresh['quality']['verdict'] == 'unknown' and fresh['quality']['discoveries'] == 0

@@ -217,6 +217,39 @@ def mastodon(url: str, q: str = '') -> list[dict]:
     return out
 
 
+def devto(_url: str, q: str) -> list[dict]:
+    """Developer articles from dev.to. The first query word is used as a tag when it is a usable one."""
+    tag = re.sub(r'[^a-z0-9]', '', (q.split() or [''])[0].lower())
+    params = {'per_page': 25, 'top': 7}
+    if tag:
+        params['tag'] = tag
+    data = json.loads(curation.fetch('https://dev.to/api/articles?' + urlencode(params),
+                                     kinds=('application/json',)))
+    if not isinstance(data, list):
+        raise ValueError('Unexpected dev.to response.')
+    return [{'url': a['url'], 'title': clean(a.get('title'), 500), 'type': 'article', 'provider': 'devto',
+             'publisher': 'dev.to', 'author': clean((a.get('user') or {}).get('name'), 100),
+             'summary': clean(a.get('description'), 1000), 'image': safe_image(a.get('cover_image')),
+             'published_at': ts(a.get('published_at')), 'external_id': f"devto:{a.get('id')}",
+             'meta': {'tags': (a.get('tag_list') or [])[:8], 'reactions': a.get('positive_reactions_count'),
+                      'comments': a.get('comments_count')}}
+            for a in data[:25] if isinstance(a, dict) and a.get('url') and a.get('title')]
+
+
+def lobsters(url: str, _q: str = '') -> list[dict]:
+    """Lobste.rs stories. The source URL picks the list: hottest.json or newest.json."""
+    data = json.loads(curation.fetch(url, kinds=('application/json',)))
+    if not isinstance(data, list):
+        raise ValueError('Unexpected Lobste.rs response.')
+    return [{'url': s.get('url') or s.get('comments_url'), 'title': clean(s.get('title'), 500), 'type': 'news',
+             'provider': 'lobsters', 'publisher': 'Lobste.rs', 'author': clean(s.get('submitter_user'), 100),
+             'summary': clean(s.get('description_plain') or s.get('description'), 1000),
+             'published_at': ts(s.get('created_at')), 'external_id': f"lobsters:{s.get('short_id')}",
+             'meta': {'tags': (s.get('tags') or [])[:8], 'score': s.get('score'),
+                      'comments': s.get('comment_count'), 'discussion': s.get('comments_url')}}
+            for s in data[:40] if isinstance(s, dict) and s.get('title') and (s.get('url') or s.get('comments_url'))]
+
+
 def rss(url: str, _q: str = '') -> list[dict]:
     return parse_feed(curation.fetch(url), url)
 
@@ -453,4 +486,8 @@ PROVIDERS = {p.key: p for p in [
              ['update-monitoring', 'page-changes'], needs_url=True, default_type='web'),
     Provider('mastodon', 'Mastodon communities', 'query', 'Public posts from an HTTPS instance or /tags/hashtag URL. Instance queries become hashtags; explicit hashtag URLs stay scoped. Requires anonymous timeline access.', mastodon,
              ['keyword-search', 'update-monitoring', 'structured-metadata'], needs_url=True, default_type='meme'),
+    Provider('devto', 'dev.to articles', 'query', 'Developer articles from dev.to. The first query word is used as a tag when it is a usable one.', devto,
+             ['keyword-search', 'structured-metadata'], default_type='article'),
+    Provider('lobsters', 'Lobste.rs stories', 'feed', 'Stories from the Lobste.rs technology community. Use https://lobste.rs/hottest.json or /newest.json.', lobsters,
+             ['feed', 'structured-metadata'], needs_url=True, default_type='news'),
 ]}
