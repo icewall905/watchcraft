@@ -272,7 +272,7 @@
 			</div>
 			<p class="small muted">Embeddings: optional. Enables Search by meaning in Find; without a model only keyword search runs.</p>
 			<div class="grid">
-				<TextField label="Embeddings server" hint="Any OpenAI-compatible /v1/embeddings endpoint." bind:value={llm.value.embed_base_url} placeholder="same as judge" type="url" group="llm-embed" />
+				<TextField label="Embeddings server" hint="The API base, for example http://host:8082/v1. A full /v1/embeddings URL works too." bind:value={llm.value.embed_base_url} placeholder="same as judge" type="url" group="llm-embed" />
 				<TextField label="Embeddings model" hint="Changing it re-indexes everything." bind:value={llm.value.embed_model} placeholder="text-embedding-3-small" group="llm-embed" />
 				<TextField label="Embeddings API key" hint="Only needed when the embeddings server differs. Shown as ******** once saved." type="password" bind:value={llm.value.embed_api_key} placeholder="none" group="llm-embed" />
 			</div>

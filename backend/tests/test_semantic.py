@@ -147,3 +147,14 @@ def test_a_bad_server_url_is_refused_rather_than_saved(client):
     assert client.put('/api/settings/llm', json={'embed_base_url': 'embed:8082/v1'}, headers=H).status_code == 400
     assert client.put('/api/settings/llm', json={'worker_base_url': 'ftp://nope'}, headers=H).status_code == 400
     assert client.put('/api/settings/llm', json={'embed_base_url': 'http://embed:8082/v1'}, headers=H).status_code == 200
+
+
+def test_a_pasted_embeddings_url_is_not_doubled(client):
+    """The hint invites pasting an endpoint; ".../v1/embeddings" must not become ".../embeddings/embeddings"."""
+    base = {**db.get_settings()['llm'], 'embed_model': 'e'}
+    for given, expected in (('http://embed:8082/v1/embeddings', 'http://embed:8082/v1'),
+                            ('http://embed:8082/v1/embeddings/', 'http://embed:8082/v1'),
+                            ('http://embed:8082/v1', 'http://embed:8082/v1')):
+        save_setting('llm', {**base, 'embed_base_url': given})
+        assert semantic.config()['base_url'] == expected, given
+    assert semantic.base_url('') == '' and semantic.base_url('http://x/v1/') == 'http://x/v1'

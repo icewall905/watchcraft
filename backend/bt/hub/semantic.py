@@ -19,6 +19,16 @@ MAX_COMPARE = 5000  # vectors compared per query; beyond this the oldest are ski
 THROTTLE = 120.0
 
 
+def base_url(url: str) -> str:
+    """Accept the API base or the full /embeddings URL; both name the same endpoint.
+
+    The settings hint invites pasting an endpoint, and a pasted ".../v1/embeddings" would
+    otherwise be posted to as ".../v1/embeddings/embeddings".
+    """
+    url = (url or '').strip().rstrip('/')
+    return url[:-len('/embeddings')] if url.endswith('/embeddings') else url
+
+
 def config() -> dict:
     """Embeddings may live on their own server; an empty endpoint falls back to the judge's.
 
@@ -28,7 +38,7 @@ def config() -> dict:
     llm = get_settings()['llm']
     own = (llm.get('embed_base_url') or '').strip()
     key = (llm.get('embed_api_key') or '').strip()
-    return {'base_url': (own or llm.get('base_url') or '').rstrip('/'),
+    return {'base_url': base_url(own or llm.get('base_url') or ''),
             'model': (llm.get('embed_model') or '').strip(),
             'api_key': key if own else (key or (llm.get('api_key') or '')),
             'timeout_s': 60}

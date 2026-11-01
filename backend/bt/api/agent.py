@@ -202,6 +202,9 @@ def _role_connection(cfg: dict, role: str) -> tuple[str, str]:
     if role == "judge":
         return cfg["base_url"].strip().rstrip("/"), cfg.get("api_key", "")
     base = (cfg.get(f"{role}_base_url") or "").strip().rstrip("/") or cfg["base_url"].strip().rstrip("/")
+    if role == "embed":
+        from ..hub.semantic import base_url
+        base = base_url(base)  # a pasted ".../v1/embeddings" is the same endpoint as ".../v1"
     key = (cfg.get(f"{role}_api_key") or "").strip() or cfg.get("api_key", "")
     return base, key
 
