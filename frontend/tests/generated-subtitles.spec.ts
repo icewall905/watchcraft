@@ -19,10 +19,10 @@ with session() as s:
  s.commit()
 `], { cwd: backend, env: { ...process.env, BT_DATA_DIR: data! } });
 });
-async function player(page: Page, youtube = true) {
+async function player(page: Page, youtube = true, captionsGate?: Promise<void>) {
  await page.route(`**/api/video/${ID}`, r => r.fulfill({ json: { id: ID, title: 'Generated subtitle clip', duration_s: 12, chapters: [], in_categories: [] } }));
  await page.route(`**/api/video/${ID}/sponsorblock`, r => r.fulfill({ json: [] }));
- await page.route(`**/api/video/${ID}/captions`, r => youtube ? r.fulfill({ json: [{ key: 'en', lang: 'en', name: 'YouTube English', auto: true, url: `/api/video/${ID}/captions/en.vtt` }] }) : r.fulfill({ status: 503, json: { detail: 'Unavailable' } }));
+ await page.route(`**/api/video/${ID}/captions`, async r => { await captionsGate; return youtube ? r.fulfill({ json: [{ key: 'en', lang: 'en', name: 'YouTube English', auto: true, url: `/api/video/${ID}/captions/en.vtt` }] }) : r.fulfill({ status: 503, json: { detail: 'Unavailable' } }); });
  await page.route('**/*.vtt*', r => r.fulfill({ contentType: 'text/vtt', body: 'WEBVTT\n\n00:00:00.000 --> 00:00:10.000\nAlternative words\n' }));
  await freshPage(page, '/'); await page.goto(`/watch/${ID}`);
  await expect(page.getByRole('button', { name: 'Subs', exact: true })).toBeEnabled();
@@ -79,4 +79,30 @@ test('save and test speech settings draft with masked saved key', async ({ page 
  await section.getByRole('button', { name: 'Save changes' }).click();
  await expect(section.getByRole('button', { name: 'Save changes' })).toBeDisabled();
  expect(submitted.api_key).toBe('********'); expect(submitted.model).toBe('qwen-asr');
+});
+
+
+test('delayed YouTube defaults cannot override a requested generated alternative', async ({ page }) => {
+ let release!: () => void;
+ const gate = new Promise<void>(resolve => (release = resolve));
+ let state = 'idle';
+ await page.route('**/api/settings', async r => {
+  const response = await r.fetch(), settings = await response.json();
+  await r.fulfill({ json: { ...settings, player: { ...settings.player, captions_lang: 'en' } } });
+ });
+ await page.route(`**/api/video/${ID}/subtitles`, async r => {
+  if (r.request().method() === 'POST') state = 'running';
+  await r.fulfill({ json: { enabled: true, status: state, progress: 40, error: '', track: state === 'ready' ? track : null, timing_approximate: true } });
+ });
+ try {
+  await player(page, true, gate);
+  await page.getByRole('button', { name: 'Generate subtitles using STT' }).click();
+ } finally { release(); }
+ await expect(page.getByRole('button', { name: 'YouTube English (auto)' })).toBeVisible();
+ state = 'ready';
+ await expect(page.locator('video track')).toHaveAttribute('src', /subtitles\/generated.vtt/, { timeout: 7000 });
+ await page.locator('video').evaluate((v: HTMLVideoElement) => { v.currentTime = 1; });
+ await expect.poll(() => page.locator('video').evaluate((v: HTMLVideoElement) =>
+  Array.from(v.textTracks[0]?.activeCues ?? []).map(c => (c as VTTCue).text))).toEqual(['Alternative words']);
+ await page.screenshot({ path: '/tmp/watchcraft-generated-subtitles.png' });
 });

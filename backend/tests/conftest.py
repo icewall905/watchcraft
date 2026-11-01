@@ -9,6 +9,7 @@ os.environ.setdefault('BT_DATA_DIR', tempfile.mkdtemp(prefix='bt-test-'))
 
 import pytest  # noqa: E402
 
+from bt import subtitle_jobs
 from bt.hub import rescue  # noqa: E402
 from bt.hub import engine, slots  # noqa: E402
 
@@ -26,6 +27,7 @@ def _isolated_background_work(monkeypatch):
         await asyncio.Event().wait()
 
     monkeypatch.setattr(engine, 'scheduler', idle_scheduler)
+    monkeypatch.setattr(subtitle_jobs, 'worker', idle_scheduler)
     monkeypatch.setattr(slots, 'after_release', None)
 
 

@@ -263,3 +263,21 @@ class PlaybackTarget(SQLModel, table=True):
     pair: dict = J({})
     # Simple send limiter: {'ts': window_start, 'n': commands in window}.
     rate: dict = J({})
+
+
+class GeneratedSubtitles(SQLModel, table=True):
+    """One durable generated alternative per globally shared video."""
+    video_id: str = Field(primary_key=True)
+    status: str = 'queued'
+    requested_by: int = 0
+    progress: float = 0
+    error: str = ''
+    language: str = ''
+    fingerprint: str = ''
+    completed_s: float = 0
+    duration_s: float = 0
+    cues: list = J()
+    vtt: str = Field(default='', sa_column=Column(Text))
+    updated_at: float = Field(default=0, index=True)
+    token: str = ''
+    lease_until: float = 0

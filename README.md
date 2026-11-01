@@ -91,6 +91,25 @@ In **Settings → Profiles**, add or edit a person to set a PIN with 4–8 digit
 
 Protected profiles show a lock in the profile picker. Enter the PIN to open or edit them. Switching away locks a protected profile again; **Lock profile** in the picker lets you lock it immediately. To change or remove a PIN, unlock the profile and edit it in Settings. If you forget a PIN, run the maintenance menu on your server, choose **Reset profile PIN**, and select its profile ID. PINs are for household profile access; server settings and activity tools remain shared.
 
+### Generate alternative subtitles
+
+In the now-playing window, choose **Subs → Generate subtitles using STT**. The generated
+track is saved with the video; you can switch between it, YouTube captions and Off.
+Progress appears in the Subs menu, and failed requests can be retried without repeating
+completed audio chunks. Saved videos reuse their local audio; other videos fetch audio
+through the existing YouTube connection.
+
+Configure the shared speech service in **Settings → Player → Generated subtitles**:
+enable generation, enter an OpenAI-compatible speech API URL (for example
+`http://your-server:8011/v1`), model, optional API key and speech language, then test and
+save. This connection also serves voice search. Environment `WC_STT_*` values supply
+initial defaults. Audio is sent to that configured service. Generation runs one video
+at a time, with up to five pending jobs and a four-hour video limit.
+
+Qwen ASR returns text without word timestamps. Captions therefore use short audio chunks
+and approximate timing; the player labels this explicitly. Existing YouTube tracks remain
+available, and saved generated tracks work even when the speech service is unavailable.
+
 ### Watch from other devices
 
 On the server itself, the default address is [http://localhost:6645](http://localhost:6645). On another device on your home network, replace `localhost` with the server computer's LAN IP address, such as `http://192.168.1.50:6645`. Use your chosen port if you changed it. Allow incoming connections on that port in the server's firewall if necessary. If you enabled shared login, keep its password private. For internet access, arrange HTTPS and suitable access controls rather than forwarding this HTTP port directly.

@@ -16,6 +16,8 @@ from .api import ytimport
 from .api import downloads
 from .api import playback
 from .api import speech
+from .api import subtitles as subtitle_api
+from . import subtitle_jobs
 from .config import STATIC_DIR
 from .db import init_db
 
@@ -23,12 +25,15 @@ from .db import init_db
 async def lifespan(_app):
     init_db()
     task = asyncio.create_task(hub_engine.scheduler())
+    subs = asyncio.create_task(subtitle_jobs.worker())
     try:
         yield
     finally:
         task.cancel()
-        with suppress(asyncio.CancelledError):
-            await task
+        subs.cancel()
+        for running in (task, subs):
+            with suppress(asyncio.CancelledError):
+                await running
 
 app = FastAPI(title="WatchCraft", docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=lifespan)
 
@@ -42,6 +47,7 @@ app.include_router(video.router, prefix="/api")
 app.include_router(downloads.router, prefix="/api")
 app.include_router(playback.router, prefix="/api")
 app.include_router(speech.router, prefix="/api")
+app.include_router(subtitle_api.router, prefix="/api")
 
 app.include_router(agent_api.router, prefix="/api")
 

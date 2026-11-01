@@ -405,6 +405,7 @@
 		subtitleBusy = true;
 		subtitleError = '';
 		selectGenerated = true;
+		captionChoiceMade = true;
 		try {
 			const status = await api.generateSubtitles(vid);
 			applySubtitleStatus(status, vid, seq);
@@ -664,6 +665,7 @@
 		if (v && video) { skipExitHistory = false; load(v); }
 	});
 	onDestroy(() => {
+		loadSeq++;
 		if (!skipExitHistory) saveHistory(true);
 		offKeys?.();
 		document.removeEventListener('visibilitychange', onVis);
