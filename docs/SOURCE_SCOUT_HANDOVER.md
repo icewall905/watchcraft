@@ -1,6 +1,34 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — judge and worker models (`40aa983`, 2026-11-01)
+
+- Covers `168c120..40aa983`, the last open task (T-058). One model did everything, so a big model was spent
+  screening search results and summarizing captured text. `llm._cfg(role)` now resolves an endpoint per role: the
+  judge keeps the existing `model`, `base_url` and `api_key`; the worker uses `worker_model`, `worker_base_url`
+  and `worker_api_key`, each falling back to the judge's value when unset, so a single-model setup behaves exactly
+  as before. `chat()` and `chat_json()` take `role="judge"` by default and `_request` resolves the endpoint from
+  it. Screening, captured-text summaries and playlist keyword suggestions pass `role="worker"`; verdicts,
+  planning, review, reports, briefings, meme explanations and ranking stay on the judge. Settings → AI gains the
+  three worker fields, with the key redacted and preserved across saves, and pointing the worker at a new server
+  without a key is refused rather than silently reusing the judge's. The existing "Context by model" table already
+  breaks requests down by model, so the split is observable without new UI.
+- No schema change: `models.py`, `hub/models.py`, `hub/migrate.py` and `db.py` are untouched. `config.py` gains
+  three settings keys with empty defaults, so nothing changes until an administrator sets a worker model.
+- Backend suite: 452 passed, 6 skipped, no failures. Svelte check: zero errors, three CSS compatibility warnings.
+  Browser tests for the touched area: settings-walk 14 and llm-providers 3 passed.
+- Backup: `/root/compose/watchcraft-backups/20261101T070050Z-pre-t058` (online SQLite, integrity `ok`, 6 profiles,
+  6,743 videos, 6 curators, 151 content items; config archive). Rollback image:
+  `watchcraft:rollback-20261101T070050Z-168c120`. Separate media volume preserved.
+- Isolated restore on `127.0.0.1:6699` with the new image: health 200, no tracebacks, integrity `ok`. The copy was
+  removed.
+- Rollout used rsync **without** `--delete`; compose project `watchcraft` with `compose.yaml`,
+  `compose.watchcraft.yaml` and `compose.host.yaml`; all four containers healthy. `DEPLOYED_COMMIT` is `40aa983`;
+  API, worker and downloader run `watchcraft:40aa983` (`sha256:f3210c60bf1a…`). Health passes locally and
+  publicly, no tracebacks after start, and the live settings show `model: currentmodel` with an empty
+  `worker_model` — the unchanged single-model behaviour.
+
+
 ## Deployment record — P7 hardening (`168c120`, 2026-11-01)
 
 - Covers `a0e551a..168c120`, completing P7. Mostly verification that had never been written down, plus one
