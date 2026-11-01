@@ -1894,3 +1894,21 @@ def test_capture_runs_in_its_own_lane_without_taking_an_agent_slot(client, monke
     assert [j['key'] for j in slots.snapshot()['lanes']] == ['local-capture']
     assert not slots.spawn_lane('local-capture', 'capture', 1, 1, 'Local capture', work, 'again')
     release.set()
+
+
+def test_busy_capture_lane_does_not_consume_retry_attempt(client, monkeypatch):
+    from bt.hub import capture
+    from bt.hub.models import CaptureJob, ContentItem, ItemState
+    monkeypatch.setattr(capture.slots, 'spawn_lane', lambda *args: False)
+    monkeypatch.setattr(capture, 'refill', lambda: None)
+    monkeypatch.setattr(capture.ai, 'enabled', lambda: False)
+    with session() as s:
+        item = ContentItem(url='https://example.org/lane-busy', type='news', title='Busy lane')
+        s.add(item); s.flush()
+        s.add(ItemState(profile_id=1, item_id=item.id))
+        s.add(CaptureJob(profile_id=1, item_id=item.id, status='queued', attempts=1))
+        s.commit(); iid = item.id
+    assert capture.dispatch() is False
+    with session() as s:
+        job = s.exec(select(CaptureJob).where(CaptureJob.item_id == iid)).one()
+        assert job.status == 'queued' and job.attempts == 1 and job.lease == 0

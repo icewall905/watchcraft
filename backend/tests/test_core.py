@@ -552,3 +552,33 @@ def test_shorts_feed_returns_only_accepted_unwatched_shorts():
     # Another profile sees none of it.
     other = c.post("/api/profiles", json={"name": "Other"}).json()
     assert c.get("/api/shorts", headers={"X-Profile-Id": str(other["id"])}).json()["items"] == []
+
+
+def test_shorts_page_deduplicates_before_limit_and_excludes_loaded_videos():
+    c = client()
+    profile = c.post('/api/profiles', json={'name': 'Paged swiper'}).json()
+    h = {'X-Profile-Id': str(profile['id'])}
+    cats = [c.post('/api/categories', json={'name': f'Clips {n}', 'brief': 'clips'}, headers=h).json()['id']
+            for n in range(5)]
+    ids = [f'page{i:07d}' for i in range(25)]
+    with session() as s:
+        for i, vid in enumerate(ids):
+            s.add(Video(id=vid, title=vid, duration_s=30, is_short=True))
+            for cid in cats:
+                s.add(Candidate(category_id=cid, video_id=vid, status='accepted', score=100-i))
+        s.commit()
+    first = c.get('/api/shorts?limit=10', headers=h).json()
+    assert [x['video']['id'] for x in first['items']] == ids[:10]
+    assert first['total'] == 25 and first['next_offset'] == 10
+    with session() as s:
+        for vid in ids[:7]:
+            s.add(WatchHistory(profile_id=profile['id'], video_id=vid, finished=True))
+        s.commit()
+    second = c.get('/api/shorts', params={'limit': 10, 'exclude_ids': ','.join(ids[:10])}, headers=h).json()
+    assert [x['video']['id'] for x in second['items']] == ids[10:20]
+    assert second['next_offset'] == 10
+    last = c.get('/api/shorts', params={'limit': 10, 'exclude_ids': ','.join(ids[:20])}, headers=h).json()
+    assert [x['video']['id'] for x in last['items']] == ids[20:]
+    assert last['next_offset'] is None
+    assert c.get('/api/shorts', params={'exclude_ids': 'bad'}, headers=h).status_code == 400
+    assert c.get('/api/shorts', params={'category_id': cats[0]}, headers={'X-Profile-Id': '1'}).status_code == 404

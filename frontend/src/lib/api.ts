@@ -216,8 +216,8 @@ export const api = {
 	deleteLesson: (id: number) => del<{ ok: boolean }>(`/lessons/${id}`),
 
 	// shorts
-	shorts: (params: { limit?: number; offset?: number; category_id?: number } = {}) =>
-		get<{ items: (Candidate & { video: Video })[]; total: number; next_offset: number | null }>('/shorts' + q(params)),
+	shorts: (params: { limit?: number; offset?: number; category_id?: number; exclude_ids?: string[] } = {}) =>
+		get<{ items: (Candidate & { video: Video })[]; total: number; next_offset: number | null }>('/shorts' + q({ ...params, exclude_ids: params.exclude_ids?.join(',') })),
 
 	// history
 	history: (limit = 60) => get<(HistoryEntry & { video: Video | { id: string } })[]>(`/history${q({ limit })}`),

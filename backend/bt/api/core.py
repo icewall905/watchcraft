@@ -411,7 +411,8 @@ def _category_items(s: Session, pid: int, cid: int, status: str = "accepted", in
 
 @router.get("/shorts")
 def shorts_feed(limit: int = 10, offset: int = 0, category_id: Optional[int] = None,
-                pid: int = Depends(profile_id), s: Session = Depends(get_session)):
+                pid: int = Depends(profile_id), s: Session = Depends(get_session),
+                exclude_ids: str = Query(default="", max_length=120000)):
     """A swipe feed of short videos the profile's curators accepted, best first.
 
     Sourced from the same accepted candidates as the playlist feeds, so the topics a household
@@ -419,32 +420,37 @@ def shorts_feed(limit: int = 10, offset: int = 0, category_id: Optional[int] = N
     feedback path, which is what teaches the curators.
     """
     limit = max(1, min(limit, 30))
+    offset = max(0, offset)
+    excluded = set(filter(None, exclude_ids.split(',')))
+    if any(not re.fullmatch(r'[A-Za-z0-9_-]{11}', vid) for vid in excluded):
+        raise HTTPException(400, 'Invalid excluded video id')
     owned = select(Category.id).where(Category.profile_id == pid, Category.enabled == True)  # noqa: E712
     if category_id is not None:
         _own_category(s, pid, category_id)
         owned = select(Category.id).where(Category.id == category_id)
+    # Choose each video's best candidate before paging, regardless of playlist duplication.
+    ranked = (select(Candidate.id.label('cid'), func.row_number().over(
+        partition_by=Candidate.video_id,
+        order_by=(col(Candidate.score).desc(), col(Candidate.judged_at).desc(), Candidate.id)
+    ).label('rank')).join(Video, Video.id == Candidate.video_id)
+        .where(col(Candidate.category_id).in_(owned), Candidate.status == "accepted",
+               Candidate.dismissed == False, Video.is_short == True))  # noqa: E712
+    omitted = _watched_ids(s, pid) | excluded
+    if omitted:
+        ranked = ranked.where(col(Candidate.video_id).not_in(omitted))
+    ranked = ranked.subquery()
     q = (select(Candidate, Video).join(Video, Video.id == Candidate.video_id)
-         .where(col(Candidate.category_id).in_(owned), Candidate.status == "accepted",
-                Candidate.dismissed == False, Video.is_short == True))  # noqa: E712
-    watched = _watched_ids(s, pid)
-    if watched:
-        q = q.where(col(Candidate.video_id).not_in(watched))
-    q = q.order_by(col(Candidate.score).desc(), col(Candidate.judged_at).desc(), Candidate.id)
-    # A video can sit in several playlists; keep the best-scoring row for each.
-    seen, rows = set(), []
-    for c, v in s.exec(q.limit((offset + limit) * 3)).all():
-        if v.id in seen:
-            continue
-        seen.add(v.id)
-        rows.append((c, v))
-    page = rows[offset:offset + limit]
+         .join(ranked, ranked.c.cid == Candidate.id).where(ranked.c.rank == 1)
+         .order_by(col(Candidate.score).desc(), col(Candidate.judged_at).desc(), Candidate.id))
+    total = s.exec(select(func.count()).select_from(ranked).where(ranked.c.rank == 1)).one()
+    page = s.exec(q.offset(offset).limit(limit)).all()
     st = _download_statuses([v.id for _, v in page], s)
     items = []
     for c, v in page:
         d = candidate_out(c, None)
         d["video"] = video_out(v, offline=st.get(v.id) == "done", download_status=st.get(v.id))
         items.append(d)
-    return {"items": items, "total": len(rows), "next_offset": offset + limit if len(rows) > offset + limit else None}
+    return {"items": items, "total": total, "next_offset": offset + limit if total > offset + limit else None}
 
 
 @router.get("/feed/home")
