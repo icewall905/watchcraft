@@ -16,7 +16,7 @@ from ..db import (get_agent_control, get_agent_state, get_kv, get_session, get_s
                   yt_request_counts)
 from ..models import AgentEvent, Candidate, Category, Profile, now
 from ..access import require_admin
-from .core import _offline_ids, profile_id
+from .core import _download_statuses, profile_id
 
 router = APIRouter()
 
@@ -173,7 +173,8 @@ def candidate_detail(cand_id: int, s: Session = Depends(get_session)):
     if not c:
         return {"detail": "not found"}
     v = s.get(Video, c.video_id)
-    out = candidate_out(c, v, offline=c.video_id in _offline_ids([c.video_id], s))
+    st = _download_statuses([c.video_id], s).get(c.video_id)
+    out = candidate_out(c, v, offline=st == "done", download_status=st)
     category = s.get(Category, c.category_id)
     profile = s.get(Profile, category.profile_id) if category else None
     out.update(profile_id=category.profile_id if category else None,

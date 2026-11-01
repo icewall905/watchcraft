@@ -176,7 +176,7 @@
 								<button class="btn why" use:focusable={{ group: `cand-acts-${c.id}`, onSelect: () => dialogs.openCandidate(c.id) }}>
 									{c.status === 'rejected' ? 'Why rejected?' : c.status === 'accepted' ? 'Why picked?' : 'Details'}
 								</button>
-								{#if c.status === 'accepted'}<OfflineButton videoId={c.video.id} offline={isVideo(c.video) && !!c.video.offline} group="cand-acts-{c.id}" />{/if}
+								{#if c.status === 'accepted'}<OfflineButton videoId={c.video.id} offline={isVideo(c.video) && !!c.video.offline} status={isVideo(c.video) ? (c.video.download_status ?? null) : null} group="cand-acts-{c.id}" />{/if}
 									{#if c.status === 'accepted' || c.status === 'found' || c.status === 'enriched'}
 										<button class="btn why" use:focusable={{ group: `cand-acts-${c.id}`, onSelect: () => markSeen(c) }}>
 											{c.status === 'accepted' ? 'Seen it' : 'Seen it, skip'}

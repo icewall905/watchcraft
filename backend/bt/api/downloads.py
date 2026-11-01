@@ -37,7 +37,8 @@ def list_downloads(s: Session = Depends(get_session)):
         counts[d.status] = counts.get(d.status, 0) + 1
         items.append({"video_id": d.video_id, **download_out(d), "created_at": d.created_at,
                       "finished_at": d.finished_at, "last_played_at": d.last_played_at,
-                      "video": video_out(v, offline=d.status == "done") if v else {"id": d.video_id}})
+                      "video": video_out(v, offline=d.status == "done", download_status=d.status)
+                      if v else {"id": d.video_id}})
     jobs = s.exec(select(ReencodeJob)).all()
     return {"items": items, "reencode": {"queued": sum(j.status == "queued" for j in jobs),
                                           "failed": sum(j.status == "error" for j in jobs)},

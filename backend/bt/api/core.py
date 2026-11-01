@@ -25,38 +25,50 @@ router = APIRouter()
 
 # ---------- helpers
 
-def _offline_ids(ids: list[str], s: Session | None = None) -> set[str]:
+def _download_statuses(ids: list[str], s: Session | None = None) -> dict[str, str]:
+    """video_id -> download status for every row that exists. A card needs this to tell "not
+    saved" from "queued" or "downloading"; `offline` alone only knows about finished copies."""
     from ..models import Download
     if not ids:
-        return set()
+        return {}
     def _find(sess):
-        return set(sess.exec(select(Download.video_id).where(col(Download.video_id).in_(ids),
-                                                             Download.status == "done")).all())
+        return dict(sess.exec(select(Download.video_id, Download.status)
+                              .where(col(Download.video_id).in_(ids))).all())
     if s is not None:
         return _find(s)
     with session() as sess:
         return _find(sess)
 
 
-def video_out(v: Video, full: bool = False, offline: Optional[bool] = None) -> dict:
+# Distinguishes "caller did not say" from "there is no download row", which is a real answer.
+_UNSET = object()
+
+
+def video_out(v: Video, full: bool = False, offline: Optional[bool] = None,
+              download_status=_UNSET) -> dict:
+    if offline is None or download_status is _UNSET:
+        status = _download_statuses([v.id]).get(v.id)
+        offline = status == "done" if offline is None else offline
+        download_status = status if download_status is _UNSET else download_status
     d = {
         "id": v.id, "title": v.title, "channel_id": v.channel_id, "channel_name": v.channel_name,
         "duration_s": v.duration_s, "published_at": v.published_at, "view_count": v.view_count,
         "like_count": v.like_count, "thumbnail": f"/api/thumb/{v.id}", "is_short": v.is_short,
         "is_live": v.is_live, "has_transcript": bool(v.transcript), "comment_count": len(v.comments or []),
-        "offline": bool(offline) if offline is not None else v.id in _offline_ids([v.id]),
+        "offline": bool(offline), "download_status": download_status,
     }
     if full:
         d.update(description=v.description, tags=v.tags, chapters=v.chapters)
     return d
 
 
-def candidate_out(c: Candidate, v: Optional[Video], offline: Optional[bool] = None) -> dict:
+def candidate_out(c: Candidate, v: Optional[Video], offline: Optional[bool] = None,
+                  download_status=_UNSET) -> dict:
     return {
         "id": c.id, "category_id": c.category_id, "status": c.status, "source": c.source, "score": c.score,
         "summary": c.summary, "reasons": c.reasons, "red_flags": c.red_flags, "tags": c.tags,
         "error": c.error, "created_at": c.created_at, "judged_at": c.judged_at,
-        "video": video_out(v, offline=offline) if v else {"id": c.video_id},
+        "video": video_out(v, offline=offline, download_status=download_status) if v else {"id": c.video_id},
     }
 
 
@@ -387,12 +399,12 @@ def _category_items(s: Session, pid: int, cid: int, status: str = "accepted", in
         rows = order_playlist(s.exec(q).all(), recent, limit=max(0, offset + limit))[offset:offset + limit]
     else:
         rows = s.exec(q.offset(offset).limit(limit)).all()
-    off = _offline_ids([c.video_id for c, _ in rows], s)  # one batched lookup instead of one per card
+    st = _download_statuses([c.video_id for c, _ in rows], s)  # one batched lookup instead of one per card
     out = []
     for c, v in rows:
         d = candidate_out(c, None)
         if v:
-            d["video"] = video_out(v, offline=v.id in off)
+            d["video"] = video_out(v, offline=st.get(v.id) == "done", download_status=st.get(v.id))
         out.append(d)
     return out
 
@@ -409,10 +421,11 @@ def home_feed(per_row: int = 20, pid: int = Depends(profile_id), s: Session = De
                   .where(WatchHistory.profile_id == pid, WatchHistory.finished == False,  # noqa: E712
                          WatchHistory.position_s > 15, col(WatchHistory.video_id).not_in(disliked))
                   .order_by(col(WatchHistory.updated_at).desc()).limit(per_row)).all()
-    off = _offline_ids([v.id for _, v in hist], s)
+    st = _download_statuses([v.id for _, v in hist], s)
     if hist:
         rows.append({"kind": "continue", "title": "Continue watching", "emoji": "⏯️", "items": [
-            {"video": video_out(v, offline=v.id in off), "position_s": h.position_s, "category_id": h.category_id}
+            {"video": video_out(v, offline=st.get(v.id) == "done", download_status=st.get(v.id)),
+             "position_s": h.position_s, "category_id": h.category_id}
             for h, v in hist]})
     # Categories
     for c in s.exec(select(Category).where(Category.profile_id == pid, Category.enabled == True)  # noqa: E712
@@ -428,9 +441,10 @@ def home_feed(per_row: int = 20, pid: int = Depends(profile_id), s: Session = De
         vids = s.exec(select(Video).where(col(Video.channel_id).in_(subs), Video.is_short == False,  # noqa: E712
                                           col(Video.id).not_in(watched), col(Video.id).not_in(disliked))
                       .order_by(col(Video.published_at).desc().nulls_last()).limit(per_row)).all()
-        off = _offline_ids([v.id for v in vids], s)
+        st = _download_statuses([v.id for v in vids], s)
         rows.append({"kind": "subscriptions", "title": "New from subscriptions", "emoji": "📺",
-                     "items": [{"video": video_out(v, offline=v.id in off)} for v in vids]})
+                     "items": [{"video": video_out(v, offline=st.get(v.id) == "done", download_status=st.get(v.id))}
+                               for v in vids]})
     return rows
 
 
@@ -629,8 +643,9 @@ def add_feedback(body: FeedbackIn, pid: int = Depends(profile_id), s: Session = 
 def list_feedback(limit: int = 100, pid: int = Depends(profile_id), s: Session = Depends(get_session)):
     rows = s.exec(select(Feedback, Video).join(Video, Video.id == Feedback.video_id, isouter=True)
                   .where(Feedback.profile_id == pid).order_by(col(Feedback.created_at).desc()).limit(limit)).all()
-    off = _offline_ids([f.video_id for f, _ in rows], s)
-    return [{**f.model_dump(), "video": video_out(v, offline=v.id in off) if v else {"id": f.video_id}}
+    st = _download_statuses([f.video_id for f, _ in rows], s)
+    return [{**f.model_dump(), "video": video_out(v, offline=st.get(v.id) == "done", download_status=st.get(v.id))
+             if v else {"id": f.video_id}}
             for f, v in rows]
 
 
@@ -741,8 +756,9 @@ def list_history(limit: int = 60, pid: int = Depends(profile_id), s: Session = D
     rows = s.exec(select(WatchHistory, Video).join(Video, Video.id == WatchHistory.video_id, isouter=True)
                   .where(WatchHistory.profile_id == pid).order_by(col(WatchHistory.updated_at).desc())
                   .limit(limit)).all()
-    off = _offline_ids([h.video_id for h, _ in rows], s)
-    return [{**h.model_dump(), "video": video_out(v, offline=v.id in off) if v else {"id": h.video_id}}
+    st = _download_statuses([h.video_id for h, _ in rows], s)
+    return [{**h.model_dump(), "video": video_out(v, offline=st.get(v.id) == "done", download_status=st.get(v.id))
+             if v else {"id": h.video_id}}
             for h, v in rows]
 
 

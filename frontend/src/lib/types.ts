@@ -69,6 +69,8 @@ export interface Video {
 	is_live: boolean;
 	/** A finished local copy exists (Ticket D cache). */
 	offline?: boolean;
+	/** The download row's status, so a card can tell "not saved" from "queued"/"downloading". */
+	download_status?: DownloadStatus | null;
 	has_transcript?: boolean;
 	comment_count?: number;
 	description?: string;

@@ -149,7 +149,7 @@
 	{#snippet footer()}
 		{#if data}
 			<button class="btn primary" use:focusable={{ autofocus: true, onSelect: play }}>▶ Play</button>
-			<OfflineButton videoId={data.video.id} offline={!!v?.offline} size="normal" />
+			<OfflineButton videoId={data.video.id} offline={!!v?.offline} status={v?.download_status ?? null} size="normal" />
 			{#if data.status === 'accepted'}
 				<button class="btn" use:focusable={{ onSelect: dismiss }}>Remove from playlist</button>
 			{:else}

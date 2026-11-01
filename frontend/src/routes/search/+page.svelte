@@ -113,7 +113,7 @@
 					<VideoCard video={v} size="grid" group="results" autofocus={i === 0}>
 						{#snippet actions()}
 							<button class="btn add" use:focusable={{ group: `res-acts-${v.id}`, onSelect: () => dialogs.openAddTo(v.id, v.title) }}>＋ Add to playlist…</button>
-							<OfflineButton videoId={v.id} offline={!!v.offline} group="res-acts-{v.id}" />
+							<OfflineButton videoId={v.id} offline={!!v.offline} status={v.download_status ?? null} group="res-acts-{v.id}" />
 						{/snippet}
 					</VideoCard>
 				{/each}

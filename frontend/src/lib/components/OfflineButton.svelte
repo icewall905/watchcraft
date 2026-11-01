@@ -2,6 +2,7 @@
 	// "Save offline" / "Remove download" toggle (Ticket D cache).
 	import { api } from '$lib/api';
 	import { toast } from '$lib/stores/toast.svelte';
+	import { agent } from '$lib/stores/agent.svelte';
 	import { focusable } from '$lib/nav';
 	import type { DownloadStatus } from '$lib/types';
 
@@ -16,9 +17,19 @@
 		size?: 'small' | 'normal';
 	}
 	let { videoId, offline = false, status = null, progress = 0, group, size = 'small' }: Props = $props();
-	// svelte-ignore state_referenced_locally
-	let st = $state<DownloadStatus | 'none'>(status ?? (offline ? 'done' : 'none'));
+	/** Set by the toggle so the button reacts before the next fetch lands. */
+	let local = $state<DownloadStatus | 'none' | null>(null);
 	let busy = $state(false);
+	// The shared SSE stream already carries the active download, so this shows live progress
+	// instead of whatever the page happened to load with.
+	const live = $derived(
+		agent.downloader.video_id === videoId &&
+			(agent.downloader.state === 'downloading' || agent.downloader.state === 'transcoding')
+			? agent.downloader
+			: null
+	);
+	const st = $derived(local ?? (live ? 'downloading' : (status ?? (offline ? 'done' : 'none'))));
+	const shown = $derived(live?.progress ?? progress);
 	const saved = $derived(st === 'done' || st === 'queued' || st === 'downloading');
 
 	async function toggle() {
@@ -27,11 +38,11 @@
 		try {
 			if (saved) {
 				await api.removeDownload(videoId);
-				st = 'evicted';
+				local = 'evicted';
 				toast.success('Download removed');
 			} else {
 				await api.saveOffline(videoId);
-				st = 'queued';
+				local = 'queued';
 				toast.success('Saving offline. It downloads in the background.');
 			}
 		} finally {
@@ -39,7 +50,7 @@
 		}
 	}
 	const label = $derived(
-		st === 'done' ? 'Remove download' : st === 'downloading' ? `Downloading ${Math.round(progress * 100)}%, cancel` : st === 'queued' ? 'Queued, cancel' : 'Save offline'
+		st === 'done' ? 'Remove download' : st === 'downloading' ? `Downloading ${Math.round(shown * 100)}%, cancel` : st === 'queued' ? 'Queued, cancel' : 'Save offline'
 	);
 </script>
 

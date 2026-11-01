@@ -8,7 +8,7 @@ from sqlmodel import select  # noqa: E402
 
 from bt.db import emit, session  # noqa: E402
 from bt.main import app  # noqa: E402
-from bt.models import AgentEvent, Candidate, Category, Feedback, Video, WatchHistory, now  # noqa: E402
+from bt.models import AgentEvent, Candidate, Category, Download, Feedback, Video, WatchHistory, now  # noqa: E402
 from bt.agent import data  # noqa: E402
 
 
@@ -502,3 +502,23 @@ def test_continue_watching_seen_and_boring_persist_across_reload_and_late_progre
     # A later explicit positive correction can put the unfinished video back.
     c.post('/api/feedback', json={'video_id': ids[1], 'rating': 1, 'text': 'Actually enjoyed it'}, headers=headers)
     assert ids[1] in continuing(headers)
+
+
+def test_a_card_reports_a_queued_download_not_just_a_finished_one():
+    """The card menu must tell "not saved" from "queued"/"downloading", not only "done"."""
+    c = client()
+    profile = c.post("/api/profiles", json={"name": "Card owner"}).json()
+    h = {"X-Profile-Id": str(profile["id"])}
+    cat = c.post("/api/categories", json={"name": "Science", "brief": "fun"}, headers=h).json()
+    with session() as s:
+        s.add(Video(id="cardvid0001", title="Queued thing", channel_id="UC1", duration_s=600))
+        s.add(Candidate(category_id=cat["id"], video_id="cardvid0001", status="accepted", score=90))
+        s.add(Download(video_id="cardvid0001", status="queued"))
+        s.commit()
+    card = c.get(f"/api/feed/category/{cat['id']}", headers=h).json()[0]["video"]
+    assert card["offline"] is False and card["download_status"] == "queued"
+    with session() as s:
+        s.get(Download, "cardvid0001").status = "done"
+        s.commit()
+    card = c.get(f"/api/feed/category/{cat['id']}", headers=h).json()[0]["video"]
+    assert card["offline"] is True and card["download_status"] == "done"

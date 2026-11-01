@@ -19,7 +19,7 @@ from .. import extras, streams, ytdl
 from ..db import get_settings, log_yt_request, session
 from ..downloader.service import abs_path
 from ..models import Candidate, Category, Channel, Download, Profile, ProfileChannel, Video, WatchHistory, now
-from .core import _offline_ids, profile_id, video_out
+from .core import _download_statuses, profile_id, video_out
 from .downloads import download_out
 
 router = APIRouter()
@@ -88,8 +88,8 @@ def _store_entries(s: Session, entries: list[dict], channel: dict | None = None)
         _upsert_channel(s, channel)
     vids = [ytdl.upsert_video(s, e) for e in entries]
     s.commit()
-    off = _offline_ids([v.id for v in vids], s)
-    return [video_out(v, offline=v.id in off) for v in vids]
+    st = _download_statuses([v.id for v in vids], s)
+    return [video_out(v, offline=st.get(v.id) == "done", download_status=st.get(v.id)) for v in vids]
 
 
 def _store_video(s: Session, info: dict, pid: int) -> dict:
@@ -104,7 +104,8 @@ def _store_video(s: Session, info: dict, pid: int) -> dict:
                    .where(Candidate.video_id == v.id, Category.profile_id == pid)).all()
     h = s.exec(select(WatchHistory).where(WatchHistory.profile_id == pid, WatchHistory.video_id == v.id)).first()
     dl = s.get(Download, v.id)
-    out = video_out(v, full=True, offline=bool(dl and dl.status == "done"))
+    out = video_out(v, full=True, offline=bool(dl and dl.status == "done"),
+                    download_status=dl.status if dl else None)
     out.update(
         download=download_out(dl),
         channel={"id": cid, "name": v.channel_name, "avatar": f"/api/channel/{cid}/avatar" if cid else "",

@@ -221,7 +221,7 @@
 							progress={v.duration_s ? (it.position_s ?? 0) / v.duration_s : 0}
 						>
 							{#snippet actions()}
-								<OfflineButton videoId={v.id} offline={!!v.offline} group="cw-acts-{v.id}" />
+								<OfflineButton videoId={v.id} offline={!!v.offline} status={v.download_status ?? null} group="cw-acts-{v.id}" />
 								<button class="btn why" use:focusable={{ group: `cw-acts-${v.id}`, onSelect: () => markSeen(v) }}>
 									Seen it
 								</button>
@@ -258,7 +258,7 @@
 								color={row.color}
 							>
 								{#snippet actions()}
-									<OfflineButton videoId={v.id} offline={!!v.offline} group="row-acts-{v.id}" />
+									<OfflineButton videoId={v.id} offline={!!v.offline} status={v.download_status ?? null} group="row-acts-{v.id}" />
 									<button class="btn why" use:focusable={{ group: `row-acts-${v.id}`, onSelect: () => markSeen(v) }}>
 										Seen it
 									</button>
