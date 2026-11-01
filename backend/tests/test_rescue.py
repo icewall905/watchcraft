@@ -123,24 +123,14 @@ def test_render_refuses_without_a_sandbox(monkeypatch):
     assert rescue.tool_render(ctx()) == ''
 
 
-def test_render_runs_the_browser_inside_bubblewrap(monkeypatch):
-    seen = {}
-
-    def run(cmd, **kwargs):
-        seen['cmd'] = cmd
-        class R:
-            returncode, stdout, stderr = 0, page(), b''
-        return R()
-
-    monkeypatch.setattr(rescue.subprocess, 'run', run)
+def test_render_refuses_even_with_a_working_sandbox(monkeypatch):
+    monkeypatch.setattr(rescue, 'sandbox_works', lambda: True)
     monkeypatch.setattr(rescue.shutil, 'which', lambda name: f'/usr/bin/{name}')
-    assert rescue.tool_render(ctx()).startswith('This is a substantial')
-    cmd = seen['cmd']
-    assert cmd[0] == 'bwrap' and '--unshare-pid' in cmd
-    assert '--tmpfs' in cmd  # the data and media directories are masked
-    # Chrome needs a writable profile inside the sandbox, and the '=' form: a space-separated
-    # value is read as a second URL and headless mode refuses it.
-    assert '--user-data-dir=/tmp/chrome-profile' in cmd
+    def forbidden(*args, **kwargs):
+        pytest.fail('Untrusted browser must never launch without network isolation')
+    monkeypatch.setattr(rescue.subprocess, 'run', forbidden)
+    assert rescue.tool_render(ctx()) == ''
+
 
 
 def test_rescue_tries_the_cheap_tools_first(monkeypatch):
@@ -212,3 +202,59 @@ def test_the_sandbox_probe_is_cached(monkeypatch):
     assert rescue.sandbox_works() is False
     assert rescue.sandbox_works() is False
     assert len(calls) == 1  # probed once, then remembered
+
+
+def test_nvd_api_recovers_a_short_record_before_page_variants(monkeypatch):
+    import json
+    seen = []
+    def fetch(url, **kwargs):
+        seen.append(url)
+        assert url == 'https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=CVE-2024-21545'
+        assert kwargs['kinds'] == ('application/json',)
+        return json.dumps({'vulnerabilities': [{'cve': {'id': 'CVE-2024-21545',
+            'descriptions': [{'lang': 'es', 'value': 'Otro'}, {'lang': 'en', 'value': 'A short advisory.'}]}}]}).encode(), url, {}
+    monkeypatch.setattr(rescue.curation, 'fetch', fetch)
+    got = rescue.rescue(ctx(url='https://nvd.nist.gov/vuln/detail/CVE-2024-21545'))
+    assert got['tool'] == 'json_api' and 'A short advisory.' in got['body']
+    assert 'Source: https://services.nvd.nist.gov/' in got['body']
+    assert len(seen) == 1
+
+
+@pytest.mark.parametrize('record', [
+    {'id': 'CVE-2024-99999', 'descriptions': [{'lang': 'en', 'value': LONG}]},
+    {'id': 'CVE-2024-21545', 'descriptions': [{'lang': 'en', 'value': ''}]},
+    {'id': 'CVE-2024-21545', 'descriptions': [{'lang': 'es', 'value': LONG}]},
+])
+def test_nvd_api_refuses_missing_or_mismatched_description(monkeypatch, record):
+    import json
+    monkeypatch.setattr(rescue.curation, 'fetch', lambda url, **kw:
+        (json.dumps({'vulnerabilities': [{'cve': record}]}).encode(), url, {}))
+    assert rescue.tool_json_api(ctx(url='https://nvd.nist.gov/vuln/detail/CVE-2024-21545')) == ''
+
+
+@pytest.mark.parametrize('url', ['https://nvd.nist.gov.evil.test/vuln/detail/CVE-2024-21545',
+    'https://evil.test/nvd.nist.gov/vuln/detail/CVE-2024-21545',
+    'https://nvd.nist.gov/vuln/detail/not-a-cve', 'http://nvd.nist.gov/vuln/detail/CVE-2024-21545'])
+def test_nvd_route_is_limited_to_exact_public_record_urls(url):
+    assert rescue._nvd_id(url) == ''
+
+
+@pytest.mark.parametrize('count,long_text,expected', [(1, False, False), (11, False, True), (1, True, True)])
+def test_ocr_reports_page_and_text_limits(monkeypatch, count, long_text, expected):
+    seen = []
+    def run(cmd, **kwargs):
+        seen.append(cmd)
+        if cmd[0] == 'pdftoppm':
+            assert cmd[cmd.index('-l') + 1] == str(rescue.OCR_PAGES + 1)
+            for n in range(count):
+                rescue.Path(cmd[-1] + f'-{n + 1:02}.png').write_bytes(b'png')
+        class Result:
+            returncode = 0
+            stdout = b'x' * (rescue.TEXT_LIMIT + 1) if long_text else b'Page text'
+        return Result()
+    monkeypatch.setattr(rescue.subprocess, 'run', run)
+    monkeypatch.setattr(rescue.shutil, 'which', lambda name: '/usr/bin/' + name)
+    context = ctx(data=b'%PDF-1.4 fake')
+    assert rescue.tool_ocr(context)
+    assert context['_ocr_truncated'] is expected
+    assert sum(cmd[0] == 'tesseract' for cmd in seen) == min(count, rescue.OCR_PAGES)

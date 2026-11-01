@@ -4,8 +4,9 @@ Capture gives up when a page renders its article in JavaScript, hides it behind 
 wall, or ships it as a scan. Every tool here is a bounded, audited way to get the same text; the
 agent picks between them, and a fixed order is used when no model is configured.
 
-Nothing here runs arbitrary code. The one tool that executes untrusted content is `render`, and
-it runs the browser inside bubblewrap with the data and media directories masked.
+The browser tool is disabled on every host: filesystem isolation alone does not constrain
+its network access. The remaining tools fetch through the public-address validator or OCR
+already-fetched bytes; model output never becomes an executable command.
 """
 import json
 import logging
@@ -18,13 +19,11 @@ from pathlib import Path
 from urllib.parse import quote, urlsplit
 
 from .. import curation
-from ..config import DATA_DIR, MEDIA_DIR
 from . import ai
 from .extract import TEXT_LIMIT, extract_page, strip_tags
 
 log = logging.getLogger(__name__)
 
-RENDER_TIMEOUT_S = 45
 OCR_PAGES = 10
 OCR_TIMEOUT_S = 120
 MIN_BODY = 200  # shorter than this is a cookie notice, not an article
@@ -85,8 +84,38 @@ def tool_variants(ctx) -> str:
     return ''
 
 
+def _nvd_id(url: str) -> str:
+    p = urlsplit(url)
+    if p.scheme != 'https' or p.netloc.lower() != 'nvd.nist.gov':
+        return ''
+    match = re.fullmatch(r'/vuln/detail/(CVE-\d{4}-\d{4,7})/?', p.path, re.I)
+    return match.group(1).upper() if match else ''
+
+
+def _nvd_body(cid: str) -> str:
+    """Use the authoritative record when NVD's human page serves a JS challenge."""
+    endpoint = 'https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=' + cid
+    try:
+        data, _, _ = _get(endpoint, kinds=('application/json',), limit=2_000_000)
+        rows = json.loads(data).get('vulnerabilities') or []
+        for row in rows:
+            record = row.get('cve') or {}
+            if record.get('id') != cid:
+                continue
+            description = next((d.get('value') for d in record.get('descriptions', [])
+                                if d.get('lang') == 'en' and isinstance(d.get('value'), str)), '')
+            if description.strip():
+                return f'{cid}\n\n{description.strip()}\n\nSource: {endpoint}'[:TEXT_LIMIT]
+    except Exception:  # noqa: BLE001 — unavailable or malformed API is still a capture miss
+        pass
+    return ''
+
+
 def tool_json_api(ctx) -> str:
     """The article as the site's own API or structured data already holds it."""
+    cid = _nvd_id(ctx['url'])
+    if cid:
+        return _nvd_body(cid)
     p = urlsplit(ctx['url'])
     slug = p.path.rstrip('/').rsplit('/', 1)[-1]
     if slug and '.' not in slug:
@@ -169,14 +198,6 @@ def tool_wayback(ctx) -> str:
         return ''
 
 
-def _chrome() -> str:
-    for name in ('google-chrome', 'chromium', 'chromium-browser'):
-        found = shutil.which(name)
-        if found:
-            return found
-    return ''
-
-
 _sandbox_ok: bool | None = None
 
 
@@ -203,24 +224,12 @@ def sandbox_works() -> bool:
 
 
 def tool_render(ctx) -> str:
-    """Run the page's JavaScript in a browser, inside bubblewrap with the data dirs masked."""
-    chrome = _chrome()
-    if not chrome or not sandbox_works():
-        return ''
-    # The profile lives in the sandbox's own /tmp: the host filesystem is read-only in there, and
-    # Chrome refuses to start without a writable one. The data and media directories are masked.
-    cmd = ['bwrap', '--ro-bind', '/', '/', '--dev', '/dev', '--proc', '/proc', '--tmpfs', '/tmp',
-           '--tmpfs', str(DATA_DIR), '--tmpfs', str(MEDIA_DIR), '--unshare-pid', '--die-with-parent',
-           chrome, '--headless=new', '--disable-gpu', '--no-sandbox', '--disable-dev-shm-usage',
-           '--disable-crash-reporter', '--disable-extensions', '--no-first-run',
-           '--user-data-dir=/tmp/chrome-profile', '--virtual-time-budget=8000', '--dump-dom', ctx['url']]
-    try:
-        out = subprocess.run(cmd, capture_output=True, timeout=RENDER_TIMEOUT_S, check=False)
-    except (subprocess.SubprocessError, OSError):
-        return ''
-    if out.returncode != 0 or not out.stdout:
-        return ''
-    return _body(out.stdout, ctx['url'])
+    """Decline on every host until browser egress enforces the fetcher's network policy.
+
+    A working bubblewrap sandbox protects files but shares networking: redirects and
+    subresources could reach localhost/LAN. Never launch Chromium on untrusted URLs.
+    """
+    return ''
 
 
 def tool_ocr(ctx) -> str:
@@ -234,21 +243,28 @@ def tool_ocr(ctx) -> str:
         src = Path(tmp) / 'in.pdf'
         src.write_bytes(data)
         try:
-            subprocess.run(['pdftoppm', '-r', '200', '-png', '-l', str(OCR_PAGES), str(src), str(Path(tmp) / 'p')],
+            rendered = subprocess.run(['pdftoppm', '-r', '200', '-png', '-l', str(OCR_PAGES + 1), str(src), str(Path(tmp) / 'p')],
                            capture_output=True, timeout=OCR_TIMEOUT_S, check=False)
         except (subprocess.SubprocessError, OSError):
             return ''
         pages = []
-        for image in sorted(Path(tmp).glob('p*.png')):
+        images = sorted(Path(tmp).glob('p*.png'))
+        truncated = len(images) > OCR_PAGES or rendered.returncode != 0
+        for image in images[:OCR_PAGES]:
             try:
                 out = subprocess.run(['tesseract', str(image), 'stdout'], capture_output=True,
                                      timeout=OCR_TIMEOUT_S, check=False)
             except (subprocess.SubprocessError, OSError):
+                truncated = True
                 continue
+            if out.returncode != 0:
+                truncated = True
             text = out.stdout.decode('utf-8', 'replace').strip()
             if text:
                 pages.append(text)
-    return '\n\n'.join(pages)[:TEXT_LIMIT]
+    body = '\n\n'.join(pages)
+    ctx['_ocr_truncated'] = truncated or len(body) > TEXT_LIMIT
+    return body[:TEXT_LIMIT]
 
 
 TOOLS = {
@@ -257,7 +273,7 @@ TOOLS = {
     'json_api': ('Read the article from the site API or its JSON-LD articleBody', tool_json_api),
     'feed_full': ('Read the full text the source feed already carries', tool_feed_full),
     'wayback': ('Read the nearest archived snapshot', tool_wayback),
-    'render': ('Run the page JavaScript in a sandboxed browser', tool_render),
+    'render': ('Unavailable: browser network isolation is not configured', tool_render),
     'ocr': ('Read a scanned PDF with OCR', tool_ocr),
 }
 ORDER = ('refetch', 'variants', 'json_api', 'feed_full', 'wayback', 'render', 'ocr')
@@ -272,13 +288,17 @@ def _run(name: str, ctx, tried: list, notes: list) -> str:
         notes.append(f'{name}: {type(e).__name__}')
         return ''
     notes.append(f'{name}: {"recovered" if body else "nothing"}')
-    return body if len(body) >= MIN_BODY else ''
+    # A validated NVD record may legitimately be shorter than an article/cookie notice.
+    trusted_record = name == 'json_api' and bool(_nvd_id(ctx['url']))
+    return body if len(body) >= MIN_BODY or (body and trusted_record) else ''
 
 
 def rescue(ctx: dict, reason: str = '') -> dict:
     """Try to get the article text another way. Returns {body, tool, notes}."""
     tried, notes = [], []
-    for name in FIRST:
+    # Avoid repeatedly fetching NVD's challenge page and AMP guesses when its API is known.
+    first = ('json_api',) if _nvd_id(ctx['url']) else FIRST
+    for name in first:
         body = _run(name, ctx, tried, notes)
         if body:
             return {'body': body, 'tool': name, 'notes': notes}

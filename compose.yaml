@@ -7,12 +7,9 @@ x-bt: &bt
   volumes:
     - ${BT_DATA_HOST_DIR:-./data}:/data
     - ${BT_MEDIA_HOST_DIR:-./media}:/media
-  # Capture rescue's `render` tool runs Chromium inside bubblewrap. That needs bwrap to create a
-  # mount namespace, which a default container cannot do: the host's / is a shared mount and the
-  # container lacks CAP_SYS_ADMIN, so bwrap exits with "Failed to make / slave". Making it work
-  # means cap_add: [SYS_ADMIN] plus seccomp=unconfined and apparmor=unconfined — the capability
-  # that enables container escape, for one of seven rescue tools. Not granted; `render` probes
-  # once and declines, and the other six tools still run. See docs/SECURITY.md.
+  # Browser capture is disabled on every host until browser egress can enforce public-only
+  # fetching for redirects and subresources. Do not grant SYS_ADMIN or disable security profiles
+  # to enable it: filesystem isolation alone does not protect the LAN. See docs/SECURITY.md.
   depends_on:
     - pot
 

@@ -8,7 +8,7 @@ from sqlmodel import SQLModel
 from bt import db
 from bt.db import init_db, session
 from bt.hub import capture
-from bt.hub.models import CaptureJob, CapturedAsset, ContentItem, ItemState
+from bt.hub.models import CaptureJob, CapturedAsset, CapturedPage, ContentItem, ItemState
 
 PDF = b'%PDF-1.4\nscanned document'
 OCR_TEXT = 'Recovered evidence from the scanned document.'
@@ -109,3 +109,43 @@ def test_stored_feed_excerpt_does_not_suppress_rescue_or_get_erased(monkeypatch)
     with session() as s:
         assert s.get(ContentItem, iid).body == 'Existing feed excerpt'
         assert s.get(CaptureJob, (1, iid)).error == 'Offline'
+
+
+@pytest.mark.parametrize('truncated', [True, False])
+def test_ocr_snapshot_retains_truncation_metadata(monkeypatch, truncated):
+    iid = seed()
+    monkeypatch.setattr(capture.curation, 'fetch', lambda url, **kw: (PDF, url, {'content_type': 'application/pdf'}))
+    monkeypatch.setattr(capture.subprocess, 'run', lambda *a, **kw: SimpleNamespace(stdout=b''))
+    def ocr(context):
+        context['_ocr_truncated'] = truncated
+        return OCR_TEXT
+    monkeypatch.setattr(capture.rescue, 'tool_ocr', ocr)
+    capture.run(1, iid, 123)
+    with session() as s:
+        assert s.get(CapturedPage, iid).truncated is truncated
+        assert s.get(CaptureJob, (1, iid)).status == 'complete'
+
+
+def test_nvd_challenge_recovers_authoritative_description(monkeypatch):
+    import json
+    iid = seed()
+    with session() as s:
+        item = s.get(ContentItem, iid)
+        item.url = 'https://nvd.nist.gov/vuln/detail/CVE-2024-21545'
+        item.type, item.provider = 'advisory', 'nvd'
+        s.add(item); s.commit()
+    description = 'The official description of this vulnerability.'
+    calls = []
+    def fetch(url, **kw):
+        calls.append(url)
+        if 'services.nvd.nist.gov' in url:
+            return json.dumps({'vulnerabilities': [{'cve': {'id': 'CVE-2024-21545',
+                'descriptions': [{'lang': 'en', 'value': description}]}}]}).encode(), url, {'content_type': 'application/json'}
+        return b'<html><script>challenge()</script></html>', url, {'content_type': 'text/html'}
+    monkeypatch.setattr(capture.curation, 'fetch', fetch)
+    capture.run(1, iid, 123)
+    with session() as s:
+        assert description in s.get(ContentItem, iid).body
+        job = s.get(CaptureJob, (1, iid))
+        assert job.status == 'complete' and not job.error
+    assert len(calls) == 2

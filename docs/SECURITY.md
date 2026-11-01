@@ -100,20 +100,16 @@ cookie or bot wall, or ships a scan — `hub/rescue.py` tries other ways to get 
 Most tools are ordinary bounded fetches through `curation.fetch`, so they inherit the SSRF rules
 above. Two are different:
 
-- **`render`** runs the page's JavaScript in headless Chromium. That executes untrusted code, so
-  it runs inside **bubblewrap** with the host filesystem read-only, `/data` and `/media` masked
-  by tmpfs, a private PID namespace, and a 45-second wall clock. It refuses to run at all when
-  the sandbox cannot start rather than falling back to a bare browser.
+- **`render`** is disabled on **every host**, even when bubblewrap can start. Filesystem
+  isolation does not enforce the public-network fetch rules: Chromium redirects and subresources
+  can contact localhost or LAN services. `tool_render` returns without launching a process.
+  Container capabilities cannot enable it. Ordinary page recovery still uses validated fetches.
 - **`ocr`** runs `pdftoppm` and `tesseract` on a PDF already fetched through `curation.fetch`,
-  in a temporary directory, bounded to ten pages.
-
-**`render` does not work in the shipped container.** bubblewrap cannot create a mount namespace
-there: the host's `/` is a shared mount and the container lacks `CAP_SYS_ADMIN`, so bwrap exits
-with "Failed to make / slave". Making it work needs `cap_add: [SYS_ADMIN]` plus
-`seccomp=unconfined` and `apparmor=unconfined` — `SYS_ADMIN` being the capability that enables
-container escape. That is not a good trade for one of seven rescue tools, so it is not granted.
-`sandbox_works()` probes once and `render` declines; the other six tools are unaffected. A host
-that runs the app outside a container, or a container given those grants, gets `render` back.
+  in a temporary directory, reading at most ten pages. An eleventh rendered page detects truncation;
+  page and text limits are retained in the reader's partial-text notice.
+- **NVD records** recover from the official NVD JSON API when the human page returns a JavaScript
+  challenge. The route requires the exact NVD hostname and a valid CVE path, verifies the returned
+  record ID, and keeps the API source URL with the extracted description.
 
 The model chooses which tool to try next, but it can only name a tool that exists. It never
 supplies a command, a URL to fetch, or a shell string, so a hostile page cannot turn the choice
@@ -131,8 +127,8 @@ sandbox review.
   access, including administrator actions.
 - **Notification webhooks can reach the LAN.** That is the point (Home Assistant), but it means
   an administrator can make the server POST to any internal address.
-- **JavaScript-rendered pages are not recovered in the shipped container**, because the browser
-  sandbox cannot start there (see above). Those items still fail capture.
+- **Browser rendering is disabled on every host.** JavaScript-only pages without an API, feed
+  or other readable version still fail capture (see above).
 - **No audit log of administrator actions** beyond the agent event stream.
 - **Media files are served by id**, not by signed URL. Anyone with the session can fetch any
   stored video; there is no per-profile media authorization.

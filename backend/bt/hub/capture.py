@@ -237,6 +237,8 @@ def run(pid, iid, lease):
                    else rescue.rescue(ctx, primary_error))
             if got['body']:
                 body = got['body']
+                if is_pdf:
+                    truncated = bool(ctx.get('_ocr_truncated', True))
                 # The failure is resolved, so it is no longer an error: the job is complete.
                 errors = [e for e in errors if e != primary_error]
                 log.info('capture %s recovered with %s', iid, got['tool'])

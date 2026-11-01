@@ -8,8 +8,8 @@ RUN npm run build
 
 # --- runtime
 FROM python:3.12-slim
-# chromium + tesseract: capture rescue can render a JavaScript page and OCR a scanned PDF.
-# bubblewrap: the browser and any future script run inside it, with /data and /media masked.
+# tesseract reads scanned PDFs. Browser rendering stays disabled pending network isolation;
+# Chromium/bubblewrap remain packaged for compatibility with existing deployments.
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg tzdata poppler-utils \
     chromium tesseract-ocr bubblewrap && rm -rf /var/lib/apt/lists/*
 # yt-dlp needs a JS runtime to solve YouTube player challenges
