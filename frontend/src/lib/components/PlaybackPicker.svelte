@@ -17,6 +17,11 @@
 		try { await playback.unregister(); } catch { /* API displays the error */ }
 		finally { working = false; }
 	}
+	async function forget() {
+		working = true;
+		try { await playback.forgetSelected(); } catch { /* API displays the error */ }
+		finally { working = false; }
+	}
 	// Remote progress: the screen reports position every heartbeat; a drag holds its value until the screen catches up.
 	let scrub = $state<number | null>(null);
 	let scrubTimer: ReturnType<typeof setTimeout> | undefined;
@@ -91,6 +96,9 @@
 					<button class="btn" disabled={!playback.selected?.online || !!playback.needsPair} use:focusable={{ group: 'cast', onSelect: () => playback.send('stop') }}>Stop</button>
 					<button class="btn" disabled={!controllable || !duration} aria-label="Forward 10 seconds" use:focusable={{ group: 'cast', onSelect: () => seek(position + 10) }}>+10s</button>
 				</div>
+				{#if playback.selected?.paired}
+					<button class="btn" disabled={working} use:focusable={{ group: 'cast', onSelect: forget }}>Forget this screen</button>
+				{/if}
 			</section>
 		{/if}
 		<section>

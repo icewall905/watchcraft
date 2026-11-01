@@ -9,8 +9,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text, update
 from sqlmodel import Session, select
 
+from ..access import require_admin
 from ..db import get_session
-from ..models import Category, PlaybackTarget
+from ..models import Category, PlaybackTarget, Profile
 from .core import profile_id
 
 router = APIRouter(prefix="/playback")
@@ -57,10 +58,19 @@ def _paired(target, pid: int) -> bool:
     return pid in _pair(target)["profiles"]
 
 
-def _public(target, pid: int):
-    return {"id": target.id, "name": target.name,
+def _is_admin(s, pid: int) -> bool:
+    p = s.get(Profile, pid)
+    return bool(p and p.role == 'admin')
+
+
+def _public(target, pid: int, admin: bool = False):
+    info = {"id": target.id, "name": target.name,
             "online": time.time() - target.last_seen < ONLINE_SECONDS, "state": target.state,
             "paired": _paired(target, pid)}
+    # Administrators manage screens, so they see which profiles may send to each one.
+    if admin:
+        info["paired_profiles"] = _pair(target)["profiles"]
+    return info
 
 
 def _receiver(s, target_id, token):
@@ -80,7 +90,8 @@ def _target(s, target_id):
 
 @router.get("/targets")
 def targets(pid: int = Depends(profile_id), s: Session = Depends(get_session)):
-    return [_public(t, pid) for t in s.exec(select(PlaybackTarget).order_by(PlaybackTarget.name)).all()]
+    admin = _is_admin(s, pid)
+    return [_public(t, pid, admin) for t in s.exec(select(PlaybackTarget).order_by(PlaybackTarget.name)).all()]
 
 
 @router.post("/targets")
@@ -180,5 +191,47 @@ def unregister(target_id: str, x_receiver_token: str = Header(default=""),
                s: Session = Depends(get_session)):
     target = _receiver(s, target_id, x_receiver_token)
     s.delete(target)
+    s.commit()
+    return {"ok": True}
+
+
+@router.delete("/targets/{target_id}/registration", dependencies=[Depends(require_admin)])
+def remove_target(target_id: str, s: Session = Depends(get_session)):
+    """An administrator removes a screen from the sender side; the screen must register again."""
+    s.delete(_target(s, target_id))
+    s.commit()
+    return {"ok": True}
+
+
+@router.delete("/targets/{target_id}/pair")
+def unpair(target_id: str, profile: int | None = None, pid: int = Depends(profile_id),
+           s: Session = Depends(get_session)):
+    """Forget a screen for one profile; administrators may unpair any profile."""
+    who = pid if profile is None else profile
+    if who != pid:
+        require_admin(pid)
+    s.exec(text("BEGIN IMMEDIATE"))
+    target = _target(s, target_id)
+    info = {**(target.pair or {}), **_pair(target)}
+    if who in info["profiles"]:
+        info["profiles"] = [x for x in info["profiles"] if x != who]
+        # A command already in the mailbox must not play for a profile that just lost access.
+        if (target.command or {}).get("profile_id") == who:
+            target.command = {}
+        target.pair = info
+        s.add(target)
+    s.commit()
+    return {"ok": True}
+
+
+@router.post("/targets/{target_id}/pair-code", dependencies=[Depends(require_admin)])
+def rotate_pair_code(target_id: str, s: Session = Depends(get_session)):
+    """Replace a screen's pairing code; the screen shows the new one on its next heartbeat."""
+    s.exec(text("BEGIN IMMEDIATE"))
+    target = _target(s, target_id)
+    info = {**(target.pair or {}), **_pair(target)}
+    # A fresh code also clears the wrong-code lockout: those guesses were for the old code.
+    target.pair = {**info, "code": str(secrets.randbelow(900000) + 100000), "fails": []}
+    s.add(target)
     s.commit()
     return {"ok": True}

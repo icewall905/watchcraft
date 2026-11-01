@@ -11,6 +11,7 @@
 	import CookiesTab from '$lib/settings/CookiesTab.svelte';
 	import ExtrasTab from '$lib/settings/ExtrasTab.svelte';
 	import ProfilesTab from '$lib/settings/ProfilesTab.svelte';
+	import ScreensTab from '$lib/settings/ScreensTab.svelte';
 	import KeysTab from '$lib/settings/KeysTab.svelte';
 	import StorageTab from '$lib/settings/StorageTab.svelte';
 	import AppearanceTab from '$lib/settings/AppearanceTab.svelte';
@@ -28,6 +29,7 @@
 		{ key: 'extras', label: 'Extras', icon: '🧩', hint: 'Shorts, dislikes, titles' },
 		{ key: 'cookies', label: 'YouTube cookies', icon: '🍪', hint: 'Optional sign-in' },
 		{ key: 'profiles', label: 'Profiles', icon: '👪', hint: 'Family members' },
+		{ key: 'screens', label: 'Screens', icon: '📺', hint: 'Play on receivers and pairing' },
 		{ key: 'keys', label: 'Remote test', icon: '🎮', hint: 'See what buttons send' }
 	] as const;
 	type TabKey = (typeof TABS)[number]['key'];
@@ -74,6 +76,7 @@
 					{:else if tab === 'extras'}<ExtrasTab />
 					{:else if tab === 'cookies'}<CookiesTab />
 					{:else if tab === 'profiles'}<ProfilesTab />
+					{:else if tab === 'screens'}<ScreensTab />
 					{:else}<KeysTab />{/if}
 				</div>
 			{/key}

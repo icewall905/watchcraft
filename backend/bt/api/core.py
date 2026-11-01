@@ -17,7 +17,7 @@ from ..config import COOKIES_PATH, DEFAULT_SETTINGS
 from ..db import emit, get_session, get_settings, save_setting, session, yt_request_counts
 from ..downloader.service import drop_unwanted
 from ..playlist import order_playlist
-from ..models import (AgentEvent, Candidate, Category, Channel, Download, Feedback, Lesson, LessonEvidenceState, LessonRevision, Profile, ProfileChannel, ReencodeJob, ReencodeResult, Video,
+from ..models import (AgentEvent, Candidate, Category, Channel, Download, Feedback, Lesson, LessonEvidenceState, LessonRevision, PlaybackTarget, Profile, ProfileChannel, ReencodeJob, ReencodeResult, Video,
                       WatchHistory, YtRequest, now)
 
 router = APIRouter()
@@ -199,6 +199,14 @@ def delete_profile(pid: int, request: Request, s: Session = Depends(get_session)
     from ..hub.api import delete_profile_data
     s.exec(delete(Discovery).where(Discovery.profile_id == pid))
     delete_profile_data(s, pid)
+    # A deleted profile must not keep casting rights: SQLite reuses the highest id for a new profile.
+    for t in s.exec(select(PlaybackTarget)).all():
+        pair = t.pair or {}
+        if pid in [int(x) for x in pair.get("profiles", [])]:
+            t.pair = {**pair, "profiles": [x for x in pair["profiles"] if int(x) != pid]}
+            if (t.command or {}).get("profile_id") == pid:
+                t.command = {}
+            s.add(t)
     profile_pins.set_pin(s, pid, "")
     s.delete(p)
     s.commit()

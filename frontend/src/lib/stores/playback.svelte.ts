@@ -8,6 +8,8 @@ export interface PlaybackTarget {
 	name: string;
 	online: boolean;
 	paired: boolean;
+	/** Profile ids allowed to send here; only administrators receive this list. */
+	paired_profiles?: number[];
 	state: { video_id?: string | null; paused?: boolean; position_s?: number; duration_s?: number | null; error?: string };
 }
 interface Receiver { id: string; name: string; token: string; ack?: string; pair_code?: string }
@@ -102,6 +104,39 @@ class Playback {
 		localStorage.removeItem(KEY);
 		this.error = '';
 		await this.poll();
+	}
+
+	/** Screens change from other devices too, so the settings tab refreshes on demand. */
+	async refresh() {
+		this.targets = await request<PlaybackTarget[]>('/playback/targets', { toast: false, signal: AbortSignal.timeout(8000) });
+	}
+
+	/** Stop sending from this profile; the screen keeps its other pairings. */
+	async forget(id: string) {
+		await request(`/playback/targets/${id}/pair`, { method: 'DELETE' });
+		if (this.selectedId === id) this.select(null);
+		await this.refresh();
+	}
+
+	async forgetSelected() {
+		if (this.selectedId) await this.forget(this.selectedId);
+	}
+
+	/** Administrators: revoke one profile's pairing, replace the code, or remove the screen. */
+	async revoke(id: string, profile: number) {
+		await request(`/playback/targets/${id}/pair?profile=${profile}`, { method: 'DELETE' });
+		await this.refresh();
+	}
+
+	async rotateCode(id: string) {
+		await request(`/playback/targets/${id}/pair-code`, { method: 'POST' });
+		await this.refresh();
+	}
+
+	async remove(id: string) {
+		await request(`/playback/targets/${id}/registration`, { method: 'DELETE' });
+		if (this.selectedId === id) this.select(null);
+		await this.refresh();
 	}
 
 	async send(action: string, video_id?: string, category_id?: number | null, position_s?: number) {

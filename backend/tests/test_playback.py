@@ -169,6 +169,55 @@ def test_wrong_pairing_codes_lock_the_screen_for_a_while():
         assert c.delete(f'/api/playback/targets/{r["id"]}', headers={'X-Receiver-Token': r['token']}).status_code == 200
 
 
+def test_administrators_manage_screens_and_pairings_from_the_sender_side():
+    with TestClient(app) as c:
+        admin = {'X-Profile-Id': '1'}
+        r = c.post('/api/playback/targets', json={'name': 'Kitchen'}).json()
+        path = f'/api/playback/targets/{r["id"]}'
+        receiver = {'X-Receiver-Token': r['token']}
+        other = c.post('/api/profiles', json={'name': 'Guest'}).json()
+        guest = {'X-Profile-Id': str(other['id'])}
+        assert pair_screen(c, r['id'], r['pair_code'], headers=guest).status_code == 200
+        assert pair_screen(c, r['id'], r['pair_code'], headers=admin).status_code == 200
+        # Only administrators see which profiles may send to a screen.
+        listed = next(t for t in c.get('/api/playback/targets', headers=admin).json() if t['id'] == r['id'])
+        assert sorted(listed['paired_profiles']) == sorted([1, other['id']])
+        assert 'paired_profiles' not in next(t for t in c.get('/api/playback/targets', headers=guest).json()
+                                             if t['id'] == r['id'])
+        # A profile may forget a screen itself, but not unpair someone else.
+        assert c.delete(path + '/pair?profile=1', headers=guest).status_code == 403
+        assert c.delete(path + '/pair', headers=guest).status_code == 200
+        assert c.post(path + '/commands', json={'action': 'pause'}, headers=guest).status_code == 403
+        # An administrator revokes another profile's pairing.
+        assert c.delete(path + '/pair?profile=1', headers=admin).status_code == 200
+        assert c.post(path + '/commands', json={'action': 'pause'}, headers=admin).status_code == 403
+        # Rotating the code invalidates the old one; the screen learns the new one by heartbeat.
+        assert c.post(path + '/pair-code', headers=guest).status_code == 403
+        assert c.post(path + '/pair-code', headers=admin).status_code == 200
+        new_code = c.post(path + '/heartbeat', json={}, headers=receiver).json()['pair_code']
+        assert new_code != r['pair_code']
+        assert pair_screen(c, r['id'], r['pair_code'], headers=admin).status_code == 403
+        assert pair_screen(c, r['id'], new_code, headers=admin).status_code == 200
+        # An administrator removes the screen; its receiver credentials stop working.
+        assert c.delete(path + '/registration', headers=guest).status_code == 403
+        assert c.delete(path + '/registration', headers=admin).status_code == 200
+        assert c.post(path + '/heartbeat', json={}, headers=receiver).status_code == 403
+        assert r['id'] not in [t['id'] for t in c.get('/api/playback/targets', headers=admin).json()]
+
+
+def test_deleting_a_profile_drops_its_screen_pairings():
+    """SQLite reuses the highest profile id, so a deleted profile must not leave casting rights behind."""
+    with TestClient(app) as c:
+        admin = {'X-Profile-Id': '1'}
+        r = c.post('/api/playback/targets', json={'name': 'Hallway'}).json()
+        temp = c.post('/api/profiles', json={'name': 'Temporary'}).json()
+        assert pair_screen(c, r['id'], r['pair_code'], headers={'X-Profile-Id': str(temp['id'])}).status_code == 200
+        assert c.delete(f'/api/profiles/{temp["id"]}', headers=admin).status_code == 200
+        listed = next(t for t in c.get('/api/playback/targets', headers=admin).json() if t['id'] == r['id'])
+        assert temp['id'] not in listed['paired_profiles']
+        assert c.delete(f'/api/playback/targets/{r["id"]}/registration', headers=admin).status_code == 200
+
+
 def test_child_profiles_pair_and_cast_like_everyone_else():
     """Children watch any video on their own device, so casting needs the same screen code and nothing more."""
     with TestClient(app) as c:

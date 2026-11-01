@@ -95,11 +95,54 @@ test('phone pairs, sends one-tap playback to a persistent browser receiver and c
 		await expect(screen).toHaveURL(/\/$/);
 		await phone.getByRole('button', { name: 'This device', exact: true }).click();
 		await expect(phone.getByRole('dialog')).toHaveCount(0);
+		// A sender can drop its own pairing; the screen then asks for the code again.
+		await phone.getByRole('button', { name: 'Play on', exact: true }).click();
+		await phone.getByRole('button', { name: /Living room test/ }).click();
+		await phone.getByRole('button', { name: 'Play on', exact: true }).click();
+		await phone.getByRole('button', { name: 'Forget this screen', exact: true }).click();
+		await phone.getByRole('button', { name: /Living room test/ }).click();
+		await expect(phone.getByLabel('Pairing code', { exact: true })).toBeVisible();
 	} finally {
 		if (registration) await request.delete(`/api/playback/targets/${registration.id}`, {
 			headers: { 'X-Receiver-Token': registration.token }
 		});
 		await phoneContext.close();
 		await screenContext.close();
+	}
+});
+
+test('administrators manage screens and pairings from Settings', async ({ browser, request }) => {
+	await resetBackend(request);
+	const admin = { 'X-Profile-Id': '1' };
+	const screen = await (await request.post('/api/playback/targets', { data: { name: 'Study' } })).json();
+	const guest = await (await request.post('/api/profiles', { data: { name: 'Guest' } })).json();
+	await request.post(`/api/playback/targets/${screen.id}/pair`,
+		{ data: { code: screen.pair_code }, headers: { 'X-Profile-Id': String(guest.id) } });
+	const context = await browser.newContext();
+	const page = await context.newPage();
+	const heartbeat = () => request.post(`/api/playback/targets/${screen.id}/heartbeat`,
+		{ data: {}, headers: { 'X-Receiver-Token': screen.token } });
+	try {
+		// Two profiles exist, so pick the administrator instead of the "Who's watching?" chooser.
+		await page.goto('/settings?tab=screens');
+		await page.evaluate(() => { localStorage.clear(); localStorage.setItem('bt.profile', '1'); });
+		await page.reload();
+		await expect(page.getByRole('heading', { name: 'Screens' })).toBeVisible();
+		await expect(page.getByText('Study', { exact: true })).toBeVisible();
+		// The administrator sees who may send to the screen and revokes one profile.
+		await page.getByRole('button', { name: 'Unpair Guest from Study' }).click();
+		await expect(page.getByRole('button', { name: 'Unpair Guest from Study' })).toHaveCount(0);
+		// A new code replaces the one the screen showed, so anyone who saw it cannot pair.
+		await page.getByRole('button', { name: 'New pairing code' }).click();
+		await expect.poll(async () => (await (await heartbeat()).json()).pair_code).not.toBe(screen.pair_code);
+		// Removing the screen unregisters it from the sender side; its credentials stop working.
+		await page.getByRole('button', { name: 'Remove screen' }).click();
+		await page.getByRole('button', { name: 'Press again to remove' }).click();
+		await expect(page.getByText('No screens are registered yet.')).toBeVisible();
+		expect((await heartbeat()).status()).toBe(403);
+	} finally {
+		await request.delete(`/api/playback/targets/${screen.id}/registration`, { headers: admin });
+		await request.delete(`/api/profiles/${guest.id}`, { headers: admin });
+		await context.close();
 	}
 });

@@ -2,14 +2,21 @@ import { test, expect } from '@playwright/test';
 import { freshPage, resetBackend } from './helpers';
 
 // Every control on every Settings tab must be reachable with the arrow keys alone.
-const TABS = ['categories', 'memory', 'ai', 'player', 'appearance', 'storage', 'sponsorblock', 'extras', 'cookies', 'profiles', 'keys'];
+const TABS = ['categories', 'memory', 'ai', 'player', 'appearance', 'storage', 'sponsorblock', 'extras', 'cookies', 'profiles', 'screens', 'keys'];
 const DIRS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'] as const;
+let screen: { id: string } | null = null;
 
 test.beforeAll(async ({ request }) => {
 	await resetBackend(request);
 	// Give the categories tab some content to walk through.
 	await request.post('/api/categories', { data: { name: 'Walk test', brief: 'test' } });
 	await request.post('/api/lessons', { data: { text: 'Avoid shouting' } });
+	// The screens tab needs a registered screen to walk through.
+	screen = await (await request.post('/api/playback/targets', { data: { name: 'Walk screen' } })).json();
+});
+
+test.afterAll(async ({ request }) => {
+	if (screen?.id) await request.delete(`/api/playback/targets/${screen.id}/registration`, { headers: { 'X-Profile-Id': '1' } });
 });
 
 for (const tab of TABS) {
