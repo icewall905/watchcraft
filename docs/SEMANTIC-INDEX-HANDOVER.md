@@ -18,7 +18,7 @@ Search by meaning is live on production. The pieces:
 | Vector table | `backend/bt/hub/models.py` — `ItemVector(item_id, model, dim, vector, created_at)` |
 | Embedding, indexing, search | `backend/bt/hub/semantic.py` |
 | Scheduler hook | `backend/bt/hub/engine.py` — `dispatch_due()` calls `semantic.sweep()` |
-| API | `backend/bt/api/hub.py` — `GET /hub/search/semantic`, `GET /hub/search/semantic/status` |
+| API | `backend/bt/hub/api.py` — `GET /hub/search/semantic`, `GET /hub/search/semantic/status` |
 | UI | `frontend/src/routes/find/+page.svelte` — "Search by meaning" |
 | Settings | `frontend/src/lib/settings/AiTab.svelte` — Embeddings server/model/key + "Test embeddings" |
 | Tests | `backend/tests/test_semantic.py` |
@@ -99,6 +99,9 @@ What was actually done:
   A fresh database gets a real `BLOB` column from `create_all`.
 - The ORM's `LargeBinary` binding refuses a `str`, so the conversion works on the driver
   connection. That is also why the test that plants a JSON-era row uses raw SQL.
+- The database file does not shrink: SQLite reuses the freed pages rather than returning them.
+  A 2,000-vector test database went from 32.9 MB to 33.5 MB while its vectors went from 31 MB
+  to 6 MB. `VACUUM` reclaims it if the space is ever wanted; nothing depends on it.
 
 ### Step 2 — raise the cap — **done**
 
