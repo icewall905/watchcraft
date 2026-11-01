@@ -103,14 +103,17 @@ above. Two are different:
 - **`render`** runs the page's JavaScript in headless Chromium. That executes untrusted code, so
   it runs inside **bubblewrap** with the host filesystem read-only, `/data` and `/media` masked
   by tmpfs, a private PID namespace, and a 45-second wall clock. It refuses to run at all when
-  `bwrap` is missing rather than falling back to a bare browser.
+  the sandbox cannot start rather than falling back to a bare browser.
 - **`ocr`** runs `pdftoppm` and `tesseract` on a PDF already fetched through `curation.fetch`,
   in a temporary directory, bounded to ten pages.
 
-Enabling bubblewrap required `security_opt: [seccomp=unconfined]` in `compose.yaml`, because
-Docker's default seccomp profile blocks the namespace syscalls it needs. That relaxes the
-container's syscall filter for the whole service. The trade is deliberate: the sandbox is what
-keeps a rendered page away from the database, and it cannot start without it.
+**`render` does not work in the shipped container.** bubblewrap cannot create a mount namespace
+there: the host's `/` is a shared mount and the container lacks `CAP_SYS_ADMIN`, so bwrap exits
+with "Failed to make / slave". Making it work needs `cap_add: [SYS_ADMIN]` plus
+`seccomp=unconfined` and `apparmor=unconfined` — `SYS_ADMIN` being the capability that enables
+container escape. That is not a good trade for one of seven rescue tools, so it is not granted.
+`sandbox_works()` probes once and `render` declines; the other six tools are unaffected. A host
+that runs the app outside a container, or a container given those grants, gets `render` back.
 
 The model chooses which tool to try next, but it can only name a tool that exists. It never
 supplies a command, a URL to fetch, or a shell string, so a hostile page cannot turn the choice
@@ -128,8 +131,8 @@ sandbox review.
   access, including administrator actions.
 - **Notification webhooks can reach the LAN.** That is the point (Home Assistant), but it means
   an administrator can make the server POST to any internal address.
-- **The container runs with `seccomp=unconfined`** so bubblewrap can create namespaces. The
-  browser sandbox is what protects the data directory, not the container's syscall filter.
+- **JavaScript-rendered pages are not recovered in the shipped container**, because the browser
+  sandbox cannot start there (see above). Those items still fail capture.
 - **No audit log of administrator actions** beyond the agent event stream.
 - **Media files are served by id**, not by signed URL. Anyone with the session can fetch any
   stored video; there is no per-profile media authorization.

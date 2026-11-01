@@ -7,10 +7,12 @@ x-bt: &bt
   volumes:
     - ${BT_DATA_HOST_DIR:-./data}:/data
     - ${BT_MEDIA_HOST_DIR:-./media}:/media
-  # bubblewrap creates namespaces, which Docker's default seccomp profile blocks. The sandbox is
-  # what keeps a rendered page away from /data and /media, so it has to be able to start.
-  security_opt:
-    - seccomp=unconfined
+  # Capture rescue's `render` tool runs Chromium inside bubblewrap. That needs bwrap to create a
+  # mount namespace, which a default container cannot do: the host's / is a shared mount and the
+  # container lacks CAP_SYS_ADMIN, so bwrap exits with "Failed to make / slave". Making it work
+  # means cap_add: [SYS_ADMIN] plus seccomp=unconfined and apparmor=unconfined — the capability
+  # that enables container escape, for one of seven rescue tools. Not granted; `render` probes
+  # once and declines, and the other six tools still run. See docs/SECURITY.md.
   depends_on:
     - pot
 

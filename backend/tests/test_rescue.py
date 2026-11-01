@@ -23,6 +23,8 @@ def ctx(**kw):
 def _no_ai(monkeypatch):
     """The fixed order runs unless a test asks for the model."""
     monkeypatch.setattr(rescue.ai, 'enabled', lambda: False)
+    # The sandbox probe is cached for the process; each test starts from unknown.
+    monkeypatch.setattr(rescue, '_sandbox_ok', None)
 
 
 def test_refetch_tries_another_browser_identity(monkeypatch):
@@ -193,3 +195,20 @@ def test_a_tool_that_raises_does_not_stop_the_others(monkeypatch):
     got = rescue.rescue(ctx(), 'failed')
     assert got['tool'] == 'variants'
     assert any('refetch' in n for n in got['notes'])
+
+
+def test_the_sandbox_probe_is_cached(monkeypatch):
+    """A container that cannot create namespaces must not spawn a doomed bwrap every time."""
+    calls = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        class R:
+            returncode = 1
+        return R()
+
+    monkeypatch.setattr(rescue.subprocess, 'run', run)
+    monkeypatch.setattr(rescue.shutil, 'which', lambda name: f'/usr/bin/{name}')
+    assert rescue.sandbox_works() is False
+    assert rescue.sandbox_works() is False
+    assert len(calls) == 1  # probed once, then remembered

@@ -177,10 +177,35 @@ def _chrome() -> str:
     return ''
 
 
+_sandbox_ok: bool | None = None
+
+
+def sandbox_works() -> bool:
+    """Whether bubblewrap can actually create a namespace here, probed once.
+
+    Inside a default Docker container it cannot: the host's / is a shared mount and the
+    container lacks CAP_SYS_ADMIN, so bwrap exits with "Failed to make / slave". Probing once
+    keeps a doomed subprocess off every rescue attempt.
+    """
+    global _sandbox_ok
+    if _sandbox_ok is None:
+        bwrap = shutil.which('bwrap')
+        if not bwrap:
+            _sandbox_ok = False
+        else:
+            try:
+                _sandbox_ok = subprocess.run(
+                    [bwrap, '--ro-bind', '/', '/', '--dev', '/dev', '--tmpfs', '/tmp', 'true'],
+                    capture_output=True, timeout=10, check=False).returncode == 0
+            except (subprocess.SubprocessError, OSError):
+                _sandbox_ok = False
+    return _sandbox_ok
+
+
 def tool_render(ctx) -> str:
     """Run the page's JavaScript in a browser, inside bubblewrap with the data dirs masked."""
-    chrome, bwrap = _chrome(), shutil.which('bwrap')
-    if not chrome or not bwrap:
+    chrome = _chrome()
+    if not chrome or not sandbox_works():
         return ''
     # The profile lives in the sandbox's own /tmp: the host filesystem is read-only in there, and
     # Chrome refuses to start without a writable one. The data and media directories are masked.
