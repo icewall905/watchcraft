@@ -27,6 +27,13 @@ POT_URL = os.environ.get("BT_POT_URL", "http://pot:4416")
 
 # Global settings (key -> default). Stored in Setting table, merged over these.
 DEFAULT_SETTINGS: dict = {
+    "stt": {
+        "base_url": os.environ.get("WC_STT_BASE_URL", ""),
+        "model": os.environ.get("WC_STT_MODEL", "Qwen/Qwen3-ASR-1.7B"),
+        "api_key": os.environ.get("WC_STT_API_KEY", ""),
+        "language": os.environ.get("WC_STT_LANGUAGE", ""),
+        "subtitles_enabled": os.environ.get("WC_STT_SUBTITLES_ENABLED", "true").lower() in ("true", "1", "yes"),
+    },
     "local_library": {"enabled": True, "asset_max_mb": 512, "rescue": True},
     # Older databases remain ready; init_db opts new installations into the guide.
     "setup": {"completed": True},

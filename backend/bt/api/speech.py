@@ -4,7 +4,7 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request
 
 from .. import stt
-from ..access import profile_id
+from ..access import profile_id, require_admin
 
 router = APIRouter(prefix='/speech', tags=['Voice search'])
 _slots = asyncio.Semaphore(2)
@@ -12,12 +12,12 @@ _slots = asyncio.Semaphore(2)
 
 @router.get('/status')
 def status(pid: int = Depends(profile_id)):
-    return {'enabled': bool(stt.BASE_URL)}
+    return {'enabled': bool(stt.config()['base_url'])}
 
 
 @router.post('/transcribe')
 async def transcribe(request: Request, pid: int = Depends(profile_id)):
-    if not stt.BASE_URL:
+    if not stt.config()['base_url']:
         raise HTTPException(503, 'Voice search is not configured on this server yet.')
     content_type = request.headers.get('content-type', '').split(';')[0].strip().lower()
     if content_type not in stt.AUDIO_TYPES:
@@ -37,3 +37,9 @@ async def transcribe(request: Request, pid: int = Depends(profile_id)):
         if not data:
             raise HTTPException(422, 'No microphone audio was received. Please try again.')
         return {'text': await stt.transcribe(bytes(data))}
+
+
+@router.post('/test', dependencies=[Depends(require_admin)])
+async def test_connection(value: dict):
+    settings = stt.prepare_config(value, stt.config())
+    return await stt.test_connection(settings)

@@ -827,7 +827,9 @@ def mark_seen(body: SeenIn, pid: int = Depends(profile_id), s: Session = Depends
 
 def _redact(st: dict) -> dict:
     st = {**st, "llm": {**st["llm"]}, "throttle": {**st["throttle"]}, "search": {**st["search"]},
-          "notify": {**st["notify"]}}
+          "notify": {**st["notify"]}, "stt": {**st["stt"]}}
+    if st["stt"].get("api_key"):
+        st["stt"]["api_key"] = "********"
     if st["search"].get("brave_api_key"):
         st["search"]["brave_api_key"] = "********"
     if st["llm"].get("api_key"):
@@ -854,6 +856,9 @@ def write_settings(key: str, value: dict, s: Session = Depends(get_session)):
     if key not in DEFAULT_SETTINGS:
         raise HTTPException(404, "unknown settings key")
     cur = get_settings(s)[key]
+    if key == "stt":
+        from .. import stt
+        value = stt.prepare_config(value, cur)
     if key == "appearance":
         theme = value.get("theme", cur["theme"])
         if not isinstance(theme, str) or theme not in {

@@ -8,6 +8,7 @@ import math
 import os
 import sys
 import wave
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx
 from fastapi import HTTPException
@@ -20,6 +21,85 @@ MAX_BYTES = 3_000_000
 MAX_SECONDS = 30
 SAMPLE_RATE = 16000
 AUDIO_TYPES = {'audio/webm', 'video/webm', 'audio/ogg', 'audio/mp4', 'audio/x-m4a', 'audio/wav', 'audio/x-wav'}
+
+
+def normalize_url(value: str) -> str:
+    if not isinstance(value, str):
+        raise HTTPException(400, 'Use an HTTP or HTTPS speech server URL.')
+    value = value.strip().rstrip('/')
+    if not value:
+        return ''
+    try:
+        parts = urlsplit(value)
+        valid = (parts.scheme in ('http', 'https') and parts.hostname and parts.username is None
+                 and parts.password is None and not parts.query and not parts.fragment
+                 and not any(c.isspace() for c in value))
+        parts.port
+    except ValueError:
+        valid = False
+    if not valid:
+        raise HTTPException(400, 'Use an HTTP or HTTPS speech server URL without credentials, query or fragment.')
+    path = parts.path.rstrip('/')
+    if path.endswith('/audio/transcriptions'):
+        path = path[:-len('/audio/transcriptions')]
+    while path.endswith('/v1/v1'):
+        path = path[:-3]
+    if not path:
+        path = '/v1'
+    return urlunsplit((parts.scheme, parts.netloc, path, '', ''))
+
+
+def config() -> dict:
+    """Read live settings for each operation; environment remains the default."""
+    from .db import session
+    from .models import Setting
+    defaults = dict(base_url=BASE_URL, model=MODEL, api_key=API_KEY, language=LANGUAGE,
+                    subtitles_enabled=os.environ.get('WC_STT_SUBTITLES_ENABLED', 'true').lower() in ('true', '1', 'yes'))
+    with session() as s:
+        row = s.get(Setting, 'stt')
+        if row:
+            defaults.update(row.value)
+    defaults['base_url'] = normalize_url(defaults['base_url'])
+    return defaults
+
+
+def prepare_config(value: dict, current: dict) -> dict:
+    merged = {**current, **{k: v for k, v in value.items() if k in current}}
+    merged['base_url'] = normalize_url(merged['base_url'])
+    if merged.get('api_key') == '********':
+        if merged['base_url'] != normalize_url(current.get('base_url', '')):
+            raise HTTPException(400, 'Enter the API key for the new speech server.')
+        merged['api_key'] = current.get('api_key', '')
+    elif 'api_key' not in value and merged['base_url'] != normalize_url(current.get('base_url', '')):
+        # Never silently send a saved credential to a changed destination.
+        merged['api_key'] = ''
+    for field, limit in (('model', 200), ('api_key', 4096), ('language', 40)):
+        if not isinstance(merged.get(field), str) or len(merged[field]) > limit or any(ord(c) < 32 for c in merged[field]):
+            raise HTTPException(400, 'Use valid speech model, language and API key values.')
+        merged[field] = merged[field].strip()
+    if not merged['model']:
+        raise HTTPException(400, 'Enter the speech model name.')
+    if type(merged.get('subtitles_enabled')) is not bool:
+        raise HTTPException(400, 'Subtitle generation must be on or off.')
+    return merged
+
+
+async def test_connection(settings: dict) -> dict:
+    if not settings['base_url']:
+        return {'ok': False, 'error': 'Enter the speech server URL.'}
+    headers = {'Authorization': f"Bearer {settings['api_key']}"} if settings['api_key'] else {}
+    try:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(10, connect=5), trust_env=False, follow_redirects=False) as client:
+            response = await client.get(settings['base_url'] + '/models', headers=headers)
+        if not response.is_success:
+            return {'ok': False, 'error': 'The speech server refused the connection. Check its settings and API key.'}
+        data = response.json()
+        models = data.get('data') if isinstance(data, dict) else None
+        if not isinstance(models, list) or not any(isinstance(m, dict) and m.get('id') == settings['model'] for m in models):
+            return {'ok': False, 'error': 'The configured speech model is not available on this server.'}
+    except (httpx.HTTPError, ValueError):
+        return {'ok': False, 'error': 'Cannot reach a compatible speech server. Check its address and connection.'}
+    return {'ok': True, 'model': settings['model']}
 
 
 async def normalize_audio(data: bytes) -> bytes:
@@ -65,7 +145,8 @@ async def normalize_audio(data: bytes) -> bytes:
 
 
 async def transcribe(data: bytes) -> str:
-    if not BASE_URL:
+    settings = config()
+    if not settings['base_url']:
         raise HTTPException(503, 'Voice search is not configured on this server yet.')
     try:
         audio = await normalize_audio(data)
@@ -73,13 +154,13 @@ async def transcribe(data: bytes) -> str:
         raise HTTPException(422, 'The recording could not be processed. Please try a shorter phrase.') from None
     except FileNotFoundError:
         raise HTTPException(503, 'Voice search audio processing is unavailable.') from None
-    fields = {'model': MODEL, 'response_format': 'json'}
-    if LANGUAGE:
-        fields['language'] = LANGUAGE
-    headers = {'Authorization': f'Bearer {API_KEY}'} if API_KEY else {}
+    fields = {'model': settings['model'], 'response_format': 'json'}
+    if settings['language']:
+        fields['language'] = settings['language']
+    headers = {'Authorization': f"Bearer {settings['api_key']}"} if settings['api_key'] else {}
     try:
         async with httpx.AsyncClient(timeout=httpx.Timeout(60, connect=5), trust_env=False, follow_redirects=False) as client:
-            response = await client.post(BASE_URL + '/audio/transcriptions', data=fields,
+            response = await client.post(settings['base_url'] + '/audio/transcriptions', data=fields,
                                          files={'file': ('search.wav', audio, 'audio/wav')}, headers=headers)
         if not response.is_success:
             raise HTTPException(503, 'The speech-to-text service is unavailable. Please try again shortly.')
