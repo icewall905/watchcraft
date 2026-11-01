@@ -89,8 +89,9 @@ def _salient(item, c) -> list[str]:
     one long token like "university-ai-assistant-lec", which matches nothing else it is meant
     to describe.
     """
-    own = ' '.join([c.name, c.subject, *c.keywords, *c.queries, *c.aliases]).lower()
-    words = re.findall(r"[a-z][a-z'’]{2,}", (item.title or '').lower().replace('-', ' '))
+    tokens = r"[a-z][a-z'’]{2,}"
+    own = set(re.findall(tokens, ' '.join([c.name, c.subject, *c.keywords, *c.queries, *c.aliases]).lower()))
+    words = re.findall(tokens, (item.title or '').lower())
     return [w for w in dict.fromkeys(words) if w not in _STOPWORDS and w not in own][:3]
 
 
