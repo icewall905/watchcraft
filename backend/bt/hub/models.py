@@ -412,5 +412,7 @@ class ItemVector(SQLModel, table=True):
     item_id: int = Field(primary_key=True)
     model: str = Field(primary_key=True)
     dim: int = 0
-    vector: str = T()
+    # Packed float32, not JSON text: 3 KB per 768-dim vector instead of 17 KB, and unpacking
+    # costs microseconds where json.loads cost 0.22 ms. `dim` is the length check.
+    vector: bytes = Field(default=b'', sa_column=Column(LargeBinary, default=b''))
     created_at: float = Field(default_factory=time.time)

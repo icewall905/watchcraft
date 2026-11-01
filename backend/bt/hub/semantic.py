@@ -4,9 +4,10 @@ Optional by design: without an embeddings model the feature reports why it is un
 keyword search stays the only path. Vectors are stored per item and per model, so switching
 models re-embeds rather than comparing vectors from different spaces.
 """
-import json
+import array
 import math
 import time
+from collections.abc import Sequence
 
 import httpx
 from sqlmodel import select
@@ -15,7 +16,7 @@ from ..db import get_settings, session
 from .models import ContentItem, CuratorDiscovery, ItemState, ItemVector
 
 BATCH = 32        # items embedded per scheduler tick
-MAX_COMPARE = 5000  # vectors compared per query; beyond this the oldest are skipped
+MAX_COMPARE = 20000  # vectors compared per query; beyond this the oldest are skipped
 THROTTLE = 120.0
 
 
@@ -83,7 +84,31 @@ def embed(texts: list[str]) -> list[list[float]]:
     return out
 
 
-def _norm(vec: list[float]) -> float:
+def _pack(vec: list[float]) -> bytes:
+    """Store a vector as packed float32. 768 dims become 3,072 bytes instead of ~17,000."""
+    return array.array('f', vec).tobytes()
+
+
+def _unpack(blob, dim: int) -> array.array | None:
+    """Unpack a stored vector, or None if it cannot be compared with a query.
+
+    A row written before the float32 change holds JSON text, and a truncated write holds a
+    partial BLOB. Both are skipped rather than raised, so one bad row cannot break search.
+    """
+    if not isinstance(blob, (bytes, bytearray, memoryview)):
+        return None
+    raw = bytes(blob)
+    if dim and len(raw) != dim * 4:
+        return None
+    vec = array.array('f')
+    try:
+        vec.frombytes(raw)
+    except ValueError:
+        return None
+    return vec
+
+
+def _norm(vec: Sequence[float]) -> float:
     return math.sqrt(sum(x * x for x in vec)) or 1.0
 
 
@@ -114,7 +139,7 @@ def embed_pending(limit: int = BATCH) -> int:
     vectors = embed(texts)
     with session() as s:
         for (iid, _, _), vec in zip(rows, vectors):
-            s.merge(ItemVector(item_id=iid, model=cfg['model'], dim=len(vec), vector=json.dumps(vec)))
+            s.merge(ItemVector(item_id=iid, model=cfg['model'], dim=len(vec), vector=_pack(vec)))
         s.commit()
     return len(rows)
 
@@ -127,19 +152,16 @@ def search(q: str, pid: int, limit: int = 20) -> list[tuple[int, float]]:
     query = embed([q.strip()[:2000]])[0]
     qn = _norm(query)
     with session() as s:
-        rows = s.exec(select(ItemVector.item_id, ItemVector.vector)
+        rows = s.exec(select(ItemVector.item_id, ItemVector.vector, ItemVector.dim)
                       .where(ItemVector.model == cfg['model'])
                       .order_by(ItemVector.item_id.desc()).limit(MAX_COMPARE)).all()
         visible = _visible(s, pid, [r[0] for r in rows])
     scored = []
-    for iid, raw in rows:
+    for iid, raw, dim in rows:
         if iid not in visible:
             continue
-        try:
-            vec = json.loads(raw)
-        except (TypeError, ValueError):
-            continue
-        if len(vec) != len(query):
+        vec = _unpack(raw, dim)
+        if vec is None or len(vec) != len(query):
             continue
         dot = sum(a * b for a, b in zip(query, vec))
         scored.append((dot / (qn * _norm(vec)), iid))

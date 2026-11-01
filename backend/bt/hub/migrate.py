@@ -1,7 +1,9 @@
 """Versioned, additive migrations for WatchCraft Hub. Runs inside init_db's BEGIN IMMEDIATE.
 
 v1 → v2: add curator columns, create Source per v1 curator, move v1 discoveries into
-canonical ContentItem + CuratorDiscovery + ItemState. The v1 discovery table is kept."""
+canonical ContentItem + CuratorDiscovery + ItemState. The v1 discovery table is kept.
+v2 → v3: repack stored vectors from JSON text to float32 BLOB."""
+import array
 import json
 import time
 
@@ -11,7 +13,7 @@ from sqlmodel import Session, select
 from ..models import Setting
 from .models import Curator, CuratorSource, Source
 
-VERSION = 2
+VERSION = 3
 
 
 JSON_DEFAULTS = {'queries': '[]', 'keywords': '[]', 'exclusions': '[]', 'content_types': '[]', 'alert_keywords': '[]',
@@ -45,7 +47,10 @@ def migrate(conn) -> None:
         version = (row.value or {}).get('version', 1) if row else 1
         if version >= VERSION:
             return
-        _v2(conn, canonical_url)
+        if version < 2:
+            _v2(conn, canonical_url)
+        if version < 3:
+            _v3(conn)
         s.merge(Setting(key='watchcraft_schema_version', value={'version': VERSION, 'migrated_at': time.time()}))
         s.commit()
 
@@ -83,6 +88,32 @@ def _v2(conn, canonical_url) -> None:
                 st.saved, st.saved_at = True, st.saved_at or d.discovered_at
             s.add(st)
         s.commit()
+
+
+def _v3(conn) -> None:
+    """Repack stored vectors from JSON text to float32 BLOB.
+
+    A row that will not convert is dropped so the sweep re-embeds it, rather than failing the
+    upgrade. Paged by predicate instead of loaded whole: at 20,000 items the JSON text is
+    ~340 MB, more than the appliance should hold at once. Each pass converts or deletes every
+    row it selects, so the predicate empties and the loop ends.
+    """
+    while True:
+        rows = conn.exec_driver_sql(
+            "SELECT item_id, model, vector FROM itemvector WHERE typeof(vector) != 'blob' LIMIT 500").all()
+        if not rows:
+            return
+        for item_id, model, raw in rows:
+            try:
+                vec = json.loads(raw)
+                if not isinstance(vec, list) or not vec:
+                    raise ValueError('not a vector')
+                blob = array.array('f', [float(x) for x in vec]).tobytes()
+            except (TypeError, ValueError):
+                conn.exec_driver_sql('DELETE FROM itemvector WHERE item_id = ? AND model = ?', (item_id, model))
+                continue
+            conn.exec_driver_sql('UPDATE itemvector SET vector = ?, dim = ? WHERE item_id = ? AND model = ?',
+                                 (blob, len(vec), item_id, model))
 
 
 __all__ = ['migrate', 'VERSION', 'json']
