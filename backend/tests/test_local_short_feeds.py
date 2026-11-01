@@ -93,3 +93,22 @@ def test_feed_prefilter_ignores_hide_shorts_but_preserves_constraints():
     assert 'excluded keyword' in data.prefilter({**item, 'title': 'Bad clip'}, cat, ctx, True)
     ctx.blocked.add('UCblocked')
     assert data.prefilter({**item, 'channel_id': 'UCblocked'}, cat, ctx, True) == 'blocked/distrusted channel'
+
+
+def test_short_feed_ownership_and_locked_profile_cannot_be_bypassed():
+    with TestClient(app) as c:
+        owner = c.post('/api/profiles', json={'name': 'Private clips', 'pin': '9321'}).json()
+        other = c.post('/api/profiles', json={'name': 'Other clips'}).json()
+        h = {'X-Profile-Id': str(owner['id'])}
+        other_h = {'X-Profile-Id': str(other['id'])}
+        assert c.post(f"/api/profiles/{owner['id']}/unlock", json={'pin': '9321'}).status_code == 200
+        feed = c.post('/api/categories', json={'name': 'Private feed', 'kind': 'shorts'}, headers=h).json()
+        assert feed['id'] in [f['id'] for f in c.get('/api/shorts/feeds', headers=h).json()]
+        assert feed['id'] not in [f['id'] for f in c.get('/api/shorts/feeds', headers=other_h).json()]
+        assert c.get('/api/shorts', params={'category_id': feed['id']}, headers=other_h).status_code == 404
+        assert c.patch(f"/api/categories/{feed['id']}", json={'name': 'Hijacked'}, headers=other_h).status_code == 404
+        assert c.delete(f"/api/categories/{feed['id']}", headers=other_h).status_code == 404
+        assert c.post(f"/api/profiles/{owner['id']}/lock").status_code == 200
+        for path in ['/api/shorts/feeds', f"/api/shorts?category_id={feed['id']}", f"/api/categories/{feed['id']}"]:
+            assert c.get(path, headers=h).status_code == 403
+        assert c.post('/api/categories', json={'name': 'Bypass', 'kind': 'shorts'}, headers=h).status_code == 403
