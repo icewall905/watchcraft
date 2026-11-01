@@ -8,7 +8,7 @@
 </script>
 
 <Section title="Extras" intro="Small community add-ons. Each one makes an anonymous request from the server, never from your browser.">
-	<Toggle label="Hide Shorts" hint="Keep vertical clips under a minute out of search results, feeds and the AI's picks." bind:checked={d.value.hide_shorts} />
+	<Toggle label="Hide Shorts" hint="Keep Shorts out of regular search results and playlist picks. Dedicated short-video feeds curate them separately." bind:checked={d.value.hide_shorts} />
 	<Toggle label="Show dislike counts" hint="Estimated dislikes from Return YouTube Dislike." bind:checked={d.value.ryd} />
 	<Toggle label="Better titles (DeArrow)" hint="Replace clickbait titles with community-written ones when available." bind:checked={d.value.dearrow} />
 	<Toggle label="Better thumbnails (DeArrow)" hint="Use DeArrow video frames when available; otherwise show the original thumbnail." bind:checked={d.value.dearrow_thumbnails} />

@@ -4,6 +4,7 @@
 	import { session } from '$lib/stores/session.svelte';
 	import { focusable } from '$lib/nav';
 	import CategoriesTab from '$lib/settings/CategoriesTab.svelte';
+	import FeedsTab from '$lib/settings/FeedsTab.svelte';
 	import MemoryTab from '$lib/settings/MemoryTab.svelte';
 	import PlayerTab from '$lib/settings/PlayerTab.svelte';
 	import SponsorBlockTab from '$lib/settings/SponsorBlockTab.svelte';
@@ -20,6 +21,7 @@
 
 	const TABS = [
 		{ key: 'categories', label: 'Playlists', icon: '🗂️', hint: 'What the AI looks for' },
+		{ key: 'feeds', label: 'Feeds', icon: '▶', hint: 'Local short-video collections' },
 		{ key: 'memory', label: 'AI memory', icon: '🧠', hint: 'Rules learned from feedback' },
 		{ key: 'ai', label: 'AI and limits', icon: '✦', hint: 'Model, curator, pace' },
 		{ key: 'search', label: 'Search & sources', icon: '🔎', hint: 'Web search provider for curators' },
@@ -65,9 +67,10 @@
 		{:else}
 			{#key tab}
 				<div class="pane">
-					{#if !session.isAdmin && !['categories', 'profiles', 'keys', 'appearance'].includes(tab)}
+					{#if !session.isAdmin && !['categories', 'feeds', 'profiles', 'keys', 'appearance'].includes(tab)}
 						<h2>Administrator access required</h2><p class="muted">Switch to an administrator profile to change shared server settings.</p>
 					{:else if tab === 'categories'}<CategoriesTab />
+					{:else if tab === 'feeds'}<FeedsTab />
 					{:else if tab === 'memory'}<MemoryTab />
 					{:else if tab === 'ai'}<AiTab />
 					{:else if tab === 'search'}<SearchTab />

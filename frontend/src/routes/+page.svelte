@@ -127,7 +127,7 @@
 		return null;
 	});
 	const catRows = $derived((rows ?? []).filter((r) => r.kind === 'category'));
-	const noCategories = $derived(rows !== null && !failed && catRows.length === 0 && session.categories.filter((c) => c.enabled).length === 0);
+	const noCategories = $derived(rows !== null && !failed && catRows.length === 0 && session.categories.filter((c) => c.enabled && c.kind !== 'shorts').length === 0);
 	const greeting = $derived.by(() => {
 		const h = new Date().getHours();
 		const part = h < 5 ? 'Late night' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';

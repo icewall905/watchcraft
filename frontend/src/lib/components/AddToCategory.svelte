@@ -18,9 +18,9 @@
 </script>
 
 <Modal title="Add to playlist" subtitle={t.title} size="sm" onClose={close}>
-	{#if session.categories.length}
+	{#if session.categories.filter(c => c.kind !== 'shorts').length}
 		<div class="list">
-			{#each session.categories as c, i (c.id)}
+			{#each session.categories.filter(c => c.kind !== 'shorts') as c, i (c.id)}
 				<button class="opt" style:--cat={c.color} use:focusable={{ autofocus: i === 0, onSelect: () => add(c.id) }}>
 					<span class="e">{c.emoji}</span>
 					<span>{c.name}</span>

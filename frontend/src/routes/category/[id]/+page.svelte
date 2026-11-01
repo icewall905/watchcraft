@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import { agent, STATE_LABEL } from '$lib/stores/agent.svelte';
@@ -21,37 +22,55 @@
 	let items = $state<Candidate[] | null>(null);
 	let notFound = $state(false);
 
-	async function loadCat() {
-		try {
-			cat = await api.category(id);
-		} catch {
-			notFound = true;
-		}
+	let alive = true;
+	let loadSeq = 0;
+	const warmTimers: ReturnType<typeof setTimeout>[] = [];
+	function clearWarmTimers() {
+		for (const timer of warmTimers.splice(0)) clearTimeout(timer);
 	}
 	async function loadItems() {
+		const seq = ++loadSeq, cid = id, profile = session.version;
+		const current = () => alive && seq === loadSeq && cid === id && profile === session.version;
+		clearWarmTimers();
 		items = null;
+		notFound = false;
 		try {
-			items = await api.categoryFeed(id, tab, { limit: 80 });
+			const category = await api.category(cid);
+			if (!current()) return;
+			if (category.kind === 'shorts') {
+				await goto('/shorts', { replaceState: true });
+				return;
+			}
+			cat = category;
 		} catch {
-			items = [];
+			if (current()) { notFound = true; items = []; }
+			return;
 		}
-		// Warm the first picks of the grid: the likeliest next plays.
-		if (tab === 'accepted')
-			items.slice(0, 3).forEach((c, i) => setTimeout(() => warmVideo(c.video.id, { offline: isVideo(c.video) && !!c.video.offline, manifest: true, force: true }), i * 3500));
+		try {
+			const result = await api.categoryFeed(cid, tab, { limit: 80 });
+			if (!current()) return;
+			items = result;
+		} catch {
+			if (current()) items = [];
+			return;
+		}
+		if (tab === 'accepted') {
+			items.slice(0, 3).forEach((c, i) => warmTimers.push(setTimeout(() => {
+				if (current()) warmVideo(c.video.id, { offline: isVideo(c.video) && !!c.video.offline, manifest: true, force: true });
+			}, i * 3500)));
+		}
 	}
 	onMount(() => {
-		loadCat();
 		const off = agent.onEvent((e) => {
-			if (e.category_id === id && (e.kind === 'accept' || e.kind === 'reject')) {
-				loadCat();
-				loadItems();
-			}
+			if (e.category_id === id && (e.kind === 'accept' || e.kind === 'reject')) void loadItems();
 		});
-		return off;
+		return () => { alive = false; loadSeq++; clearWarmTimers(); off(); };
 	});
 	$effect(() => {
 		void tab;
-		loadItems();
+		void id;
+		void session.version;
+		void loadItems();
 	});
 
 	async function findMore() {

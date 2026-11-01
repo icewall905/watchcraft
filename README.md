@@ -91,6 +91,21 @@ In **Settings → Profiles**, add or edit a person to set a PIN with 4–8 digit
 
 Protected profiles show a lock in the profile picker. Enter the PIN to open or edit them. Switching away locks a protected profile again; **Lock profile** in the picker lets you lock it immediately. To change or remove a PIN, unlock the profile and edit it in Settings. If you forget a PIN, run the maintenance menu on your server, choose **Reset profile PIN**, and select its profile ID. PINs are for household profile access; server settings and activity tools remain shared.
 
+### Local short-video feeds
+
+Open **Shorts** and choose a feed. To create one, use **New feed** there or
+**Settings → Feeds → New feed**. Give it a name and brief, then set its search
+phrases/channels, language, duration range, quality threshold and queue size just as
+with a playlist. Feeds are separate from normal playlists; opening Shorts always
+shows the picker first.
+
+The curator collects matching short videos and the downloader stores accepted clips
+on your server. Playback starts only from completed, readable local files. Incomplete,
+missing and failed downloads never fall back to a YouTube stream. The picker shows
+local readiness; refresh availability while waiting for downloads. Existing storage,
+AI pause and request limits still apply. Hide Shorts affects normal playlist/search
+picks, while dedicated feeds collect shorts independently.
+
 ### Generate alternative subtitles
 
 In the now-playing window, choose **Subs → Generate subtitles using STT**. The generated
