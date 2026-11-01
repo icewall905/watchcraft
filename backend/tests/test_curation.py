@@ -783,7 +783,7 @@ def test_research_follow_up_is_editable_disabled_and_profile_scoped(client):
                        headers={'X-Profile-Id': str(other['id'])}).status_code == 404
 
 
-def test_agent_slots_respect_live_limit_and_team_setting(client):
+def test_agent_slots_respect_live_limit_and_team_setting(client, monkeypatch, request):
     import threading
     from bt.hub import slots
     assert client.get('/api/settings').json()['team'] == {'max_parallel': 1}
@@ -791,6 +791,21 @@ def test_agent_slots_respect_live_limit_and_team_setting(client):
     assert client.put('/api/settings/team', json={'max_parallel': 9}).status_code == 400
     assert slots.limit() == 1 and slots.free() == 1
     release, entered = threading.Event(), []
+    threads = []
+    real_thread = threading.Thread
+    def tracked_thread(*args, **kwargs):
+        thread = real_thread(*args, **kwargs)
+        threads.append(thread)
+        return thread
+    monkeypatch.setattr(threading, 'Thread', tracked_thread)
+    def finish_workers():
+        release.set()
+        for thread in threads:
+            thread.join(timeout=5)
+            assert not thread.is_alive(), f'Slot worker {thread.name} did not stop'
+    # Slot removal precedes the post-release callback. Join the actual workers,
+    # including on assertion failures, before the client fixture resets its schema.
+    request.addfinalizer(finish_workers)
     def work(n):
         entered.append(n); release.wait(5)
     assert slots.spawn('test-a', 'curator', 1, 1, 'A', work, 'a')
