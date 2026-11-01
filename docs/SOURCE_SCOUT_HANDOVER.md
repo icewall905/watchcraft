@@ -1,6 +1,31 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — three AI roles (`43cc914`, 2026-11-01)
+
+- Covers `40aa983..43cc914`. The AI tab now groups Judge, Worker and Embeddings, each with its own optional server
+  and key. Embeddings may point at their own endpoint: a separate server never receives the judge's key, so a typo
+  cannot send one service's credential to another, and a key set without a separate server means "same server,
+  different credential". Both keys are redacted and preserved across saves, and a server URL that is not http(s) is
+  refused rather than saved. The worker and embeddings groups used a `.grid` class that was never defined, so the
+  fields stacked full width; it is defined now. The welcome guide reuses this component, so it shows only the judge
+  connection — onboarding should not ask for three endpoints.
+- No schema change. `config.py` gains `embed_base_url` and `embed_api_key`, both empty by default.
+- Backend suite: 456 passed, 6 skipped, no failures. Svelte check: zero errors, three CSS compatibility warnings.
+  Browser tests: welcome 3, settings-walk 14 and llm-providers 3 passed. The full suite reports 122 passed and the
+  five known B-011 flakes.
+- Test fixes for the rename: llm-providers and welcome use the new labels, and the settings walk now puts the caret
+  at the end of a text field before pressing a direction. A field with a value consumes Left/Right to move its
+  caret, so the old harness left the caret mid-value and could never arrow out to the right.
+- Backup: `/root/compose/watchcraft-backups/20261101T074531Z-pre-embed-endpoint` (online SQLite, integrity `ok`,
+  6 profiles, 6,767 videos, 6 curators, 151 content items; config archive). Rollback image:
+  `watchcraft:rollback-20261101T074531Z-40aa983`.
+- Isolated restore on `127.0.0.1:6699`: health 200, no tracebacks, integrity `ok`. The copy was removed.
+- Rollout used rsync **without** `--delete`; all four containers healthy. `DEPLOYED_COMMIT` is `43cc914`; API,
+  worker and downloader run `watchcraft:43cc914` (`sha256:503bb3d32b03…`). Health passes locally and publicly, no
+  tracebacks after start, the live settings show all three roles with the optional fields empty, and the served
+  bundle carries the Judge/Worker/Embeddings labels.
+
 ## Deployment record — judge and worker models (`40aa983`, 2026-11-01)
 
 - Covers `168c120..40aa983`, the last open task (T-058). One model did everything, so a big model was spent
