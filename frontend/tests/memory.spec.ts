@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
+import { resetBackend } from './helpers';
 
 const DATA = process.env.BT_E2E_DATA;
 const BACKEND = process.env.BT_E2E_BACKEND;
@@ -10,13 +11,20 @@ function python(code: string) {
 	execFileSync(join(BACKEND!, '.venv/bin/python'), ['-c', code], { cwd: BACKEND, env: { ...process.env, BT_DATA_DIR: DATA! } });
 }
 
-test.beforeAll(() => python(`
-from sqlmodel import select
+test.beforeAll(async ({ request }) => {
+	await resetBackend(request);
+	expect((await request.put('/api/settings/memory', { data: { enabled: true, max_core_tokens: 15000 } })).ok()).toBe(true);
+	python(`
+from sqlmodel import select, delete
 from bt.db import init_db, session
 from bt.models import Profile, Lesson, MemoryCore, LlmRequest
 from bt.agent.memory import fingerprint
 init_db()
 with session() as s:
+    # Browser specs share one backend. Earlier AI calls must not change the
+    # average asserted below, and earlier core snapshots must not win selection.
+    s.exec(delete(LlmRequest))
+    s.exec(delete(MemoryCore))
     pid = s.exec(select(Profile)).first().id
     rule = Lesson(profile_id=pid, text="Prefer thoughtful science explanations")
     s.add(rule); s.commit()
@@ -24,7 +32,8 @@ with session() as s:
     s.add(LlmRequest(task="verdict", model="test", input_tokens=1200, cached_tokens=600, estimated=False, ok=True))
     s.add(LlmRequest(task="memory_compaction", model="test", input_tokens=600, estimated=False, ok=True))
     s.commit()
-`));
+`);
+});
 
 test('memory settings show core, input averages and an independently queued manual run', async ({ page, request }) => {
 	const profiles = await (await request.get('/api/profiles')).json();
