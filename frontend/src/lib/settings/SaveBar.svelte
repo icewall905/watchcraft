@@ -1,9 +1,11 @@
 <script lang="ts">
 	import { focusable } from '$lib/nav';
-	let { dirty, busy = false, onsave, onreset, label = 'Save changes' }: { dirty: boolean; busy?: boolean; onsave: () => void; onreset?: () => void; label?: string } = $props();
+	// `stack` lifts a dirty bar above the ones below it: several sections of one tab can be dirty
+	// at once, and sticky bars all pin to the same offset and overlap otherwise.
+	let { dirty, busy = false, onsave, onreset, label = 'Save changes', stack = 0 }: { dirty: boolean; busy?: boolean; onsave: () => void; onreset?: () => void; label?: string; stack?: number } = $props();
 </script>
 
-<div class="savebar" class:dirty>
+<div class="savebar" class:dirty style:--stack={stack}>
 	<span class="small">{dirty ? 'You have unsaved changes.' : 'All changes saved.'}</span>
 	<span class="spacer"></span>
 	{#if onreset && dirty}<button class="btn ghost" use:focusable={{ group: 'savebar', scroll: 'nearest', onSelect: onreset }}>Undo</button>{/if}
@@ -29,13 +31,13 @@
 	/* Only unsaved sections stick to the bottom, so idle bars never cover controls. */
 	.savebar.dirty {
 		position: sticky;
-		bottom: 1rem;
+		bottom: calc(1rem + var(--stack, 0) * 3.6rem);
 		border-color: var(--accent);
 		color: var(--accent-2);
 	}
 	@media (max-width: 760px) {
 		.savebar.dirty {
-			bottom: 5rem;
+			bottom: calc(5rem + var(--stack, 0) * 3.6rem);
 		}
 	}
 </style>

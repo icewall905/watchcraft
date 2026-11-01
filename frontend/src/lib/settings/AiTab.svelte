@@ -349,7 +349,7 @@
 		<p class="small muted">Local AI on this computer? Use an address the WatchCraft server can reach. On Docker Desktop, host.docker.internal points to your computer; localhost points to the container. On Linux, use the AI server's LAN address.</p>
 		<button class="btn primary big" disabled={connecting || testing || llm.busy || !llm.value.base_url || !llm.value.model} use:focusable={{ group: 'llm-connect', onSelect: connectAndContinue }}>{connecting ? 'Connecting…' : 'Test, save and continue'}</button>
 	{:else}
-		<SaveBar dirty={llm.dirty} busy={llm.busy} onsave={() => llm.save('AI model settings saved')} onreset={() => { llm.reset(); provider = providerFor(llm.value.base_url); clearModels(); }} />
+		<SaveBar stack={0} dirty={llm.dirty} busy={llm.busy} onsave={() => llm.save('AI model settings saved')} onreset={() => { llm.reset(); provider = providerFor(llm.value.base_url); clearModels(); }} />
 	{/if}
 </Section>
 
@@ -359,14 +359,14 @@
 <Section title="Curator" intro="The background worker that searches, reads and judges videos for every profile's playlists.">
 	<div class="status small muted">Right now: <strong>{STATE_LABEL[agent.effective] ?? agent.effective}</strong>{agent.state.detail ? `, ${agent.state.detail}` : ''}</div>
 	<Toggle label="Curator enabled" hint="Off stops all background searching. Search and playback keep working. For a short break use Pause AI in the top bar instead." bind:checked={ag.value.enabled} />
-	<SaveBar dirty={ag.dirty} busy={ag.busy} onsave={() => ag.save(ag.value.enabled ? 'Curator enabled' : 'Curator disabled')} onreset={() => ag.reset()} />
+	<SaveBar stack={1} dirty={ag.dirty} busy={ag.busy} onsave={() => ag.save(ag.value.enabled ? 'Curator enabled' : 'Curator disabled')} onreset={() => ag.reset()} />
 </Section>
 
 <div class="gap"></div>
 
 <Section title="Agent team" intro="Scheduled curators, Source Scout searches and briefings share these slots and wait their turn. Anything you start yourself begins right away. The video curator above always runs on its own.">
 	<Stepper label="Parallel agents" hint="How many may work at the same time. AI calls still go to your model one at a time, so more agents mostly speeds up fetching." bind:value={team.value.max_parallel} min={1} max={8} step={1} format={(v) => (v === 1 ? '1 agent' : `${v} agents`)} />
-	<SaveBar dirty={team.dirty} busy={team.busy} onsave={() => team.save(`Up to ${team.value.max_parallel} agent${team.value.max_parallel === 1 ? '' : 's'} at once`)} onreset={() => team.reset()} />
+	<SaveBar stack={2} dirty={team.dirty} busy={team.busy} onsave={() => team.save(`Up to ${team.value.max_parallel} agent${team.value.max_parallel === 1 ? '' : 's'} at once`)} onreset={() => team.reset()} />
 </Section>
 
 <div class="gap"></div>
@@ -438,7 +438,7 @@
 		<Stepper label="Comments to read" hint="Top comments often reveal what a video is really like." bind:value={th.value.max_comments} min={0} max={200} step={5} />
 		<Stepper label="Transcript length" hint="Longer gives the AI more to judge with, but is slower." bind:value={th.value.transcript_max_chars} min={2000} max={200000} step={2000} format={(v) => `${Math.round(v / 1000)}k chars`} />
 	</div>
-	<SaveBar dirty={th.dirty} busy={th.busy} onsave={saveThrottle} onreset={() => { th.reset(); parseProxy(th.value.proxy ?? ''); }} />
+	<SaveBar stack={3} dirty={th.dirty} busy={th.busy} onsave={saveThrottle} onreset={() => { th.reset(); parseProxy(th.value.proxy ?? ''); }} />
 </Section>
 
 {/if}
