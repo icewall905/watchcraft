@@ -1,6 +1,41 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — generated subtitles (`3b4a03c`, 2026-11-01)
+
+- Release `8e62bcb..3b4a03c` adds a Subs menu with on-demand local STT generation,
+  progress/retry and persistent alternative VTT tracks. YouTube captions and Off remain
+  selectable. Settings → Player exposes the shared speech URL, model, masked key,
+  language, enable switch and draft connection test; voice search uses those live settings.
+- Verified service: `http://10.0.10.73:8011/v1`, model `Qwen/Qwen3-ASR-1.7B`, backed by
+  `/root/compose/stt-qwen-wyoming`. No changes to that service. It rejects timestamped
+  `verbose_json`, so this implementation uses short pause-aware chunks and explicitly
+  labels approximate cue timing. One video runs at a time; five pending jobs, four-hour
+  video limit, durable chunk progress, total request deadlines and bounded temporary audio.
+- Validation: full backend suite **543 passed, six skipped**, then **14 generated-subtitle
+  tests passed**, including extra deadline and saved-audio coverage. Frontend check/build
+  passed with the existing three CSS warnings. Earlier integrated settings/player/voice
+  checks passed 27 tests; final caption suite passed **six**, including the real Qwen service.
+  A 15-second excerpt of an already saved public video was transcribed and displayed in
+  the player. Screenshot review exposed dim captions behind controls; cue placement now
+  moves above visible controls and was rechecked visually. The release container also
+  generated real Qwen captions using disposable data.
+- Fresh backup: `/root/compose/watchcraft-backups/20261101-pre-generated-subs`, including
+  online and final stopped-service SQLite snapshots, private configuration, source and
+  data extras. Rollback image: `watchcraft:rollback-20261101-generated-subs` (previous
+  `693fd02`). Isolated backup initialized twice with the final image; original profile,
+  settings, video and content rows were preserved. The new table is additive and older
+  images ignore it; rollback does not require restoring the live database.
+- Production rolled out with rsync without deletion, preserving `.env` and `compose.host.yaml`.
+  `DEPLOYED_COMMIT=3b4a03c`; API, worker and downloader use image `sha256:5872492ac908ee86…`
+  with zero restarts. Public/local health passed, database integrity is `ok`, and the final
+  baseline retains six profiles, 7,097 videos, 223 content items and 223 capture jobs. Profile
+  and PIN checksums match; effective speech endpoint/model availability was checked inside
+  the live API. A saved video returned HTTP 206 and decoded 20 frames successfully.
+- Physical TV/projector/phone acceptance remains deferred by the user and tracked in the
+  external vault. Browser and service probes establish neither remote-control nor casting
+  acceptance on those devices.
+
 ## Deployment record — basic reliability (`693fd02`, 2026-11-01)
 
 - Covers `a8f7c81..693fd02`: scanned-PDF OCR integration, explicit OCR truncation notices,
