@@ -1,28 +1,57 @@
 # WatchCraft
 
-**Watching the Internet for you.**
+**Your everything hub for offline viewing.**
 
-Instead of going on the internet yourself, set WatchCraft up to do it for you. Curators watch feeds, search engines, GitHub, Hacker News, arXiv and security databases; Research briefs (OSINT) dig into a business, person, domain or topic from public sources; everything lands locally in Discover, News, Knowledge, Library, Briefings and Alerts. Video stays front and centre: TV is still the default home. See [the Hub design and API](docs/HUB.md) and [deployment and migration](docs/WATCHCRAFT.md).
+WatchCraft goes on the internet for you and brings home what you care about. Tell it your interests once; it finds the videos, articles, papers, recipes, patterns, releases, news and memes that fit, keeps a local copy with a short summary and the source link, and serves it all from one self-hosted app on your TV, computer and phone. When the internet is slow, down or full of noise, your library is still there.
 
-WatchCraft is a self-hosted YouTube front end for watching and discovering videos on your own terms. Run it on a computer at home, open it in a browser on your devices, and give each family member a place for their own interests. It plays videos without embedding the YouTube player and can use an AI curator to build playlists around the things you actually want to watch.
+It started as a self-hosted YouTube front end, and video remains the default home: a TV-friendly player without the YouTube embed. Everything else now sits alongside it.
 
-**[Deploy at home](#deploy-at-home)** · **[How it works](#how-it-works)** · **[Manage your installation](#manage-your-installation)** · **[Development](#development)**
+**[What it does](#what-it-does)** · **[Where it is heading](#where-it-is-heading)** · **[How it works](#how-it-works)** · **[Deploy at home](#deploy-at-home)** · **[Manage your installation](#manage-your-installation)** · **[Development](#development)**
 
-## What you can do
+## What it does
 
-- **Watch without player ads.** WatchCraft resolves and plays video streams through its own player. SponsorBlock can skip or ask about sponsored segments; Return YouTube Dislike and DeArrow are optional community integrations.
-- **Make playlists around your interests.** Describe a subject such as “science for kids” or “woodworking”, and the background curator searches for videos that fit. It can consider metadata, transcripts, comments and thumbnails when available.
-- **Teach the curator your preferences.** Give feedback and review or edit the lessons it learns. Curated picks are paced to provide variety across topics and creators.
-- **Give everyone their own space.** Profiles keep playlists, subscriptions, viewing history and AI memory separate, while server settings are shared. Add an optional PIN to any profile.
-- **Watch on a TV or projector.** The interface supports keyboard and remote navigation, an on-screen keyboard and installation as a progressive web app. It works in a regular browser too.
-- **Save videos for later.** Download videos to your own storage and adjust caching and storage limits in Settings.
-- **Choose your AI provider.** Connect a compatible model endpoint in the web UI, including one hosted on your own network. The AI curator is optional for browsing and playback.
+### Gather
+
+- **Curators** watch the internet for a subject you describe in plain words, such as "woodworking", "home lab security" or "science for kids". Each one draws on reusable sources: RSS/Atom and YouTube channel feeds, GitHub releases and search, Hacker News, arXiv, NVD and CISA advisories, Wikipedia, Mastodon, web search (SearXNG or Brave) and single pages. Websites without a feed can be watched through article listings, sitemaps or page-change watchers with editable rules.
+- **Source Scout** researches a website or topic, finds and tests its feeds, sitemaps and article listings, and suggests sources to add.
+- **Research briefs** dig into a topic, organization, person, domain or product from public sources and produce a cited report. An investigation can become an ongoing watch.
+- **Video AI** builds playlists around your interests from metadata, transcripts, comments and thumbnails, and learns from your feedback.
+
+### Keep it locally
+
+- **Offline copies.** Found and saved items are captured to your server: readable article text, PDFs with extracted text, a representative image, and YouTube videos in the offline download queue. The original URL is always kept as provenance.
+- **Summaries first.** With AI enabled, each capture gets a short summary, clearly labelled and kept apart from the source facts.
+- **One search for everything.** Find (Ctrl/Cmd+K) searches local items, notes, videos, curators, collections and topics, with optional live web search.
+
+### Browse and use it
+
+- **TV** is the default home: keyboard and remote navigation, an on-screen keyboard, SponsorBlock and optional Return YouTube Dislike and DeArrow.
+- **Discover, News, Knowledge and Library** organize what the curators found: a unified feed, a newsroom grouped by story, topic pages with notes, and saved items, collections and exports.
+- **Briefings and Alerts** turn findings into cited daily or weekly digests and severity-filtered alerts.
+- **Meme Radar** collects image memes, removes duplicates, groups templates and tracks trends.
+- **Team and Scout Report** show what your curators actually did and found, built only from real runs.
+- **Play on** sends a video from your phone to a paired screen in the house and lets you pause, resume and seek from the phone.
+- **Profiles** keep each person's curators, library, history and AI memory separate. Administrator, adult and child roles and optional PINs control who sees what.
+
+Most features work without AI and fall back to keyword scoring and plain digests. AI can be a model on your own network or a hosted API.
+
+## Where it is heading
+
+The goal is a home library that fills itself: give WatchCraft your interests, and everything worth keeping is already on your server, summarized and searchable, before you go looking for it. Planned directions include:
+
+- **More complete offline copies:** multiple images and layout-aware reading, captions for downloaded videos, OCR for scanned documents, more document formats, and retention policies.
+- **More sources:** more providers, continuous source discovery, and watchers that repair themselves when a site changes.
+- **Better relevance:** semantic search, personal ranking, and separate AI models for judging and for routine work.
+- **Reaching you:** browser, email, webhook and Home Assistant notifications.
+- **Every screen:** smoother phone-to-TV handoff, mobile and accessibility improvements, and broader TV and PWA testing.
 
 ## How it works
 
-WatchCraft runs its web app and background services on your computer using Docker. Your profiles, settings, history and saved videos live in the storage folders you choose. The app contacts YouTube to find and play videos, and optional integrations or your configured AI provider for their respective features. Availability can change when external services change; some videos may require cookies or be unavailable.
+WatchCraft runs its web app and background workers on your computer using Docker. Profiles, settings, history, captured content and downloaded videos live in storage folders you choose. It contacts the internet only to find, fetch and play content, and your configured AI provider for AI features. Every fetch of outside content is restricted to public HTTPS addresses with size limits, and retrieved pages are shown as text, never as the site's own HTML.
 
-To get started, install Docker, run the setup file for your operating system, then open WatchCraft in your browser. Configure your AI connection in **Settings → AI** and create a playlist with a description of what you enjoy. The curator works in the background, and you can pause it or adjust its behavior in Settings.
+What can be captured depends on the source: paywalled, sign-in-only or script-heavy pages may be partial or unavailable, and some videos may need YouTube cookies. Each item shows whether its local copy succeeded.
+
+To get started, install Docker, run the setup file for your operating system, then open WatchCraft in your browser. The welcome guide helps you create a profile and connect AI. Then create a curator or a playlist from a description of what you enjoy, and let it work in the background.
 
 ## Deploy at home
 
@@ -120,7 +149,7 @@ With a compatible NVIDIA GPU, drivers and NVIDIA container support, start with `
 
 ## Development
 
-The repository contains the FastAPI backend and workers in `backend/bt/`, the SvelteKit interface in `frontend/`, optional projector integration in `host/`, and design notes in `docs/`.
+The repository contains the FastAPI backend and workers in `backend/bt/`, the SvelteKit interface in `frontend/`, optional projector integration in `host/`, and design notes in `docs/`. Start with [WatchCraft overview](docs/WATCHCRAFT.md) and [Hub design and API](docs/HUB.md).
 
 ```bash
 cd backend && uv venv -p 3.12 .venv && uv pip install -p .venv -r requirements.txt
@@ -131,6 +160,7 @@ cd frontend && npm ci && npm run dev
 ```
 
 ## Projector
+
 `host/install-desktop.sh` (as root on the projector host) installs `/home/console/bin/bt-mode`
 and binds it to remote button 6 (Ctrl+Shift+Y via input-remapper → xbindkeys).
 
