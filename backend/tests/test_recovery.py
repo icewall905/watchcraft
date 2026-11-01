@@ -63,7 +63,7 @@ def test_recover_stale_fails_interrupted_runs_and_leaves_live_ones(clean):
 def test_a_stale_capture_lease_is_claimed_again(clean, monkeypatch):
     """A worker that died mid-capture must not hold the job forever."""
     spawned = []
-    monkeypatch.setattr(capture.slots, 'spawn', lambda *a, **k: spawned.append(a) or True)
+    monkeypatch.setattr(capture.slots, 'spawn_lane', lambda *a, **k: spawned.append(a) or True)
     with session() as s:
         item = ContentItem(url='https://example.org/a', type='news', title='A', summary='A')
         s.add(item); s.flush()
@@ -79,7 +79,7 @@ def test_a_stale_capture_lease_is_claimed_again(clean, monkeypatch):
 
 
 def test_a_live_capture_lease_is_left_alone(clean, monkeypatch):
-    monkeypatch.setattr(capture.slots, 'spawn', lambda *a, **k: pytest.fail('a live lease must not be re-claimed'))
+    monkeypatch.setattr(capture.slots, 'spawn_lane', lambda *a, **k: pytest.fail('a live lease must not be re-claimed'))
     with session() as s:
         item = ContentItem(url='https://example.org/b', type='news', title='B', summary='B')
         s.add(item); s.flush()
@@ -90,7 +90,7 @@ def test_a_live_capture_lease_is_left_alone(clean, monkeypatch):
 
 
 def test_a_capture_job_for_a_profile_that_lost_access_is_failed(clean, monkeypatch):
-    monkeypatch.setattr(capture.slots, 'spawn', lambda *a, **k: pytest.fail('no work for a profile without access'))
+    monkeypatch.setattr(capture.slots, 'spawn_lane', lambda *a, **k: pytest.fail('no work for a profile without access'))
     with session() as s:
         item = ContentItem(url='https://example.org/c', type='news', title='C', summary='C')
         s.add(item); s.flush()

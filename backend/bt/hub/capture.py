@@ -330,7 +330,7 @@ def dispatch():
         job.attempts += 1
         pid, iid, lease = job.profile_id, job.item_id, job.lease
         s.add(job); s.commit()
-    if slots.spawn('local-capture', 'capture', iid, pid, 'Local capture', run, pid, iid, lease): return True
+    if slots.spawn_lane('local-capture', 'capture', iid, pid, 'Local capture', run, pid, iid, lease): return True
     with session() as s:
         s.exec(update(CaptureJob).where(CaptureJob.profile_id == pid, CaptureJob.item_id == iid, CaptureJob.lease == lease)
                .values(status='queued', next_run=time.time() + 30)); s.commit()

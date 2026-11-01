@@ -588,6 +588,13 @@ def dispatch_due() -> None:
         semantic.sweep()
     except Exception:  # noqa: BLE001 — an embedding outage never stops the scheduler
         log.exception('semantic index sweep failed')
+    try:
+        # Capture has its own lane: it must not wait for a curator to finish, and it must not
+        # take the only slot from one either.
+        from . import capture
+        capture.dispatch()
+    except Exception:  # noqa: BLE001 — a capture failure never stops the scheduler
+        log.exception('local capture dispatch failed')
     free = slots.free()
     if free <= 0:
         return
@@ -631,9 +638,6 @@ def dispatch_due() -> None:
                                             config.profile_id, config.frequency, now + LEASE_S):
             free -= 1
 
-    if free > 0:
-        from . import capture
-        capture.dispatch()
 
 
 slots.after_release = dispatch_due

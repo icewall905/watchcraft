@@ -1084,7 +1084,7 @@ def test_capture_claim_recovers_expired_lease(client, monkeypatch):
         s.add(CaptureJob(profile_id=1, item_id=iid, status='running', lease=time.time() - 1, attempts=1))
         s.commit()
     calls = []
-    monkeypatch.setattr(capture.slots, 'spawn', lambda *args: calls.append(args) or True)
+    monkeypatch.setattr(capture.slots, 'spawn_lane', lambda *args: calls.append(args) or True)
     assert capture.dispatch()
     assert len(calls) == 1
     with session() as s:
@@ -1853,3 +1853,44 @@ def test_capture_settings_keep_the_rescue_flag(client):
                       headers={'X-Profile-Id': '1'}).status_code == 200
     got = client.get('/api/hub/capture/status').json()
     assert got['asset_max_mb'] == 256 and got['rescue'] is False
+
+
+def test_capture_runs_in_its_own_lane_without_taking_an_agent_slot(client, monkeypatch, request):
+    """An image meme must not wait for a curator, and must not take the curator's only slot."""
+    import threading
+    from bt.hub import slots
+    release, entered, threads = threading.Event(), [], []
+    real_thread = threading.Thread
+
+    def tracked_thread(*args, **kwargs):
+        thread = real_thread(*args, **kwargs)
+        threads.append(thread)
+        return thread
+
+    monkeypatch.setattr(threading, 'Thread', tracked_thread)
+
+    def finish():
+        release.set()
+        for thread in threads:
+            thread.join(timeout=5)
+
+    request.addfinalizer(finish)
+
+    def work(n):
+        entered.append(n); release.wait(5)
+
+    assert slots.spawn('test-curator', 'curator', 1, 1, 'Curator', work, 'curator')
+    for _ in range(50):
+        if entered: break
+        time.sleep(0.02)
+    assert slots.free() == 0  # the only agent slot is taken
+    # The lane still runs, and the agent slot stays with the curator.
+    assert slots.spawn_lane('local-capture', 'capture', 1, 1, 'Local capture', work, 'capture')
+    for _ in range(50):
+        if len(entered) == 2: break
+        time.sleep(0.02)
+    assert sorted(entered) == ['capture', 'curator']
+    assert slots.free() == 0  # the lane did not consume a slot
+    assert [j['key'] for j in slots.snapshot()['lanes']] == ['local-capture']
+    assert not slots.spawn_lane('local-capture', 'capture', 1, 1, 'Local capture', work, 'again')
+    release.set()

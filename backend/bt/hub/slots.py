@@ -16,6 +16,7 @@ log = logging.getLogger(__name__)
 
 _cond = threading.Condition()
 _jobs: dict[str, dict] = {}  # key -> {kind, ref_id, profile_id, label, state, since}
+_lanes: dict[str, dict] = {}  # bounded work outside the agent limit; see spawn_lane
 
 
 class Busy(Exception):
@@ -131,10 +132,47 @@ def spawn(key: str, kind: str, ref_id: int | None, profile_id: int | None, label
     return True
 
 
+def spawn_lane(key: str, kind: str, ref_id: int | None, profile_id: int | None, label: str,
+               fn: Callable, *args) -> bool:
+    """Run fn in a background thread outside the agent slots. False if that lane is already busy.
+
+    Bounded work that must neither be starved by agents nor take their slots: at most one job per
+    key, and it never counts against `limit()`. Local capture uses this, so an image meme is not
+    held up by a curator that happens to be running.
+    """
+    with _cond:
+        if key in _lanes:
+            return False
+        _lanes[key] = {'kind': kind, 'ref_id': ref_id, 'profile_id': profile_id, 'label': label,
+                       'state': 'running', 'since': time.time()}
+
+    def body():
+        try:
+            fn(*args)
+        finally:
+            with _cond:
+                _lanes.pop(key, None)
+                _cond.notify_all()
+            if after_release:
+                try:
+                    after_release()
+                except Exception:  # noqa: BLE001 — the scheduler tick retries anyway
+                    log.exception('dispatch after %s failed', key)
+    try:
+        threading.Thread(target=body, daemon=True, name=key).start()
+    except BaseException:
+        with _cond:
+            _lanes.pop(key, None)
+        raise
+    return True
+
+
 def snapshot(profile_id: int | None = None) -> dict:
     """Live team state; other profiles' jobs are counted but not described."""
     n = limit()
     with _cond:
         jobs = [{'key': k, **v} for k, v in _jobs.items() if profile_id is None or v['profile_id'] == profile_id]
+        lanes = [{'key': k, **v} for k, v in _lanes.items() if profile_id is None or v['profile_id'] == profile_id]
         return {'limit': n, 'running': _running(), 'waiting': sum(1 for j in _jobs.values() if j['state'] == 'waiting'),
+                'lanes': sorted(lanes, key=lambda j: j['since']),
                 'jobs': sorted(jobs, key=lambda j: j['since'])}
