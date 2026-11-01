@@ -52,3 +52,10 @@ test('the curator form can add a Mastodon source', async ({ page, request }) => 
 	for (const s of await (await request.get('/api/hub/sources')).json())
 		if (s.provider === 'mastodon') await request.delete(`/api/hub/sources/${s.id}`);
 });
+
+test('Search by meaning explains itself when no embeddings model is set', async ({ page }) => {
+	await freshPage(page, '/find?q=rust');
+	await page.getByRole('button', { name: 'Search by meaning' }).click();
+	await expect(page.getByRole('heading', { name: 'By meaning' })).toBeVisible();
+	await expect(page.getByText(/embeddings model/i)).toBeVisible();
+});

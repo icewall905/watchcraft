@@ -6,7 +6,7 @@
 	import { currentProfileId } from '$lib/api';
 	import { hub, host } from '$lib/hub/api';
 	import { lsGet, lsSet, errMsg } from '$lib/hub/util';
-	import type { Curator, Registry, SavedSearch, SearchResult, Source, Topic, WebResult } from '$lib/hub/types';
+	import type { Curator, Item, Registry, SavedSearch, SearchResult, Source, Topic, WebResult } from '$lib/hub/types';
 	import ContentCard from '$lib/hub/ContentCard.svelte';
 	import VoiceSearch from '$lib/components/VoiceSearch.svelte';
 
@@ -38,6 +38,15 @@
 	let web = $state<{ results: WebResult[]; errors: { provider: string; message: string }[]; q: string } | null>(null);
 	let webLoading = $state(false);
 	let webError = $state('');
+	let meaning = $state<{ available: boolean; reason: string; items: (Item & { similarity?: number })[] } | null>(null);
+	let meaningBusy = $state(false);
+	async function searchByMeaning() {
+		if (!q.trim() || meaningBusy) return;
+		meaningBusy = true;
+		try { meaning = await hub.semanticSearch(q.trim()); }
+		catch { meaning = { available: false, reason: 'Semantic search failed. Try again.', items: [] }; }
+		finally { meaningBusy = false; }
+	}
 	let imported = $state<Record<string, 'busy' | 'done' | string>>({});
 
 	const rkey = () => `wc.recent.${currentProfileId() ?? 'default'}`;
@@ -193,7 +202,28 @@
 	<div class="hstack">
 		<button class="btn" disabled={!q.trim() || isSaved} use:focusable onclick={saveCurrent}>{isSaved ? 'Search saved' : 'Save this search'}</button>
 		{#if q.trim()}<a class="btn ghost" href={`/curators/new?goal=${encodeURIComponent(q.trim())}`} use:focusable>Turn this search into a curator</a>{/if}
+		{#if q.trim()}<button class="btn ghost" disabled={meaningBusy} use:focusable onclick={searchByMeaning}>{meaningBusy ? 'Thinking…' : 'Search by meaning'}</button>{/if}
 	</div>
+
+	{#if meaning}
+		<section class="meaning">
+			<div class="hstack"><h2>By meaning</h2><span class="spacer"></span><button class="btn ghost" use:focusable onclick={() => (meaning = null)}>Hide</button></div>
+			{#if !meaning.available}
+				<p class="muted small">{meaning.reason}</p>
+			{:else if !meaning.items.length}
+				<p class="muted small">Nothing indexed matches that yet. The index fills as curators collect items.</p>
+			{:else}
+				<ul class="mlist">
+					{#each meaning.items as it (it.id)}
+						<li>
+							<a href={`/item/${it.id}`} use:focusable>{it.title}</a>
+							<span class="small faint">{it.type}{it.publisher ? ` · ${it.publisher}` : ''}{#if it.similarity !== undefined} · {Math.round(it.similarity * 100)}% match{/if}</span>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+	{/if}
 
 	<div class="layout">
 		<div class="main">
@@ -302,6 +332,10 @@
 	.sel { width: auto; min-height: 3.2rem; background: rgba(10, 8, 25, .85); }
 	.layout { display: grid; grid-template-columns: minmax(0, 1fr) 22rem; gap: 2rem; align-items: start; }
 	.main, .results { display: grid; gap: 1.5rem; }
+	.meaning { display: grid; gap: .6rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--r-card); background: var(--surface); }
+	.meaning h2 { margin: 0; font-size: 1.05rem; }
+	.mlist { display: grid; gap: .5rem; margin: 0; padding: 0; list-style: none; }
+	.mlist li { display: grid; gap: .1rem; }
 	.results.busy { opacity: .6; }
 	section h2 { font-size: 1.1rem; margin-bottom: .6rem; }
 	.vids { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: .8rem; }

@@ -98,6 +98,8 @@ export const hub = {
 	generateBriefing: (id: number) => send<Issue>('POST', `/briefings/${id}/generate`),
 	issues: (id: number) => get<Issue[]>(`/briefings/${id}/issues`),
 
+	/** Rank by meaning instead of words. Reports why it is unavailable when no embeddings model is set. */
+	semanticSearch: (q: string, limit = 20) => get<{ available: boolean; reason: string; items: (Item & { similarity?: number })[] }>('/search/semantic' + qs({ q, limit })),
 	alerts: (state = 'new', severity?: string, curator_id?: number) => get<Page<Alert>>('/alerts' + qs({ state, severity, curator_id })),
 	alertState: (id: number, state: string, snooze_hours?: number) => send<{ ok: boolean }>('POST', `/alerts/${id}/state`, { state, snooze_hours }),
 

@@ -1650,3 +1650,29 @@ def test_source_quality_counts_what_a_source_contributed(client, monkeypatch):
     # A source that has never been checked reports nothing rather than a verdict.
     fresh = client.post('/api/hub/sources', json={'provider': 'rss', 'url': 'https://example.org/other.xml'}).json()
     assert fresh['quality']['verdict'] == 'unknown' and fresh['quality']['discoveries'] == 0
+
+
+def test_profile_taste_learns_from_saves_and_dismissals(client):
+    """Explicit verdicts tune one curator; saves and dismissals tune the whole profile."""
+    from bt.hub import engine
+    from bt.hub.models import ContentItem, ItemState
+    with session() as s:
+        for k in range(3):
+            it = ContentItem(url=f'https://example.org/keep/{k}', type='news', title=f'Rust async runtime {k}')
+            s.add(it); s.flush()
+            s.add(ItemState(profile_id=1, item_id=it.id, saved=True))
+        for k in range(3):
+            it = ContentItem(url=f'https://example.org/drop/{k}', type='news', title=f'Celebrity gossip {k}')
+            s.add(it); s.flush()
+            s.add(ItemState(profile_id=1, item_id=it.id, dismissed=True))
+        s.commit()
+        liked, disliked = engine.taste(s, 1)
+    assert 'rust' in liked and 'async' in liked
+    assert 'celebrity' in disliked and 'gossip' in disliked
+    assert not set(liked) & set(disliked)
+    # The nudge is small and never resurrects an item that failed the keyword gate.
+    score, reason = engine._taste_nudge({'title': 'A rust async runtime'}, 50.0, '', liked, disliked)
+    assert score == 55.0 and 'You save' in reason
+    score, reason = engine._taste_nudge({'title': 'Celebrity gossip again'}, 50.0, '', liked, disliked)
+    assert score == 45.0 and 'You dismiss' in reason
+    assert engine._taste_nudge({'title': 'Rust gossip'}, 50.0, '', liked, disliked) == (50.0, '')

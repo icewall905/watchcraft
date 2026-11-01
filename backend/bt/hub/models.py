@@ -405,3 +405,12 @@ class MemeTrendState(SQLModel, table=True):
     trend_id: int = Field(primary_key=True)
     followed: bool = False
     hidden: bool = False
+
+
+class ItemVector(SQLModel, table=True):
+    """Embedding for one item under one model. Switching models re-embeds instead of mixing spaces."""
+    item_id: int = Field(primary_key=True)
+    model: str = Field(primary_key=True)
+    dim: int = 0
+    vector: str = T()
+    created_at: float = Field(default_factory=time.time)

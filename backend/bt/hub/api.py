@@ -1734,6 +1734,32 @@ def alert_state(aid: int, body: AlertStateIn, pid: int = Depends(profile_id)):
 
 # ---------- search
 
+@router.get('/search/semantic')
+def semantic_search(q: str = '', limit: int = 20, pid: int = Depends(profile_id)):
+    """Rank items by meaning rather than words. Needs an embeddings model; says so when it has none."""
+    from . import semantic
+    ok, reason = semantic.available()
+    if not ok:
+        return {'available': False, 'reason': reason, 'items': []}
+    try:
+        ranked = semantic.search(q.strip()[:300], pid, max(1, min(limit, 50)))
+    except ValueError as e:
+        return {'available': False, 'reason': str(e), 'items': []}
+    with session() as s:
+        rows = {i.id: i for i in s.exec(select(ContentItem).where(ContentItem.id.in_([i for i, _ in ranked] or [0]))).all()}
+        items = serialize(s, pid, [rows[i] for i, _ in ranked if i in rows])
+    scores = dict(ranked)
+    for item in items:
+        item['similarity'] = scores.get(item['id'])
+    return {'available': True, 'reason': '', 'items': items}
+
+
+@router.get('/search/semantic/status')
+def semantic_status():
+    from . import semantic
+    return semantic.status()
+
+
 @router.get('/search')
 def search(q: str = '', type: str = '', provider: str = '', scope: str = 'all', offset: int = 0, limit: int = 30,
            curator: int | None = None, source: int | None = None, topic: int | None = None, tags: str = '',

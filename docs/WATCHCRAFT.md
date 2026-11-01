@@ -20,16 +20,23 @@ the default and is unchanged. Design, route map, provider registry and API contr
 | Research (OSINT) | `/research` | One-off or ongoing public-source research on a topic, organization, person, domain or product; cited report; findings by type; create an inactive editable watch curator from an investigation. |
 | Curators | `/curators`, `/curators/new`, `/curators/[id]` | Natural-language wizard + templates, multi-source, edit, duplicate, pause/resume, run now, delete, run history, export JSON. |
 | Sources | `/sources` | Provider catalogue with capabilities/availability, reusable sources, health, test connection. |
-| Find | `/find`, Ctrl/Cmd+K | Local FTS5 search (prefix, "phrases", -exclusions) over items, private notes, local videos, curators, collections, topics; filters for type, curator, source, topic, tags, state, date and relevance; live web search on demand; saved + recent searches; "turn into a curator". |
+| Find | `/find`, Ctrl/Cmd+K | Local FTS5 search (prefix, "phrases", -exclusions) over items, private notes, local videos, curators, collections, topics; filters for type, curator, source, topic, tags, state, date and relevance; live web search on demand; saved + recent searches; "turn into a curator". **Search by meaning** ranks items by embedding similarity when an embeddings model is configured under Settings → AI, and says why it is unavailable when none is. |
 | Settings → Search & sources | `/settings?tab=search` | SearXNG URL or Brave key (redacted), toggle Hub AI. |
+| Settings → Notifications | `/settings?tab=notify` | Alert delivery to a JSON webhook, a Home Assistant webhook and SMTP email, with a minimum severity and a Send test action. Empty fields disable a channel; the email password is redacted. Desktop notifications are opt-in per browser and need no push server. |
 
 Navigation is defined once in `frontend/src/lib/navigation.ts`. Desktop: grouped, collapsible sidebar with expanded/compact
 modes and unread/alert counts. Phones (desktop mode, ≤760px): bottom bar TV · Discover · Library · Alerts · More.
 TV mode: a deliberately small drawer (TV Home, Video search, Subscriptions, Playlists, Hub, Settings).
 
 Providers: RSS/Atom (incl. YouTube channel feeds → video), GitHub releases, GitHub repository search, Hacker News, Mastodon
-(public instance tag timelines; images, GIFs and video poster previews), arXiv, NVD CVE API, CISA KEV, Wikipedia, RDAP, web search (SearXNG/Brave), single-page extraction (OpenGraph +
-JSON-LD Recipe/Article). Web search shows as unavailable until configured and is never silently enabled.
+(public instance tag timelines; images, GIFs and video poster previews), dev.to articles, Lobste.rs stories, arXiv, NVD CVE
+API, CISA KEV, Wikipedia, RDAP, web search (SearXNG/Brave), single-page extraction (OpenGraph + JSON-LD Recipe/Article).
+Web search shows as unavailable until configured and is never silently enabled. Bluesky and Reddit were evaluated and both
+answer 403 to datacenter IPs, so they are not offered.
+
+Source quality is counted separately from health: discoveries, acceptance rate (kept ÷ fetched) and last contribution, with a
+productive / thin / noisy / never-contributes verdict on the Sources page. Health says a source still works; quality says
+whether its results are worth the run.
 
 AI (optional, uses the existing OpenAI-compatible endpoint): relevance scoring with evidence-based reasons, curator
 drafts, cited research reports and briefings. Without AI: keyword relevance, heuristic drafts, grouped digests.

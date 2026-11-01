@@ -58,6 +58,7 @@ DEFAULT_SETTINGS: dict = {
         "max_retries": 2,
         "vision": True,
         "temperature": 0.4,
+        "embed_model": os.environ.get("BT_LLM_EMBED_MODEL", ""),  # empty = semantic search off
     },
     "throttle": {
         "min_delay_s": 20,

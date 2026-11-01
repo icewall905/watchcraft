@@ -229,6 +229,7 @@
 		<div class="two">
 			<TextField label="Model" hint="Load the available models below, or type a model name." bind:value={llm.value.model} placeholder="currentmodel" group="llm-model" />
 			<TextField label="API key" hint="Leave empty for local servers. Stored on the server, never shown again." type="password" bind:value={llm.value.api_key} placeholder="none" group="llm-model" oninput={clearModels} />
+			<TextField label="Embeddings model" hint="Optional. Enables Search by meaning in Find. Leave empty to keep keyword search only." bind:value={llm.value.embed_model} placeholder="text-embedding-3-small" group="llm-model" />
 		</div>
 		<div class="test-row">
 			<button class="btn" disabled={modelsLoading || !llm.value.base_url} use:focusable={{ group: 'llm-test', id: 'llm-model-list', onSelect: loadModels }}>

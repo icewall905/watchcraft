@@ -14,7 +14,7 @@ from ..access import hub_allowed
 from ..db import engine as db_engine, get_settings, session
 from . import activity, ai, polling, slots, narrate, watchers
 from .models import (Alert, Briefing, CollectionItem, ContentItem, Curator, CuratorDiscovery, CuratorRun,
-                     CuratorSource, PageRevision, SitemapEntry, Source, SourceCheck, TopicItem)
+                     CuratorSource, ItemState, PageRevision, SitemapEntry, Source, SourceCheck, TopicItem)
 from .providers import PROVIDERS
 
 log = logging.getLogger(__name__)
@@ -214,6 +214,44 @@ def _terms(values) -> list[str]:
     return [v.strip().lower() for v in values or [] if isinstance(v, str) and v.strip()]
 
 
+TASTE_MIN = 3      # saved or dismissed items a word needs before it counts
+TASTE_NUDGE = 5.0  # points added or removed; small enough never to override a keyword gate
+
+
+def taste(s, pid: int) -> tuple[list[str], list[str]]:
+    """Words this profile keeps versus dismisses, learned from saved, liked and dismissed items.
+
+    Explicit "more/less like this" tunes one curator. This is the profile-wide signal, so a
+    new curator starts from what the household already keeps.
+    """
+    from collections import Counter
+    rows = s.exec(select(ItemState.saved, ItemState.favorite, ItemState.dismissed, ItemState.rating,
+                         ContentItem.title)
+                  .join(ContentItem, ContentItem.id == ItemState.item_id)
+                  .where(ItemState.profile_id == pid)).all()
+    up, down = Counter(), Counter()
+    for saved, favorite, dismissed, rating, title in rows:
+        words = {w for w in re.split(r'[^a-z0-9]+', (title or '').lower()) if len(w) >= 4}
+        if saved or favorite or rating == 1:
+            up.update(words)
+        elif dismissed or rating == -1:
+            down.update(words)
+    liked = sorted(w for w, n in up.items() if n >= TASTE_MIN and n > 2 * down.get(w, 0))[:20]
+    disliked = sorted(w for w, n in down.items() if n >= TASTE_MIN and n > 2 * up.get(w, 0))[:20]
+    return liked, disliked
+
+
+def _taste_nudge(data: dict, score: float, reason: str, liked: list[str], disliked: list[str]) -> tuple[float, str]:
+    words = set(re.split(r'[^a-z0-9]+', f"{data.get('title', '')} {data.get('summary', '')}".lower()))
+    up = [w for w in liked if w in words]
+    down = [w for w in disliked if w in words]
+    if up and not down:
+        return min(100.0, score + TASTE_NUDGE), ' · '.join(x for x in (reason, f'You save "{up[0]}"') if x)
+    if down and not up:
+        return max(0.0, score - TASTE_NUDGE), ' · '.join(x for x in (reason, f'You dismiss "{down[0]}"') if x)
+    return score, reason
+
+
 def keyword_score(c: Curator, data: dict) -> tuple[float | None, str]:
     """Deterministic relevance without AI. None = excluded."""
     hay = f"{data.get('title', '')} {data.get('summary', '')} {data.get('meta', {}).get('product', '')} {data.get('meta', {}).get('vendor', '')}".lower()
@@ -396,6 +434,8 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
     # Score: keywords first (cheap), then optional AI over the survivors.
     activity.emit(c, r.id, 'reviewing', narrate.say(c.tone, 'curator.reviewing', seed=str(r.id),
                                                    got=narrate.phrase(len(candidates), 'source item')))
+    with session() as s:
+        liked, disliked = taste(s, c.profile_id)
     scored, type_blocked = [], 0
     seen_urls = set()
     for src, q, d in candidates:
@@ -410,6 +450,9 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         if score is None:
             type_blocked += reason == TYPE_BLOCKED
             continue
+        # Only nudge items that already passed the keyword gate, so taste never resurrects a miss.
+        if score > 0 and (liked or disliked):
+            score, reason = _taste_nudge(d, score, reason, liked, disliked)
         # Feeds are unfiltered firehoses: with keywords set, keep matches only. Query results already match a query.
         if score == 0 and (PROVIDERS[src.provider].mode != 'query' or _feed_needs_keywords(src.provider)):
             continue
@@ -540,6 +583,11 @@ def dispatch_due() -> None:
         notify.dispatch()
     except Exception:  # noqa: BLE001 — a broken channel never stops the scheduler
         log.exception('alert delivery failed')
+    try:
+        from . import semantic
+        semantic.sweep()
+    except Exception:  # noqa: BLE001 — an embedding outage never stops the scheduler
+        log.exception('semantic index sweep failed')
     free = slots.free()
     if free <= 0:
         return
