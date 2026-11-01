@@ -625,3 +625,27 @@ def test_live_download_short_video():
     data = p.read_bytes()
     assert data[4:8] == b"ftyp" and b"moov" in data[:4096], "faststart: moov should precede mdat"
     assert time.monotonic() - t < 120
+
+
+def test_a_copy_being_streamed_is_never_evicted():
+    """Evicting a playing copy 404s the player's next Range request, so it is not a candidate."""
+    with session() as s:
+        c = _cat(s)
+        _done(s, IDS[0], 100_000_000)  # never played: evictable
+        _cand(s, c, IDS[0])
+        playing = _done(s, IDS[1], 400_000_000)  # a file request 30 s ago: may be streaming
+        _cand(s, c, IDS[1])
+        playing.last_played_at = now() - timedelta(seconds=30)
+        s.add(playing)
+        s.commit()
+        assert [d.video_id for d in svc.eviction_order(s, allow_wanted=True)] == [IDS[0]]
+        # 500 MB used against a 300 MB cap: evicting the idle copy is not enough, and the playing
+        # copy is off limits, so the download waits rather than breaking the stream.
+        assert svc.make_room(s, {"max_gb": 0.3}, 0, allow_wanted=True) is False
+        assert s.get(Download, IDS[1]).status == "done"
+        assert (MEDIA_DIR / svc.rel_path(IDS[1])).exists()
+        assert s.get(Download, IDS[0]).status == "evicted"
+        # Once the play window lapses it becomes an ordinary candidate again.
+        playing.last_played_at = now() - timedelta(seconds=svc.ACTIVE_PLAY_S + 60)
+        s.add(playing); s.commit()
+        assert [d.video_id for d in svc.eviction_order(s, allow_wanted=True)] == [IDS[1]]

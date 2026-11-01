@@ -138,8 +138,12 @@ def next_download(s: Session, last_category: Optional[int] = None) -> tuple[Opti
 def eviction_order(s: Session, allow_wanted: bool) -> list[Download]:
     """Done, non-pinned downloads in eviction order:
     0) finished by every profile that watched them, 1) no longer wanted (dismissed/rejected/no accepted
-    candidate), 2) still wanted (only when allow_wanted). LRU (last played, else finished) within a group."""
+    candidate), 2) still wanted (only when allow_wanted). LRU (last played, else finished) within a group.
+
+    A copy someone may still be streaming is never a candidate: evicting it 404s the player's next
+    Range request and the family sees an error card mid-video."""
     done = s.exec(select(Download).where(Download.status == "done", Download.pinned == False)).all()  # noqa: E712
+    done = [d for d in done if not _playing_now(d)]
     if not done:
         return []
     ids = [d.video_id for d in done]
