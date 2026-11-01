@@ -416,6 +416,19 @@
 		}
 	}
 
+	function positionCaptions(show: boolean) {
+		if (!video) return;
+		for (const track of Array.from(video.textTracks)) {
+			for (const cue of Array.from(track.cues ?? [])) {
+				if (cue instanceof VTTCue) {
+					cue.snapToLines = false;
+					cue.line = show ? 65 : 90;
+				}
+			}
+		}
+	}
+	$effect(() => { if (video) positionCaptions(controls); });
+
 	function setCaption(key: string | null) {
 		captionChoiceMade = true;
 		selectGenerated = false;
@@ -433,7 +446,7 @@
 		el.src = `${c.url}${c.url.includes('?') ? '&' : '?'}layout=two-line-v1`;
 		el.default = true;
 		video.appendChild(el);
-		el.addEventListener('load', () => (el.track.mode = 'showing'));
+		el.addEventListener('load', () => { el.track.mode = 'showing'; positionCaptions(controls); });
 		el.track.mode = 'showing';
 	}
 

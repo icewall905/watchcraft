@@ -29,6 +29,7 @@ with session() as s:
  await expect(page.locator('video track')).toHaveAttribute('src', /subtitles\/generated.vtt/, { timeout: 150_000 });
  await page.locator('video').evaluate((v: HTMLVideoElement) => { v.pause(); v.currentTime = 3; });
  await expect.poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => Array.from(v.textTracks[0]?.activeCues ?? []).map(c => (c as VTTCue).text).join(' '))).toMatch(/\w{3}/);
+ await expect.poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => (v.textTracks[0]?.activeCues?.[0] as VTTCue)?.line)).toBe(65);
  await page.mouse.move(0, 0); await page.waitForTimeout(4500);
  await page.screenshot({ path: '/tmp/watchcraft-live-stt-subtitles.png' });
  const vtt = await (await page.request.get(`/api/video/${ID}/subtitles/generated.vtt`)).text();
