@@ -522,3 +522,33 @@ def test_a_card_reports_a_queued_download_not_just_a_finished_one():
         s.commit()
     card = c.get(f"/api/feed/category/{cat['id']}", headers=h).json()[0]["video"]
     assert card["offline"] is True and card["download_status"] == "done"
+
+
+def test_shorts_feed_returns_only_accepted_unwatched_shorts():
+    """The swipe feed is the playlist queue filtered to shorts, and a dislike removes one."""
+    c = client()
+    profile = c.post("/api/profiles", json={"name": "Swiper"}).json()
+    h = {"X-Profile-Id": str(profile["id"])}
+    cat = c.post("/api/categories", json={"name": "Clips", "brief": "short clips"}, headers=h).json()
+    with session() as s:
+        s.add(Video(id="short000001", title="A short", channel_id="UC1", duration_s=30, is_short=True))
+        s.add(Video(id="long0000001", title="A long one", channel_id="UC1", duration_s=900, is_short=False))
+        s.add(Video(id="short000002", title="Watched short", channel_id="UC1", duration_s=20, is_short=True))
+        s.add(Video(id="short000003", title="Dismissed short", channel_id="UC1", duration_s=25, is_short=True))
+        s.add(Candidate(category_id=cat["id"], video_id="short000001", status="accepted", score=90))
+        s.add(Candidate(category_id=cat["id"], video_id="long0000001", status="accepted", score=95))
+        s.add(Candidate(category_id=cat["id"], video_id="short000002", status="accepted", score=99))
+        s.add(Candidate(category_id=cat["id"], video_id="short000003", status="accepted", score=99, dismissed=True))
+        s.add(WatchHistory(profile_id=profile["id"], video_id="short000002", finished=True))
+        s.commit()
+    got = c.get("/api/shorts", headers=h).json()
+    # Not the long video, not the watched one, not the dismissed one.
+    assert [i["video"]["id"] for i in got["items"]] == ["short000001"]
+    assert got["items"][0]["video"]["is_short"] is True
+    # A dislike goes through the normal feedback path, so the curator learns from it.
+    assert c.post("/api/feedback", json={"video_id": "short000001", "category_id": cat["id"], "rating": -1},
+                  headers=h).status_code == 200
+    assert c.get("/api/shorts", headers=h).json()["items"] == []
+    # Another profile sees none of it.
+    other = c.post("/api/profiles", json={"name": "Other"}).json()
+    assert c.get("/api/shorts", headers={"X-Profile-Id": str(other["id"])}).json()["items"] == []

@@ -215,6 +215,10 @@ export const api = {
 	updateLesson: (id: number, l: Partial<Lesson>) => patch<Lesson>(`/lessons/${id}`, l),
 	deleteLesson: (id: number) => del<{ ok: boolean }>(`/lessons/${id}`),
 
+	// shorts
+	shorts: (params: { limit?: number; offset?: number; category_id?: number } = {}) =>
+		get<{ items: (Candidate & { video: Video })[]; total: number; next_offset: number | null }>('/shorts' + q(params)),
+
 	// history
 	history: (limit = 60) => get<(HistoryEntry & { video: Video | { id: string } })[]>(`/history${q({ limit })}`),
 	historyFor: (videoId: string) => get<HistoryEntry>(`/history/${encodeURIComponent(videoId)}`, { toast: false }),

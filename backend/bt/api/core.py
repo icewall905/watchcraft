@@ -409,6 +409,44 @@ def _category_items(s: Session, pid: int, cid: int, status: str = "accepted", in
     return out
 
 
+@router.get("/shorts")
+def shorts_feed(limit: int = 10, offset: int = 0, category_id: Optional[int] = None,
+                pid: int = Depends(profile_id), s: Session = Depends(get_session)):
+    """A swipe feed of short videos the profile's curators accepted, best first.
+
+    Sourced from the same accepted candidates as the playlist feeds, so the topics a household
+    already curates are the topics it swipes through. A like or dislike goes through the normal
+    feedback path, which is what teaches the curators.
+    """
+    limit = max(1, min(limit, 30))
+    owned = select(Category.id).where(Category.profile_id == pid, Category.enabled == True)  # noqa: E712
+    if category_id is not None:
+        _own_category(s, pid, category_id)
+        owned = select(Category.id).where(Category.id == category_id)
+    q = (select(Candidate, Video).join(Video, Video.id == Candidate.video_id)
+         .where(col(Candidate.category_id).in_(owned), Candidate.status == "accepted",
+                Candidate.dismissed == False, Video.is_short == True))  # noqa: E712
+    watched = _watched_ids(s, pid)
+    if watched:
+        q = q.where(col(Candidate.video_id).not_in(watched))
+    q = q.order_by(col(Candidate.score).desc(), col(Candidate.judged_at).desc(), Candidate.id)
+    # A video can sit in several playlists; keep the best-scoring row for each.
+    seen, rows = set(), []
+    for c, v in s.exec(q.limit((offset + limit) * 3)).all():
+        if v.id in seen:
+            continue
+        seen.add(v.id)
+        rows.append((c, v))
+    page = rows[offset:offset + limit]
+    st = _download_statuses([v.id for _, v in page], s)
+    items = []
+    for c, v in page:
+        d = candidate_out(c, None)
+        d["video"] = video_out(v, offline=st.get(v.id) == "done", download_status=st.get(v.id))
+        items.append(d)
+    return {"items": items, "total": len(rows), "next_offset": offset + limit if len(rows) > offset + limit else None}
+
+
 @router.get("/feed/home")
 def home_feed(per_row: int = 20, pid: int = Depends(profile_id), s: Session = Depends(get_session)):
     rows = []

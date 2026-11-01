@@ -11,11 +11,12 @@ const entry = (href: string, label: string, icon: string, countKey?: CountKey, a
 export const TV: NavEntry = entry('/tv', 'TV', 'tv', undefined, (p) => p === '/' || p === '/tv' || p.startsWith('/category/') || p.startsWith('/channel/'));
 export const DISCOVER = entry('/discover', 'Discover', 'compass', 'discover_unread');
 export const LIBRARY = entry('/library', 'Library', 'library');
+export const SHORTS = entry('/shorts', 'Shorts', 'play');
 export const ALERTS = entry('/alerts', 'Alerts', 'alert', 'alerts_new');
 export const SETTINGS = entry('/settings', 'Settings', 'settings');
 
 export const SECTIONS: NavSection[] = [
-	{ key: 'watch', title: 'Watch', items: [TV, entry('/subscriptions', 'Subscriptions', 'subs')] },
+	{ key: 'watch', title: 'Watch', items: [TV, SHORTS, entry('/subscriptions', 'Subscriptions', 'subs')] },
 	{ key: 'explore', title: 'Explore', items: [DISCOVER, entry('/news', 'News', 'news'), entry('/knowledge', 'Knowledge', 'book'), LIBRARY, entry('/memes', 'Meme Radar', 'meme'), entry('/briefings', 'Briefings', 'briefing'), ALERTS] },
 	{ key: 'research', title: 'Research', items: [entry('/research', 'Research', 'research'), entry('/scout-report', 'Scout Report', 'briefing')] },
 	{ key: 'automation', title: 'Automation', items: [entry('/team', 'Agent Activity', 'team'), entry('/curators', 'Curators', 'curator'), entry('/sources', 'Sources', 'source'), entry('/agent', 'Video AI', 'agent'), entry('/stats', 'Statistics', 'chart')] }
