@@ -1,6 +1,39 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — screen management and Meme Radar autonomy (`c4ce003`, 2026-11-01)
+
+- Covers `c72081b..c4ce003`. Screen management (`e3619bf`): administrators remove a screen from the sender
+  side, revoke one profile's pairing, and rotate a pairing code; Settings gains a Screens tab and the Play on
+  picker gains "Forget this screen". Deleting a profile drops its pairings and any command it left in a
+  screen's mailbox. Meme Radar (`28ccbf1`, `292f85d`, `67e4500`, `c4ce003`): the analysis sweep runs at the top
+  of every scheduler tick instead of behind the agent-slot gate, `/memes` gains a Refresh radar action, a meme
+  curator with no working public source probes public Mastodon instances with its own queries and creates or
+  re-points its source, a run whose every item was rejected for its content type now says so instead of
+  reporting `ok`, the curator form offers Mastodon as a source, and meme cards show the whole picture with a
+  quiet caption. Image memes are analyzed as soon as their image lands, like clips already were.
+- No schema migration: `models.py`, `hub/models.py`, `hub/migrate.py` and `db.py` are unchanged in this range.
+- Backend suite: 424 passed, 6 skipped. Svelte check: zero errors, three CSS compatibility warnings. Browser
+  tests for the touched areas: memes 4, hub 3, local-library 1, playback 2, settings-walk 14 passed. The full
+  Playwright suite reports 96 passed and the six known B-011 flakes (`scout-report`, `team`, `watchers`), which
+  fail identically on a stashed clean tree.
+- Backups: `/root/compose/watchcraft-backups/20261101T032749Z-pre-meme-radar` (online SQLite, integrity `ok`,
+  6 profiles, 6,507 videos, 6 curators, 131 content items, 2 playback targets, 8 sources; config archive) with
+  rollback image `watchcraft:rollback-20261101T032749Z-c72081b`, and
+  `/root/compose/watchcraft-backups/20261101T034552Z-pre-meme-cards` with rollback image
+  `watchcraft:rollback-20261101T034552Z-67e4500`. Separate media volume preserved.
+- Isolated restore of the first backup on `127.0.0.1:6699` with the new image: health 200, no tracebacks,
+  integrity `ok`, counts unchanged. The copy was removed.
+- Rollout used rsync **without** `--delete`; a before/after listing showed nothing missing. Compose project
+  `watchcraft` with `compose.yaml`, `compose.watchcraft.yaml` and `compose.host.yaml`; all four containers
+  healthy. `DEPLOYED_COMMIT` is `c4ce003`; API, worker and downloader run `watchcraft:c4ce003`
+  (`sha256:e5c457c79505…`). Health passes locally and publicly; no tracebacks after start.
+- Live acceptance on production: the Meme Tracker (curator 4) ran with zero sources, the autopilot added
+  `https://mastodon.social`, and the run collected 20 memes from 281 source items with no errors; its timeline
+  shows `source_repaired`. The next sweep analyzed the 16 image memes that were waiting, leaving 20 examples and
+  2 counted community trends. No profile PINs were read or changed; the run was triggered in the container
+  because the owning profile is PIN-protected.
+
 
 ## Deployment record — meme videos and live Mastodon (`c72081b`, 2026-10-31)
 
