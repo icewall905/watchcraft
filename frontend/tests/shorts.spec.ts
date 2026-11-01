@@ -43,12 +43,13 @@ test('the shorts feed swipes between accepted shorts and records a dislike', asy
 	expect(disliked!.video_id).toBe('short000002');
 });
 
-test('an empty shorts feed explains itself instead of showing a blank screen', async ({ page }) => {
+test('an empty shorts feed names the setting that is keeping it empty', async ({ page }) => {
+	// Shorts are hidden by default, so an empty feed is a setting rather than a bug and must say so.
 	await page.route('**/api/shorts*', (route) =>
 		route.fulfill({ json: { items: [], total: 0, next_offset: null } }));
 	await freshPage(page, '/shorts');
-	await expect(page.getByRole('heading', { name: 'No shorts yet' })).toBeVisible();
-	await expect(page.getByRole('link', { name: 'Create a curator' })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Shorts are hidden' })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Open Settings → Extras' })).toBeVisible();
 });
 
 /** Dispatch a real touch gesture on the feed, the way a phone would. */

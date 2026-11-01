@@ -5,6 +5,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { api } from '$lib/api';
 	import { toast } from '$lib/stores/toast.svelte';
+	import { session } from '$lib/stores/session.svelte';
 	import { focusable, nav } from '$lib/nav';
 	import { loadShaka } from '$lib/player/shaka';
 	import { errMsg } from '$lib/hub/ui';
@@ -26,6 +27,8 @@
 	let touchStart: { y: number; x: number } | null = null;
 
 	const current = $derived(items[index] ?? null);
+	// Shorts are hidden by default, so an empty feed is usually a setting rather than a bug.
+	const hidden = $derived(session.settings?.extras.hide_shorts ?? true);
 
 	async function load(offset = 0) {
 		try {
@@ -189,9 +192,16 @@
 	{:else if !items.length}
 		<div class="state">
 			<span class="big" aria-hidden="true">▶</span>
-			<h1>No shorts yet</h1>
-			<p class="muted">Shorts appear here once a curator accepts some. Playlists that allow short videos fill this feed.</p>
-			<a class="btn primary" href="/curators/new" use:focusable>Create a curator</a>
+			{#if hidden}
+				<h1>Shorts are hidden</h1>
+				<p class="muted">"Hide Shorts" is on, so curators skip vertical clips under a minute and this feed stays empty. Turn it off to let them collect shorts.</p>
+				<a class="btn primary" href="/settings?tab=extras" use:focusable>Open Settings → Extras</a>
+			{:else}
+				<h1>No shorts yet</h1>
+				<p class="muted">Shorts appear here once a curator accepts some. A playlist also needs a minimum duration that allows clips under a minute.</p>
+				<a class="btn primary" href="/curators/new" use:focusable>Create a curator</a>
+				<a class="btn ghost" href="/settings?tab=categories" use:focusable>Check playlist durations</a>
+			{/if}
 		</div>
 	{:else if current}
 		<video
