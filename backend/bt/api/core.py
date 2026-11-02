@@ -1,10 +1,11 @@
 """Profiles, categories, feeds, channels, feedback, lessons, history, settings."""
 import json
+import logging
 import re
 from datetime import date, datetime, timedelta
 from typing import Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from pydantic import BaseModel
 from sqlmodel import Session, col, delete, func, select
 from sqlalchemy import update
@@ -907,7 +908,7 @@ def restart_history(video_id: str, body: RestartHistoryIn, pid: int = Depends(pr
 
 
 @router.post("/history/seen")
-def mark_seen(body: SeenIn, pid: int = Depends(profile_id), s: Session = Depends(get_session)):
+def mark_seen(body: SeenIn, background_tasks: BackgroundTasks, pid: int = Depends(profile_id), s: Session = Depends(get_session)):
     """Mark a video watched without playing it: it leaves the feeds and the AI stops suggesting it.
 
     Dismisses its candidates in this profile's categories (also skips enrichment/judging/download)
@@ -916,21 +917,28 @@ def mark_seen(body: SeenIn, pid: int = Depends(profile_id), s: Session = Depends
     if not re.match(r"^[A-Za-z0-9_-]{11}$", body.video_id):
         raise HTTPException(status_code=404, detail="no such video")
     v = s.get(Video, body.video_id)
-    h = s.exec(select(WatchHistory).where(WatchHistory.profile_id == pid,
-                                           WatchHistory.video_id == body.video_id)).first()
-    h = h or WatchHistory(profile_id=pid, video_id=body.video_id)
-    h.finished, h.updated_at = True, now()
-    h.duration_s = (v.duration_s if v and v.duration_s else h.duration_s) or 0
-    s.add(h)
-    cat_ids = set(s.exec(select(Category.id).where(Category.profile_id == pid)).all())
-    rows = s.exec(select(Candidate).where(Candidate.video_id == body.video_id,
-                                          col(Candidate.category_id).in_(cat_ids))).all() if cat_ids else []
-    for c in rows:
-        c.dismissed = True
-        s.add(c)
+    duration = v.duration_s if v and v.duration_s else 0
+    stmt = sqlite_insert(WatchHistory).values(profile_id=pid, video_id=body.video_id,
+        finished=True, duration_s=duration, position_s=0, updated_at=now())
+    s.execute(stmt.on_conflict_do_update(index_elements=['profile_id', 'video_id'], set_={
+        'finished': True, 'duration_s': duration or WatchHistory.duration_s, 'updated_at': now(),
+    }))
+    changed = s.execute(update(Candidate).where(Candidate.video_id == body.video_id,
+        Candidate.category_id.in_(select(Category.id).where(Category.profile_id == pid)))
+        .values(dismissed=True)).rowcount
     s.commit()
-    drop_unwanted(s, body.video_id)  # "Seen it": the local copy is not needed anymore
-    return {"ok": True, "dismissed": len(rows)}
+    # The watched state is durable now. Filesystem cleanup must not delay its response.
+    background_tasks.add_task(_cleanup_seen, body.video_id)
+    return {"ok": True, "dismissed": changed}
+
+
+def _cleanup_seen(video_id: str) -> None:
+    try:
+        with session() as s:
+            drop_unwanted(s, video_id)
+    except Exception:  # cleanup is retried by the downloader's regular sweep
+        logging.getLogger(__name__).exception('Deferred seen-video cleanup failed for %s', video_id)
+
 
 
 # ---------- settings

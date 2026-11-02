@@ -80,6 +80,8 @@ interface ReqOpts {
 	headers?: Record<string, string>;
 	/** Survive page unload (history save on exit). */
 	keepalive?: boolean;
+    /** Freeze profile identity across retries; null preserves the default profile. */
+    profileId?: string | null;
 }
 
 function detailOf(body: unknown, fallback: string): string {
@@ -93,7 +95,7 @@ function detailOf(body: unknown, fallback: string): string {
 
 export async function request<T>(path: string, opts: ReqOpts = {}): Promise<T> {
 	const headers: Record<string, string> = { Accept: 'application/json', ...(opts.headers ?? {}) };
-	const pid = currentProfileId();
+	const pid = opts.profileId === undefined ? currentProfileId() : opts.profileId;
 	if (pid && !headers['X-Profile-Id']) headers['X-Profile-Id'] = pid;
 	let body: BodyInit | undefined = opts.raw;
 	if (opts.body !== undefined) {
@@ -235,7 +237,18 @@ export const api = {
 	saveHistory: (h: { video_id: string; position_s: number; duration_s?: number; category_id?: number | null; finished?: boolean }, keepalive = false) =>
 		post<{ ok: boolean; finished: boolean }>('/history', h, { toast: false, keepalive }),
 	clearHistory: () => del<{ ok: boolean }>('/history'),
-	markSeen: (video_id: string) => post<{ ok: boolean; dismissed: number }>('/history/seen', { video_id }),
+	markSeen: async (video_id: string) => {
+        const profileId = currentProfileId();
+        for (let attempt = 0; ; attempt++) {
+            try {
+                return await post<{ ok: boolean; dismissed: number }>('/history/seen', { video_id }, { profileId, toast: false });
+            } catch (e) {
+                // The endpoint is idempotent: a gateway can fail after the save committed.
+                if (attempt >= 2 || !(e instanceof ApiError) || ![0, 502, 503, 504].includes(e.status)) throw e;
+                await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)));
+            }
+        }
+    },
 
 	// settings
 	settings: () => get<Settings>('/settings'),

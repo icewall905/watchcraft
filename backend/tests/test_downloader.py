@@ -689,3 +689,24 @@ def test_iterate_drops_dead_queue_rows_and_reports_the_real_count():
         assert s.get(Download, IDS[1]) is None
         assert s.get(Download, IDS[0]).status == "queued"
     assert get_kv("downloader_state")["queue"] == 1
+
+
+def test_seen_cleanup_failure_does_not_fail_save(monkeypatch):
+    from fastapi.testclient import TestClient
+    from bt.main import app
+    from bt.api import core
+    def broken(*args):
+        raise OSError('media temporarily unavailable')
+    monkeypatch.setattr(core, 'drop_unwanted', broken)
+    with session() as s:
+        cat = _cat(s)
+        _cand(s, cat, IDS[0], 90)
+    client = TestClient(app)
+    for _ in range(2):
+        response = client.post('/api/history/seen', json={'video_id': IDS[0]})
+        assert response.status_code == 200
+        assert response.json()['ok']
+    with session() as s:
+        entries = s.exec(select(WatchHistory).where(WatchHistory.video_id == IDS[0])).all()
+        assert len(entries) == 1 and entries[0].finished
+        assert s.exec(select(Candidate).where(Candidate.video_id == IDS[0])).one().dismissed

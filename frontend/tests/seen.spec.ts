@@ -50,7 +50,19 @@ with session() as s:
 `], { cwd: BACKEND, env: { ...process.env, BT_DATA_DIR: DATA! } });
 });
 
-test('Seen it removes the card and keeps the rest', async ({ page, request }) => {
+test('Seen it retries a temporary 502, removes the card and keeps the rest', async ({ page, request }) => {
+    let attempts = 0;
+    const retryProfile = await (await request.post('/api/profiles', { data: { name: 'Retry isolation' } })).json();
+    const retryHeaders: (string | undefined)[] = [];
+    await page.route('**/api/history/seen', async (route) => {
+        attempts++;
+        retryHeaders.push(route.request().headers()['x-profile-id']);
+        if (attempts === 1) {
+            await page.evaluate((id) => localStorage.setItem('bt.profile', String(id)), retryProfile.id);
+            await route.fulfill({ status: 502, body: 'Bad Gateway' });
+        }
+        else await route.continue();
+    });
 	const id = await getCatId(request);
 	await freshPage(page, `/category/${id}`);
 	await expect(page.getByRole('heading', { name: 'Seen it test' })).toBeVisible();
@@ -71,6 +83,7 @@ test('Seen it removes the card and keeps the rest', async ({ page, request }) =>
 		return { sumTop: sum.getBoundingClientRect().top, durBottom: dur.getBoundingClientRect().bottom };
 	});
 	expect(pos.durBottom).toBeLessThanOrEqual(pos.sumTop + 30); // 30px = overlay's transparent gradient start
+    await page.evaluate(() => localStorage.removeItem('bt.profile'));
 	await seenBtn.click();
 
 	await expect(page.getByRole('link', { name: 'Video the family has seen' })).toHaveCount(0);
@@ -83,6 +96,12 @@ test('Seen it removes the card and keeps the rest', async ({ page, request }) =>
 	expect(feed.map((c: { video: { id: string } }) => c.video.id)).toContain('other000000');
 	const hist = await (await request.get('/api/history/seenit00000')).json();
 	expect(hist.finished).toBe(true);
+    expect(attempts).toBe(2);
+    expect(retryHeaders).toEqual([undefined, undefined]);
+    const otherHistory = await (await request.get('/api/history/seenit00000', { headers: { 'X-Profile-Id': String(retryProfile.id) } })).json();
+    expect(otherHistory.finished).not.toBe(true);
+    await request.delete(`/api/profiles/${retryProfile.id}`);
+    await expect(page.getByText('Could not mark it as seen.', { exact: true })).toHaveCount(0);
 });
 
 test("Don't like channel clears its cards and blocks it", async ({ page, request }) => {
