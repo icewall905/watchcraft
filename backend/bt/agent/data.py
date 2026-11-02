@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import Optional
+from urllib.parse import unquote, urlsplit
 
 from sqlalchemy import or_
 from sqlmodel import Session, col, func, select
@@ -74,6 +75,21 @@ def subscription_context(s: Session, profile_id: int) -> list[dict]:
     return [{"id": cid, "name": channels[cid].name[:100] if cid in channels else "",
              "handle": channels[cid].handle[:100] if cid in channels else "",
              "recent_titles": examples.get(cid, [])} for cid in ids[:300]]
+
+
+def channel_alternatives(s: Session, unavailable: list[dict]) -> list[dict]:
+    """Offer observed exact-name matches as alternatives, never silently infer an alias."""
+    labels = set()
+    for row in unavailable:
+        path = unquote(urlsplit(row["reference"]).path).split("/")
+        if len(path) > 1 and path[1].startswith("@"):
+            labels.add(path[1][1:].casefold())
+    if not labels:
+        return []
+    rows = s.exec(select(Channel).where(or_(func.lower(Channel.name).in_(labels),
+                                           func.lower(Channel.handle).in_(["@" + name for name in labels])))
+                  .order_by(col(Channel.updated_at).desc()).limit(12)).all()
+    return [{"id": c.id, "name": c.name[:100], "handle": c.handle[:100]} for c in rows]
 
 
 def title_key(title: str) -> str:

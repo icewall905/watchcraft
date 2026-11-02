@@ -201,7 +201,15 @@ You are the PLANNER. Propose YouTube searches that will surface excellent NEW vi
   AI rejections are fallible evidence, not family rules or blanket topic/channel bans.
 - Respect applicable lessons and explicit avoid-lists; learn from liked and rejected examples.
 - channels: 0-4 YouTube channel @handles you are confident exist and consistently fit the category
-  (e.g. "@MarkRober"). Leave empty if unsure — never invent handles.
+  (e.g. "@MarkRober"), or exact channel IDs already observed in the supplied context.
+  A display name is not proof of an @handle. Leave empty if unsure — never invent handles.
+- TEMPORARILY UNAVAILABLE CHANNEL REFERENCES are extraction failures, not taste feedback or creator
+  bans. Do not repeat those references, their case/URL variants, or the same failed tab before retry_at.
+  Find other relevant sources or use an independently verified canonical handle/channel ID for that
+  creator. Never guess another spelling. These technical failures do not ban a topic or another tab.
+- PREVIOUSLY OBSERVED CHANNEL REFERENCES are exact-name matches from real channel metadata and may
+  provide a correct channel ID after a guessed handle failed. Prefer those IDs to guessing handles.
+  A matching display name is not proof of identity or topic fit: assess the supplied evidence and brief.
 - subscriptions: select 0-4 exact channel IDs from SUBSCRIBED CHANNEL SUGGESTIONS only when their content
   fits THIS playlist's brief. Use their names and recent titles as evidence. Being subscribed does not
   mean they fit every playlist. Mixed-topic channels can qualify when they regularly cover a relevant
@@ -213,7 +221,9 @@ Output ONLY the JSON object."""
 
 def planner_messages(cat, lessons: list, accepted: list[str], rejected: list[str], disliked: list[str],
                      tried: list[str], queue: Optional[list[str]] = None, core: str = "",
-                     search_yield: Optional[list[str]] = None, subscriptions: Optional[list[dict]] = None) -> list[dict]:
+                     search_yield: Optional[list[str]] = None, subscriptions: Optional[list[dict]] = None,
+                     unavailable_channels: Optional[list[dict]] = None,
+                     known_channels: Optional[list[dict]] = None) -> list[dict]:
     # Keep stable category/seeds/lessons context ahead of changing queue/history.
     parts = [category_block(cat)]
     if cat.seed_queries:
@@ -233,6 +243,12 @@ def planner_messages(cat, lessons: list, accepted: list[str], rejected: list[str
     if subscriptions:
         parts.append("SUBSCRIBED CHANNEL SUGGESTIONS (optional; select only relevant IDs for THIS playlist):\n"
                      + json.dumps(subscriptions, ensure_ascii=False))
+    if unavailable_channels:
+        parts.append("TEMPORARILY UNAVAILABLE CHANNEL REFERENCES (technical failures; not creator/topic bans):\n"
+                     + json.dumps(unavailable_channels, ensure_ascii=False))
+    if known_channels:
+        parts.append("PREVIOUSLY OBSERVED CHANNEL REFERENCES (possible alternatives, not inferred aliases):\n"
+                     + json.dumps(known_channels, ensure_ascii=False))
     if tried:
         parts.append("Queries already tried (do not repeat): " + "; ".join(tried))
     from .memory import apply

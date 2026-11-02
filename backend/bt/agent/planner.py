@@ -9,7 +9,7 @@ from sqlmodel import select
 
 from ..db import get_kv, save_setting, session
 from ..models import Candidate, Category, Channel, ProfileChannel, now
-from . import data, prompts
+from . import channel_sources, data, prompts
 from .runtime import Interrupt, Runtime, iso, parse_ts
 
 REPLAN_MIN_S = 1800  # never re-plan a category more often than this
@@ -36,6 +36,7 @@ def load_plan(cat_id: int) -> dict:
     p.setdefault("tried", [])
     p.setdefault("cursor", 0)
     p.setdefault("planned_at", None)
+    p["channel_failures"] = channel_sources.active(p)
     with session() as s:
         cat = s.get(Category, cat_id)
     if p.get("version") != PLAN_VERSION or (cat and p.get("context") != plan_context(cat)):
@@ -67,12 +68,14 @@ def sources(cat: Category, plan: dict, subs: list[str]) -> list[tuple[str, str]]
             out.append((kind, ref))
 
     qs = list(plan.get("queries") or [])
-    chans = list(cat.seed_channels or []) + list(plan.get("channels") or [])
+    chans = [ref for ref in list(cat.seed_channels or []) + list(plan.get("channels") or [])
+             if channel_sources.available(cat, plan, ref)]
     seeds = list(cat.seed_queries or [])
     # Profile subscriptions are suggestions for the planner, not sources for every playlist.
     eligible = set(subs)
     selection = plan.get("subscriptions") or []
-    selected = [ref for ref in selection if isinstance(ref, str) and ref in eligible][:4] if isinstance(selection, list) else []
+    selected = [ref for ref in selection if isinstance(ref, str) and ref in eligible
+                and channel_sources.available(cat, plan, ref)][:4] if isinstance(selection, list) else []
     # interleave: planner query, seed query, channel, rss ...
     for i in range(max(len(qs), len(seeds), len(chans), len(selected))):
         if i < len(qs):
@@ -91,11 +94,13 @@ def make_plan(rt: Runtime, cat: Category, plan: dict) -> bool:
     with session() as s:
         from .memory import select_memory
         core, lessons = select_memory(s, cat.profile_id, data.lessons_for(s, cat))
+        unavailable = channel_sources.context(plan)
         msgs = prompts.planner_messages(
             cat, lessons, data.recent_titles(s, cat.id, "accepted"),
             data.rejections_for(s, cat.id, cat.profile_id), data.recent_dislikes(s, cat.profile_id),
             plan.get("tried", [])[-TRIED_KEEP:], data.queue_context(s, cat.id, cat.profile_id), core=core,
-            search_yield=data.discovery_yield(s, cat.id), subscriptions=data.subscription_context(s, cat.profile_id))
+            search_yield=data.discovery_yield(s, cat.id), subscriptions=data.subscription_context(s, cat.profile_id),
+            unavailable_channels=unavailable, known_channels=data.channel_alternatives(s, unavailable))
     rt.state("planning", f"Planning searches for {cat.name}", cat)
     rt.event("plan", f"🧭 Planning new searches for {cat.name}", "info", cat)
     try:
@@ -110,14 +115,19 @@ def make_plan(rt: Runtime, cat: Category, plan: dict) -> bool:
     queries = [q.strip() for q in out.get("queries") or [] if isinstance(q, str) and q.strip()]
     fresh = [q for q in queries if q.lower() not in tried] or queries
     channels = [c.strip() for c in out.get("channels") or [] if isinstance(c, str) and c.strip()]
+    suppressed = [ref for ref in channels if not channel_sources.available(cat, plan, ref)
+                  or channel_sources.key(cat, ref) is None]
+    channels = [ref for ref in channels if ref not in suppressed]
     with session() as s:
         eligible = {pc.channel_id for pc in data.subscribed_channels(s, cat.profile_id)}
     selected = out.get("subscriptions") or []
-    subscriptions = list(dict.fromkeys(ref for ref in selected if isinstance(ref, str) and ref in eligible))[:4] if isinstance(selected, list) else []
+    subscriptions = list(dict.fromkeys(ref for ref in selected if isinstance(ref, str) and ref in eligible
+                                     and channel_sources.available(cat, plan, ref)))[:4] if isinstance(selected, list) else []
     plan.update(queries=fresh[:6], channels=channels[:4], subscriptions=subscriptions,
                 version=PLAN_VERSION, context=plan_context(cat), planned_at=iso(now()), cursor=0)
     rt.event("plan", f"🧭 Plan for {cat.name}: " + "; ".join(f'"{q}"' for q in plan["queries"]), "info", cat,
-             payload={"queries": plan["queries"], "channels": plan["channels"], "subscriptions": subscriptions})
+             payload={"queries": plan["queries"], "channels": plan["channels"], "subscriptions": subscriptions,
+                      "suppressed_channels": suppressed})
     return True
 
 
@@ -204,7 +214,9 @@ def discover(rt: Runtime, rl, cat: Category) -> Optional[dict]:
             srcs = sources(cat, plan, subs)
         save_plan(cat.id, plan)
     if not srcs:
-        rt.event("plan", f"🤷 No search ideas for {cat.name} yet (add seed queries or check the LLM)", "warn", cat)
+        detail = ("channel sources are temporarily unavailable; add a search query or another channel"
+                  if channel_sources.active(plan) else "add seed queries or check the LLM")
+        rt.event("plan", f"🤷 No usable sources for {cat.name} yet ({detail})", "warn", cat)
         return None
     i = plan["cursor"] % len(srcs)
     kind, ref = srcs[i]
@@ -234,11 +246,15 @@ def discover(rt: Runtime, rl, cat: Category) -> Optional[dict]:
             else:
                 res = _call(rt, rl, lambda: yt.channel_videos(ref, n=30, origin="worker"))
         except _Skip as e:
+            if isinstance(e.__cause__, yt.YtUnavailable):
+                _channel_unavailable(rt, cat, plan, ref)
             if ref in plan.get("channels", []):
                 plan["channels"] = [c for c in plan["channels"] if c != ref]
                 save_plan(cat.id, plan)
             raise e
         ch, entries = res if isinstance(res, tuple) else ({}, res)
+        channel_sources.succeeded(cat, plan, ref)
+        save_plan(cat.id, plan)
         _save_channel(ch)
         source = f"channel: {ch.get('name') or ref}"
     else:  # rss
@@ -267,7 +283,12 @@ def discover(rt: Runtime, rl, cat: Category) -> Optional[dict]:
                     return yt.channel_videos(ref, n=30, origin="worker", tab="shorts")
                 return yt.channel_videos(ref, n=30, origin="worker")
 
-        res = _call(rt, rl, rss_or_channel)
+        try:
+            res = _call(rt, rl, rss_or_channel)
+        except _Skip as e:
+            if isinstance(e.__cause__, yt.YtUnavailable):
+                _channel_unavailable(rt, cat, plan, ref)
+            raise
         ch, entries = res if isinstance(res, tuple) else ({}, res)
         with session() as s:
             pc = s.exec(select(ProfileChannel).where(ProfileChannel.profile_id == cat.profile_id,
@@ -284,6 +305,14 @@ def discover(rt: Runtime, rl, cat: Category) -> Optional[dict]:
              + (f" ({counts['screened']} off-topic)" if counts["screened"] else ""),
              "info", cat, payload={**counts, "query": ref, "kind": kind})
     return counts
+
+
+def _channel_unavailable(rt: Runtime, cat: Category, plan: dict, ref: str) -> None:
+    retry_at = channel_sources.unavailable(cat, plan, ref)
+    save_plan(cat.id, plan)
+    if retry_at:
+        rt.event("plan", f"Temporarily skipping unavailable channel {ref} for {cat.name}; retry after {retry_at}",
+                 "warn", cat, payload={"channel": channel_sources.key(cat, ref), "retry_at": retry_at})
 
 
 class _Skip(Exception):

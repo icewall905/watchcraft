@@ -1368,3 +1368,134 @@ def test_topic_change_and_llm_failure_only_uses_current_explicit_sources():
     assert plan['queries'] == [] and plan['channels'] == [] and plan['subscriptions'] == []
     assert plan['cursor'] == 1  # retrying a failed plan does not reset explicit-source rotation
     assert [e.payload['query'] for e in events('search') if 'query' in e.payload] == ['food science', 'food science']
+
+
+def test_unavailable_channel_history_survives_replanning_restart_and_brief_edit():
+    from bt.agent import channel_sources, planner
+    cat = make_category(seed_channels=['@Tasty'])
+    cat.seed_queries = []
+    w = make_worker(FakeYt([]))
+    def missing(ref, **kw):
+        raise YtUnavailable('HTTP Error 404: Not Found')
+    w.rt.yt.channel_videos = missing
+    planner.save_plan(cat.id, {'queries': [], 'channels': ['@Tasty'], 'cursor': 0, 'planned_at': now().isoformat()})
+    with pytest.raises(planner._Skip):
+        planner.discover(w.rt, w.rl, cat)
+    plan = planner.load_plan(cat.id)
+    assert len(channel_sources.active(plan)) == 1
+    assert planner.sources(cat, plan, []) == []
+    assert cat.seed_channels == ['@Tasty']
+    captured = []
+    def repeats(messages, **kw):
+        captured.append(messages[-1]['content'])
+        return {'queries': ['food tricks'], 'channels': ['https://m.youtube.com/@TASTY/videos?feature=share', '@Other'], 'subscriptions': []}
+    w.rt.llm.chat_json = repeats
+    assert planner.make_plan(w.rt, cat, plan)
+    planner.save_plan(cat.id, plan)
+    assert plan['channels'] == ['@Other']
+    assert 'TEMPORARILY UNAVAILABLE CHANNEL REFERENCES' in captured[0]
+    assert '@tasty/videos' in captured[0]
+    with session() as s:
+        changed = s.get(Category, cat.id); changed.brief = 'Different food'; s.add(changed); s.commit()
+    restarted = planner.load_plan(cat.id)
+    assert len(channel_sources.active(restarted)) == 1
+    assert not any(ref == '@Tasty' for kind, ref in planner.sources(cat, restarted, []))
+    assert any('Temporarily skipping unavailable' in e.message for e in events('plan'))
+
+
+def test_channel_failure_keys_normalize_handles_but_keep_actual_tabs_and_id_case():
+    from bt.agent import channel_sources
+    cat = make_category()
+    a = channel_sources.key(cat, '@Tasty')
+    assert a == channel_sources.key(cat, 'https://m.youtube.com/@TASTY/videos/?feature=share')
+    shorts = channel_sources.key(cat, 'https://www.youtube.com/@Tasty/shorts')
+    assert a != shorts
+    cat.kind = 'shorts'
+    assert shorts == channel_sources.key(cat, '@TASTY')
+    assert channel_sources.key(cat, 'UCJFp8uSYCjXOMnkUyb3CQ3Q') != channel_sources.key(cat, 'UCJFp8uSYCjXOMnkUyb3CQ3q')
+    assert channel_sources.key(cat, 'https://example.com/@Tasty') is None
+
+
+def test_failure_history_expires_is_bounded_and_success_only_clears_same_tab(monkeypatch):
+    from bt.agent import channel_sources
+    cat = make_category()
+    instant = now()
+    monkeypatch.setattr(channel_sources, 'now', lambda: instant)
+    plan = {}
+    for i in range(channel_sources.MAX_FAILURES + 4):
+        channel_sources.unavailable(cat, plan, f'@missing{i}')
+    assert len(channel_sources.active(plan)) == channel_sources.MAX_FAILURES
+    channel_sources.unavailable(cat, plan, '@Tasty')
+    channel_sources.unavailable(cat, plan, 'https://youtube.com/@Tasty/shorts')
+    channel_sources.succeeded(cat, plan, '@Tasty')
+    assert channel_sources.available(cat, plan, '@Tasty')
+    assert not channel_sources.available(cat, plan, 'https://youtube.com/@Tasty/shorts')
+    monkeypatch.setattr(channel_sources, 'now', lambda: instant + timedelta(seconds=channel_sources.RETRY_S + 1))
+    assert channel_sources.active(plan) == {}
+    channel_sources.unavailable(cat, plan, '@Tasty')
+    assert not channel_sources.available(cat, plan, '@Tasty')
+    plan['channel_failures']['bad'] = {'retry_at': ['malformed']}
+    plan['channel_failures']['other'] = None
+    assert len(channel_sources.active(plan)) == 1
+
+
+@pytest.mark.parametrize('error', [YtError, YtBlocked])
+def test_transient_or_blocked_channel_failures_do_not_enter_unavailable_history(error):
+    from bt.agent import channel_sources, planner
+    cat = make_category(seed_channels=['@Existing'])
+    cat.seed_queries = []
+    w = make_worker(FakeYt([]))
+    def fail(ref, **kw): raise error('temporary failure')
+    w.rt.yt.channel_videos = fail
+    planner.save_plan(cat.id, {'queries': [], 'channels': [], 'cursor': 0, 'planned_at': now().isoformat()})
+    with pytest.raises(YtBlocked if error is YtBlocked else planner._Skip):
+        planner.discover(w.rt, w.rl, cat)
+    assert channel_sources.active(planner.load_plan(cat.id)) == {}
+
+
+def test_failed_rss_and_public_channel_are_cooled_down():
+    from bt.agent import channel_sources, planner
+    cat = make_category()
+    cat.seed_queries = []
+    with session() as s:
+        s.add(ProfileChannel(profile_id=cat.profile_id, channel_id='UCmissing', subscribed=True)); s.commit()
+    w = make_worker(FakeYt([]))
+    def missing(ref, **kw): raise YtUnavailable('404')
+    w.rt.feeds.channel_feed = missing
+    w.rt.yt.channel_videos = missing
+    planner.save_plan(cat.id, {'queries': [], 'channels': [], 'subscriptions': ['UCmissing'], 'cursor': 0, 'planned_at': now().isoformat()})
+    with pytest.raises(planner._Skip): planner.discover(w.rt, w.rl, cat)
+    plan = planner.load_plan(cat.id)
+    assert not channel_sources.available(cat, plan, 'UCmissing')
+    assert planner.sources(cat, plan, ['UCmissing']) == []
+
+
+def test_invalid_generated_channel_is_filtered_without_a_network_request():
+    from bt.agent import planner
+    cat = make_category()
+    w = make_worker(FakeYt([]))
+    w.rt.llm.chat_json = lambda *args, **kw: {'queries': ['food science'], 'channels': ['https://example.com/private', '@ActuallyValid'], 'subscriptions': []}
+    plan = planner.load_plan(cat.id)
+    assert planner.make_plan(w.rt, cat, plan)
+    assert plan['channels'] == ['@ActuallyValid']
+    assert not w.rt.yt.calls
+
+
+def test_failed_display_name_handle_receives_observed_canonical_alternative():
+    from bt.agent import channel_sources, planner
+    cat = make_category()
+    canonical = 'UCJFp8uSYCjXOMnkUyb3CQ3Q'
+    with session() as s:
+        s.add(Channel(id=canonical, name='Tasty', handle='@buzzfeedtasty')); s.commit()
+    plan = planner.load_plan(cat.id)
+    channel_sources.unavailable(cat, plan, '@Tasty')
+    w = make_worker(FakeYt([]))
+    seen = []
+    def choose(messages, **kw):
+        seen.append(messages[-1]['content'])
+        return {'queries': ['food tricks'], 'channels': ['@Tasty', canonical], 'subscriptions': []}
+    w.rt.llm.chat_json = choose
+    assert planner.make_plan(w.rt, cat, plan)
+    assert plan['channels'] == [canonical]
+    assert 'PREVIOUSLY OBSERVED CHANNEL REFERENCES' in seen[0]
+    assert '@buzzfeedtasty' in seen[0] and canonical in seen[0]
