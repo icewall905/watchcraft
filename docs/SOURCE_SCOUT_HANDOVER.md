@@ -1,5 +1,47 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — persistent channel availability feedback (`2ec62a9`, 2026-11-02)
+
+- Discovery plans retain up to 32 temporary unavailable-channel records across replanning,
+  process restarts and playlist-brief/context invalidation. Records use the actual requested
+  public tab URL: equivalent handle spellings/URL variants share evidence, channel IDs retain
+  their case, and missing Shorts tabs do not disable videos/streams. The 24-hour retry expires
+  automatically. Invalid/malformed/expired history is pruned. Successful extraction clears
+  only its exact reference/tab.
+- Only definitive `YtUnavailable` results enter this history, including an RSS failure followed
+  by an unavailable public-channel fallback. Transient errors and blocking403/429 retain their
+  existing retries/backoff. Empty valid channels are not recorded as failures. Explicit family
+  seed preferences are retained while unavailable sources are temporarily skipped.
+- Planner prompts receive technical failure/retry evidence, separate from taste feedback.
+  Deterministic source filtering suppresses repeated references even if the model ignores that
+  evidence. Malformed generated channel URLs are rejected before discovery. Up to 12 observed
+  exact-name channel records can supply a stable ID after a guessed handle fails; these are
+  possible alternatives rather than silently inferred aliases or creator/topic bans.
+- Independent review approved the final patch. Full backend suite: **589 passed, six skipped**;
+  after the final observed-channel-alternative addition, **77 agent tests passed, one skipped**.
+  Frontend check/build passed with the existing three CSS warnings; **four focused browser
+  regressions passed** for activity layout and separate feed configuration.
+- Fresh online and stopped-service backups: `/root/compose/watchcraft-backups/20261102-pre-channel-retry`.
+  Rollback image `watchcraft:rollback-20261102-channel-retry` retains `a3dea76`. Original rows
+  matched after two isolated initializations; network-isolated server startup and affected
+  routes passed. Private configuration and the host GPU override were preserved.
+- The exact release reproduced public `@Tasty/shorts`404, fetched two positively verified
+  Shorts from stable channel `UCJFp8uSYCjXOMnkUyb3CQ3Q` (`@buzzfeedtasty`), then replanned
+  with the existing guarded homelab model at `10.0.10.23:8080` on copied data. The real model
+  chose that stable Tasty ID. Equivalent failed handles remained filtered after persisted
+  reload/replan. The verification report is retained beside the backup.
+- Rollout registered the independently fetched Tasty metadata and observed bad-handle failure
+  on the affected feed's plan. It preserved current planner content, family seeds, briefs and
+  subscriptions. This was rehearsed on the disposable copy before application with services
+  stopped; no hard-coded creator correction exists in application code.
+- `DEPLOYED_COMMIT=2ec62a9`; API, worker and downloader run image `sha256:a3b5f9768135a580…`
+  with zero restarts; API is healthy and no new service tracebacks were found. Public/local
+  health, `/shorts`, `/agent`, `/settings`, live failed-reference suppression and canonical
+  alternative availability passed. Integrity/profile/PIN/environment checks passed; every
+  playlist field except its normal work timestamp matches the final backup. Saved media
+  returned HTTP206 and decoded 20 frames. Baseline: six profiles, 7,213 videos, 267 content
+  items and 267 capture jobs. Backup and rollback image are retained.
+
 ## Deployment record — playlist-scoped discovery (`a3dea76`, 2026-11-02)
 
 - Profile subscriptions are now optional planner suggestions, with names, handles and up to
