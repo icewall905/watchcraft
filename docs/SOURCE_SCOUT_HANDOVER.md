@@ -1,5 +1,43 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — thumbs down asks why, and a language answer really hides it (`3ec97d0`, 2026-11-02)
+
+- Covers `1fb720f..3ec97d0`. Learning the title words was wrong: a German meme taught the curator "humor", "memes"
+  and "source", which would suppress good memes too. A thumbs down now always asks why, and only the answer is
+  learned.
+- The question offers the reasons that actually work as one click: the meme's language (when it is not English),
+  its community and its format, plus free text. A language answer hides that language from the meme feed for the
+  profile, stored in `Profile.prefs['hidden_meme_languages']` through `POST /memes/languages/{code}/hide`. That is
+  the only way "I do not speak German" can mean anything: the ranking only matches words in the title, so learning
+  "german" would never fire. Any other answer goes to the curator's `tuned_down` as before. Skipping still leaves
+  the meme hidden and keeps an Undo within reach.
+- Local verification: **684 backend tests passed, six skipped** (two new: hiding a language removes it from the
+  feed and undo restores it; nonsense codes are rejected); **5 meme-feedback browser specs** including the German
+  case where the language chip posts `/memes/languages/de/hide`; **9 browser tests** across memes and a11y;
+  svelte-check 0 errors (three existing CSS warnings); production build.
+- Fresh online and stopped-service backups: `/root/compose/watchcraft-backups/20261102-pre-why-ask`
+  (integrity `ok`; 6 profiles, 7,731 videos, 29 categories, 411 items, 7,325 candidates, 2,285 downloads, 18
+  sources, 9 curators). Rollback image `watchcraft:rollback-20261102-why-ask` retains `1fb720f`
+  (`37e229eb4d6c`). Saved media was unchanged.
+- Isolated restore of the online backup ran `watchcraft:3ec97d0` on `127.0.0.1:6697`: integrity `ok`, every count
+  and the profile/PIN checksum identical, started twice, all routes 200, no tracebacks. A disposable adult QA
+  profile drove the real path: its feed held 18 items with one Spanish meme, `POST /memes/languages/es/hide`
+  returned `hidden_languages: ['es']`, the feed dropped to 17 with no Spanish left, and `{hidden: false}` restored
+  18 with the Spanish meme back. The disposable containers and data were removed.
+- Rollout used rsync without `--delete` and preserved `.env` and `compose.host.yaml` (checksums verified before and
+  after). `DEPLOYED_COMMIT=3ec97d0`; API, worker and downloader run image
+  `sha256:85ba954bf77e49cd6626ffae2c7568a3fceab33d2362a13fca9dc24bb2944e02` with zero restarts and no tracebacks.
+- Post-deploy: local `/api/health` OK and `https://wc.tdgs.org` plus `https://watchcraft.tdgs.org` return 200; `/`,
+  `/shorts`, `/agent`, `/settings`, `/discover`, `/news`, `/library`, `/memes`, `/api/categories` and
+  `/api/downloads` return 200; DB integrity `ok`; profiles, roles and both PIN records unchanged (checksum
+  `2c415ddd39a318be`); the deployed bundle contains the "Why hide this?" dialog and the backend exposes
+  `hidden_meme_languages`.
+- Rollback: `docker tag watchcraft:rollback-20261102-why-ask watchcraft:latest` and rerun the three-file compose
+  command with `up -d --no-build --force-recreate --wait` (no schema change).
+- Still open: V-040 (curation measurement window), B-033, B-034, T-075 Stages E–G, and the physical device checks
+  V-002/V-003/V-010/V-027. Hidden languages live in profile prefs and have no settings screen yet; the only way to
+  undo one is the toast's Undo.
+
 ## Deployment record — thumbs down always hides, and asks why when it cannot learn (`1fb720f`, 2026-11-02)
 
 - Covers `0eaf673..1fb720f`. A meme whose title had no distinctive words made the curator feedback answer 422
