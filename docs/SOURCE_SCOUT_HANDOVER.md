@@ -1,5 +1,51 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — curator-form defaults and video-curation throughput (`cce22ea`, 2026-11-02)
+
+- Covers `a5f0e10..cce22ea`: `b3f280e` (default Mastodon and Lemmy endpoints in the curator form) and
+  `068b92b` + `cce22ea` (T-075 Stages A–C and the Stage D quantum).
+- `b3f280e`: the Where to look section offers one-click defaults — six Lemmy communities, five Mastodon trend
+  feeds and six Mastodon instances — instead of only a typed URL. Clicking an existing default toggles its
+  selection rather than duplicating the source. Every default was probed live before shipping; `lemmy.ca` and
+  `discuss.tchncs.de` were dropped (404/400) and `infosec.exchange`, `mstdn.social` and `mstdn.ca` were dropped
+  because they reject anonymous public timelines.
+- `068b92b`: closed-vocabulary timing spans written to a private rotating `curation-timing.log` in the data
+  directory, with `scripts/curation_timing_report.py` and `scripts/curation_lifecycle_report.py`; cache-only
+  metadata lookup that cannot extract on a miss; caption-track check before the transcript turn; cached
+  research that advances during a YouTube blocker; conditional candidate writes that never overwrite a manual
+  decision or dismissal; and an AI lane that yields after one verdict once research has finished.
+- `cce22ea`: curation acquires `min(setting, JUDGE_COMMENTS_MAX)` comments. Production asked for 60 while the
+  judge reads 30. The player keeps its own on-demand fetch; its warm start from a curated video is now 30
+  comments, which is the partial-cache behaviour already tracked as B-034.
+- Local verification: **671 backend tests passed, six skipped**; **13 script tests passed**; svelte-check 0
+  errors (three existing CSS warnings); production build; five Hub browser tests including the new default-endpoint
+  spec. Offline before/after: warm research 3 limiter turns/3 calls → 0/0, cached-metadata + no-caption 3/3 → 1/1,
+  comments 60 → 30, and a synthetic 20-item AI backlog first yield 400 s → 80 s with identical verdict throughput.
+- Fresh online and stopped-service backups: `/root/compose/watchcraft-backups/20261102-pre-curation-throughput`
+  (integrity `ok`; 6 profiles, 7,674 videos, 29 categories, 147 history, 279 items, 279 capture jobs, 2,268
+  downloads, 9 sources, 5 curators). Rollback image `watchcraft:rollback-20261102-curation-throughput` retains
+  `a5f0e10` (`d8b33137875a`). Saved media was unchanged.
+- Isolated restore of the online backup ran `watchcraft:cce22ea` on `127.0.0.1:6697`: integrity `ok`, every count
+  and the profile/PIN checksum identical to production, started twice, `/`, `/shorts`, `/agent`, `/settings`,
+  `/api/categories` and `/api/downloads` all 200, no tracebacks. A 100-second worker run on that copy produced
+  `curation-timing.log` (0600) with 24 events across 12 stages, logged `Read 30 comments`, and the report script
+  summarised it (comments p50 3.3 s, metadata 4.4 s, limiter_wait p50 13.7 s, metadata_cache misses under 8 ms).
+  The disposable containers and data were removed.
+- Rollout used rsync without `--delete` (five backend files changed, four backend files added, two frontend files
+  changed, five scripts added) and preserved `.env` and `compose.host.yaml` (checksums verified before and after).
+  `DEPLOYED_COMMIT=cce22ea`; API, worker and downloader run image
+  `sha256:9d1be9f1544a65616d242d3990202a15a48836c51a90a03990cc614481e59c8c` with zero restarts and no tracebacks.
+- Post-deploy: local `/api/health` OK and `https://wc.tdgs.org/api/health` plus `https://watchcraft.tdgs.org/api/health`
+  return 200 (`bt.tdgs.org` returns 502 because that hostname belongs to the retired BetterTube install, not to
+  WatchCraft); `/`, `/shorts`, `/agent`, `/settings`, `/discover`, `/api/categories` and `/api/downloads` return 200;
+  DB integrity `ok`; profiles, roles and both PIN records unchanged (checksum `2c415ddd39a318be`); the deployed
+  bundle contains the new default-endpoint strings; `data/curation-timing.log` is live and the worker logged
+  `Read 30 comments`, `caption_check no_track` and `metadata_cache miss` within the first minutes.
+- Rollback: `docker tag watchcraft:rollback-20261102-curation-throughput watchcraft:latest` and rerun the three-file
+  compose command with `up -d --no-build --force-recreate --wait` (no schema change).
+- Still open: V-040 (compare a fixed post-deploy window against the pre-deploy baseline), B-033, B-034, T-075
+  Stages E–G, and the physical device checks V-002/V-003/V-010/V-027.
+
 ## Deployment record — child-friendliness scoped to the Kid-safe toggle (`6e82ee9`, 2026-11-02)
 
 - Covers `4789e51..6e82ee9`. B-032: the judge prompt carried the child-safety rules for every playlist. The
