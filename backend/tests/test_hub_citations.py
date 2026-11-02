@@ -47,3 +47,18 @@ def test_cited_summary_includes_source_url_in_retrieval_context(monkeypatch):
 def test_cited_summary_accepts_abbreviations_and_urls(monkeypatch, text):
     monkeypatch.setattr(ai, '_call', lambda *args, **kwargs: {'text': text})
     assert ai._cited([ContentItem(url='https://example.com', title='Example')], 'Summarize', 100) == text
+
+
+def test_social_evidence_context_preserves_coverage_and_attribution(monkeypatch):
+    seen = {}
+    def call(system, user, *args, **kwargs):
+        seen.update(system=system, user=user)
+        return {'text': 'Community members discussed the release [1].'}
+    monkeypatch.setattr(ai, '_call', call)
+    item = ContentItem(url='https://lemmy.example/post/1', title='A release', provider='lemmy',
+                       meta={'coverage': 'Selected public community', 'article_url': 'https://publisher.example/release'})
+    ai._cited([item], 'Summarize', 100)
+    assert 'not independent confirmation' in seen['system']
+    assert 'not truth or consensus' in seen['system']
+    assert 'Selected public community' in seen['user']
+    assert 'https://publisher.example/release' in seen['user']

@@ -42,6 +42,7 @@ export type SourceHealth = {
 };
 /** Watcher rules; which keys apply depends on the provider (GET /sources/{id}/watcher lists them). */
 export type WatcherConfig = {
+	sort?: string; item_type?: string; limit?: number; allow_rss?: boolean; include_sensitive?: boolean; languages?: string[];
 	item_selector?: string; link_selector?: string; title_selector?: string; date_selector?: string; content_selector?: string;
 	allowed_patterns?: string[]; ignored_patterns?: string[]; ignore_selectors?: string[];
 	strip_query?: boolean; auto_repair?: boolean; alert_on_change?: boolean; min_change_chars?: number;

@@ -37,6 +37,8 @@ FIELDS = {
                      'ignored_patterns', 'ignore_selectors', 'strip_query', 'auto_repair'},
     'page_watch': {'content_selector', 'ignore_selectors', 'alert_on_change', 'min_change_chars', 'auto_repair'},
     'sitemap': {'allowed_patterns', 'ignored_patterns', 'strip_query'},
+    'lemmy': {'sort', 'item_type', 'limit', 'allow_rss'},
+    'mastodon_trends': {'item_type', 'include_sensitive', 'languages'},
 }
 CONFIGURABLE = set(FIELDS)
 GENERIC_TITLES = {'read more', 'continue reading', 'more', 'learn more', 'read article', 'read the post', 'read post',
@@ -79,7 +81,24 @@ def normalize(provider: str, config: dict | None) -> dict:
     for key, value in (config or {}).items():
         if key not in FIELDS[provider] or value in (None, '', []):
             continue
-        if key in SELECTORS or key == 'ignore_selectors':
+        if key in ('item_type', 'sort'):
+            choices = ('news', 'article', 'meme', 'web') if key == 'item_type' else ('Hot', 'Scaled', 'TopDay', 'New')
+            if not isinstance(value, str) or value not in choices:
+                raise RuleError(f'{key}: choose one of {", ".join(choices)}.')
+            out[key] = value
+        elif key == 'limit':
+            if not isinstance(value, int) or isinstance(value, bool) or not 1 <= value <= 30:
+                raise RuleError('limit: use a whole number from 1 to 30.')
+            out[key] = value
+        elif key == 'languages':
+            if not isinstance(value, list) or len(value) > 10 or not all(isinstance(v, str) and re.fullmatch(r'[a-z]{2,3}(?:-[A-Za-z]{2,4})?', v) for v in value):
+                raise RuleError('languages: use up to ten language codes such as en or da.')
+            out[key] = value
+        elif key in ('allow_rss', 'include_sensitive'):
+            if not isinstance(value, bool):
+                raise RuleError(f'{key}: use true or false.')
+            out[key] = value
+        elif key in SELECTORS or key == 'ignore_selectors':
             values = value if key == 'ignore_selectors' else [value]
             if not isinstance(values, list) or len(values) > LIST_MAX:
                 raise RuleError(f'{key}: use at most {LIST_MAX} selectors.')

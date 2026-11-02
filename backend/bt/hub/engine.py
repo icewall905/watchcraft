@@ -181,6 +181,15 @@ def upsert(s: Session, data: dict, provider: str) -> ContentItem | None:
     except (ValueError, KeyError):
         return None
     item = s.exec(select(ContentItem).where(ContentItem.url == url)).first()
+    if not item and provider in ('mastodon', 'mastodon_trends'):
+        # Older captures used the display URL; accept that alias when AP identity arrives.
+        display = (data.get('meta') or {}).get('display_url')
+        if display:
+            try:
+                alias = canonical_url(display)
+                item = s.exec(select(ContentItem).where(ContentItem.url == alias)).first()
+            except ValueError:
+                pass
     if item:
         # Fill gaps from richer sources; never overwrite established facts.
         changed = False

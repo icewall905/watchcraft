@@ -168,7 +168,7 @@ def run(pid, iid, lease):
         url, typ, title, image, body = item.url, item.type, item.title, item.image, item.body
         video_id = str(item.meta.get('video_id', ''))
         meme_media = item.meta.get('media', {}) if typ == 'meme' else {}
-        mastodon_meme = typ == 'meme' and item.provider == 'mastodon'
+        social_post = item.provider in ('mastodon', 'mastodon_trends', 'lemmy') and bool(item.meta.get('social_post', item.provider == 'mastodon'))
         # The feed that found this item may carry the whole article even when the page will not.
         feed_url = s.exec(select(Source.url).join(CuratorDiscovery, CuratorDiscovery.source_id == Source.id)
                           .where(CuratorDiscovery.item_id == iid, Source.provider == 'rss')).first() or ''
@@ -181,7 +181,7 @@ def run(pid, iid, lease):
     truncated = False
     payload = b''
     try:
-        if mastodon_meme:
+        if social_post:
             pass  # The public API already supplied the post body and attachment metadata.
         elif typ == 'video' and VID_RE.fullmatch(video_id):
             with session() as s:
@@ -227,7 +227,7 @@ def run(pid, iid, lease):
     except Exception as e:  # noqa: BLE001
         primary_error = _safe_error(e)
         errors.append(primary_error)
-    if not body and typ not in ('video', 'meme') and not mastodon_meme \
+    if not body and typ not in ('video', 'meme') and not social_post \
             and get_settings()['local_library'].get('rescue', True):
         # The plain fetch could not read it. Try the other ways before giving up on the item.
         try:

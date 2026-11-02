@@ -51,6 +51,8 @@
 		{ title: 'Search the web', keys: ['web_search'] },
 		{ title: 'YouTube channel feeds (RSS)', keys: ['rss'], yt: true, add: 'rss', addHint: 'https://www.youtube.com/feeds/videos.xml?channel_id=…' },
 		{ title: 'RSS', keys: ['rss'], yt: false, add: 'rss', addHint: 'https://example.org/feed.xml' },
+		{ title: 'Lemmy communities', keys: ['lemmy'], add: 'lemmy', addHint: 'https://lemmy.world/c/selfhosted', addLabel: 'Add community' },
+		{ title: 'Mastodon trends', keys: ['mastodon_trends'], add: 'mastodon_trends', addHint: 'https://mastodon.social/api/v1/trends/links', addLabel: 'Add trend feed' },
 		{ title: 'Mastodon communities', keys: ['mastodon'], add: 'mastodon', addHint: 'https://mastodon.world', addLabel: 'Add instance' },
 		{ title: 'GitHub', keys: ['github_releases', 'github_search'], add: 'github_releases', addHint: 'https://github.com/owner/repository' },
 		{ title: 'Security advisories', keys: ['nvd', 'cisa_kev'] },

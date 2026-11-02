@@ -14,6 +14,12 @@
 
 	type Kind = 'text' | 'list' | 'bool' | 'number';
 	const FIELDS: Record<string, { label: string; kind: Kind; hint: string; placeholder?: string }> = {
+		sort: { label: 'Community ranking', kind: 'text', hint: 'Hot (default), Scaled, TopDay or New. Each source checks one community and one ranking.', placeholder: 'Hot' },
+		item_type: { label: 'Content type', kind: 'text', hint: 'news (default), article, meme or web. Use meme for a meme community.', placeholder: 'news' },
+		limit: { label: 'Posts per check', kind: 'number', hint: '1–30. Default 20.', placeholder: '20' },
+		allow_rss: { label: 'Allow RSS fallback', kind: 'bool', hint: 'Only for trusted communities: RSS may omit NSFW and removal flags. Off by default.' },
+		include_sensitive: { label: 'Include sensitive posts', kind: 'bool', hint: 'Include posts marked sensitive or carrying a content warning. Off by default.' },
+		languages: { label: 'Languages', kind: 'list', hint: 'One code per line, such as en or da. Empty accepts any language.' },
 		content_selector: { label: 'Content area', kind: 'text', hint: 'CSS selector for the part of the page to watch, e.g. main or #changelog. Empty watches the whole page text.', placeholder: 'main' },
 		item_selector: { label: 'Item selector', kind: 'text', hint: 'CSS selector matching each entry in the listing.', placeholder: 'article' },
 		link_selector: { label: 'Link selector', kind: 'text', hint: 'Inside each item, the link to follow.', placeholder: 'a[href]' },
@@ -89,7 +95,7 @@
 			failedSave = !r.saved;
 			if (r.saved) {
 				if (r.source) onchanged(r.source);
-				if (r.test.ok) toast.success('Watcher rules saved');
+				if (r.test.ok) toast.success(['lemmy', 'mastodon_trends'].includes(source.provider) ? 'Collection settings saved' : 'Watcher rules saved');
 				else toast.info('Rules saved without a passing test');
 				await load();
 			}
@@ -110,7 +116,7 @@
 </script>
 
 <div class="panel-in" aria-label="Watcher rules">
-	<b>Watcher rules</b>
+	<b>{['lemmy', 'mastodon_trends'].includes(source.provider) ? 'Collection settings' : 'Watcher rules'}</b>
 	{#if loadErr}<div class="err" role="alert">{loadErr}</div>
 	{:else if !w}<span class="small muted">Loading rules…</span>
 	{:else}

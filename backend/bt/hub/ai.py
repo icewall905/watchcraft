@@ -36,7 +36,8 @@ def _data(items: list[dict]) -> str:
     for i, d in enumerate(items, 1):
         rows.append(json.dumps({'n': i, 'type': d.get('type'), 'title': (d.get('title') or '')[:300],
                                 'source': d.get('publisher') or '', 'url': (d.get('url') or '')[:500],
-                                'summary': (d.get('summary') or '')[:600]}, ensure_ascii=False))
+                                'summary': (d.get('summary') or '')[:600],
+                                **{k: str(d[k])[:500] for k in ('provider', 'coverage', 'linked_article') if d.get(k)}}, ensure_ascii=False))
     return '<data>\n' + _esc('\n'.join(rows)) + '\n</data>'
 
 
@@ -201,10 +202,14 @@ def _citation_sentences(text: str) -> list[str]:
 
 
 def _cited(items: list[ContentItem], instruction: str, words: int) -> str:
-    rows = [{'title': i.title, 'type': i.type, 'publisher': i.publisher, 'url': i.url, 'summary': i.summary} for i in items]
+    rows = [{'title': i.title, 'type': i.type, 'publisher': i.publisher, 'url': i.url, 'summary': i.summary,
+             'provider': i.provider, 'coverage': i.meta.get('coverage', ''),
+             'linked_article': i.meta.get('article_url', '')} for i in items]
     res = _call(f'{instruction} Write about {words} words of plain text paragraphs (no markdown headings). Every factual '
                 'sentence must end with citations like [3] referring to item numbers n. Only state what the items say; '
-                'clearly mark uncertainty. Separate verified facts from interpretation.', _data(rows), SUMMARY_SCHEMA, 2500)
+                'clearly mark uncertainty. Separate verified facts from interpretation. Social posts are attributed claims or opinions, '
+                'not independent confirmation. Trending ranks and engagement measure sampled attention, not truth or consensus. '
+                'A linked article is not verified unless its own content is supplied. Do not count federated copies as corroboration.', _data(rows), SUMMARY_SCHEMA, 2500)
     text = str(res.get('text', '')).strip()
     if not text:
         raise ValueError('empty summary')

@@ -157,6 +157,7 @@
 					{#if item.published_at}Published {fmtDate(item.published_at)} ({ago(item.published_at)}) · {/if}Discovered {fmtDate(item.first_seen)} ({ago(item.first_seen)})
 				</p>
 				<div class="hstack top">
+					{#if str(m, 'article_url') && safeUrl(str(m, 'article_url')) && str(m, 'article_url') !== item.url}<a class="btn" href={safeUrl(str(m, 'article_url'))} target="_blank" rel="noopener noreferrer" use:focusable>Linked article ↗</a>{/if}
 					<a class="btn" href={safeUrl(item.url) || undefined} target="_blank" rel="noopener noreferrer" use:focusable>Open original ↗ <span class="faint host">{host(item.url)}</span></a>
 					{#if item.type === 'video' && str(m, 'video_id')}<a class="btn" href={`/watch/${encodeURIComponent(str(m, 'video_id'))}`} use:focusable>Watch in WatchCraft</a>{/if}
 					<button class="btn" aria-pressed={item.state.saved} use:focusable onclick={() => patch({ saved: !item!.state.saved })}>{item.state.saved ? '✓ Saved' : 'Save'}</button>

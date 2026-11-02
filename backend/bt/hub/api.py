@@ -700,6 +700,12 @@ def _norm_source(provider: str, url: str) -> str:
     if not url:
         raise HTTPException(422, f'{p.label} needs a URL')
     try:
+        if provider == 'lemmy':
+            from .lemmy import normalize_source_url
+            return normalize_source_url(url.strip())
+        if provider == 'mastodon_trends':
+            from .social_trends import _source
+            _source(url.strip())
         return curation.canonical(url.strip())
     except ValueError as e:
         raise HTTPException(422, str(e))

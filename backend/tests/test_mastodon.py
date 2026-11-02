@@ -45,7 +45,7 @@ def test_explicit_hashtag_is_not_broadened(monkeypatch, source):
     items = mastodon(source, 'unrelated topic')
     assert calls == ['https://social.example/api/v1/timelines/tag/memes?limit=30']
     assert len(items) == 1
-    assert items[0]['external_id'] == 'mstdn:social.example:109510769373674155'
+    assert items[0]['external_id'] == 'mstdn:https://social.example/@alice/109510769373674155'
 
 
 def test_instance_query_and_public_timeline(monkeypatch):

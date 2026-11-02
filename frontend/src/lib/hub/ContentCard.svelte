@@ -62,6 +62,7 @@
 			{:else}<span>found {ago(item.first_seen)}</span>{/if}
 			{#if unread}<span class="dot" title="Unread" aria-label="Unread"></span>{/if}
 		</p>
+		{#if str(m, 'coverage')}<p class="small muted">{str(m, 'coverage')}</p>{/if}
 		<h3><a href={href} use:focusable onclick={opened}>{item.title}</a></h3>
 
 		<div class="badges">

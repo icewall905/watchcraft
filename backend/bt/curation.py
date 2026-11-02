@@ -26,6 +26,14 @@ class Discovery(SQLModel, table=True):
 FEED_TYPES = ('application/atom+xml', 'application/rss+xml', 'application/xml', 'text/xml', 'application/json', 'application/feed+json')
 HTML_TYPES = ('text/html', 'application/xhtml+xml')
 
+class FetchError(ValueError):
+    """Public HTTP failure with bounded retry metadata for polite collectors."""
+    def __init__(self, status, retry_after=''):
+        self.status = status
+        self.retry_after = str(retry_after)[:100]
+        super().__init__(f'Source returned HTTP {status}.')
+
+
 def fetch(url, kinds=FEED_TYPES, limit=2_000_000, headers=None, with_metadata=False):
     """Pin validated public DNS to the actual socket; validate every redirect."""
     origin = urlsplit(url).hostname
@@ -45,7 +53,7 @@ def fetch(url, kinds=FEED_TYPES, limit=2_000_000, headers=None, with_metadata=Fa
                 url = urljoin(url, response.getheader('Location', ''))
                 continue
             if response.status != 200:
-                raise ValueError(f'Source returned HTTP {response.status}.')
+                raise FetchError(response.status, response.getheader('Retry-After', ''))
             kind = response.getheader('Content-Type', '').split(';')[0].lower()
             if kind not in kinds:
                 raise ValueError(f'Source returned unsupported content type {kind or "unknown"}.')

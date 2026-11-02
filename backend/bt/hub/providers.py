@@ -39,6 +39,7 @@ class Provider:
     capabilities: list = field(default_factory=list)
     needs_url: bool = False
     default_type: str = 'web'
+    configurable: bool = False
 
     def availability(self) -> tuple[bool, str]:
         if self.key == 'web_search':
@@ -52,7 +53,7 @@ class Provider:
 
     def run(self, url: str, q: str = '', config: dict | None = None) -> list[dict]:
         """Fetch with the source's watcher rules when this provider supports them."""
-        return self.fetch(url, q, config or {}) if self.key in watchers.CONFIGURABLE else self.fetch(url, q)
+        return self.fetch(url, q, config or {}) if self.configurable or self.key in watchers.CONFIGURABLE else self.fetch(url, q)
 
     def info(self) -> dict:
         ok, reason = self.availability()
@@ -196,7 +197,8 @@ def _mastodon_status(s: dict, instance: str) -> dict | None:
     """One public status → item dict. Replies and boosts are skipped; engagement counts are stored as observed."""
     if not isinstance(s, dict) or s.get('visibility') != 'public' or s.get('in_reply_to_id') or s.get('reblog'):
         return None
-    url = s.get('url')
+    display_url = s.get('url')
+    url = s.get('uri') or display_url
     if not isinstance(url, str) or not url.startswith('https://'):
         return None
     media = [m for m in (s.get('media_attachments') or []) if isinstance(m, dict)]
@@ -215,11 +217,11 @@ def _mastodon_status(s: dict, instance: str) -> dict | None:
     title = clean((text.split('\n')[0] if text else (first.get('description') or '')) or f'{instance} post', 500)
     community = f'#{tags[0]}' if tags else str(account.get('acct') or account.get('username') or instance)
     return {
-        'url': url, 'type': 'meme', 'provider': 'mastodon', 'publisher': instance,
+        'url': url, 'type': 'meme', 'provider': 'mastodon', 'publisher': urlsplit(url).hostname or instance,
         'author': clean(f"{account.get('display_name') or account.get('username') or ''} ({account.get('acct') or ''})", 200),
         'title': title, 'summary': clean(text, 1000), 'body': text[:4000], 'image': preview,
-        'published_at': ts(s.get('created_at')), 'external_id': f"mstdn:{instance}:{s.get('id') or url}",
-        'meta': {'platform': 'mastodon', 'instance': instance, 'community': community[:200], 'tags': tags[:8],
+        'published_at': ts(s.get('created_at')), 'external_id': f"mstdn:{s.get('uri') or url}",
+        'meta': {'platform': 'mastodon', 'social_post': True, 'origin_uri': s.get('uri') or url, 'display_url': display_url, 'instance': instance, 'community': community[:200], 'tags': tags[:8],
                  'language': str(s.get('language') or '')[:8], 'sensitive': bool(s.get('sensitive')),
                  'spoiler': clean(s.get('spoiler_text'), 300),
                  'media': {'type': str(first.get('type') or ''), 'mime': str(first.get('mime_type') or ''),
@@ -502,6 +504,10 @@ def web_search(_url: str, q: str) -> list[dict]:
     return out
 
 
+from .lemmy import lemmy
+from .social_trends import mastodon_trends
+
+
 PROVIDERS = {p.key: p for p in [
     Provider('rss', 'RSS / Atom / JSON feed', 'feed', 'Public RSS, Atom or JSON feeds, including YouTube channel feeds.', rss,
              ['feed', 'update-monitoring'], needs_url=True, default_type='news'),
@@ -531,6 +537,10 @@ PROVIDERS = {p.key: p for p in [
              ['url-extraction', 'structured-metadata'], needs_url=True, default_type='web'),
     Provider('page_watch', 'Page change watcher', 'feed', 'Track text changes on one public page, optionally limited to a content area.', page_watch,
              ['update-monitoring', 'page-changes'], needs_url=True, default_type='web'),
+    Provider('lemmy', 'Lemmy communities', 'feed', 'One public community per source. Use https://lemmy.world/c/selfhosted or !selfhosted@lemmy.world. Configure ranking, content type and optional RSS fallback in source settings.', lemmy,
+             ['feed', 'structured-metadata', 'community-scoped'], needs_url=True, default_type='news', configurable=True),
+    Provider('mastodon_trends', 'Mastodon trends', 'feed', 'Sampled instance trends. Use /api/v1/trends/links, /statuses or /tags on a public HTTPS instance. Popularity is not independent verification. Sensitive posts excluded by default.', mastodon_trends,
+             ['feed', 'structured-metadata', 'instance-trends'], needs_url=True, default_type='news', configurable=True),
     Provider('mastodon', 'Mastodon communities', 'query', 'Public posts from an HTTPS instance or /tags/hashtag URL. Instance queries become hashtags; explicit hashtag URLs stay scoped. Requires anonymous timeline access.', mastodon,
              ['keyword-search', 'update-monitoring', 'structured-metadata'], needs_url=True, default_type='meme'),
     Provider('devto', 'dev.to articles', 'query', 'Developer articles from dev.to. The first query word is used as a tag when it is a usable one.', devto,

@@ -146,7 +146,8 @@ function qualitySummary(s: Source) {
 			<h2>Add a source</h2>
 			<form class="add panel" onsubmit={add}>
 				<Select label="Provider" bind:value={provider} options={addable} group="src-add" />
-				{#if chosen?.needs_url}<TextField type="url" label="URL" bind:value={url} placeholder={provider === 'github_releases' ? 'https://github.com/owner/repository' : 'https://example.org/feed.xml'} group="src-add" />{/if}
+				{#if chosen?.needs_url}<TextField type={provider === 'lemmy' ? 'text' : 'url'} label={provider === 'lemmy' ? 'Community' : 'URL'} bind:value={url} placeholder={provider === 'lemmy' ? '!selfhosted@lemmy.world' : provider === 'mastodon_trends' ? 'https://mastodon.social/api/v1/trends/links' : provider === 'github_releases' ? 'https://github.com/owner/repository' : 'https://example.org/feed.xml'} group="src-add" />{/if}
+				{#if ['lemmy', 'mastodon_trends'].includes(provider)}<p class="small muted">Add only communities or trend feeds you want this profile’s curators to use. After adding, open Collection settings to choose news or memes and collection filters. Attach the source to a curator to schedule checks. Trends describe this source’s sample; they do not verify claims.</p>{/if}
 				{#if provider === 'page_watch'}<p class="small muted">Attach this source to a curator to check it on that curator’s schedule. The first successful run establishes a baseline; later text changes appear in the source history. After adding it, use Watcher rules to narrow it to a content area, ignore noisy parts, and raise an alert in Alerts when the page changes.</p>{/if}
 				<TextField label="Name (optional)" bind:value={name} placeholder="Shown in lists" group="src-add" />
 				{#if formErr}<div class="err" role="alert">{formErr}</div>{/if}
@@ -240,8 +241,8 @@ function qualitySummary(s: Source) {
 								{#if s.provider === 'page_watch'}<button class="btn" disabled={loadingHistory === s.id} use:focusable onclick={() => history(s)}>{loadingHistory === s.id ? 'Loading…' : 'View history'}</button>{/if}
 {#if s.provider === 'sitemap'}<button class="btn" disabled={loadingChanges === s.id} use:focusable onclick={() => sitemapChanges(s)}>{loadingChanges === s.id ? 'Loading…' : 'View changes'}</button>{/if}
 {#if s.configurable}
-<button class="btn" aria-expanded={!!rulesOpen[s.id]} use:focusable onclick={() => (rulesOpen[s.id] = !rulesOpen[s.id])}>Watcher rules</button>
-<button class="btn" class:primary={needsRepair(s)} aria-expanded={!!repairOpen[s.id]} use:focusable onclick={() => (repairOpen[s.id] = !repairOpen[s.id])}>Repair</button>
+<button class="btn" aria-expanded={!!rulesOpen[s.id]} use:focusable onclick={() => (rulesOpen[s.id] = !rulesOpen[s.id])}>{['lemmy', 'mastodon_trends'].includes(s.provider) ? 'Collection settings' : 'Watcher rules'}</button>
+{#if !['lemmy', 'mastodon_trends'].includes(s.provider)}<button class="btn" class:primary={needsRepair(s)} aria-expanded={!!repairOpen[s.id]} use:focusable onclick={() => (repairOpen[s.id] = !repairOpen[s.id])}>Repair</button>{/if}
 {/if}
 								<button class="btn ghost danger" use:focusable onclick={() => (confirm = s)}>Delete</button>
 							</div>
