@@ -1,5 +1,46 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — meme thumbs up/down (`dd88919`, 2026-11-02)
+
+- Covers `903b90e..dd88919`. Meme Radar had no way to say which memes were wanted short of opening an item and
+  using the curator panel. Each meme card now carries thumbs up and down, and the drawer repeats them as labelled
+  buttons. A thumb sends the existing `curator-feedback` verdict to every curator that found the meme, so the
+  learned words land in that curator's `tuned_up`/`tuned_down` and rank future finds; the toast names what was
+  learned. Items nobody curated show no thumbs.
+- The card body stopped being one big button (a button cannot contain buttons): the picture and caption are the
+  button that opens the drawer and the actions sit beside it, so a thumb never opens the meme. Item payloads now
+  carry `curator_ids` beside `curator_names`, which is what lets a card send feedback without a second request.
+- Local verification: **675 backend tests passed, six skipped** (the item-payload assertion now covers
+  `curator_ids`); **16 browser tests** across a11y/navigation/hub/memes plus **two new meme-feedback specs** that
+  stub the API and assert the POST body, the pressed state, that a thumb does not open the drawer and that an
+  uncurated meme offers no thumbs; svelte-check 0 errors (three existing CSS warnings); production build; card
+  layout, thumb containment and click targets checked at desktop and 390 px.
+- Fresh online and stopped-service backups: `/root/compose/watchcraft-backups/20261102-pre-meme-thumbs`
+  (integrity `ok`; 6 profiles, 7,701 videos, 29 categories, 401 items, 7,276 candidates, 2,277 downloads, 18
+  sources, 8 curators). Rollback image `watchcraft:rollback-20261102-meme-thumbs` retains `903b90e`
+  (`5871cb7fdb59`). Saved media was unchanged.
+- Isolated restore of the online backup ran `watchcraft:dd88919` on `127.0.0.1:6697`: integrity `ok`, every count
+  and the profile/PIN checksum identical, started twice, `/`, `/shorts`, `/agent`, `/settings`, `/discover`,
+  `/news`, `/library`, `/memes` and `/api/categories` all 200, no tracebacks. On that copy a disposable adult QA
+  profile (created, PIN-set and given the meme curator inside the copy only) exercised the real path: the meme
+  feed returned `curator_ids: [4]` with `curator_names: ['Meme Tracker']`, and a thumbs-up POST on item 151
+  returned 200 with `added: ['disappointed', 'grindr', 'source']`, after which the curator's `tuned_up` held
+  exactly those words and `tuned_down` stayed empty. The disposable containers and data were removed.
+- Rollout used rsync without `--delete` (four frontend files changed, one added, one backend file changed) and
+  preserved `.env` and `compose.host.yaml` (checksums verified before and after). `DEPLOYED_COMMIT=dd88919`; API,
+  worker and downloader run image
+  `sha256:3dcbf25c4c4a70c4fe6e944c834759ac002052bbff69837a14e7583128a9b42c` with zero restarts and no tracebacks.
+- Post-deploy: local `/api/health` OK and `https://wc.tdgs.org` plus `https://watchcraft.tdgs.org` return 200; `/`,
+  `/shorts`, `/agent`, `/settings`, `/discover`, `/news`, `/library`, `/memes`, `/api/categories` and
+  `/api/downloads` return 200; DB integrity `ok`; profiles, roles and both PIN records unchanged (checksum
+  `2c415ddd39a318be`); the deployed bundle contains the thumb labels and the backend exposes `curator_ids`; a
+  read-only serialization of live meme items returns `curator_ids: [4]` for the Meme Tracker. The curation timing
+  log keeps growing (345 events) and the worker is researching normally.
+- Rollback: `docker tag watchcraft:rollback-20261102-meme-thumbs watchcraft:latest` and rerun the three-file
+  compose command with `up -d --no-build --force-recreate --wait` (no schema change).
+- Still open: V-040 (curation measurement window), B-033, B-034, T-075 Stages E–G, and the physical device checks
+  V-002/V-003/V-010/V-027.
+
 ## Deployment record — live item filters and tag search (`903b90e`, 2026-11-02)
 
 - Covers `cce22ea..903b90e`. Discover, News, Library and Meme Radar only filtered after a submit, and News and
