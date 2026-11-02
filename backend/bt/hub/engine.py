@@ -15,7 +15,7 @@ from ..db import engine as db_engine, get_settings, session
 from . import activity, ai, polling, slots, narrate, watchers
 from .models import (Alert, Briefing, CollectionItem, ContentItem, Curator, CuratorDiscovery, CuratorRun,
                      CuratorSource, ItemState, PageRevision, SitemapEntry, Source, SourceCheck, TopicItem)
-from .providers import PROVIDERS
+from .providers import PROVIDERS, RateLimited
 
 log = logging.getLogger(__name__)
 LEASE_S = 900
@@ -421,6 +421,9 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
             except Exception as e:  # noqa: BLE001 — one source never fails the run
                 log.info('source %s failed: %s', src.id, e)
                 failed = _safe_error(e)
+                if isinstance(e, RateLimited):
+                    # The host asked us to stop: the remaining queries would fail too.
+                    break
         if prov.mode == 'query' and not queries:
             failed = 'No search queries configured.'
         # A sitemap's health counts every listed URL, not just this run's changes.

@@ -174,6 +174,22 @@ def test_partial_failure_history_and_curator_crud(client, monkeypatch):
     assert export['watchcraft_curator'] == 1 and len(export['sources']) == 2
 
 
+def test_a_rate_limited_source_stops_after_the_first_query(client, monkeypatch):
+    """A host that says stop must not be asked the curator's remaining queries."""
+    calls = []
+
+    def fetch(_url, query):
+        calls.append(query)
+        raise providers.RateLimited('GitHub rate limit reached: 10 searches a minute without a token. It resets in 30s.')
+
+    monkeypatch.setattr(providers.PROVIDERS['github_search'], 'fetch', fetch)
+    curator = make_curator(client, [{'provider': 'github_search'}], queries=['one', 'two', 'three'])
+    run = hub.run(curator['id'])
+    assert calls == ['one']
+    assert run.status == 'failed'
+    assert 'rate limit' in run.errors[0]['message'].lower()
+
+
 def test_source_check_history_preserves_partial_failures_and_is_private(client, monkeypatch):
     def fetch(_url, query):
         if query == 'broken':

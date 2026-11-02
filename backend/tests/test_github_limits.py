@@ -70,3 +70,23 @@ def test_a_403_without_a_reset_keeps_its_plain_error(monkeypatch):
     monkeypatch.setattr(curation, 'fetch', fetch)
     with pytest.raises(curation.FetchError, match='HTTP 403'):
         providers.github_search('', 'q')
+
+
+def test_a_rate_limit_stops_the_rest_of_the_run(monkeypatch):
+    """Once GitHub says stop, the remaining queries must not burn quota or repeat the error."""
+    monkeypatch.setattr(providers, '_github_last', 0.0)
+    monkeypatch.setattr(providers, '_github_blocked_until', 0.0)
+    monkeypatch.setattr(providers.time, 'monotonic', lambda: 1000.0)
+    calls = []
+
+    def fetch(url, **kwargs):
+        calls.append(url)
+        raise curation.FetchError(403, '30')
+
+    monkeypatch.setattr(curation, 'fetch', fetch)
+    with pytest.raises(providers.RateLimited, match='resets in 30s'):
+        providers.github_search('', 'first')
+    # The next query in the same run is refused without touching the network.
+    with pytest.raises(providers.RateLimited, match='resets in 30s'):
+        providers.github_search('', 'second')
+    assert len(calls) == 1

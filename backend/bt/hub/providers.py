@@ -305,21 +305,36 @@ def rss(url: str, _q: str = '') -> list[dict]:
     return parse_feed(curation.fetch(url), url)
 
 
-# GitHub's unauthenticated search API allows ten requests a minute. A curator with
-# several queries, or two curators sharing the source, would otherwise 403 on the
-# second run inside the same minute, so space the calls instead of failing.
-GITHUB_SEARCH_GAP_S = 6.5
+class RateLimited(ValueError):
+    """A host asked us to stop; the rest of this source's queries would fail too."""
+
+
+# GitHub's unauthenticated search API allows ten requests a minute per address. Several
+# curators share one source here, so a run can ask for thirty searches at once: pace them
+# at half the limit, and once GitHub says stop, stop until it says the window has reset.
+GITHUB_SEARCH_GAP_S = 12.0
 _github_lock = threading.Lock()
 _github_last = 0.0
+_github_blocked_until = 0.0
 
 
 def _github_pace() -> None:
     global _github_last
     with _github_lock:
-        wait = GITHUB_SEARCH_GAP_S - (time.monotonic() - _github_last)
+        now = time.monotonic()
+        if now < _github_blocked_until:
+            raise RateLimited(f'GitHub rate limit reached: 10 searches a minute without a token. '
+                              f'It resets in {int(_github_blocked_until - now)}s.')
+        wait = GITHUB_SEARCH_GAP_S - (now - _github_last)
         if wait > 0:
             time.sleep(wait)
         _github_last = time.monotonic()
+
+
+def _github_block(seconds: int) -> None:
+    global _github_blocked_until
+    with _github_lock:
+        _github_blocked_until = max(_github_blocked_until, time.monotonic() + max(0, seconds))
 
 
 def _github_limited(exc: Exception, budget: str) -> ValueError | None:
@@ -333,7 +348,8 @@ def _github_limited(exc: Exception, budget: str) -> ValueError | None:
     wait = int(float(exc.retry_after or 0))
     if wait <= 0:
         return None
-    return ValueError(f'GitHub rate limit reached: {budget}. It resets in {wait}s.')
+    _github_block(wait)
+    return RateLimited(f'GitHub rate limit reached: {budget}. It resets in {wait}s.')
 
 
 def github_releases(url: str, _q: str = '') -> list[dict]:
