@@ -94,7 +94,16 @@ test('refresh invalidates pending pagination and loads availability anew', async
 	await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000003/file');
 });
 
-test('phone swipes advance through local files and pagination excludes loaded clips', async ({ page }) => {
+test.describe('phone local playback', () => {
+ test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
+ test('phone swipes advance through local files and pagination excludes loaded clips', async ({ page }) => {
+ async function swipe(from: number, to: number) {
+  await page.locator('video').evaluate((el, [from, to]) => {
+   const touch = (y: number) => new Touch({ identifier: 1, target: el, clientX: 200, clientY: y });
+   el.dispatchEvent(new TouchEvent('touchstart', { touches: [touch(from)], changedTouches: [touch(from)], bubbles: true }));
+   el.dispatchEvent(new TouchEvent('touchend', { touches: [], changedTouches: [touch(to)], bubbles: true }));
+  }, [from, to]);
+ }
  await fixture(page);
  const excluded: string[] = [];
  await page.route(/\/api\/shorts\?/, r => {
@@ -105,11 +114,11 @@ test('phone swipes advance through local files and pagination excludes loaded cl
  await freshPage(page, '/shorts');
  await page.getByRole('button', {name: /Science clips/}).click();
  await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');
- await page.locator('video').dispatchEvent('touchstart', {touches: [{clientX: 200, clientY: 600}]});
- await page.locator('video').dispatchEvent('touchend', {changedTouches: [{clientX: 205, clientY: 200}]});
+ await swipe(600, 200);
  await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
  expect(excluded).toEqual(['', 'short000001']);
- await page.locator('video').dispatchEvent('touchstart', {touches: [{clientX: 200, clientY: 200}]});
- await page.locator('video').dispatchEvent('touchend', {changedTouches: [{clientX: 200, clientY: 600}]});
+ await swipe(200, 600);
  await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');
+});
+
 });
