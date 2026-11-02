@@ -5,6 +5,8 @@ fetches go through curation.fetch (HTTPS, public IPs only, bounded). The configu
 endpoint is admin-trusted configuration and may live on the LAN."""
 import json
 import re
+import threading
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
@@ -303,12 +305,46 @@ def rss(url: str, _q: str = '') -> list[dict]:
     return parse_feed(curation.fetch(url), url)
 
 
+# GitHub's unauthenticated search API allows ten requests a minute. A curator with
+# several queries, or two curators sharing the source, would otherwise 403 on the
+# second run inside the same minute, so space the calls instead of failing.
+GITHUB_SEARCH_GAP_S = 6.5
+_github_lock = threading.Lock()
+_github_last = 0.0
+
+
+def _github_pace() -> None:
+    global _github_last
+    with _github_lock:
+        wait = GITHUB_SEARCH_GAP_S - (time.monotonic() - _github_last)
+        if wait > 0:
+            time.sleep(wait)
+        _github_last = time.monotonic()
+
+
+def _github_limited(exc: Exception, budget: str) -> ValueError | None:
+    """Turn GitHub's quota 403 into something a person can act on.
+
+    Only a refusal that names a reset is a quota answer; any other 403 keeps its
+    plain HTTP error rather than being mislabelled as a rate limit.
+    """
+    if not isinstance(exc, curation.FetchError) or exc.status not in (403, 429):
+        return None
+    wait = int(float(exc.retry_after or 0))
+    if wait <= 0:
+        return None
+    return ValueError(f'GitHub rate limit reached: {budget}. It resets in {wait}s.')
+
+
 def github_releases(url: str, _q: str = '') -> list[dict]:
     p = urlsplit(url)
     parts = p.path.strip('/').split('/')
     if p.hostname != 'github.com' or len(parts) != 2 or any(not x or not all(c.isalnum() or c in '-_.' for c in x) for x in parts):
         raise ValueError('Use https://github.com/owner/repository.')
-    data = json.loads(curation.fetch(f'https://api.github.com/repos/{parts[0]}/{parts[1]}/releases?per_page=20'))
+    try:
+        data = json.loads(curation.fetch(f'https://api.github.com/repos/{parts[0]}/{parts[1]}/releases?per_page=20'))
+    except curation.FetchError as e:
+        raise _github_limited(e, '60 requests an hour without a token') or e
     if not isinstance(data, list):
         raise ValueError('Unexpected GitHub response.')
     repo = f'{parts[0]}/{parts[1]}'
@@ -321,7 +357,12 @@ def github_releases(url: str, _q: str = '') -> list[dict]:
 
 
 def github_search(_url: str, q: str) -> list[dict]:
-    data = json.loads(curation.fetch('https://api.github.com/search/repositories?' + urlencode({'q': q, 'sort': 'updated', 'per_page': 15})))
+    _github_pace()
+    try:
+        data = json.loads(curation.fetch('https://api.github.com/search/repositories?'
+                                         + urlencode({'q': q, 'sort': 'updated', 'per_page': 15})))
+    except curation.FetchError as e:
+        raise _github_limited(e, '10 searches a minute without a token') or e
     return [{'url': r['html_url'], 'title': r['full_name'], 'type': 'project', 'summary': clean(r.get('description'), 1000),
              'publisher': 'GitHub', 'author': clean((r.get('owner') or {}).get('login'), 100),
              'published_at': ts(r.get('created_at')), 'external_id': f"gh-repo:{r.get('id')}",

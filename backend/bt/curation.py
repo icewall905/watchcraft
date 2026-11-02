@@ -34,6 +34,22 @@ class FetchError(ValueError):
         super().__init__(f'Source returned HTTP {status}.')
 
 
+def _retry_hint(response) -> str:
+    """Retry-After, or the rate-limit reset when a host reports an exhausted quota.
+
+    GitHub answers 403 with ``x-ratelimit-remaining: 0`` and an epoch reset instead of
+    Retry-After, so without this a caller can only say "HTTP 403".
+    """
+    retry = response.getheader('Retry-After', '')
+    if retry:
+        return retry
+    if response.getheader('x-ratelimit-remaining') == '0':
+        reset = response.getheader('x-ratelimit-reset', '')
+        if reset.isdigit():
+            return str(max(0, int(reset) - int(time.time())))
+    return ''
+
+
 def fetch(url, kinds=FEED_TYPES, limit=2_000_000, headers=None, with_metadata=False):
     """Pin validated public DNS to the actual socket; validate every redirect."""
     origin = urlsplit(url).hostname
@@ -53,7 +69,7 @@ def fetch(url, kinds=FEED_TYPES, limit=2_000_000, headers=None, with_metadata=Fa
                 url = urljoin(url, response.getheader('Location', ''))
                 continue
             if response.status != 200:
-                raise FetchError(response.status, response.getheader('Retry-After', ''))
+                raise FetchError(response.status, _retry_hint(response))
             kind = response.getheader('Content-Type', '').split(';')[0].lower()
             if kind not in kinds:
                 raise ValueError(f'Source returned unsupported content type {kind or "unknown"}.')
