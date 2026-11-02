@@ -151,11 +151,32 @@
 				const r = await hub.curatorFeedback(it.id, cid, verdict);
 				learned.push(...r.added);
 			}
-			verdicts = { ...verdicts, [it.id]: verdict };
 			const words = [...new Set(learned)];
-			toast.success(`${words.length ? `Learned: ${words.join(', ')}. ` : ''}Similar memes will rank ${verdict === 'more' ? 'higher' : 'lower'}.`);
+			const said = words.length ? `Learned: ${words.join(', ')}. ` : '';
+			if (verdict === 'more') {
+				verdicts = { ...verdicts, [it.id]: verdict };
+				toast.success(`${said}Similar memes will rank higher.`);
+				return;
+			}
+			// A thumbs down hides the meme for good and teaches the curator to rank its shape lower.
+			await hub.setState(it.id, { dismissed: true });
+			verdicts = { ...verdicts, [it.id]: verdict };
+			items = items.filter((x) => x.id !== it.id);
+			total = Math.max(0, total - 1);
+			if (open?.id === it.id) closeDrawer();
+			// A dismissal is not visible anywhere else, so keep the undo within reach.
+			toast.success(`${said}Hidden from your feed.`, { action: { label: 'Undo', run: () => void restore(it) }, timeout: 8000 });
 		} catch (e) { toast.error(errMsg(e)); }
 		finally { tuning = null; }
+	}
+	async function restore(it: Item) {
+		try {
+			await hub.setState(it.id, { dismissed: false });
+			const next = { ...verdicts };
+			delete next[it.id];
+			verdicts = next;
+			await loadFeed(false);
+		} catch (e) { toast.error(errMsg(e)); }
 	}
 	async function toggleState(key: 'saved' | 'dismissed') {
 		if (!open) return;

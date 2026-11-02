@@ -35,21 +35,51 @@ test('meme thumbs teach the curator that found it', async ({ page }) => {
 	await expect(page.getByRole('button', { name: /More memes like this: Manually added meme/ })).toHaveCount(0);
 });
 
-test('the meme drawer offers the same thumbs', async ({ page }) => {
+test('a thumbs down hides the meme and keeps it hidden', async ({ page }) => {
 	const posts: unknown[] = [];
+	const states: unknown[] = [];
+	await page.route('**/api/hub/memes/items*', (route) => route.fulfill({ json: { items: [meme(1, 'Spongebob reaction', [5])], total: 1 } }));
+	await page.route('**/api/hub/memes/facets*', (route) => route.fulfill({ json: { communities: [], languages: [] } }));
+	await page.route('**/api/hub/topics*', (route) => route.fulfill({ json: [] }));
+	await page.route('**/api/hub/items/*/curator-feedback', async (route) => {
+		posts.push(route.request().postDataJSON());
+		await route.fulfill({ json: { curator_id: 5, verdict: 'less', added: ['spongebob'], tuned_up: [], tuned_down: ['spongebob'] } });
+	});
+	await page.route('**/api/hub/items/*/state', async (route) => {
+		states.push(route.request().postDataJSON());
+		await route.fulfill({ json: { ...state, dismissed: true } });
+	});
+
+	await freshPage(page, '/memes?tab=examples');
+	const card = page.getByRole('button', { name: 'Open meme: Spongebob reaction' });
+	await expect(card).toBeVisible();
+	await page.getByRole('button', { name: /Fewer memes like this: Spongebob reaction/ }).click();
+	// Gone from the feed, and the item itself is dismissed so it cannot come back.
+	await expect(card).toHaveCount(0);
+	expect(posts).toEqual([{ curator_id: 5, verdict: 'less' }]);
+	expect(states).toEqual([{ dismissed: true }]);
+	await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
+});
+
+test('the meme drawer thumbs down closes the drawer and hides the meme', async ({ page }) => {
+	const states: unknown[] = [];
 	await page.route('**/api/hub/memes/items*', (route) => route.fulfill({ json: { items: [meme(1, 'Spongebob reaction', [5])], total: 1 } }));
 	await page.route('**/api/hub/memes/facets*', (route) => route.fulfill({ json: { communities: [], languages: [] } }));
 	await page.route('**/api/hub/topics*', (route) => route.fulfill({ json: [] }));
 	await page.route('**/api/hub/memes/items/1/similar', (route) => route.fulfill({ json: { items: [] } }));
-	await page.route('**/api/hub/items/*/curator-feedback', async (route) => {
-		posts.push(route.request().postDataJSON());
-		await route.fulfill({ json: { curator_id: 5, verdict: 'less', added: ['spongebob'], tuned_up: [], tuned_down: ['spongebob'] } });
+	await page.route('**/api/hub/items/*/curator-feedback', (route) => route.fulfill({
+		json: { curator_id: 5, verdict: 'less', added: ['spongebob'], tuned_up: [], tuned_down: ['spongebob'] }
+	}));
+	await page.route('**/api/hub/items/*/state', async (route) => {
+		states.push(route.request().postDataJSON());
+		await route.fulfill({ json: { ...state, dismissed: true } });
 	});
 
 	await freshPage(page, '/memes?tab=examples');
 	await page.getByRole('button', { name: 'Open meme: Spongebob reaction' }).click();
 	const drawer = page.getByRole('dialog', { name: 'Meme detail' });
 	await drawer.getByRole('button', { name: '👎 Less like this' }).click();
-	await expect(drawer.getByRole('button', { name: '👎 Less like this' })).toHaveAttribute('aria-pressed', 'true');
-	expect(posts).toEqual([{ curator_id: 5, verdict: 'less' }]);
+	await expect(drawer).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Open meme: Spongebob reaction' })).toHaveCount(0);
+	expect(states).toEqual([{ dismissed: true }]);
 });
