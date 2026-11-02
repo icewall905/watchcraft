@@ -1,5 +1,39 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — dead download queue rows (`4789e51`, 2026-11-02)
+
+- Covers `598e242..4789e51`. B-031: `next_download` only returns a non-pinned row whose candidate is still
+  accepted and not dismissed, so rows left behind by a deleted or dismissed candidate sat in `queued`
+  forever. `drop_dead_queue` deletes queued/error rows with no accepted, non-dismissed candidate; it runs
+  next to `purge_unwanted` at the top of every `iterate`, so the count self-corrects within one cycle even
+  while the cache is disabled. Pinned rows are kept (they are returned before the candidate lookup, so a
+  manual "Save offline" still runs) and genuine `error` rows with a live candidate are kept.
+- Local verification: **599 backend tests passed, two skipped** (two new tests cover the keep/drop matrix and
+  the reported count). Against a copy of the production `download`/`candidate` tables: 24 queued/error rows
+  in, the six dead ones out, all 18 real error rows kept.
+- Fresh online and stopped-service backups: `/root/compose/watchcraft-backups/20261102-pre-dead-queue`
+  (integrity `ok`; 6 profiles, 7,406 videos, 27 categories, 141 history, 267 items, 267 capture jobs).
+  Rollback image `watchcraft:rollback-20261102-dead-queue` retains `598e242`.
+- Isolated restore of the online backup ran `watchcraft:4789e51`. With the cache disabled so the copy could
+  not download, the downloader logged `dropped 6 dead queue rows (no accepted candidate)` and the queue went
+  from 6 to 0 while all 18 `error` rows survived; a pinned row with no candidate was kept. The API then
+  started twice on that copy: health OK, integrity `ok`, all counts preserved, no tracebacks, and
+  `/api/downloads` reported `queued: 1` (the pinned probe) instead of 6. The disposable container and data
+  were removed.
+- Rollout used rsync without `--delete` (three files changed, nothing removed) and preserved `.env` and
+  `compose.host.yaml` (checksums verified before and after). `DEPLOYED_COMMIT=4789e51`; API, worker and
+  downloader run image `sha256:d2ed5f8787bb…` with zero restarts and no tracebacks.
+- Post-deploy: the downloader logged the same `dropped 6 dead queue rows` line, `download` has no `queued`
+  rows left, `/api/downloads` reports `{'done': 1115, 'error': 18}` and `queue 0` / "Nothing to download".
+  Local and public `/api/health` OK; `/`, `/shorts`, `/agent`, `/settings`, `/api/categories` and
+  `/api/downloads` return 200; DB integrity `ok`; profiles, roles and both PIN records unchanged; an
+  uncommitted probe confirmed `next_download` still returns a pinned row with no candidate, so manual
+  "Save offline" is unaffected.
+- Rollback: `docker tag watchcraft:rollback-20261102-dead-queue watchcraft:latest` and rerun the compose
+  command (no schema change; the six deleted rows were dead and are not restored).
+- Still open: B-008 (merge pause), B-019 (browser egress), T-069 (non-YouTube providers), and the physical
+  device checks V-002/V-003/V-010/V-027.
+
 ## Deployment record — judge calibration, date-aware discovery, profile-scoped manifests and brief autofill (`598e242`, 2026-11-02)
 
 - Covers `9c27ded..598e242`. B-028: the judge no longer reads popularity as quality, treats a missing
