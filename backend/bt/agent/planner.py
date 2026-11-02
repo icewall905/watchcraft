@@ -200,7 +200,10 @@ def discover(rt: Runtime, rl, cat: Category) -> Optional[dict]:
         rt.event("search", f"📺 Browsing channel {ref} for {cat.name}", "info", cat, payload={"channel": ref})
         save_plan(cat.id, plan)
         try:
-            res = _call(rt, rl, lambda: yt.channel_videos(ref, n=30, origin="worker"))
+            if cat.kind == "shorts":
+                res = _call(rt, rl, lambda: yt.channel_videos(ref, n=30, origin="worker", tab="shorts"))
+            else:
+                res = _call(rt, rl, lambda: yt.channel_videos(ref, n=30, origin="worker"))
         except _Skip as e:
             if ref in plan.get("channels", []):
                 plan["channels"] = [c for c in plan["channels"] if c != ref]
@@ -215,7 +218,27 @@ def discover(rt: Runtime, rl, cat: Category) -> Optional[dict]:
         rt.event("rss", f"📰 Checking new uploads from subscribed channel {ref}", "info", cat,
                  payload={"channel_id": ref})
         save_plan(cat.id, plan)
-        res = _call(rt, rl, lambda: rt.feeds.channel_feed(ref))
+        def rss_or_channel():
+            try:
+                return rt.feeds.channel_feed(ref)
+            except yt.YtUnavailable:
+                # A public channel can work while its RSS endpoint returns 404.
+                # This is one bounded fallback, with its own channel request budget.
+                rl.failed()
+                with session() as s:
+                    pc = s.exec(select(ProfileChannel).where(ProfileChannel.profile_id == cat.profile_id,
+                                                             ProfileChannel.channel_id == ref)).first()
+                    if pc:
+                        pc.last_feed_check = now()
+                        s.add(pc)
+                        s.commit()
+                rl.wait_turn("channel", cat)
+                rt.event("rss", f"RSS unavailable for {ref}; checking its public channel tab", "info", cat)
+                if cat.kind == "shorts":
+                    return yt.channel_videos(ref, n=30, origin="worker", tab="shorts")
+                return yt.channel_videos(ref, n=30, origin="worker")
+
+        res = _call(rt, rl, rss_or_channel)
         ch, entries = res if isinstance(res, tuple) else ({}, res)
         with session() as s:
             pc = s.exec(select(ProfileChannel).where(ProfileChannel.profile_id == cat.profile_id,

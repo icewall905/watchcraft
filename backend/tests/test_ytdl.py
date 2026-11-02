@@ -391,3 +391,38 @@ def test_classify_transient_5xx_is_not_unavailable():
     e = ytdl.classify("ERROR: Unable to download API page: HTTP Error 503: Service Unavailable")
     assert type(e) is ytdl.YtError
     assert isinstance(ytdl.classify("ERROR: [youtube] x: This video is unavailable"), ytdl.YtUnavailable)
+
+
+@pytest.mark.parametrize('ref', [
+    'https://notyoutube.com/@Tasty', 'https://youtube.com.evil.org/@Tasty',
+    'https://www.youtube.com/feed/subscriptions', 'https://www.youtube.com/playlist?list=private',
+    'https://user:password@youtube.com/@Tasty', '@Tasty/../feed/subscriptions',
+    'https://www.youtube.com/@Tasty%2f..%2ffeed',
+])
+def test_public_channel_rejects_non_channel_sources(monkeypatch, ref):
+    calls = []
+    monkeypatch.setattr(ytdl, '_extract', lambda *a, **k: calls.append((a, k)))
+    with pytest.raises(ytdl.YtError):
+        ytdl.channel_videos(ref)
+    assert calls == []
+
+
+@pytest.mark.parametrize('tab,expected', [(None, 'videos'), ('shorts', 'shorts')])
+def test_public_channel_authcheck_skip_is_scoped(monkeypatch, tab, expected):
+    calls = []
+    def fake(url, *a, **opts):
+        calls.append((url, opts))
+        return {'entries': [{'id': '26P1KyvrmjI', 'duration': 150, 'url': '26P1KyvrmjI'}]}
+    monkeypatch.setattr(ytdl, '_extract', fake)
+    ch, entries = ytdl.channel_videos('@Tasty', tab=tab)
+    assert calls[0][0] == f'https://www.youtube.com/@Tasty/{expected}'
+    assert calls[0][1]['extractor_args'] == {'youtubetab': {'skip': ['authcheck']}}
+    assert entries[0]['is_short'] is (tab == 'shorts')
+    assert 'youtubetab' not in ytdl._opts()['extractor_args']
+    ytdl.search('cooking')
+    assert 'extractor_args' not in calls[1][1]
+
+
+def test_explicit_short_tab_replaces_other_channel_tab():
+    assert ytdl._channel_url('https://youtube.com/@Tasty/videos', 'shorts').endswith('/@Tasty/shorts')
+    assert ytdl._channel_url('https://youtube.com/@Tasty/shorts').endswith('/@Tasty/shorts')

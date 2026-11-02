@@ -1188,3 +1188,70 @@ def test_prefilter_skips_reuploads_of_rejected_titles():
     pf = lambda e: data.prefilter(e, cat, ctx, True, rejected=rejected)  # noqa: E731
     assert pf(entry("vidNEW00001", "funny baby moments with  CAT | non stop laughing")) == "same title rejected before"
     assert pf(entry("vidNEW00002", "Bengal cat")) is None  # short generic titles are not keyed
+
+
+@pytest.mark.parametrize('kind', ['videos', 'shorts'])
+def test_discovery_channel_selects_feed_tab(kind):
+    from bt.agent import planner
+    cat = make_category(kind=kind, seed_channels=['@Tasty'])
+    cat.seed_queries = []
+    w = make_worker()
+    calls = []
+    def channel(ref, **kw):
+        calls.append((ref, kw))
+        return {}, []
+    w.rt.yt.channel_videos = channel
+    planner.save_plan(cat.id, {'queries': [], 'channels': [], 'cursor': 0, 'planned_at': now().isoformat()})
+    planner.discover(w.rt, w.rl, cat)
+    assert calls == [('@Tasty', {'n': 30, 'origin': 'worker', **({'tab': 'shorts'} if kind == 'shorts' else {})})]
+
+
+@pytest.mark.parametrize('kind', ['videos', 'shorts'])
+def test_rss_unavailable_falls_back_to_public_channel(kind):
+    from bt.agent import planner
+    cat = make_category(kind=kind)
+    cat.seed_queries = []
+    with session() as s:
+        s.add(ProfileChannel(profile_id=cat.profile_id, channel_id='UCmissing', subscribed=True))
+        s.commit()
+    w = make_worker()
+    calls = []
+    def missing(ref):
+        raise YtUnavailable('rss channel: not found')
+    def channel(ref, **kw):
+        calls.append((ref, kw))
+        return {}, []
+    w.rt.feeds.channel_feed = missing
+    w.rt.yt.channel_videos = channel
+    planner.save_plan(cat.id, {'queries': [], 'channels': [], 'cursor': 0, 'planned_at': now().isoformat()})
+    result = planner.discover(w.rt, w.rl, cat)
+    assert result['found'] == 0
+    assert calls == [('UCmissing', {'n': 30, 'origin': 'worker', **({'tab': 'shorts'} if kind == 'shorts' else {})})]
+    assert not events('error')
+
+
+@pytest.mark.parametrize('error', [YtBlocked, YtUnavailable])
+def test_rss_fallback_preserves_blocks_and_unavailable_continues(error):
+    from bt.agent import planner
+    cat = make_category()
+    cat.seed_queries = []
+    with session() as s:
+        s.add(ProfileChannel(profile_id=cat.profile_id, channel_id='UCmissing', subscribed=True))
+        s.commit()
+    w = make_worker()
+    calls = []
+    def missing(ref):
+        raise error('rss not found' if error is YtUnavailable else 'HTTP 429')
+    def channel(ref, **kw):
+        calls.append(ref)
+        raise YtUnavailable('channel not found')
+    w.rt.feeds.channel_feed = missing
+    w.rt.yt.channel_videos = channel
+    planner.save_plan(cat.id, {'queries': [], 'channels': [], 'cursor': 0, 'planned_at': now().isoformat()})
+    with pytest.raises(YtBlocked if error is YtBlocked else planner._Skip):
+        planner.discover(w.rt, w.rl, cat)
+    assert calls == ([] if error is YtBlocked else ['UCmissing'])
+    assert planner.load_plan(cat.id)['cursor'] == 1
+    with session() as s:
+        subscription = s.exec(select(ProfileChannel).where(ProfileChannel.channel_id == 'UCmissing')).one()
+        assert (subscription.last_feed_check is not None) is (error is YtUnavailable)

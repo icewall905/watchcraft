@@ -305,22 +305,27 @@ def search(query: str, n: int = 15, origin: str = "worker") -> list[dict]:
     return [x for x in (_entry(e) for e in info.get("entries") or [] if e) if x]
 
 
-def _channel_url(ref: str) -> str:
+def _channel_url(ref: str, tab: str | None = None) -> str:
+    """Canonical public channel tabs only; never accept private feeds or playlist URLs."""
+    if tab not in (None, "videos", "shorts", "streams"):
+        raise YtError("unsupported channel tab")
     ref = ref.strip()
+    if not ref or re.search(r"[\s\\?#]", ref):
+        raise YtError("invalid public channel reference")
     if re.fullmatch(r"UC[A-Za-z0-9_-]{22}", ref):
-        return f"https://www.youtube.com/channel/{ref}/videos"
-    if ref.startswith("@"):
-        return f"https://www.youtube.com/{ref}/videos"
-    if ref.startswith(("http://", "https://")) or ref.startswith(("www.", "youtube.com", "m.youtube.com")):
-        u = ref if "://" in ref else "https://" + ref
-        p = up.urlparse(u)
-        if not (p.hostname or "").endswith("youtube.com"):
-            raise YtError(f"not a youtube url: {ref}")
+        path = f"/channel/{ref}"
+    elif ref.startswith(("http://", "https://", "www.", "youtube.com", "m.youtube.com")):
+        p = up.urlparse(ref if "://" in ref else "https://" + ref)
+        allowed_hosts = {"youtube.com", "www.youtube.com", "m.youtube.com"}
+        if p.netloc.lower() not in {host + port for host in allowed_hosts for port in ("", ":80", ":443")}:
+            raise YtError("not a public youtube channel URL")
         path = p.path.rstrip("/")
-        if re.fullmatch(r"/(channel/[^/]+|@[^/]+|c/[^/]+|user/[^/]+)", path):
-            path += "/videos"
-        return f"https://www.youtube.com{path}"
-    return f"https://www.youtube.com/@{ref}/videos"
+    else:
+        path = "/" + (ref if ref.startswith("@") else "@" + ref)
+    match = re.fullmatch(r"(/(?:@[\w.-]+|channel/UC[A-Za-z0-9_-]{22}|(?:c|user)/[\w.-]+))(?:/(videos|shorts|streams))?", path)
+    if not match:
+        raise YtError("expected a public YouTube channel or channel tab")
+    return f"https://www.youtube.com{match[1]}/{tab or match[2] or 'videos'}"
 
 
 def _avatar(info: dict) -> str:
@@ -332,10 +337,13 @@ def _avatar(info: dict) -> str:
     return max(sq, key=lambda t: t["width"])["url"] if sq else ""
 
 
-def channel_videos(ref: str, n: int = 30, origin: str = "worker") -> tuple[dict, list[dict]]:
+def channel_videos(ref: str, n: int = 30, origin: str = "worker", *, tab: str | None = None) -> tuple[dict, list[dict]]:
     n = max(1, min(int(n), 100))
-    info = _extract(_channel_url(ref), "channel", origin, f"channel {ref}", extract_flat="in_playlist",
-                    playlistend=n)
+    url = _channel_url(ref, tab)
+    # Only validated public channel tabs use this upstream-supported workaround.
+    # Keep auth checks intact for private playlists, subscriptions and all other extractors.
+    info = _extract(url, "channel", origin, f"channel {ref}", extract_flat="in_playlist",
+                    playlistend=n, extractor_args={"youtubetab": {"skip": ["authcheck"]}})
     uid = info.get("uploader_id") or ""
     ch = {
         "id": info.get("channel_id") or info.get("id") or "",
@@ -344,6 +352,9 @@ def channel_videos(ref: str, n: int = 30, origin: str = "worker") -> tuple[dict,
         "avatar": _avatar(info),
     }
     entries = [x for x in (_entry(e, ch) for e in list(info.get("entries") or [])[:n] if e) if x]
+    if url.endswith("/shorts"):
+        for entry in entries:
+            entry["is_short"] = True  # Flat entries may omit the URL or last up to three minutes.
     return ch, entries
 
 
