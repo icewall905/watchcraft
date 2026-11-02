@@ -64,6 +64,12 @@ export function currentProfileId(): string | null {
 	}
 }
 
+/** Profile header for raw fetches that bypass `request()` (media, manifests): the backend scopes those by profile. */
+export function profileHeaders(): Record<string, string> {
+	const pid = currentProfileId();
+	return pid ? { 'X-Profile-Id': pid } : {};
+}
+
 interface ReqOpts {
 	method?: string;
 	body?: unknown;

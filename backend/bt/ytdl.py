@@ -309,7 +309,10 @@ def _entry(e: dict, channel: dict | None = None) -> dict | None:
 
 def search(query: str, n: int = 15, origin: str = "worker") -> list[dict]:
     n = max(1, min(int(n), 50))
-    info = _extract(f"ytsearch{n}:{query}", "search", origin, f"search {query!r}", extract_flat="in_playlist")
+    # approximate_date fills published_at from YouTube's relative text, so discovery can apply
+    # max_age_days before paying for a full extraction.
+    info = _extract(f"ytsearch{n}:{query}", "search", origin, f"search {query!r}", extract_flat="in_playlist",
+                    extractor_args={"youtubetab": {"approximate_date": ["1"]}})
     return [x for x in (_entry(e) for e in info.get("entries") or [] if e) if x]
 
 
@@ -353,7 +356,7 @@ def channel_videos(ref: str, n: int = 30, origin: str = "worker", *, tab: str | 
     # Only validated public channel tabs use this upstream-supported workaround.
     # Keep auth checks intact for private playlists, subscriptions and all other extractors.
     info = _extract(url, "channel", origin, f"channel {ref}", extract_flat="in_playlist",
-                    playlistend=n, extractor_args={"youtubetab": {"skip": ["authcheck"]}})
+                    playlistend=n, extractor_args={"youtubetab": {"skip": ["authcheck"], "approximate_date": ["1"]}})
     uid = info.get("uploader_id") or ""
     ch = {
         "id": info.get("channel_id") or info.get("id") or "",

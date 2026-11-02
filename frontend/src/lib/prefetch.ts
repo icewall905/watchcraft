@@ -2,7 +2,7 @@
 // autoplay target. A warm video skips the whole "Preparing video" extraction on click — for
 // AI-picked videos the curator has usually extracted the info already, and this asks for it early.
 // Cheap when nothing is cold: the backend serves detail from its caches without touching YouTube.
-import { api } from '$lib/api';
+import { api, profileHeaders } from '$lib/api';
 import { session } from '$lib/stores/session.svelte';
 
 let lastAt = 0;
@@ -21,7 +21,7 @@ export function warmVideo(id: string, opts: { offline?: boolean; manifest?: bool
 				warmed.add(id);
 				// Also warm the DASH manifest (its format checks) when a play is imminent.
 				if (opts.manifest)
-					void fetch(api.manifestUrl(id, session.settings?.player.max_height), { cache: 'no-store' }).catch(() => {});
+					void fetch(api.manifestUrl(id, session.playerPrefs.max_height), { cache: 'no-store', headers: profileHeaders() }).catch(() => {});
 			},
 			() => {}
 		)

@@ -67,10 +67,10 @@ def sources(cat: Category, plan: dict, subs: list[str]) -> list[tuple[str, str]]
             seen.add(key)
             out.append((kind, ref))
 
-    qs = list(plan.get("queries") or [])
+    qs = [q for q in (plan.get("queries") or []) if not prompts.future_dated(q)]
     chans = [ref for ref in list(cat.seed_channels or []) + list(plan.get("channels") or [])
              if channel_sources.available(cat, plan, ref)]
-    seeds = list(cat.seed_queries or [])
+    seeds = [q for q in (cat.seed_queries or []) if not prompts.future_dated(q)]
     # Profile subscriptions are suggestions for the planner, not sources for every playlist.
     eligible = set(subs)
     selection = plan.get("subscriptions") or []

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Optional
 
 FAMILY = ("You work for BetterTube, a private, ad-free YouTube front-end used by one family at home "
@@ -34,6 +35,13 @@ How to judge:
   for true fun/quality: genuine laughter, "my kids loved this", learning moments = good; complaints about
   fake/staged content, cruelty, bait, or "waste of time" = bad.
 - Reward: genuine fun, warmth, curiosity, craft and effort, good storytelling, real learning, kindness.
+- Popularity is not quality. Views, likes and channel size measure reach, not worth: a small channel can make
+  an excellent video and a huge one a lazy one. Never lower the score for low views or likes, and never raise
+  it for high ones. Judge the video, not its audience.
+- Missing evidence is not negative evidence. An absent transcript, comment section or description means the
+  data could not be fetched, not that the video is lazy, silent or unloved. Judge from whatever is available
+  (title, thumbnail, description, chapters, uploader tags) and say in the summary what you could not check.
+  Never invent a red flag to fill the gap, and never list "no transcript" or "no comments" as a red flag.
 - Red flags (list each one you find in red_flags, short and concrete):
   animal cruelty or distress played for laughs; meanness, humiliation, bullying or cruel pranks; dangerous
   stunts kids could copy; clickbait (title/thumbnail promise something the video does not deliver);
@@ -52,20 +60,27 @@ How to judge:
   the current brief and applicable lessons; never infer a channel ban from previous AI rejections.
   A candidate that repeats a supported listed failure — same shallow treatment of the topic,
   same red flag — must be rejected too. One that fixes the reason (e.g. the family said "too basic", so
-  this one goes deeper) counts in its favour.
+  this one goes deeper) counts in its favour. A rejection is only a precedent when its reason is a real
+  quality or safety failure: one that rested on low views, a missing transcript or comment section, or a
+  format the brief never required is not a failure to repeat.
 - Preserve the brief's distinctions between preferences and hard requirements. A preferred duration,
   target mix of obscure creators, or preference for explanations is not an absolute ban unless the
   family explicitly made it one. A demonstration can be valuable without narration; missing transcripts
   are missing evidence, not proof of low effort. Apply tutorial-specific lessons to tutorials, not every
   visual demonstration. Do not infer that a topic is banned because earlier videos on it were rejected.
+  Read the brief at its own breadth: a broad brief ("fun cooking tricks", "cool science") is satisfied by
+  any video that delivers what it names, so do not require a narrower format, a single trick or a teaching
+  style the family never asked for.
 - CHANNEL TRUST (-1..1) reflects the family's past ratings of this channel: lean on it, but the video's own
   content decides.
 - VARIETY: the CURRENT QUEUE lists what is already waiting in this category. When the brief covers several
   kinds of videos, keep the queue balanced: if it already holds several videos very similar to this one
-  (same topic, format or channel), that is a reason to be stricter; if it fills a gap, let that count in
-  the video's favour. Never accept a weak video just for variety, and never punish a great one — quality first.
+  (same topic, format or channel), let that break a close call towards the gap; if it fills a gap, let that
+  count in the video's favour. Variety never decides on its own: never accept a weak video for it, and never
+  reject a good one because something similar is already queued.
 - Score 0-100 for this category: 90+ outstanding, 75-89 clearly good, 60-74 okay, below 50 poor or off-topic.
-  Be strict: an average YouTube video should score around 50. Off-topic for the category = below 40.
+  Be strict about fit and quality, not about scale or polish: a modest video that plainly delivers what the
+  brief asks is clearly good, and a slick one that misses the brief is not. Off-topic for the category = below 40.
 - summary: 1-2 plain sentences telling the family why this is worth watching (or why not). No hype.
 - tags: 2-6 short lowercase canonical tags, with the MAIN SUBJECT first (for example "volcanoes",
   "dinosaurs", or "piano"). Put the format next (for example "experiment", "story", "animation",
@@ -144,6 +159,7 @@ def judge_messages(cat, video, lessons: list, trust: Optional[float], transcript
         f"Channel: {video.channel_name} ({video.channel_id})"
         + (f" — family trust {trust:+.1f}" if trust is not None else " — family trust: unknown (new channel)"),
         f"Duration: {_fmt_dur(video.duration_s)} | Views: {video.view_count:,} | Likes: {video.like_count:,}"
+        + " (reach only — not a quality signal)"
         + (f" | Published: {video.published_at:%Y-%m-%d}" if video.published_at else ""),
     ]
     if video.tags:
@@ -153,11 +169,10 @@ def judge_messages(cat, video, lessons: list, trust: Optional[float], transcript
         rejections_block(rejections or []),
         queue_block(queue or []),
         "VIDEO\n" + "\n".join(meta),
-        "DESCRIPTION\n" + _clip(video.description, 1500),
+        "DESCRIPTION\n" + (_clip(video.description, 1500) or "(not available — missing evidence, not a fault)"),
         "CHAPTERS\n" + (chapters or "(none)"),
-        "TRANSCRIPT\n" + (_clip(video.transcript, transcript_chars) or "(no transcript available — rely on "
-                                                                        "description, comments and thumbnail)"),
-        "TOP COMMENTS\n" + ("\n".join(comments) or "(no comments available)"),
+        "TRANSCRIPT\n" + (_clip(video.transcript, transcript_chars) or "(not available — missing evidence, not a fault)"),
+        "TOP COMMENTS\n" + ("\n".join(comments) or "(not available — missing evidence, not a fault)"),
     ])
     from .memory import apply
     return apply([{"role": "system", "content": JUDGE_SYSTEM}, {"role": "user", "content": user}], core, lessons_block(lessons))
@@ -193,6 +208,9 @@ You are the PLANNER. Propose YouTube searches that will surface excellent NEW vi
   searches for gaps. Do not batch all queries around one interest just because it is easy to search.
 - Pacing: balance short, medium and longer videos when the duration range and brief allow it. Prefer a mix
   of formats and creators while preserving the strongest quality and safety requirements.
+- Recency: the brief may ask for current news or recent developments. When it does, prefer queries that name
+  the current period, and never search a year or month that has already passed unless the brief asks for
+  history. When the brief is evergreen, do not force dates into queries.
 - Favour queries that find high-effort, genuinely fun or educational content; avoid queries that attract
   clickbait, prank, reaction, compilation or "satisfying" spam.
 - Use RECENT DISCOVERY OUTCOMES to improve searches: replace phrases that mostly found off-topic,
@@ -219,15 +237,38 @@ You are the PLANNER. Propose YouTube searches that will surface excellent NEW vi
 Output ONLY the JSON object."""
 
 
+_MONTHS = ("january", "february", "march", "april", "may", "june", "july", "august",
+           "september", "october", "november", "december")
+
+
+def future_dated(text: str, today=None) -> bool:
+    """True when a query names a year, or a month and year, that has not arrived yet.
+
+    A seed such as "best AI homelab December 2026" cannot match anything before that month, so searching it
+    wastes a rotation slot and returns stale results for the current-news brief it was meant to serve. A bare
+    month name is left alone: "December cookies" is a subject, not a date.
+    """
+    from ..models import now
+    today = today or now()
+    low = (text or "").lower()
+    if any(int(y) > today.year for y in re.findall(r"\b(20\d{2})\b", low)):
+        return True
+    months = "|".join(_MONTHS)
+    return any((int(y), _MONTHS.index(m) + 1) > (today.year, today.month)
+               for m, y in re.findall(rf"\b({months})\s+(20\d{{2}})\b", low))
+
+
 def planner_messages(cat, lessons: list, accepted: list[str], rejected: list[str], disliked: list[str],
                      tried: list[str], queue: Optional[list[str]] = None, core: str = "",
                      search_yield: Optional[list[str]] = None, subscriptions: Optional[list[dict]] = None,
                      unavailable_channels: Optional[list[dict]] = None,
                      known_channels: Optional[list[dict]] = None) -> list[dict]:
+    from ..models import now
     # Keep stable category/seeds/lessons context ahead of changing queue/history.
-    parts = [category_block(cat)]
-    if cat.seed_queries:
-        parts.append("Seed queries from the family: " + "; ".join(cat.seed_queries))
+    parts = [category_block(cat), f"Today is {now():%Y-%m-%d}."]
+    seeds = [q for q in (cat.seed_queries or []) if not future_dated(q)]
+    if seeds:
+        parts.append("Seed queries from the family: " + "; ".join(seeds))
     if cat.seed_channels:
         parts.append("Seed channels from the family: " + ", ".join(cat.seed_channels))
     parts.append(queue_block(queue or []))

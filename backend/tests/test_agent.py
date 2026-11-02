@@ -1499,3 +1499,71 @@ def test_failed_display_name_handle_receives_observed_canonical_alternative():
     assert plan['channels'] == [canonical]
     assert 'PREVIOUSLY OBSERVED CHANNEL REFERENCES' in seen[0]
     assert '@buzzfeedtasty' in seen[0] and canonical in seen[0]
+
+
+# ------------------------------------------------------------------ judge calibration (B-028)
+
+def test_judge_prompt_treats_popularity_and_missing_evidence_as_neutral():
+    cat = make_category()
+    with session() as s:
+        v = Video(id="vidCALIB001", title="Custard tip", channel_id="UCsmall", channel_name="Small",
+                  duration_s=300, view_count=12, like_count=1, description="", transcript="", comments=[])
+        s.add(v)
+        s.commit()
+        s.refresh(v)
+        msgs = prompts.judge_messages(cat, v, [], None, 24000)
+    system, user = msgs[0]["content"], msgs[1]["content"]
+    assert "Popularity is not quality" in system
+    assert "Missing evidence is not negative evidence" in system
+    assert "reach only — not a quality signal" in user
+    assert user.count("missing evidence, not a fault") == 3
+    assert "no transcript available" not in user and "no comments available" not in user
+
+
+def test_judge_prompt_keeps_safety_rules_and_reads_broad_briefs_at_their_breadth():
+    cat = make_category()
+    with session() as s:
+        v = Video(id="vidCALIB002", title="Charming recipe", channel_id="UCcook", channel_name="Cook",
+                  duration_s=300, view_count=900, like_count=10, description="", transcript="", comments=[])
+        s.add(v)
+        s.commit()
+        s.refresh(v)
+        msgs = prompts.judge_messages(cat, v, [], None, 24000)
+    system = msgs[0]["content"]
+    # Safety stays a hard gate; only the quality calibration changed.
+    assert "animal cruelty or distress played for laughs" in system
+    assert "kid_safe = true only if a parent would happily let a ~6-year-old watch it alone" in system
+    assert "Read the brief at its own breadth" in system
+    assert "Variety never decides on its own" in system
+    assert "is not a failure to repeat" in system
+
+
+# ------------------------------------------------------------------ discovery freshness (B-029)
+
+def test_future_dated_queries_are_recognised():
+    from datetime import datetime, timezone
+    today = datetime(2026, 11, 2, tzinfo=timezone.utc)
+    assert prompts.future_dated("best AI homelab December 2026", today)
+    assert prompts.future_dated("coolest AI news 2027", today)
+    assert not prompts.future_dated("coolest AI news 2026", today)
+    assert not prompts.future_dated("best AI homelab November 2026", today)
+    assert not prompts.future_dated("December cookies", today)  # a subject, not a date
+    assert not prompts.future_dated("fun cooking tricks", today)
+
+
+def test_discovery_skips_future_dated_seeds_and_tells_the_planner_the_date():
+    from bt.agent import planner
+    with session() as s:
+        pid = s.exec(select(Profile)).first().id
+        cat = Category(profile_id=pid, name="AI news", brief="Coolest AI news",
+                       seed_queries=["fun cooking tricks", "best AI homelab December 2026"], threshold=65)
+        s.add(cat)
+        s.commit()
+        s.refresh(cat)
+    plan = planner.load_plan(cat.id)
+    refs = [ref for kind, ref in planner.sources(cat, plan, []) if kind == "query"]
+    assert "fun cooking tricks" in refs
+    assert "best AI homelab December 2026" not in refs
+    prompt = prompts.planner_messages(cat, [], [], [], [], [])[-1]["content"]
+    assert f"Today is {now():%Y-%m-%d}." in prompt
+    assert "best AI homelab December 2026" not in prompt

@@ -19,6 +19,11 @@ class Session {
 	version = $state(0);
 
 	profile = $derived(this.profiles.find((p) => p.id === this.profileId) ?? null);
+	/** Player settings for the active profile: profile prefs override the global defaults. */
+	playerPrefs = $derived({
+		...(this.settings?.player ?? {}),
+		...((this.profile?.prefs?.player ?? {}) as Partial<Settings['player']>)
+	});
 	isAdmin = $derived(this.profile?.role === 'admin' && !this.profile?.pin_locked);
 	hubAllowed = $derived(!!this.profile && this.profile.role !== 'child' && !this.profile.pin_locked);
 	needsLogin = $derived(this.authRequired && !this.authenticated);

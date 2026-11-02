@@ -182,13 +182,24 @@
 	/** Stream through Shaka (DASH), falling back to the progressive proxy. Returns false if superseded. */
 	async function stream(vid: string, start: number, seq: number): Promise<boolean> {
 		if (!video) return false;
-		const maxH = session.settings?.player.max_height;
+		const maxH = session.playerPrefs.max_height;
 		let ok = false;
 		try {
 			const shaka = await loadShaka();
 			if (seq !== loadSeq) return false;
 			if (shaka.Player.isBrowserSupported()) {
 				player = new shaka.Player();
+				// The manifest is profile-scoped. Without the header the backend falls back to the first
+				// profile, which may be locked, and player prefs come from the wrong profile.
+				const profileId = session.profileId;
+				player.getNetworkingEngine()?.registerRequestFilter((_type: number, request: { uris: string[]; headers: Record<string, string> }) => {
+					if (profileId === null || !request.uris.length) return;
+					const sameOriginManifest = request.uris.every((uri: string) => {
+						const url = new URL(uri, location.href);
+						return url.origin === location.origin && /^\/api\/video\/[^/]+\/manifest\.mpd$/.test(url.pathname);
+					});
+					if (sameOriginManifest) request.headers['X-Profile-Id'] = String(profileId);
+				});
 				await player.attach(video);
 				player.configure({
 					streaming: { bufferingGoal: 45, rebufferingGoal: 2, bufferBehind: 30, retryParameters: { maxAttempts: 4, timeout: 30000 } },

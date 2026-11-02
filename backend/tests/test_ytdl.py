@@ -416,11 +416,21 @@ def test_public_channel_authcheck_skip_is_scoped(monkeypatch, tab, expected):
     monkeypatch.setattr(ytdl, '_extract', fake)
     ch, entries = ytdl.channel_videos('@Tasty', tab=tab)
     assert calls[0][0] == f'https://www.youtube.com/@Tasty/{expected}'
-    assert calls[0][1]['extractor_args'] == {'youtubetab': {'skip': ['authcheck']}}
+    assert calls[0][1]['extractor_args'] == {'youtubetab': {'skip': ['authcheck'], 'approximate_date': ['1']}}
     assert entries[0]['is_short'] is (tab == 'shorts')
     assert 'youtubetab' not in ytdl._opts()['extractor_args']
     ytdl.search('cooking')
-    assert 'extractor_args' not in calls[1][1]
+    assert 'skip' not in calls[1][1]['extractor_args']['youtubetab']
+
+
+def test_discovery_requests_approximate_dates_so_freshness_can_be_checked_early(monkeypatch):
+    calls = []
+    monkeypatch.setattr(ytdl, '_extract', lambda *a, **k: calls.append((a, k)) or {'entries': []})
+    ytdl.search('ai news')
+    ytdl.channel_videos('@Tasty')
+    assert len(calls) == 2
+    for _, opts in calls:
+        assert opts['extractor_args']['youtubetab']['approximate_date'] == ['1']
 
 
 def test_explicit_short_tab_replaces_other_channel_tab():
