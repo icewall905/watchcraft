@@ -1,5 +1,45 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — thumbs down always hides, and asks why when it cannot learn (`1fb720f`, 2026-11-02)
+
+- Covers `0eaf673..1fb720f`. A meme whose title had no distinctive words made the curator feedback answer 422
+  "Nothing distinctive in this finding to learn from", and because that call ran before the dismissal the whole
+  thumbs down aborted: the meme stayed in the feed and the person got an error instead of a result. The Meme
+  Tracker's own queries (`memes`, `linux memes`, `programming humor`, `AI memes`) are excluded from the words it
+  learns, so a meme titled only "#memes" has nothing left to learn from — the case that failed.
+- The dismissal now happens first, so the meme always leaves the feed. The feedback runs after it; when it still
+  has nothing to learn from, the tracker asks "What should I avoid?" in a small dialog and sends that word as the
+  reason. The feedback call no longer raises its own toast, so the question replaces the error instead of
+  appearing beside it. `POST /items/{iid}/curator-feedback` accepts optional `terms` for exactly this case: the
+  person's word is cleaned, bounded to three and learned into the curator's `tuned_down` instead of the title words.
+- Local verification: **682 backend tests passed, six skipped** (two new cover the typed reason and its bounds);
+  **4 meme-feedback browser specs** including one where the feedback answers 422 and the meme still disappears,
+  the dialog appears and the typed word is sent as `terms`; **15 browser tests** across memes and a11y;
+  svelte-check 0 errors (three existing CSS warnings); production build.
+- Fresh online and stopped-service backups: `/root/compose/watchcraft-backups/20261102-pre-thumbs-reason`
+  (integrity `ok`; 6 profiles, 7,719 videos, 29 categories, 401 items, 7,294 candidates, 2,283 downloads, 18
+  sources, 9 curators). Rollback image `watchcraft:rollback-20261102-thumbs-reason` retains `0eaf673`
+  (`c8e20dfe5169`). Saved media was unchanged.
+- Isolated restore of the online backup ran `watchcraft:1fb720f` on `127.0.0.1:6697`: integrity `ok`, every count
+  and the profile/PIN checksum identical, started twice, all routes 200, no tracebacks. A disposable adult QA
+  profile drove the real path: the meme feed held 18 items, a thumbs down dismissed the item (200, `dismissed:
+  true`), the feed dropped to 17 with the item absent, and a feedback call carrying `terms: ["  Spongebob "]`
+  returned `added: ['spongebob']` with `tuned_down` growing by exactly that word. The disposable containers and
+  data were removed.
+- Rollout used rsync without `--delete` and preserved `.env` and `compose.host.yaml` (checksums verified before and
+  after). `DEPLOYED_COMMIT=1fb720f`; API, worker and downloader run image
+  `sha256:37e229eb4d6c0cb534deac3168b3aea3e744108e3ae5653c2cfe7b5da4638c6b` with zero restarts and no tracebacks.
+- Post-deploy: local `/api/health` OK and `https://wc.tdgs.org` plus `https://watchcraft.tdgs.org` return 200; `/`,
+  `/shorts`, `/agent`, `/settings`, `/discover`, `/news`, `/library`, `/memes`, `/api/categories` and
+  `/api/downloads` return 200; DB integrity `ok`; profiles, roles and both PIN records unchanged (checksum
+  `2c415ddd39a318be`); the deployed bundle contains the "What should I avoid?" dialog and the backend exposes
+  `_clean_terms`.
+- Rollback: `docker tag watchcraft:rollback-20261102-thumbs-reason watchcraft:latest` and rerun the three-file
+  compose command with `up -d --no-build --force-recreate --wait` (no schema change).
+- Still open: V-040 (curation measurement window), B-033, B-034, T-075 Stages E–G, and the physical device checks
+  V-002/V-003/V-010/V-027. A thumbs down hides the item and ranks its shape lower; it does not hard-exclude the
+  words, so a different meme with the same words can still arrive.
+
 ## Deployment record — GitHub rate limits and meme thumbs-down hiding (`0eaf673`, 2026-11-02)
 
 - Covers `dd88919..0eaf673`. Two changes.
