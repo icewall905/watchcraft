@@ -3,7 +3,7 @@ import pytest
 from test_agent import fresh_db, make_category, make_worker  # noqa: F401
 
 from bt import ytdl
-from bt.agent import enrich
+from bt.agent import enrich, judge
 from bt.db import get_kv, session
 from bt.models import Candidate, Video, now
 
@@ -122,3 +122,28 @@ def test_network_enrichment_never_overwrites_manual_decision():
     with session() as s:
         assert s.get(Candidate, cand.id).status == 'accepted'
         assert s.get(Video, cand.video_id).comments == [{'text': 'useful'}]
+
+
+def _acquired_comments(monkeypatch, setting, vid):
+    cat = make_category()
+    w = make_worker()
+    cand = candidate(cat, vid)
+    monkeypatch.setattr(w.rt, "throttle", lambda: {"max_comments": setting, "transcript_max_chars": 5000})
+    seen = []
+
+    def comments(video_id, max_comments=40, origin="worker"):
+        seen.append(max_comments)
+        return [{"text": "useful"}]
+
+    w.rt.yt.comments = comments
+    assert enrich.enrich_one(w.rt, w.rl, cand, cat) == "enriched"
+    return seen
+
+
+def test_comment_acquisition_is_capped_at_the_judge_evidence_limit(monkeypatch):
+    # Production asks for 60 while the judge reads 30; the extra pages are waste.
+    assert _acquired_comments(monkeypatch, 60, "fastpath009") == [judge.JUDGE_COMMENTS_MAX]
+
+
+def test_comment_acquisition_keeps_a_lower_setting(monkeypatch):
+    assert _acquired_comments(monkeypatch, 12, "fastpath010") == [12]

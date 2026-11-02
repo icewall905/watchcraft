@@ -8,7 +8,7 @@ from sqlalchemy import exists, update
 
 from ..db import drop_kv, get_kv, save_setting, session
 from ..models import Candidate, Category, Video, now
-from . import data, timing
+from . import data, judge, timing
 from .runtime import Runtime
 
 log = logging.getLogger("bt.agent")
@@ -171,7 +171,10 @@ def enrich_one(rt: Runtime, rl, cand: Candidate, cat: Category) -> str:
 
     # 3) comments (optional)
     rt.check()
-    n = int(th.get("max_comments") or 40)
+    # The judge reads at most JUDGE_COMMENTS_MAX comments, so acquiring more
+    # only costs yt-dlp continuation pages. The player fetches its own page on
+    # demand; this cache is a warm start, not its source of truth.
+    n = min(int(th.get("max_comments") or 40), judge.JUDGE_COMMENTS_MAX)
     rl.wait_turn("comments", cat, **st)
     rt.state("comments", f"Reading comments: {title}", cat, **st)
     try:
