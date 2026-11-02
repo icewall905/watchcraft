@@ -5,9 +5,9 @@ import json
 import re
 from typing import Optional
 
-FAMILY = ("You work for BetterTube, a private, ad-free YouTube front-end used by one family at home "
-          "(parents and young kids, often watching together on a projector). Your job is to curate genuinely "
-          "good videos for each of the family's categories so they never have to browse YouTube's feed.")
+FAMILY = ("You work for BetterTube, a private, ad-free YouTube front-end used by one household. Your job is "
+          "to curate genuinely good videos for each of the household's categories so they never have to "
+          "browse YouTube's feed.")
 
 # ---------------------------------------------------------------- judge
 
@@ -43,13 +43,15 @@ How to judge:
   (title, thumbnail, description, chapters, uploader tags) and say in the summary what you could not check.
   Never invent a red flag to fill the gap, and never list "no transcript" or "no comments" as a red flag.
 - Red flags (list each one you find in red_flags, short and concrete):
-  animal cruelty or distress played for laughs; meanness, humiliation, bullying or cruel pranks; dangerous
-  stunts kids could copy; clickbait (title/thumbnail promise something the video does not deliver);
-  low-effort content (compilations of stolen clips, AI-voiced slideshows, filler, endless intros, padding);
-  engagement bait, heavy sponsorship/merch pushing, gambling/loot boxes; misinformation;
-  sexual content, gore, swearing or scary content (anything a parent would not want a young child to see).
-- kid_safe = true only if a parent would happily let a ~6-year-old watch it alone. When the category is
-  marked kid-safe, any kid-safety concern must lower the score sharply.
+  clickbait (title/thumbnail promise something the video does not deliver); low-effort content
+  (compilations of stolen clips, AI-voiced slideshows, filler, endless intros, padding); engagement bait,
+  heavy sponsorship/merch pushing, gambling/loot boxes; misinformation; cruelty or meanness presented as
+  entertainment (humiliation, bullying, cruel pranks, animal distress played for laughs).
+- Judge the video against this playlist's brief and its own audience, not against a general idea of what
+  suits children. Adult language, mature themes, violence, horror or sexual content are not red flags by
+  themselves: only this playlist's requirements decide.
+- kid_safe reports whether a parent would happily let a ~6-year-old watch the video alone. It is
+  information only: unless this playlist is marked kid-safe, it must not change the score.
 - LESSONS come from this family's feedback. Explicit instructions, safety requirements and supported
   patterns override your general taste; a violation must score below the threshold. Tentative/unreviewed
   inferences are contextual evidence, not blanket subject/channel bans. Assess the current video's actual
@@ -88,6 +90,18 @@ How to judge:
   "educational", "kids", or "video"; never put a generic tag before the subject.
 - reasons: 2-4 short concrete reasons.
 The video thumbnail is attached if available. Output ONLY the JSON object."""
+
+# Appended only for playlists that turn the Kid-safe toggle on. Everything else is judged on its own brief.
+KID_SAFE_JUDGE = """
+- This playlist is marked KID-SAFE: a parent must be happy to let a ~6-year-old watch it alone. Add these
+  red flags when they apply: sexual content; gore or graphic injury; swearing; scary or distressing
+  imagery; dangerous stunts a young child could copy; anything else a parent would not want a young child
+  to see. Any kid-safety concern must set kid_safe to false and lower the score sharply."""
+
+
+def judge_system(cat) -> str:
+    """The judge prompt for one playlist: the child-safety block only when that playlist asks for it."""
+    return JUDGE_SYSTEM + (KID_SAFE_JUDGE if getattr(cat, "kid_safe", False) else "")
 
 
 def _clip(text: str, n: int) -> str:
@@ -175,7 +189,7 @@ def judge_messages(cat, video, lessons: list, trust: Optional[float], transcript
         "TOP COMMENTS\n" + ("\n".join(comments) or "(not available — missing evidence, not a fault)"),
     ])
     from .memory import apply
-    return apply([{"role": "system", "content": JUDGE_SYSTEM}, {"role": "user", "content": user}], core, lessons_block(lessons))
+    return apply([{"role": "system", "content": judge_system(cat)}, {"role": "user", "content": user}], core, lessons_block(lessons))
 
 
 # ---------------------------------------------------------------- planner

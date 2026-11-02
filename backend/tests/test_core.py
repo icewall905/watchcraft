@@ -610,6 +610,10 @@ def test_autofill_brief_writes_a_brief_from_the_name(monkeypatch):
     assert "Science for kids" in seen[0][0][-1]["content"]
     assert seen[0][1]["role"] == "worker"
     assert seen[0][1]["schema_name"] == "category_brief"
+    # The brief must not be pushed towards a child audience unless the name asks for one.
+    system = seen[0][0][0]["content"]
+    assert "Do not assume a young audience" in system
+    assert "young children watching together" not in system
 
 
 def test_autofill_brief_requires_a_name_and_rejects_empty_or_failed_output(monkeypatch):

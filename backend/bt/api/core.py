@@ -298,8 +298,8 @@ BRIEF_SYSTEM = """You write the brief for one WatchCraft playlist or Shorts feed
 
 Write 2-4 plain sentences under 600 characters, in the same language as the name.
 - Name the subject concretely and give 2-4 example creators, series or kinds of video that fit.
-- Say what to avoid: clickbait, pranks, shouting, compilations, or whatever genuinely does not fit.
-- Assume a family with young children watching together unless the name says otherwise.
+- Say what to avoid: clickbait, low-effort filler, or whatever genuinely does not fit the subject.
+- Do not assume a young audience: mention children or family viewing only when the name implies it.
 - Do not invent requirements the name does not imply. Do not mention scores, thresholds, durations or settings: those are separate fields.
 - Return only the brief text: no heading, no quotes, no markdown."""
 

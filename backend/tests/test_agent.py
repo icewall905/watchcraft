@@ -183,7 +183,7 @@ def make_category(**kw):
         pid = s.exec(select(Profile)).first().id
         c = Category(profile_id=pid, name=kw.pop("name", "Kids science"), brief="Fun hands-on science for kids",
                      seed_queries=["science for kids"], exclude_keywords=["minecraft"], target_queue=5,
-                     threshold=65, kid_safe=True, **kw)
+                     threshold=65, kid_safe=kw.pop("kid_safe", True), **kw)
         s.add(c)
         s.commit()
         s.refresh(c)
@@ -1520,7 +1520,7 @@ def test_judge_prompt_treats_popularity_and_missing_evidence_as_neutral():
     assert "no transcript available" not in user and "no comments available" not in user
 
 
-def test_judge_prompt_keeps_safety_rules_and_reads_broad_briefs_at_their_breadth():
+def test_judge_prompt_keeps_quality_rules_and_reads_broad_briefs_at_their_breadth():
     cat = make_category()
     with session() as s:
         v = Video(id="vidCALIB002", title="Charming recipe", channel_id="UCcook", channel_name="Cook",
@@ -1529,13 +1529,34 @@ def test_judge_prompt_keeps_safety_rules_and_reads_broad_briefs_at_their_breadth
         s.commit()
         s.refresh(v)
         msgs = prompts.judge_messages(cat, v, [], None, 24000)
-    system = msgs[0]["content"]
-    # Safety stays a hard gate; only the quality calibration changed.
-    assert "animal cruelty or distress played for laughs" in system
-    assert "kid_safe = true only if a parent would happily let a ~6-year-old watch it alone" in system
+    system = " ".join(msgs[0]["content"].split())
+    assert "cruelty or meanness presented as entertainment" in system
     assert "Read the brief at its own breadth" in system
     assert "Variety never decides on its own" in system
     assert "is not a failure to repeat" in system
+
+
+def test_child_safety_rules_only_apply_when_the_playlist_asks_for_them():
+    adult = make_category(name="True crime", kid_safe=False)
+    kid = make_category(name="Kids science", kid_safe=True)
+    with session() as s:
+        v = Video(id="vidCALIB003", title="Nightmare on Elm Street", channel_id="UChorror", channel_name="Horror",
+                  duration_s=300, view_count=900, like_count=10, description="", transcript="", comments=[])
+        s.add(v)
+        s.commit()
+        s.refresh(v)
+        adult_system = " ".join(prompts.judge_messages(adult, v, [], None, 24000)[0]["content"].split())
+        kid_system = " ".join(prompts.judge_messages(kid, v, [], None, 24000)[0]["content"].split())
+    # Without the toggle the playlist is judged on its own brief, not on what suits children.
+    assert "KID-SAFE" not in adult_system
+    assert "gore or graphic injury" not in adult_system
+    assert "swearing" not in adult_system
+    assert "not red flags by themselves" in adult_system
+    assert "must not change the score" in adult_system
+    # The toggle still turns the full child-safety gate on.
+    assert "KID-SAFE" in kid_system
+    assert "gore or graphic injury" in kid_system
+    assert "lower the score sharply" in kid_system
 
 
 # ------------------------------------------------------------------ discovery freshness (B-029)
