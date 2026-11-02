@@ -66,3 +66,25 @@ def test_tag_terms_ignores_phrases_and_negations():
     assert tag_terms('"machine learning" rust -java', negated=True) == ['java']
     assert tag_terms('') == []
     assert tag_terms('aa bb cc dd ee ff gg hh') == ['aa', 'bb', 'cc', 'dd', 'ee', 'ff']
+
+
+def test_feedback_learns_the_reason_the_person_typed(client):
+    """A meme whose title has nothing distinctive still teaches the curator when the person says why."""
+    curator = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}])
+    ids = _discover(curator, [
+        ('blank', ContentItem(url='https://example.org/m', type='meme', title='😂😂😂', summary='')),
+    ])
+    path = f"/api/hub/items/{ids['blank']}/curator-feedback"
+    # Nothing in the title to learn from, and no reason given.
+    assert client.post(path, json={'curator_id': curator['id'], 'verdict': 'less'}).status_code == 422
+    # The person supplies the reason instead.
+    r = client.post(path, json={'curator_id': curator['id'], 'verdict': 'less', 'terms': ['  Spongebob  ']})
+    assert r.status_code == 200
+    assert r.json()['added'] == ['spongebob']
+    assert r.json()['tuned_down'] == ['spongebob']
+
+
+def test_feedback_terms_are_bounded_and_deduplicated(client):
+    from bt.hub.api import _clean_terms
+    assert _clean_terms(['  Spongebob ', 'spongebob', 'a', 'x' * 80]) == ['spongebob', 'x' * 40]
+    assert _clean_terms(None) == []

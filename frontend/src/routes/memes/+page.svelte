@@ -11,6 +11,7 @@
 	import LocalImage from '$lib/hub/LocalImage.svelte';
 	import LocalVideo from '$lib/hub/LocalVideo.svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import Modal from '$lib/components/Modal.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
 
 	const LIMIT = 24;
@@ -34,6 +35,9 @@
 	// Thumbs are per item and per session: the curator's tuned lists are the durable record.
 	let verdicts = $state<Record<number, 'more' | 'less'>>({});
 	let tuning = $state<number | null>(null);
+	// Set when a thumbs down had nothing to learn from and the person should say why.
+	let ask = $state<Item | null>(null);
+	let why = $state('');
 	let similar = $state<Item[]>([]);
 	let explanation = $state<MemeExplain | null>(null);
 	let explainError = $state('');
@@ -142,32 +146,52 @@
 	function closeDrawer() { open = null; }
 	function onKey(e: KeyboardEvent) { if (e.key === 'Escape' && open) closeDrawer(); }
 
+	async function learn(it: Item, verdict: 'more' | 'less', terms?: string[]): Promise<string[]> {
+		const learned: string[] = [];
+		for (const cid of it.curator_ids ?? []) {
+			const r = await hub.curatorFeedback(it.id, cid, verdict, terms);
+			learned.push(...r.added);
+		}
+		return [...new Set(learned)];
+	}
+	async function hide(it: Item) {
+		await hub.setState(it.id, { dismissed: true });
+		verdicts = { ...verdicts, [it.id]: 'less' };
+		items = items.filter((x) => x.id !== it.id);
+		total = Math.max(0, total - 1);
+		if (open?.id === it.id) closeDrawer();
+	}
 	async function tune(it: Item, verdict: 'more' | 'less') {
 		if (tuning !== null || !it.curator_ids?.length) return;
 		tuning = it.id;
 		try {
-			const learned: string[] = [];
-			for (const cid of it.curator_ids ?? []) {
-				const r = await hub.curatorFeedback(it.id, cid, verdict);
-				learned.push(...r.added);
-			}
-			const words = [...new Set(learned)];
+			// Hide first: the meme leaves the feed even when the curator has nothing to learn from.
+			if (verdict === 'less') await hide(it);
+			const words = await learn(it, verdict);
 			const said = words.length ? `Learned: ${words.join(', ')}. ` : '';
 			if (verdict === 'more') {
 				verdicts = { ...verdicts, [it.id]: verdict };
 				toast.success(`${said}Similar memes will rank higher.`);
 				return;
 			}
-			// A thumbs down hides the meme for good and teaches the curator to rank its shape lower.
-			await hub.setState(it.id, { dismissed: true });
-			verdicts = { ...verdicts, [it.id]: verdict };
-			items = items.filter((x) => x.id !== it.id);
-			total = Math.max(0, total - 1);
-			if (open?.id === it.id) closeDrawer();
 			// A dismissal is not visible anywhere else, so keep the undo within reach.
 			toast.success(`${said}Hidden from your feed.`, { action: { label: 'Undo', run: () => void restore(it) }, timeout: 8000 });
-		} catch (e) { toast.error(errMsg(e)); }
-		finally { tuning = null; }
+		} catch (e) {
+			// The title had nothing distinctive: ask what to avoid instead of leaving it unexplained.
+			if (verdict === 'less' && /nothing distinctive/i.test(errMsg(e))) { ask = it; why = ''; }
+			else toast.error(errMsg(e));
+		} finally { tuning = null; }
+	}
+	async function submitWhy(e: SubmitEvent) {
+		e.preventDefault();
+		const item = ask;
+		const word = why.trim();
+		ask = null; why = '';
+		if (!item || !word) return;
+		try {
+			const words = await learn(item, 'less', [word]);
+			toast.success(`Learned: ${words.join(', ') || word}. Similar memes will rank lower.`);
+		} catch (err) { toast.error(errMsg(err)); }
 	}
 	async function restore(it: Item) {
 		try {
@@ -378,6 +402,19 @@
 	</div>
 {/if}
 
+{#if ask}
+	<Modal title="What should I avoid?" size="sm" onClose={() => (ask = null)}
+		subtitle="This meme is hidden. Tell me what to look out for and I will rank similar ones lower.">
+		<form class="why" onsubmit={submitWhy}>
+			<input class="input" bind:value={why} placeholder="e.g. spongebob" aria-label="What to avoid" maxlength="40" use:focusable />
+			<div class="hstack">
+				<button class="btn primary" disabled={!why.trim()} use:focusable>Learn this</button>
+				<button type="button" class="btn ghost" use:focusable onclick={() => (ask = null)}>Skip</button>
+			</div>
+		</form>
+	</Modal>
+{/if}
+
 <style>
 	.page { display: grid; gap: 1rem; align-content: start; }
 	.head { display: flex; justify-content: space-between; align-items: end; gap: 1rem; flex-wrap: wrap; }
@@ -416,6 +453,7 @@
 	.body { padding: 1.4rem; overflow: auto; display: grid; gap: .7rem; align-content: start; }
 	.acts { display: flex; gap: .5rem; flex-wrap: wrap; }
 	.acts .btn.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
+	.why { display: grid; gap: .8rem; }
 	.explain { display: grid; grid-template-columns: auto 1fr; gap: .3rem .8rem; margin: 0; font-size: .92rem; }
 	.explain dt { color: var(--muted); font-weight: 600; }
 	.explain dd { margin: 0; }

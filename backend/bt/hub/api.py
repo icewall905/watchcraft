@@ -84,6 +84,16 @@ _STOPWORDS = frozenset('the a an and or of for to in on with from this that your
                         ' new best top review guide tutorial watch video edition part using make made really very more most about just'.split())
 
 
+def _clean_terms(values: list[str] | None) -> list[str]:
+    """Words the person typed as the reason, bounded and lowercased."""
+    out: list[str] = []
+    for value in values or []:
+        word = re.sub(r'\s+', ' ', str(value)).strip().lower()[:40]
+        if len(word) >= 2 and word not in out:
+            out.append(word)
+    return out[:3]
+
+
 def _salient(item, c) -> list[str]:
     """Up to three distinctive title words, skipping words the curator is set up to follow.
 
@@ -300,6 +310,8 @@ def item(iid: int, pid: int = Depends(profile_id)):
 class FeedbackIn(BaseModel):
     curator_id: int
     verdict: str = Input(pattern='^(more|less)$')
+    # What to learn when the title has nothing distinctive: the person said it instead.
+    terms: list[str] | None = None
 
 
 @router.post('/items/{iid}/curator-feedback')
@@ -311,7 +323,7 @@ def curator_feedback(iid: int, body: FeedbackIn, pid: int = Depends(profile_id))
             raise HTTPException(404, 'Item not found')
         c = owned(s, Curator, body.curator_id, pid)
         item = s.get(ContentItem, iid)
-        terms = _salient(item, c)
+        terms = _clean_terms(body.terms) or _salient(item, c)
         if not terms:
             raise HTTPException(422, 'Nothing distinctive in this finding to learn from.')
         keep, drop = ('tuned_up', 'tuned_down') if body.verdict == 'more' else ('tuned_down', 'tuned_up')

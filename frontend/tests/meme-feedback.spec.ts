@@ -83,3 +83,37 @@ test('the meme drawer thumbs down closes the drawer and hides the meme', async (
 	await expect(page.getByRole('button', { name: 'Open meme: Spongebob reaction' })).toHaveCount(0);
 	expect(states).toEqual([{ dismissed: true }]);
 });
+
+test('a thumbs down still hides the meme when there is nothing to learn, and asks why', async ({ page }) => {
+	const posts: unknown[] = [];
+	const states: unknown[] = [];
+	await page.route('**/api/hub/memes/items*', (route) => route.fulfill({ json: { items: [meme(1, 'Spongebob reaction', [5])], total: 1 } }));
+	await page.route('**/api/hub/memes/facets*', (route) => route.fulfill({ json: { communities: [], languages: [] } }));
+	await page.route('**/api/hub/topics*', (route) => route.fulfill({ json: [] }));
+	await page.route('**/api/hub/items/*/curator-feedback', async (route) => {
+		const body = route.request().postDataJSON();
+		posts.push(body);
+		if (!body.terms) {
+			await route.fulfill({ status: 422, json: { detail: 'Nothing distinctive in this finding to learn from.' } });
+			return;
+		}
+		await route.fulfill({ json: { curator_id: 5, verdict: 'less', added: body.terms, tuned_up: [], tuned_down: body.terms } });
+	});
+	await page.route('**/api/hub/items/*/state', async (route) => {
+		states.push(route.request().postDataJSON());
+		await route.fulfill({ json: { ...state, dismissed: true } });
+	});
+
+	await freshPage(page, '/memes?tab=examples');
+	await page.getByRole('button', { name: /Fewer memes like this: Spongebob reaction/ }).click();
+	// Hidden even though the curator could not learn anything from the title.
+	await expect(page.getByRole('button', { name: 'Open meme: Spongebob reaction' })).toHaveCount(0);
+	expect(states).toEqual([{ dismissed: true }]);
+	// And it asks what to avoid instead of leaving it unexplained.
+	const dialog = page.getByRole('dialog', { name: 'What should I avoid?' });
+	await expect(dialog).toBeVisible();
+	await dialog.getByRole('textbox', { name: 'What to avoid' }).fill('spongebob');
+	await dialog.getByRole('button', { name: 'Learn this' }).click();
+	await expect(dialog).toHaveCount(0);
+	expect(posts.at(-1)).toEqual({ curator_id: 5, verdict: 'less', terms: ['spongebob'] });
+});

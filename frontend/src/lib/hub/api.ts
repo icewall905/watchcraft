@@ -24,8 +24,12 @@ export const hub = {
 	items: (params: Params, signal?: AbortSignal) => get<Page<Item>>('/items' + qs(params), signal),
 	item: (id: number) => get<ItemDetail>(`/items/${id}`),
 	setState: (id: number, patch: Partial<ItemState> & { read?: boolean }) => send<ItemState>('POST', `/items/${id}/state`, patch),
-	curatorFeedback: (id: number, curator_id: number, verdict: 'more' | 'less') =>
-		send<{ curator_id: number; verdict: string; added: string[]; tuned_up: string[]; tuned_down: string[] }>('POST', `/items/${id}/curator-feedback`, { curator_id, verdict }),
+	// The caller owns the message: a 422 here means "nothing to learn from", which the
+	// meme tracker answers with a question rather than an error toast.
+	curatorFeedback: (id: number, curator_id: number, verdict: 'more' | 'less', terms?: string[]) =>
+		request<{ curator_id: number; verdict: string; added: string[]; tuned_up: string[]; tuned_down: string[] }>(
+			`${H}/items/${id}/curator-feedback`,
+			{ method: 'POST', body: { curator_id, verdict, ...(terms?.length ? { terms } : {}) }, toast: false }),
 	importUrl: (url: string) => send<Item>('POST', '/items/import', { url }),
 	news: (params: Params) => get<{ groups: NewsGroup[]; topics: Topic[] }>('/news' + qs(params)),
 
