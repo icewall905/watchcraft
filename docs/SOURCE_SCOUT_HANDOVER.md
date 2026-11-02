@@ -1,5 +1,47 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — GitHub rate limits and meme thumbs-down hiding (`0eaf673`, 2026-11-02)
+
+- Covers `dd88919..0eaf673`. Two changes.
+- `b40dba5` (B-035): the GitHub repositories source failed with a bare "Source returned HTTP 403". GitHub's
+  anonymous search API allows ten requests a minute and a curator with several queries exhausted it; the source's
+  own check history showed `ok` at 13:43:30 and 13:44:14, then `failed` at 13:44:17, 13:44:18 and 13:47:47. Search
+  calls are now spaced 6.5 s apart in-process, so eight queries stay inside the minute and concurrent curators
+  queue instead of colliding. A refusal that names a reset reads "GitHub rate limit reached: 10 searches a minute
+  without a token. It resets in 42s."; a 403 without a reset keeps its plain HTTP error. `curation.fetch` now reads
+  `x-ratelimit-reset` when a host reports an exhausted quota, so `FetchError` carries the wait without `Retry-After`.
+- `0eaf673`: a meme thumbs down only nudged the curator's ranking, so the meme stayed in the feed. It now also
+  dismisses the item: the card leaves the feed immediately, the drawer closes, and the item stays dismissed for
+  that profile, which keeps it out of Discover and Meme Radar for good. The curator feedback still runs so the
+  shape ranks lower in future. The toast carries an Undo for eight seconds because a dismissal is not visible
+  anywhere else in the UI.
+- Local verification: **680 backend tests passed, six skipped** (five new cover the pacing, both GitHub providers'
+  messages and the "not a quota" case); **7 browser tests** across meme-feedback and memes, including that a thumbs
+  down removes the card, posts `{dismissed: true}` and offers Undo, and that the drawer closes; svelte-check 0
+  errors (three existing CSS warnings); production build.
+- Fresh online and stopped-service backups: `/root/compose/watchcraft-backups/20261102-pre-meme-hide`
+  (integrity `ok`; 6 profiles, 7,706 videos, 29 categories, 401 items, 7,281 candidates, 2,282 downloads, 18
+  sources, 9 curators). Rollback image `watchcraft:rollback-20261102-meme-hide` retains `dd88919`
+  (`3dcbf25c4c4a`). Saved media was unchanged.
+- Isolated restore of the online backup ran `watchcraft:0eaf673` on `127.0.0.1:6697`: integrity `ok`, every count
+  and the profile/PIN checksum identical, started twice, all routes 200, no tracebacks. On that copy the GitHub
+  fix was exercised against the real API from inside the image (first search 0.7 s, second 6.6 s, both 15 items),
+  and a disposable adult QA profile drove the dismissal path: the meme feed went from 18 items to 17 with the
+  dismissed item absent, and `{dismissed: false}` brought it back to 18. The disposable containers and data were
+  removed.
+- Rollout used rsync without `--delete` and preserved `.env` and `compose.host.yaml` (checksums verified before and
+  after). `DEPLOYED_COMMIT=0eaf673`; API, worker and downloader run image
+  `sha256:c8e20dfe51690ccee523c021fcfd54948b97e1ed154c2b0e00d63fe924fe6951` with zero restarts and no tracebacks.
+- Post-deploy: local `/api/health` OK and `https://wc.tdgs.org` plus `https://watchcraft.tdgs.org` return 200; `/`,
+  `/shorts`, `/agent`, `/settings`, `/discover`, `/news`, `/library`, `/memes`, `/api/categories` and
+  `/api/downloads` return 200; DB integrity `ok`; profiles, roles and both PIN records unchanged (checksum
+  `2c415ddd39a318be`); the deployed bundle contains the new hide strings and the backend exposes the GitHub pacer.
+- Rollback: `docker tag watchcraft:rollback-20261102-meme-hide watchcraft:latest` and rerun the three-file compose
+  command with `up -d --no-build --force-recreate --wait` (no schema change).
+- Still open: V-040 (curation measurement window), B-033, B-034, T-075 Stages E–G, and the physical device checks
+  V-002/V-003/V-010/V-027. A thumbs down hides the item and ranks its shape lower; it does not hard-exclude the
+  words, so a different meme with the same words can still arrive.
+
 ## Deployment record — meme thumbs up/down (`dd88919`, 2026-11-02)
 
 - Covers `903b90e..dd88919`. Meme Radar had no way to say which memes were wanted short of opening an item and
