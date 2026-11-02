@@ -53,6 +53,24 @@ test('the curator form can add a Mastodon source', async ({ page, request }) => 
 		if (s.provider === 'mastodon') await request.delete(`/api/hub/sources/${s.id}`);
 });
 
+test('the curator form offers default Lemmy and Mastodon endpoints', async ({ page, request }) => {
+	await freshPage(page, '/curators/new');
+	await page.getByRole('button', { name: /Meme Tracker/ }).click();
+	const lemmy = page.locator('.grp').filter({ hasText: 'Lemmy communities' });
+	await lemmy.getByRole('button', { name: 'lemmy.world · selfhosted' }).click();
+	await expect(lemmy.getByRole('checkbox')).toHaveCount(1);
+	await expect(lemmy.getByRole('checkbox')).toBeChecked();
+	const trends = page.locator('.grp').filter({ hasText: 'Mastodon trends' });
+	await trends.getByRole('button', { name: 'mastodon.social · links' }).click();
+	await expect(trends.getByRole('checkbox')).toHaveCount(1);
+	await expect(trends.getByRole('checkbox')).toBeChecked();
+	// Clicking the same default again deselects it instead of adding a duplicate.
+	await lemmy.getByRole('button', { name: 'lemmy.world · selfhosted' }).click();
+	await expect(lemmy.getByRole('checkbox')).not.toBeChecked();
+	for (const s of await (await request.get('/api/hub/sources')).json())
+		if (['lemmy', 'mastodon_trends'].includes(s.provider)) await request.delete(`/api/hub/sources/${s.id}`);
+});
+
 test('Search by meaning explains itself when no embeddings model is set', async ({ page }) => {
 	await freshPage(page, '/find?q=rust');
 	await page.getByRole('button', { name: 'Search by meaning' }).click();

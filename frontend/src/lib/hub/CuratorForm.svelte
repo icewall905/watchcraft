@@ -46,14 +46,39 @@
 	const prov = (k: string) => providers.find((p) => p.key === k);
 	const isYt = (s: Source) => /youtube\.com\/feeds|youtube\.com\/(channel|@)/.test(s.url);
 
-	type Group = { title: string; keys: string[]; yt?: boolean; add?: string; addHint?: string; addLabel?: string };
+	type Preset = { url: string; label: string };
+	type Group = { title: string; keys: string[]; yt?: boolean; add?: string; addHint?: string; addLabel?: string; presets?: Preset[]; note?: string };
 	const GROUPS: Group[] = [
 		{ title: 'Search the web', keys: ['web_search'] },
 		{ title: 'YouTube channel feeds (RSS)', keys: ['rss'], yt: true, add: 'rss', addHint: 'https://www.youtube.com/feeds/videos.xml?channel_id=…' },
 		{ title: 'RSS', keys: ['rss'], yt: false, add: 'rss', addHint: 'https://example.org/feed.xml' },
-		{ title: 'Lemmy communities', keys: ['lemmy'], add: 'lemmy', addHint: 'https://lemmy.world/c/selfhosted', addLabel: 'Add community' },
-		{ title: 'Mastodon trends', keys: ['mastodon_trends'], add: 'mastodon_trends', addHint: 'https://mastodon.social/api/v1/trends/links', addLabel: 'Add trend feed' },
-		{ title: 'Mastodon communities', keys: ['mastodon'], add: 'mastodon', addHint: 'https://mastodon.world', addLabel: 'Add instance' },
+		{ title: 'Lemmy communities', keys: ['lemmy'], add: 'lemmy', addHint: 'https://lemmy.world/c/selfhosted', addLabel: 'Add community',
+			presets: [
+				{ url: 'https://lemmy.world/c/selfhosted', label: 'lemmy.world · selfhosted' },
+				{ url: 'https://lemmy.world/c/technology', label: 'lemmy.world · technology' },
+				{ url: 'https://lemmy.world/c/news', label: 'lemmy.world · news' },
+				{ url: 'https://lemmy.ml/c/linux', label: 'lemmy.ml · linux' },
+				{ url: 'https://programming.dev/c/programming', label: 'programming.dev · programming' },
+				{ url: 'https://sh.itjust.works/c/asklemmy', label: 'sh.itjust.works · asklemmy' }
+			] },
+		{ title: 'Mastodon trends', keys: ['mastodon_trends'], add: 'mastodon_trends', addHint: 'https://mastodon.social/api/v1/trends/links', addLabel: 'Add trend feed',
+			presets: [
+				{ url: 'https://mastodon.social/api/v1/trends/links', label: 'mastodon.social · links' },
+				{ url: 'https://mastodon.social/api/v1/trends/statuses', label: 'mastodon.social · posts' },
+				{ url: 'https://mastodon.social/api/v1/trends/tags', label: 'mastodon.social · tags' },
+				{ url: 'https://mastodon.world/api/v1/trends/links', label: 'mastodon.world · links' },
+				{ url: 'https://fosstodon.org/api/v1/trends/links', label: 'fosstodon.org · links' }
+			] },
+		{ title: 'Mastodon communities', keys: ['mastodon'], add: 'mastodon', addHint: 'https://mastodon.world', addLabel: 'Add instance',
+			note: 'Instances must allow anonymous public timelines. mastodon.social only answers hashtag timelines, so give the curator queries.',
+			presets: [
+				{ url: 'https://mastodon.social', label: 'mastodon.social' },
+				{ url: 'https://mastodon.world', label: 'mastodon.world' },
+				{ url: 'https://fosstodon.org', label: 'fosstodon.org' },
+				{ url: 'https://hachyderm.io', label: 'hachyderm.io' },
+				{ url: 'https://mas.to', label: 'mas.to' },
+				{ url: 'https://techhub.social', label: 'techhub.social' }
+			] },
 		{ title: 'GitHub', keys: ['github_releases', 'github_search'], add: 'github_releases', addHint: 'https://github.com/owner/repository' },
 		{ title: 'Security advisories', keys: ['nvd', 'cisa_kev'] },
 		{ title: 'Research papers', keys: ['arxiv'] },
@@ -93,6 +118,17 @@
 		try {
 			const s = await hub.createSource({ provider: g.add, url });
 			sources = [...sources, s]; selIds = [...selIds, s.id]; addUrl[g.title] = '';
+		} catch (e) { formError = errMsg(e); } finally { addBusy = ''; }
+	}
+	const presetSource = (g: Group, p: Preset) => sources.find((s) => s.provider === g.add && s.url === p.url);
+	async function usePreset(g: Group, p: Preset) {
+		const row = presetSource(g, p);
+		if (row) { selIds = toggleIn(selIds, row.id); return; }
+		if (!g.add) return;
+		addBusy = p.url; formError = '';
+		try {
+			const s = await hub.createSource({ provider: g.add, url: p.url, name: p.label });
+			sources = [...sources, s]; selIds = [...selIds, s.id];
 		} catch (e) { formError = errMsg(e); } finally { addBusy = ''; }
 	}
 	async function approve(s: Suggestion) {
@@ -175,6 +211,16 @@
 		{#each groups as g (g.title)}
 			<div class="grp">
 				<h4>{g.title}</h4>
+				{#if g.note}<p class="faint small note">{g.note}</p>{/if}
+				{#if g.presets && g.add && prov(g.add)?.available !== false}
+					<div class="presets">
+						{#each g.presets as p (p.url)}
+							{@const row = presetSource(g, p)}
+							{@const on = !!row && selIds.includes(row.id)}
+							<button type="button" class="chip" class:on aria-pressed={on} disabled={addBusy === p.url} use:focusable onclick={() => usePreset(g, p)}>{p.label}</button>
+						{/each}
+					</div>
+				{/if}
 				{#each g.keys.map(prov).filter((p) => !!p) as p (p!.key)}
 					{#if !p!.needs_url}
 						<label class="opt" class:off={!p!.available}>
@@ -248,6 +294,12 @@
 	.grp h4 { margin: .3rem 0 0; font-size: .9rem; color: var(--muted); }
 	.addrow { display: flex; gap: .5rem; flex-wrap: wrap; }
 	.addrow .input { flex: 1; min-width: 12rem; }
+	.note { margin: 0; }
+	.presets { display: flex; flex-wrap: wrap; gap: .4rem; }
+	.chip { min-height: 2.25rem; padding: .35rem .7rem; border: 1px solid var(--line); border-radius: 999px; background: rgba(255,255,255,.03); color: var(--text); font: inherit; font-size: .85rem; cursor: pointer; }
+	.chip:hover:not(:disabled) { border-color: var(--accent); }
+	.chip.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 22%, transparent); font-weight: 700; }
+	.chip:disabled { opacity: .55; cursor: progress; }
 	.sugg { display: grid; gap: .5rem; padding: .8rem; border-radius: var(--r-md); border: 1px dashed var(--ai); }
 	.srow { display: flex; justify-content: space-between; align-items: center; gap: .8rem; flex-wrap: wrap; }
 	.srow span { overflow-wrap: anywhere; }
