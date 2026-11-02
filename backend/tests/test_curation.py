@@ -450,7 +450,8 @@ def test_run_crash_is_recorded_and_manual_curator_not_rescheduled(client, monkey
     assert client.post(f"/api/hub/curators/{c['id']}/run").json()['last_status'] == 'queued'
 
 
-def test_search_videos_scoped_to_profile_and_not_blocked(client):
+def test_search_videos_cover_the_household_and_skip_blocked_channels(client):
+    """The video library is household media: a video another playlist collected is still found."""
     from bt.models import Candidate, Category, ProfileChannel, Video
     with session() as s:
         s.add(Video(id='mine0000001', title='Rust talk', channel_name='A', channel_id='UCa'))
@@ -460,7 +461,8 @@ def test_search_videos_scoped_to_profile_and_not_blocked(client):
         s.add(Candidate(category_id=cat.id, video_id='mine0000001')); s.add(Candidate(category_id=cat.id, video_id='block000001'))
         s.add(ProfileChannel(profile_id=1, channel_id='UCc', blocked=True)); s.commit()
     vids = client.get('/api/hub/search?q=rust').json()['videos']
-    assert [v['id'] for v in vids] == ['mine0000001'] and vids[0]['thumbnail'] == '/api/thumb/mine0000001'
+    assert sorted(v['id'] for v in vids) == ['mine0000001', 'other000001']
+    assert next(v for v in vids if v['id'] == 'mine0000001')['thumbnail'] == '/api/thumb/mine0000001'
 
 
 def test_discover_since_uses_discovery_time(client, monkeypatch):

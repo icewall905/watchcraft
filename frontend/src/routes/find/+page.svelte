@@ -252,7 +252,15 @@
 			{:else if loading && !res}
 				<div class="stack" aria-busy="true" aria-label="Searching">{#each Array(4) as _}<div class="skeleton sk"></div>{/each}</div>
 			{:else if empty}
-				<div class="empty"><span class="big-emoji">∅</span><h2>No local results for "{q.trim()}"</h2><p>Try the live web search, or create a curator to keep watching this.</p></div>
+				<div class="empty">
+					<span class="big-emoji">∅</span>
+					<h2>Nothing in this profile matches "{q.trim()}"</h2>
+					<p>Search covers this profile's findings and the household's video library. Look live instead, or create a curator to keep watching.</p>
+					<div class="hstack">
+						<a class="btn primary" href={`/search?q=${encodeURIComponent(q.trim())}`} use:focusable>Search YouTube</a>
+						<button class="btn" disabled={!chosen.length || webLoading} use:focusable onclick={runWeb}>{webLoading ? 'Searching…' : 'Search the web'}</button>
+					</div>
+				</div>
 			{:else if res}
 				<div class="results" class:busy={loading} aria-busy={loading}>
 					{#if res.items.length}

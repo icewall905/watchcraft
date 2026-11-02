@@ -16,7 +16,13 @@
 	let input = $state<HTMLInputElement>();
 	let restore: HTMLElement | null = null;
 
-	const results = $derived(ALL_ENTRIES.filter((e) => (session.hubAllowed || !isHubPath(e.href)) && e.label.toLowerCase().includes(q.trim().toLowerCase())));
+	// A typed query offers the live video search first: someone watching TV who types
+	// "octopus" wants a video, not the collected-items page.
+	const actions = $derived.by(() => {
+		const t = q.trim();
+		return t ? [{ href: `/search?q=${encodeURIComponent(t)}`, label: `Search YouTube for “${t}”`, icon: 'search' }] : [];
+	});
+	const results = $derived([...actions, ...ALL_ENTRIES.filter((e) => (session.hubAllowed || !isHubPath(e.href)) && e.label.toLowerCase().includes(q.trim().toLowerCase()))]);
 
 	$effect(() => { void q; idx = -1; });
 	$effect(() => {

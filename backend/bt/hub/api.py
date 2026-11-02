@@ -1959,13 +1959,15 @@ def search(q: str = '', type: str = '', provider: str = '', scope: str = 'all', 
         rows = list(s.exec(ordered.offset(max(0, offset)).limit(max(1, min(limit, 100)))).all())
         videos = []
         if scope == 'all' and type in ('', 'video'):
-            from ..models import Candidate, Category, ProfileChannel, Video, WatchHistory
-            mine = select(Candidate.video_id).join(Category, Category.id == Candidate.category_id).where(Category.profile_id == pid).union(
-                select(WatchHistory.video_id).where(WatchHistory.profile_id == pid))
+            # The video library is household media, not one profile's findings: searching
+            # "octopus" must find the octopus videos whoever's playlist collected them.
+            # Channels this profile blocked stay out.
+            from ..models import ProfileChannel, Video
             blocked = select(ProfileChannel.channel_id).where(ProfileChannel.profile_id == pid, ProfileChannel.blocked == True)  # noqa: E712
             videos = [{'id': v.id, 'title': v.title, 'channel_name': v.channel_name, 'thumbnail': f'/api/thumb/{v.id}'}
-                      for v in s.exec(select(Video).where(Video.id.in_(mine), Video.channel_id.not_in(blocked),
-                                                          or_(Video.title.like(like), Video.channel_name.like(like))).limit(12)).all()]
+                      for v in s.exec(select(Video).where(Video.channel_id.not_in(blocked),
+                                                          or_(Video.title.like(like), Video.channel_name.like(like)))
+                                      .order_by(Video.published_at.desc().nulls_last()).limit(24)).all()]
         return {'items': serialize(s, pid, rows), 'total': total, 'videos': videos,
                 'curators': [{'id': c.id, 'name': c.name, 'kind': c.kind} for c in s.exec(select(Curator).where(
                     Curator.profile_id == pid, or_(Curator.name.like(like), Curator.instructions.like(like), Curator.subject.like(like)))).all()][:10],
