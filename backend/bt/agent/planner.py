@@ -1,6 +1,8 @@
 """Plan (LLM search queries, cached per category) + discover (search / channel tab / RSS) new candidates."""
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Optional
 
 from sqlmodel import select
@@ -13,10 +15,18 @@ from .runtime import Interrupt, Runtime, iso, parse_ts
 REPLAN_MIN_S = 1800  # never re-plan a category more often than this
 PLAN_MAX_AGE_S = 12 * 3600  # re-plan when the cached plan is older than this
 TRIED_KEEP = 40
+PLAN_VERSION = 2  # subscription sources now require a playlist-specific selection
 
 
 def plan_key(cat_id: int) -> str:
     return f"plan:{cat_id}"
+
+
+def plan_context(cat: Category) -> str:
+    """A changed playlist brief or source constraint needs a fresh source selection."""
+    fields = ("profile_id", "name", "kind", "brief", "seed_queries", "seed_channels", "include_keywords",
+              "exclude_keywords", "min_duration_s", "max_duration_s", "language", "kid_safe")
+    return hashlib.sha256(json.dumps({k: getattr(cat, k) for k in fields}, sort_keys=True).encode()).hexdigest()
 
 
 def load_plan(cat_id: int) -> dict:
@@ -26,10 +36,22 @@ def load_plan(cat_id: int) -> dict:
     p.setdefault("tried", [])
     p.setdefault("cursor", 0)
     p.setdefault("planned_at", None)
+    with session() as s:
+        cat = s.get(Category, cat_id)
+    if p.get("version") != PLAN_VERSION or (cat and p.get("context") != plan_context(cat)):
+        p.update(version=PLAN_VERSION, cursor=0, planned_at=None, queries=[], channels=[], subscriptions=[])
+        if cat:
+            p["context"] = plan_context(cat)
     return p
 
 
 def save_plan(cat_id: int, plan: dict) -> None:
+    plan["version"] = PLAN_VERSION
+    if "context" not in plan:
+        with session() as s:
+            cat = s.get(Category, cat_id)
+        if cat:
+            plan["context"] = plan_context(cat)
     save_setting(plan_key(cat_id), plan)
 
 
@@ -47,16 +69,20 @@ def sources(cat: Category, plan: dict, subs: list[str]) -> list[tuple[str, str]]
     qs = list(plan.get("queries") or [])
     chans = list(cat.seed_channels or []) + list(plan.get("channels") or [])
     seeds = list(cat.seed_queries or [])
+    # Profile subscriptions are suggestions for the planner, not sources for every playlist.
+    eligible = set(subs)
+    selection = plan.get("subscriptions") or []
+    selected = [ref for ref in selection if isinstance(ref, str) and ref in eligible][:4] if isinstance(selection, list) else []
     # interleave: planner query, seed query, channel, rss ...
-    for i in range(max(len(qs), len(seeds), len(chans), len(subs))):
+    for i in range(max(len(qs), len(seeds), len(chans), len(selected))):
         if i < len(qs):
             add("query", qs[i])
         if i < len(seeds):
             add("query", seeds[i])
         if i < len(chans):
             add("channel", chans[i])
-        if i < len(subs):
-            add("rss", subs[i])
+        if i < len(selected):
+            add("channel" if cat.kind == "shorts" else "rss", selected[i])
     return out
 
 
@@ -69,7 +95,7 @@ def make_plan(rt: Runtime, cat: Category, plan: dict) -> bool:
             cat, lessons, data.recent_titles(s, cat.id, "accepted"),
             data.rejections_for(s, cat.id, cat.profile_id), data.recent_dislikes(s, cat.profile_id),
             plan.get("tried", [])[-TRIED_KEEP:], data.queue_context(s, cat.id, cat.profile_id), core=core,
-            search_yield=data.discovery_yield(s, cat.id))
+            search_yield=data.discovery_yield(s, cat.id), subscriptions=data.subscription_context(s, cat.profile_id))
     rt.state("planning", f"Planning searches for {cat.name}", cat)
     rt.event("plan", f"🧭 Planning new searches for {cat.name}", "info", cat)
     try:
@@ -84,9 +110,14 @@ def make_plan(rt: Runtime, cat: Category, plan: dict) -> bool:
     queries = [q.strip() for q in out.get("queries") or [] if isinstance(q, str) and q.strip()]
     fresh = [q for q in queries if q.lower() not in tried] or queries
     channels = [c.strip() for c in out.get("channels") or [] if isinstance(c, str) and c.strip()]
-    plan.update(queries=fresh[:6], channels=channels[:4], planned_at=iso(now()), cursor=0)
+    with session() as s:
+        eligible = {pc.channel_id for pc in data.subscribed_channels(s, cat.profile_id)}
+    selected = out.get("subscriptions") or []
+    subscriptions = list(dict.fromkeys(ref for ref in selected if isinstance(ref, str) and ref in eligible))[:4] if isinstance(selected, list) else []
+    plan.update(queries=fresh[:6], channels=channels[:4], subscriptions=subscriptions,
+                version=PLAN_VERSION, context=plan_context(cat), planned_at=iso(now()), cursor=0)
     rt.event("plan", f"🧭 Plan for {cat.name}: " + "; ".join(f'"{q}"' for q in plan["queries"]), "info", cat,
-             payload={"queries": plan["queries"], "channels": plan["channels"]})
+             payload={"queries": plan["queries"], "channels": plan["channels"], "subscriptions": subscriptions})
     return True
 
 
@@ -108,8 +139,6 @@ def _screen(rt: Runtime, cat: Category, entries: list[dict]) -> dict[str, str]:
         n = row.get("n") if isinstance(row, dict) else None
         if isinstance(n, int) and 1 <= n <= len(entries):
             off[entries[n - 1]["id"]] = str(row.get("why") or "").strip()[:200] or "not about this playlist"
-    if len(off) == len(entries) and len(entries) > 3:
-        return {}  # a screen that drops everything is more likely confused than right
     return off
 
 
@@ -247,7 +276,7 @@ def discover(rt: Runtime, rl, cat: Category) -> Optional[dict]:
                 pc.last_feed_check = now()
                 s.add(pc)
                 s.commit()
-        source = "rss"
+        source = f"rss: {ref}"
     counts = _insert(rt, cat, list(entries or []), source)
     counts.update(source=source)
     rt.event("search", f"➕ {counts['added']} new of {counts['found']} results for {cat.name}"
@@ -286,4 +315,3 @@ def _save_channel(ch: Optional[dict]) -> None:
         row.updated_at = now()
         s.add(row)
         s.commit()
-

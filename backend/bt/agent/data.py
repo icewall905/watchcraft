@@ -8,7 +8,7 @@ from typing import Optional
 from sqlalchemy import or_
 from sqlmodel import Session, col, func, select
 
-from ..models import Candidate, Category, Feedback, Lesson, ProfileChannel, Video, WatchHistory, now
+from ..models import Candidate, Category, Channel, Feedback, Lesson, ProfileChannel, Video, WatchHistory, now
 from .runtime import aware, parse_ts
 
 BLOCK_TRUST = -0.8
@@ -54,7 +54,26 @@ def profile_ctx(s: Session, profile_id: int) -> ProfileCtx:
 def subscribed_channels(s: Session, profile_id: int) -> list[ProfileChannel]:
     return list(s.exec(select(ProfileChannel).where(ProfileChannel.profile_id == profile_id,
                                                     ProfileChannel.subscribed == True,  # noqa: E712
-                                                    ProfileChannel.blocked == False)).all())  # noqa: E712
+                                                    ProfileChannel.blocked == False,
+                                                    ProfileChannel.trust > BLOCK_TRUST)).all())  # noqa: E712
+
+
+def subscription_context(s: Session, profile_id: int) -> list[dict]:
+    """Bounded, profile-owned suggestions; a subscription alone never establishes topic fit."""
+    ids = [pc.channel_id for pc in subscribed_channels(s, profile_id)][:300]
+    if not ids:
+        return []
+    channels = {c.id: c for c in s.exec(select(Channel).where(Channel.id.in_(ids))).all()}
+    ranked = select(Video.channel_id, Video.title,
+                    func.row_number().over(partition_by=Video.channel_id,
+                                           order_by=col(Video.fetched_at).desc()).label("rank"))\
+        .where(Video.channel_id.in_(ids)).subquery()
+    examples = {}
+    for channel_id, title in s.exec(select(ranked.c.channel_id, ranked.c.title).where(ranked.c.rank <= 3)).all():
+        examples.setdefault(channel_id, []).append(title[:140])
+    return [{"id": cid, "name": channels[cid].name[:100] if cid in channels else "",
+             "handle": channels[cid].handle[:100] if cid in channels else "",
+             "recent_titles": examples.get(cid, [])} for cid in ids[:300]]
 
 
 def title_key(title: str) -> str:
@@ -262,17 +281,21 @@ def touch_category(s: Session, cat_id: int) -> None:
 
 def discovery_yield(s: Session, cat_id: int, n: int = 120) -> list[str]:
     """Recent judged search batches, so planning can improve poor retrieval phrases."""
-    rows = s.exec(select(Candidate, Video.title).join(Video, Video.id == Candidate.video_id)
+    rows = s.exec(select(Candidate, Video).join(Video, Video.id == Candidate.video_id)
                   .where(Candidate.category_id == cat_id, Candidate.status.in_(["accepted", "rejected"]),
-                         Candidate.dismissed == False, Candidate.source.startswith("search:"))
+                         Candidate.dismissed == False)
                   .order_by(col(Candidate.judged_at).desc(), col(Candidate.id).desc()).limit(n)).all()
     groups = {}
-    for c, title in rows:
-        group = groups.setdefault(c.source, {"accepted": 0, "rejected": 0, "off_topic": 0, "examples": []})
+    for c, video in rows:
+        # Recover channel provenance for historical rows that only recorded "rss".
+        source = f"rss: {video.channel_id}" if c.source == "rss" else c.source
+        if not source.startswith(("search:", "channel:", "rss:")):
+            continue
+        group = groups.setdefault(source, {"accepted": 0, "rejected": 0, "off_topic": 0, "examples": []})
         group[c.status] += 1
         group["off_topic"] += c.status == "rejected" and screened(c)
         if c.status == "rejected" and len(group["examples"]) < 2:
-            group["examples"].append(title[:120])
+            group["examples"].append(video.title[:120])
     return [f"{source}: {g['accepted']} accepted, {g['rejected']} rejected"
             + (f" ({g['off_topic']} off-topic)" if g["off_topic"] else "")
             + ("; rejected examples: " + "; ".join(g["examples"]) if g["examples"] else "")

@@ -17,7 +17,7 @@ from bt.agent.ratelimit import quiet_remaining  # noqa: E402
 from bt.agent.runtime import Paused, Runtime, parse_ts  # noqa: E402
 from bt.db import (engine, get_agent_state, init_db, log_yt_request, save_setting, session,  # noqa: E402
                    update_agent_control)
-from bt.models import (AgentEvent, Candidate, Category, Feedback, Lesson, Profile, ProfileChannel, Video,  # noqa: E402
+from bt.models import (AgentEvent, Candidate, Category, Channel, Feedback, Lesson, Profile, ProfileChannel, Video,  # noqa: E402
                        WatchHistory, YtRequest, now)
 
 
@@ -1161,7 +1161,7 @@ def test_screen_records_off_topic_results_without_research():
         assert any("1 off-topic" in line for line in data.discovery_yield(s, cat.id))
 
 
-def test_screen_failure_or_total_drop_keeps_every_result():
+def test_screen_rejects_entire_unrelated_batch_but_failure_keeps_results():
     cat = make_category()
     fl = FakeLlm()
     yt = FakeYt([entry(f"vidPOP0000{i}", f"Pop song number {i}") for i in range(5)])
@@ -1169,7 +1169,10 @@ def test_screen_failure_or_total_drop_keeps_every_result():
     from bt.agent import planner
     with session() as s:
         cat = s.get(Category, cat.id)
-    assert planner._screen(w.rt, cat, yt.results) == {}  # dropping everything looks confused
+    counts = planner._insert(w.rt, cat, yt.results, "rss: UCmusic")
+    assert counts["screened"] == 5 and counts["added"] == 0
+    assert all(c.status == "rejected" and c.score is None for c in cands(cat.id).values())
+    assert not yt.calls  # no metadata, transcripts or comments fetched
     fl.fail = True
     assert planner._screen(w.rt, cat, yt.results[:2]) == {}
 
@@ -1206,7 +1209,7 @@ def test_discovery_channel_selects_feed_tab(kind):
     assert calls == [('@Tasty', {'n': 30, 'origin': 'worker', **({'tab': 'shorts'} if kind == 'shorts' else {})})]
 
 
-@pytest.mark.parametrize('kind', ['videos', 'shorts'])
+@pytest.mark.parametrize('kind', ['playlist', 'shorts'])
 def test_rss_unavailable_falls_back_to_public_channel(kind):
     from bt.agent import planner
     cat = make_category(kind=kind)
@@ -1223,7 +1226,7 @@ def test_rss_unavailable_falls_back_to_public_channel(kind):
         return {}, []
     w.rt.feeds.channel_feed = missing
     w.rt.yt.channel_videos = channel
-    planner.save_plan(cat.id, {'queries': [], 'channels': [], 'cursor': 0, 'planned_at': now().isoformat()})
+    planner.save_plan(cat.id, {'queries': [], 'channels': [], 'subscriptions': ['UCmissing'], 'cursor': 0, 'planned_at': now().isoformat()})
     result = planner.discover(w.rt, w.rl, cat)
     assert result['found'] == 0
     assert calls == [('UCmissing', {'n': 30, 'origin': 'worker', **({'tab': 'shorts'} if kind == 'shorts' else {})})]
@@ -1247,7 +1250,7 @@ def test_rss_fallback_preserves_blocks_and_unavailable_continues(error):
         raise YtUnavailable('channel not found')
     w.rt.feeds.channel_feed = missing
     w.rt.yt.channel_videos = channel
-    planner.save_plan(cat.id, {'queries': [], 'channels': [], 'cursor': 0, 'planned_at': now().isoformat()})
+    planner.save_plan(cat.id, {'queries': [], 'channels': [], 'subscriptions': ['UCmissing'], 'cursor': 0, 'planned_at': now().isoformat()})
     with pytest.raises(YtBlocked if error is YtBlocked else planner._Skip):
         planner.discover(w.rt, w.rl, cat)
     assert calls == ([] if error is YtBlocked else ['UCmissing'])
@@ -1255,3 +1258,113 @@ def test_rss_fallback_preserves_blocks_and_unavailable_continues(error):
     with session() as s:
         subscription = s.exec(select(ProfileChannel).where(ProfileChannel.channel_id == 'UCmissing')).one()
         assert (subscription.last_feed_check is not None) is (error is YtUnavailable)
+
+
+def test_subscription_sources_require_current_playlist_selection():
+    from bt.agent import planner
+    cat = make_category(seed_channels=['@Explicit'])
+    cat.seed_queries = []
+    plan = {'queries': ['food science'], 'channels': [], 'subscriptions': ['UCfood', 'UCotherprofile']}
+    assert planner.sources(cat, plan, ['UCfood', 'UCtech']) == [
+        ('query', 'food science'), ('channel', '@Explicit'), ('rss', 'UCfood')]
+    assert planner.sources(cat, plan, ['UCtech']) == [('query', 'food science'), ('channel', '@Explicit')]
+    assert planner.sources(cat, {'queries': [], 'channels': []}, ['UCtech']) == [('channel', '@Explicit')]
+    cat.kind = 'shorts'
+    assert ('channel', 'UCfood') in planner.sources(cat, plan, ['UCfood'])
+    assert not any(kind == 'rss' for kind, ref in planner.sources(cat, plan, ['UCfood']))
+
+
+def test_legacy_plan_invalidates_subscription_rotation_without_losing_seeds():
+    from bt.agent import planner
+    cat = make_category(seed_channels=['@Explicit'])
+    save_setting(planner.plan_key(cat.id), {'queries': ['old query'], 'channels': [],
+                                          'subscriptions': ['UCtech'], 'cursor': 99,
+                                          'planned_at': now().isoformat()})
+    plan = planner.load_plan(cat.id)
+    assert plan['planned_at'] is None and plan['cursor'] == 0 and plan['subscriptions'] == []
+    assert plan['queries'] == [] and cat.seed_channels == ['@Explicit']
+
+
+def test_planner_selects_only_owned_unblocked_subscriptions_and_sees_examples():
+    from bt.agent import planner
+    cat = make_category()
+    with session() as s:
+        other = Profile(name='Other'); s.add(other); s.commit(); s.refresh(other)
+        for cid, pid, blocked, trust in [('UCmixed', cat.profile_id, False, 0),
+                                         ('UCblocked', cat.profile_id, True, 0),
+                                         ('UCdistrust', cat.profile_id, False, -1),
+                                         ('UCprivate', other.id, False, 0)]:
+            s.add(Channel(id=cid, name=cid + ' channel', handle='@' + cid))
+            s.add(ProfileChannel(profile_id=pid, channel_id=cid, subscribed=True, blocked=blocked, trust=trust))
+            s.add(Video(id=cid + 'clip', channel_id=cid, title='Marble run on a cooking channel'))
+        s.commit()
+    w = make_worker()
+    captured = []
+    def choose(messages, **kw):
+        captured.append(messages[-1]['content'])
+        return {'queries': ['marble science'], 'channels': [],
+                'subscriptions': ['UCmixed', 'UCblocked', 'UCdistrust', 'UCprivate', 'UCinvented', 'UCmixed']}
+    w.rt.llm.chat_json = choose
+    plan = planner.load_plan(cat.id)
+    assert planner.make_plan(w.rt, cat, plan)
+    assert plan['subscriptions'] == ['UCmixed']
+    assert 'Marble run on a cooking channel' in captured[0] and '@UCmixed' in captured[0]
+    assert all(cid not in captured[0] for cid in ['UCblocked', 'UCdistrust', 'UCprivate'])
+    assert any(e.payload.get('subscriptions') == ['UCmixed'] for e in events('plan'))
+
+
+def test_subscription_yield_is_channel_and_playlist_specific_including_legacy_rows():
+    cat = make_category()
+    with session() as s:
+        for vid, channel, source, status in [('techvid0001', 'UCtech', 'rss', 'rejected'),
+                                             ('techvid0002', 'UCtech', 'rss: UCtech', 'rejected'),
+                                             ('foodvid0001', 'UCfood', 'rss: UCfood', 'accepted')]:
+            s.add(Video(id=vid, channel_id=channel, title=vid))
+            s.add(Candidate(category_id=cat.id, video_id=vid, source=source, status=status,
+                            red_flags=['off-topic: unrelated'] if status == 'rejected' else [], judged_at=now()))
+        s.commit()
+        outcomes = data.discovery_yield(s, cat.id)
+    assert any('rss: UCtech: 0 accepted, 2 rejected (2 off-topic)' in x for x in outcomes)
+    assert any('rss: UCfood: 1 accepted, 0 rejected' in x for x in outcomes)
+
+
+def test_title_screen_receives_entire_playlist_brief():
+    cat = make_category()
+    cat.brief = 'Animal interests. ' * 150 + 'Also explicitly include playful engineering.'
+    prompt = prompts.screen_messages(cat, [entry('vidGOOD0001', 'A marble machine')])[-1]['content']
+    assert 'Also explicitly include playful engineering.' in prompt
+
+
+def test_editing_playlist_brief_invalidates_cached_source_selection():
+    from bt.agent import planner
+    cat = make_category()
+    planner.save_plan(cat.id, {'queries': ['old topic'], 'channels': [], 'subscriptions': ['UCold'],
+                              'cursor': 8, 'planned_at': now().isoformat()})
+    assert planner.load_plan(cat.id)['planned_at'] is not None
+    with session() as s:
+        changed = s.get(Category, cat.id)
+        changed.brief = 'Cooking experiments instead of engineering'
+        s.add(changed); s.commit()
+    plan = planner.load_plan(cat.id)
+    assert plan['planned_at'] is None and plan['cursor'] == 0 and plan['subscriptions'] == []
+
+
+def test_topic_change_and_llm_failure_only_uses_current_explicit_sources():
+    from bt.agent import planner
+    cat = make_category()
+    planner.save_plan(cat.id, {'queries': ['laptop benchmarks'], 'channels': ['@Tech'],
+                              'subscriptions': ['UCtech'], 'cursor': 5, 'planned_at': now().isoformat()})
+    with session() as s:
+        changed = s.get(Category, cat.id)
+        changed.brief = 'Cooking only'
+        changed.seed_queries = ['food science', 'kitchen experiments']
+        s.add(changed); s.commit(); s.refresh(changed)
+        cat = changed
+    w = make_worker(FakeYt([]))
+    w.rt.llm.fail = True
+    result = planner.discover(w.rt, w.rl, cat)
+    assert result['found'] == 0
+    plan = planner.load_plan(cat.id)
+    assert plan['queries'] == [] and plan['channels'] == [] and plan['subscriptions'] == []
+    assert plan['cursor'] == 1  # retrying a failed plan does not reset explicit-source rotation
+    assert [e.payload['query'] for e in events('search') if 'query' in e.payload] == ['food science', 'food science']

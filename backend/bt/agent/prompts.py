@@ -170,14 +170,17 @@ PLAN_SCHEMA = {
     "properties": {
         "queries": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
         "channels": {"type": "array", "items": {"type": "string"}, "maxItems": 4},
+        "subscriptions": {"type": "array", "items": {"type": "string"}, "maxItems": 4},
     },
-    "required": ["queries", "channels"],
+    "required": ["queries", "channels", "subscriptions"],
     "additionalProperties": False,
 }
 
 PLANNER_SYSTEM = FAMILY + """
 
 You are the PLANNER. Propose YouTube searches that will surface excellent NEW videos for one category.
+- The CURRENT PLAYLIST brief defines the subject. Profile-wide interests, subscriptions and examples
+  from other subjects are context, never permission to drift beyond this playlist.
 - Give 4-6 specific search queries (2-5 words each), the way a person types them into YouTube. Each query
   must name the playlist's core subject (for example "cat" for a cat playlist): YouTube matches loosely, so a
   query stuffed with side words ("cat fidget spinner toy obsessed") drifts to videos about those side words. Treat every
@@ -199,12 +202,18 @@ You are the PLANNER. Propose YouTube searches that will surface excellent NEW vi
 - Respect applicable lessons and explicit avoid-lists; learn from liked and rejected examples.
 - channels: 0-4 YouTube channel @handles you are confident exist and consistently fit the category
   (e.g. "@MarkRober"). Leave empty if unsure — never invent handles.
+- subscriptions: select 0-4 exact channel IDs from SUBSCRIBED CHANNEL SUGGESTIONS only when their content
+  fits THIS playlist's brief. Use their names and recent titles as evidence. Being subscribed does not
+  mean they fit every playlist. Mixed-topic channels can qualify when they regularly cover a relevant
+  subject; the title screen and full judge still review each video. Leave empty when none fit. Avoid
+  duplicating selected subscriptions in channels. Poor source outcomes should change your selection,
+  without inventing a blanket channel ban across playlists.
 Output ONLY the JSON object."""
 
 
 def planner_messages(cat, lessons: list, accepted: list[str], rejected: list[str], disliked: list[str],
                      tried: list[str], queue: Optional[list[str]] = None, core: str = "",
-                     search_yield: Optional[list[str]] = None) -> list[dict]:
+                     search_yield: Optional[list[str]] = None, subscriptions: Optional[list[dict]] = None) -> list[dict]:
     # Keep stable category/seeds/lessons context ahead of changing queue/history.
     parts = [category_block(cat)]
     if cat.seed_queries:
@@ -221,6 +230,9 @@ def planner_messages(cat, lessons: list, accepted: list[str], rejected: list[str
         parts.append("The family DISLIKED:\n" + "\n".join(f"- {t}" for t in disliked))
     if search_yield:
         parts.append("RECENT DISCOVERY OUTCOMES (AI judgments, not family rules):\n" + "\n".join(search_yield))
+    if subscriptions:
+        parts.append("SUBSCRIBED CHANNEL SUGGESTIONS (optional; select only relevant IDs for THIS playlist):\n"
+                     + json.dumps(subscriptions, ensure_ascii=False))
     if tried:
         parts.append("Queries already tried (do not repeat): " + "; ".join(tried))
     from .memory import apply
@@ -255,9 +267,7 @@ Give each listed result a short reason (under 15 words). Output ONLY the JSON ob
 
 
 def screen_messages(cat, entries: list[dict]) -> list[dict]:
-    lines = [f"PLAYLIST: {cat.name}", "Brief: " + _clip(cat.brief or "(none)", 1500)]
-    if cat.include_keywords:
-        lines.append("Good signs / topics: " + ", ".join(cat.include_keywords))
+    lines = [category_block(cat)]
     lines.append("RESULTS")
     lines += [f"{i}. {_clip(e.get('title') or '', 160)} | {e.get('channel_name') or '?'} | {_fmt_dur(e.get('duration_s'))}"
               for i, e in enumerate(entries, 1)]
