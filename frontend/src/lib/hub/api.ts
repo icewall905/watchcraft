@@ -117,7 +117,7 @@ export const hub = {
 	deleteSavedSearch: (id: number) => send<{ ok: boolean }>('DELETE', `/saved-searches/${id}`),
 
 	memeItems: (params: Params, signal?: AbortSignal) => get<Page<Item>>('/memes/items' + qs(params), signal),
-	memeFacets: () => get<{ communities: { key: string; count: number }[]; languages: { key: string; count: number }[] }>('/memes/facets'),
+	memeFacets: () => get<{ communities: { key: string; count: number }[]; languages: { key: string; count: number }[]; hidden_languages: string[] }>('/memes/facets'),
 	memeTrends: (params: Params) => get<{ trends: MemeTrend[] }>('/memes/trends' + qs(params)),
 	memeTrendState: (id: number, body: { followed?: boolean; hidden?: boolean }) => send<{ followed: boolean; hidden: boolean }>('POST', `/memes/trends/${id}/state`, body),
 	memeFormats: (params: Params) => get<{ formats: MemeFormat[]; total: number }>('/memes/formats' + qs(params)),

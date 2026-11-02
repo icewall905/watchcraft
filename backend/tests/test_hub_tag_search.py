@@ -116,3 +116,20 @@ def test_hiding_a_language_keeps_it_out_of_the_meme_feed(client):
 
 def test_hiding_a_language_rejects_nonsense_codes(client):
     assert client.post('/api/hub/memes/languages/not a code/hide', json={'hidden': True}).status_code == 422
+
+
+def test_language_detection_fills_in_what_the_source_left_blank():
+    from bt.hub.memes import detect_language
+    assert detect_language('Ein Witz über Katzen') == 'de'
+    assert detect_language('the cat is not happy') == 'en'
+    assert detect_language('me timaron con el doblaje') == 'es'
+    # Nothing to go on: stay unknown rather than guess and hide the wrong memes.
+    assert detect_language('😂😂😂') == ''
+    assert detect_language('ok') == ''
+    assert detect_language('') == ''
+
+
+def test_facets_report_the_hidden_languages(client):
+    assert client.get('/api/hub/memes/facets').json()['hidden_languages'] == []
+    client.post('/api/hub/memes/languages/de/hide', json={'hidden': True})
+    assert client.get('/api/hub/memes/facets').json()['hidden_languages'] == ['de']

@@ -2139,8 +2139,11 @@ def meme_facets(pid: int = Depends(profile_id)):
                            .where(MemeExample.language != '', vis)
                            .group_by(MemeExample.language).order_by(func.count(MemeExample.item_id).desc())
                            .limit(20)).all()
+        hidden = [x for x in ((s.get(Profile, pid).prefs or {}).get('hidden_meme_languages') or [])
+                  if isinstance(x, str) and x]
         return {'communities': [{'key': c, 'count': n} for c, n in communities],
-                'languages': [{'key': l, 'count': n} for l, n in languages]}
+                'languages': [{'key': l, 'count': n} for l, n in languages],
+                'hidden_languages': hidden}
 
 
 @router.get('/memes/trends')

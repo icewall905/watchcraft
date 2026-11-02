@@ -129,3 +129,22 @@ test('a German meme offers its language as the reason and hides it', async ({ pa
 	expect(hidden).toEqual(['de']);
 	await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
 });
+
+test('Settings lists meme languages and hides one', async ({ page }) => {
+	const posts: unknown[] = [];
+	await page.route('**/api/hub/memes/facets*', (route) => route.fulfill({
+		json: { communities: [], languages: [{ key: 'en', count: 14 }, { key: 'de', count: 1 }], hidden_languages: [] }
+	}));
+	await page.route('**/api/hub/memes/languages/*/hide', async (route) => {
+		posts.push(route.request().postDataJSON());
+		await route.fulfill({ json: { hidden_languages: ['de'] } });
+	});
+
+	await freshPage(page, '/settings?tab=memes');
+	const german = page.locator('li').filter({ hasText: 'German' });
+	await expect(german).toBeVisible();
+	await expect(german.getByRole('button', { name: 'Shown' })).toBeVisible();
+	await german.getByRole('button', { name: 'Shown' }).click();
+	await expect(german.getByRole('button', { name: 'Hidden' })).toBeVisible();
+	expect(posts).toEqual([{ hidden: true }]);
+});

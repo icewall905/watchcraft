@@ -18,6 +18,7 @@
 	import AppearanceTab from '$lib/settings/AppearanceTab.svelte';
 	import SearchTab from '$lib/settings/SearchTab.svelte';
 	import NotificationsTab from '$lib/settings/NotificationsTab.svelte';
+	import MemeLanguagesTab from '$lib/settings/MemeLanguagesTab.svelte';
 
 	const TABS = [
 		{ key: 'categories', label: 'Playlists', icon: '🗂️', hint: 'What the AI looks for' },
@@ -25,6 +26,7 @@
 		{ key: 'memory', label: 'AI memory', icon: '🧠', hint: 'Rules learned from feedback' },
 		{ key: 'ai', label: 'AI and limits', icon: '✦', hint: 'Model, curator, pace' },
 		{ key: 'search', label: 'Search & sources', icon: '🔎', hint: 'Web search provider for curators' },
+		{ key: 'memes', label: 'Meme languages', icon: '🌐', hint: 'Languages you do not want in Meme Radar' },
 		{ key: 'notify', label: 'Notifications', icon: '🔔', hint: 'Webhook, Home Assistant, email' },
 		{ key: 'player', label: 'Player', icon: '▶', hint: 'Quality, speed, captions' },
 		{ key: 'appearance', label: 'Appearance', icon: '🎨', hint: 'Device mode, themes and colours' },
@@ -74,6 +76,7 @@
 					{:else if tab === 'memory'}<MemoryTab />
 					{:else if tab === 'ai'}<AiTab />
 					{:else if tab === 'search'}<SearchTab />
+					{:else if tab === 'memes'}<MemeLanguagesTab />
 					{:else if tab === 'notify'}<NotificationsTab />
 					{:else if tab === 'player'}<PlayerTab />
 					{:else if tab === 'appearance'}<AppearanceTab />

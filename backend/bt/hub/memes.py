@@ -89,13 +89,75 @@ def _create_format(s: Session, kind: str, exemplar: ContentItem, phash: str) -> 
     return f
 
 
+# Function words that belong to one language only. Shared words are left out on purpose:
+# a word two languages use cannot tell them apart, and guessing wrong would hide the wrong
+# memes. This is a caption-sized heuristic, not a language model.
+_LANGUAGE_WORDS = {
+    'en': {'the', 'and', 'you', 'that', 'this', 'with', 'have', 'not', 'for', 'but', 'what', 'when', 'just',
+           'like', 'they', 'from', 'your', 'about', 'would', 'there', 'their', 'been', 'because', 'really'},
+    'de': {'der', 'das', 'und', 'nicht', 'ist', 'ich', 'wir', 'mit', 'auf', 'ein', 'eine', 'zu', 'dem', 'auch',
+           'aber', 'wie', 'sind', 'wenn', 'oder', 'sehr', 'noch', 'nur', 'mein', 'dein', 'jetzt', 'immer', 'kein'},
+    'es': {'el', 'los', 'las', 'un', 'una', 'por', 'con', 'para', 'pero', 'como', 'más', 'mi', 'está', 'esto',
+           'cuando', 'muy', 'porque', 'todo', 'nada', 'aquí', 'también', 'siempre'},
+    'fr': {'le', 'les', 'des', 'qui', 'pas', 'une', 'pour', 'avec', 'dans', 'sur', 'est', 'et', 'je', 'nous',
+           'vous', 'mais', 'plus', 'tout', 'comme', 'sont', 'cette', 'être', 'toujours'},
+    'nl': {'het', 'een', 'van', 'dat', 'niet', 'ik', 'je', 'we', 'met', 'op', 'voor', 'maar', 'ook', 'wat',
+           'zijn', 'hij', 'zij', 'dit', 'nog', 'wel', 'geen', 'naar', 'altijd'},
+    'pt': {'os', 'as', 'em', 'um', 'uma', 'por', 'com', 'para', 'mas', 'como', 'mais', 'meu', 'não', 'você',
+           'isso', 'quando', 'muito', 'também', 'aqui', 'sempre'},
+    'it': {'il', 'lo', 'gli', 'che', 'non', 'una', 'per', 'con', 'su', 'è', 'sono', 'mio', 'tuo', 'come',
+           'questo', 'quando', 'molto', 'anche', 'qui', 'perché', 'sempre'},
+    'da': {'og', 'ikke', 'jeg', 'hvad', 'meget', 'også', 'fordi', 'altid', 'sammen'},
+    'sv': {'och', 'inte', 'är', 'jag', 'vad', 'mycket', 'också', 'därför', 'alltid', 'tillsammans'},
+    'no': {'og', 'ikke', 'jeg', 'hva', 'veldig', 'også', 'fordi', 'alltid', 'sammen'},
+}
+
+
+def detect_language(text: str) -> str:
+    """Best-effort language of a short caption, for memes whose source did not say.
+
+    Only words that belong to a single language count, and only a clear winner is
+    returned: a tie or a single hit leaves it unknown rather than guessing wrong.
+    """
+    words = re.findall(r"[a-zà-ÿ']+", (text or '').lower())
+    if len(words) < 2:
+        return ''
+    scores: dict[str, int] = {}
+    for word in words:
+        owners = [lang for lang, common in _LANGUAGE_WORDS.items() if word in common]
+        if len(owners) == 1:
+            scores[owners[0]] = scores.get(owners[0], 0) + 1
+    if not scores:
+        return ''
+    best = max(scores.values())
+    winners = [lang for lang, n in scores.items() if n == best]
+    return winners[0] if len(winners) == 1 else ''
+
+
+def backfill_languages(s: Session, limit: int = 200) -> int:
+    """Fill in the language of memes collected before detection existed."""
+    rows = s.exec(select(MemeExample, ContentItem).join(ContentItem, ContentItem.id == MemeExample.item_id)
+                  .where(MemeExample.language == '').limit(limit)).all()
+    filled = 0
+    for ex, item in rows:
+        lang = detect_language(f'{item.title or ""} {item.summary or ""}')
+        if lang:
+            ex.language = lang
+            s.add(ex)
+            filled += 1
+    return filled
+
+
 def analyze_item(s: Session, item: ContentItem) -> MemeExample | None:
     """Assign hash identity, exact-duplicate link and template group to one meme item."""
     if s.exec(select(MemeExample).where(MemeExample.item_id == item.id)).first():
         return None
     asset = s.get(CapturedAsset, (item.id, 'image'))
-    ex = MemeExample(item_id=item.id, community=(item.meta or {}).get('community', '')[:200],
-                     language=str((item.meta or {}).get('language', ''))[:8])
+    language = str((item.meta or {}).get('language', ''))[:8]
+    if not language:
+        # Mastodon often leaves the language null; the caption still says what it is.
+        language = detect_language(f'{item.title or ""} {item.summary or ""}')
+    ex = MemeExample(item_id=item.id, community=(item.meta or {}).get('community', '')[:200], language=language)
     is_video = (item.meta or {}).get('media', {}).get('type') in ('video', 'gifv')
     video = s.get(CapturedAsset, (item.id, 'video')) if is_video else None
     if asset or video:
@@ -359,6 +421,7 @@ def sweep(throttled=True) -> dict:
         return {'skipped': True}
     with session() as s:
         analyzed = analyze_pending(s)
+        backfill_languages(s)
         transitions = refresh_trends(s)
         formats = s.exec(select(func.count()).select_from(MemeFormat)).one()
     save_setting('watchcraft_meme_sweep', {'at': time.time(), 'analyzed': analyzed})
