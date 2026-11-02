@@ -1,6 +1,41 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — public Shorts discovery recovery (`b03cce0`, 2026-11-02)
+
+- Reproduced public `@Tasty` channel auth-check errors and RSS404 for Level1Techs
+  (`UC4w1YQAJMWOz4qtxinq55LQ`). Dedicated feed channel discovery incorrectly requested
+  `/videos`; it now selects `/shorts`. Validated public channel tabs use yt-dlp's
+  supported `youtubetab:skip=authcheck` option; private playlist/import/cookie-test
+  extraction remains unchanged. Public channel URL validation preserves shared URLs
+  and encoded handles while rejecting non-YouTube hosts and private feed paths.
+- RSS unavailability now gets one public-channel fallback with a separate channel
+  rate-limit turn. Blocking403/429 retains normal backoff. Failed RSS checks update
+  their attempt timestamp so they cannot keep taking priority over other sources.
+- New additive `video.shorts_verified` records positive public Shorts-tab/URL evidence.
+  Full watch-page metadata cannot erase that classification on 60–180second Shorts;
+  older duration-only guesses still remain correctable. Existing rows default to false.
+- The cooking channel is `@buzzfeedtasty`, stable ID `UCJFp8uSYCjXOMnkUyb3CQ3Q`.
+  `@Tasty` itself returned404 after the misleading auth gate was removed. Live search
+  and the correct public Shorts tab confirmed identity. One affected Shorts discovery
+  plan was repaired to use that verified ID, retaining its other fields and saving
+  the old value in `tasty-plan-before.json` beside the backup. User seed preferences,
+  real profile PINs, cookies and proxy configuration were not replaced.
+- Lead review inspected the actual changes; a separate reviewer could not be started
+  because the agent thread limit was reached. **575 backend tests passed, six skipped**.
+  The actual release image fetched two verified Shorts each from Tasty and Level1Techs
+  using copied production connection settings. Migration ran twice on an isolated fresh
+  backup and preserved original video/feed/profile/settings fields. Network-isolated
+  server startup, health and Shorts delivery passed. No frontend behavior changed.
+- Backup: `/root/compose/watchcraft-backups/20261102-pre-channel-recovery`, including
+  online/stopped-service SQLite, private configuration, source and data extras. Rollback
+  tag: `watchcraft:rollback-20261102-channel-recovery` (previous `9820424`). The extra
+  video column is additive and older images ignore it.
+- `DEPLOYED_COMMIT=b03cce0`; API, worker and downloader use image `sha256:b135d1aa77c4c81c…`
+  with zero restarts. Public/local health, database integrity and profile/PIN/environment
+  checks pass. Final baseline: six profiles, 7,157 videos, 262 content items and 262 capture
+  jobs. Existing independent/local-only feed playback stays unchanged.
+
 ## Deployment record — separate local-only feeds (`9820424`, 2026-11-02)
 
 - Corrects the earlier mixed Shorts stream. `/shorts` opens an explicit feed picker.
