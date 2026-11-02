@@ -86,6 +86,8 @@ def test_discovery_save_and_profile_isolation(client, monkeypatch):
     assert rel['url'] == 'https://example.org/release'  # tracking params + fragment dropped
     assert rel['summary'] == 'Widget ships local inference'  # HTML stripped
     assert rel['published_at'] and rel['curator_names'] == ['AI']
+    # The card needs the curator id to send feedback without a second request.
+    assert rel['curator_ids'] == [c['id']]
     assert client.post(f"/api/hub/items/{rel['id']}/state", json={'saved': True}).json()['saved']
     assert client.get('/api/hub/items?section=library').json()['total'] == 1
     other = client.post('/api/profiles', json={'name': 'Other'}).json()

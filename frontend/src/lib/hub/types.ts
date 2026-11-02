@@ -7,7 +7,7 @@ export type Item = {
 	id: number; url: string; type: string; title: string; summary: string; author: string; publisher: string;
 	image: string; local_image: boolean; local_video?: boolean; published_at: number | null; first_seen: number; provider: string;
 	meta: Record<string, unknown>; enrichment: Record<string, unknown>;
-	state: ItemState; score: number | null; reason: string; curator_names: string[]; meme?: MemeMeta | null;
+	state: ItemState; score: number | null; reason: string; curator_names: string[]; curator_ids?: number[]; meme?: MemeMeta | null;
 };
 export type ItemDetail = Item & {
 	body: string; media_status: string | null; local_assets: string[]; capture_truncated: boolean; local_links: { id: number; label: string }[]; capture: { status: string; summary_status: string; error: string; attempts: number } | null;

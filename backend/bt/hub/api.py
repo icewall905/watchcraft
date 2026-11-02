@@ -70,7 +70,9 @@ def serialize(s: Session, pid: int, items: list[ContentItem]) -> list[dict]:
         f = sorted(finds.get(i.id, []), key=lambda x: -(x[0].score or 0))
         out.append({**i.model_dump(exclude={'body'}), 'state': state_dict(states.get(i.id)),
                     'score': f[0][0].score if f else None, 'reason': f[0][0].reason if f else '',
-                    'curator_names': list(dict.fromkeys(n for _, n in f)), 'local_image': i.id in images, 'local_video': i.id in videos})
+                    'curator_names': list(dict.fromkeys(n for _, n in f)),
+                    'curator_ids': list(dict.fromkeys(d.curator_id for d, _ in f)),
+                    'local_image': i.id in images, 'local_video': i.id in videos})
     return out
 
 

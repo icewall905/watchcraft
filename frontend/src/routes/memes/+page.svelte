@@ -11,6 +11,7 @@
 	import LocalImage from '$lib/hub/LocalImage.svelte';
 	import LocalVideo from '$lib/hub/LocalVideo.svelte';
 	import Icon from '$lib/components/Icon.svelte';
+	import { toast } from '$lib/stores/toast.svelte';
 
 	const LIMIT = 24;
 	const TABS = [['trending', 'Trending'], ['emerging', 'Emerging'], ['formats', 'Formats'], ['examples', 'Explore'], ['saved', 'Saved'], ['history', 'History']] as const;
@@ -30,6 +31,9 @@
 	let error = $state('');
 	let seq = 0;
 	let open = $state<Item | null>(null);
+	// Thumbs are per item and per session: the curator's tuned lists are the durable record.
+	let verdicts = $state<Record<number, 'more' | 'less'>>({});
+	let tuning = $state<number | null>(null);
 	let similar = $state<Item[]>([]);
 	let explanation = $state<MemeExplain | null>(null);
 	let explainError = $state('');
@@ -138,6 +142,21 @@
 	function closeDrawer() { open = null; }
 	function onKey(e: KeyboardEvent) { if (e.key === 'Escape' && open) closeDrawer(); }
 
+	async function tune(it: Item, verdict: 'more' | 'less') {
+		if (tuning !== null || !it.curator_ids?.length) return;
+		tuning = it.id;
+		try {
+			const learned: string[] = [];
+			for (const cid of it.curator_ids ?? []) {
+				const r = await hub.curatorFeedback(it.id, cid, verdict);
+				learned.push(...r.added);
+			}
+			verdicts = { ...verdicts, [it.id]: verdict };
+			const words = [...new Set(learned)];
+			toast.success(`${words.length ? `Learned: ${words.join(', ')}. ` : ''}Similar memes will rank ${verdict === 'more' ? 'higher' : 'lower'}.`);
+		} catch (e) { toast.error(errMsg(e)); }
+		finally { tuning = null; }
+	}
 	async function toggleState(key: 'saved' | 'dismissed') {
 		if (!open) return;
 		const iid = open.id;
@@ -269,7 +288,7 @@
 	{:else}
 		<div class="gallery">
 			{#each items as it (it.id)}
-				<MemeCard item={it} onopen={openItem} />
+				<MemeCard item={it} onopen={openItem} ontune={tune} verdict={verdicts[it.id] ?? null} busy={tuning === it.id} />
 			{/each}
 		</div>
 		{#if items.length < total}
@@ -302,6 +321,12 @@
 				{/if}
 				{#if captureMessage}<p role="status">{captureMessage}</p>{/if}
 				<div class="acts">
+					{#if open.curator_ids?.length}
+						<button class="btn" class:on={verdicts[open.id] === 'more'} aria-pressed={verdicts[open.id] === 'more'}
+							disabled={tuning === open.id} use:focusable onclick={() => open && tune(open, 'more')}>👍 More like this</button>
+						<button class="btn" class:on={verdicts[open.id] === 'less'} aria-pressed={verdicts[open.id] === 'less'}
+							disabled={tuning === open.id} use:focusable onclick={() => open && tune(open, 'less')}>👎 Less like this</button>
+					{/if}
 					<button class="btn" aria-pressed={open.state.saved} use:focusable onclick={() => toggleState('saved')}>{open.state.saved ? 'Saved' : 'Save'}</button>
 					<button class="btn ghost" aria-pressed={open.state.dismissed} use:focusable onclick={() => toggleState('dismissed')}>{open.state.dismissed ? 'Dismissed' : 'Dismiss'}</button>
 					<a class="btn ghost" href={open.url} target="_blank" rel="noreferrer" use:focusable>Original</a>
@@ -369,6 +394,7 @@
 	.text-meme { padding: 2rem 1.5rem; font-size: 1.3rem; font-weight: 600; }
 	.body { padding: 1.4rem; overflow: auto; display: grid; gap: .7rem; align-content: start; }
 	.acts { display: flex; gap: .5rem; flex-wrap: wrap; }
+	.acts .btn.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
 	.explain { display: grid; grid-template-columns: auto 1fr; gap: .3rem .8rem; margin: 0; font-size: .92rem; }
 	.explain dt { color: var(--muted); font-weight: 600; }
 	.explain dd { margin: 0; }
