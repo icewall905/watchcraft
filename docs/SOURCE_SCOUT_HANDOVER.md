@@ -987,3 +987,23 @@ in the local `todo.md` (which is intentionally ignored by Git).
 - Rollback to the retained `e37d0e2` image is compatible with the private event classification: tag the rollback image as
   `watchcraft:latest`, then run the existing three-file Compose command with `up -d --no-build --wait`. Reverting to a
   pre-timeline image still requires the private-event cleanup described in the earlier timeline deployment record.
+
+## Deployment record — public social sources (`a5f0e10`, 2026-11-02)
+
+- Deployed Lemmy community API/RSS collection and explicit Mastodon links/statuses/tags trends, with source settings,
+  sampled coverage, canonical identity, shared feed polling, host pacing/backoff and social capture/evidence context.
+- Full backend release suite: 647 passed, 6 skipped. Frontend check/build passed with three existing CSS warnings;
+  six focused Hub/source browser checks passed and the rendered source settings were inspected before release.
+- Backup: `/root/compose/watchcraft-backups/20261102-pre-social-a5f0e10`; rollback image:
+  `watchcraft:rollback-20261102-social` (previous `6e82ee9`). Retained online and final pre-rollout SQLite backups,
+  configuration and prior source. Saved media was unchanged. Host NVIDIA overlay retained.
+- Isolated restored copy initialized twice with original table counts and profile/PIN records preserved; network-isolated
+  API startup and provider registry passed using a disposable adult QA profile through normal PIN unlock.
+- API/worker/downloader run image `sha256:d8b33137875a5486f574bb6e291220eb771d46c762735677fbc7dc667c469602`,
+  revision marker `a5f0e10`, with zero restarts at acceptance. Production database integrity/profile/PIN checksum,
+  public health, sources/curator/Shorts/TV routes, actual deployed UI assets, saved-video HTTP 206 and two-second decode passed.
+- The production browser preserved the child-profile Sources restriction. Adult source editing was verified in local
+  browser tests and isolated API acceptance; real adult profiles remained PIN-protected. No production source lists,
+  curator assignments or PINs were changed by deployment.
+- Rollback: tag `watchcraft:rollback-20261102-social` as `watchcraft:latest` and use the existing three-file Compose
+  command with `up -d --no-build --wait`; source/configuration snapshots remain in the backup directory.
