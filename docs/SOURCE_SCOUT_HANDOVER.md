@@ -1,5 +1,42 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — playlist-scoped discovery (`a3dea76`, 2026-11-02)
+
+- Profile subscriptions are now optional planner suggestions, with names, handles and up to
+  three recent titles. Each playlist explicitly selects up to four current, owned, subscribed,
+  unblocked channels. Low-trust blocked channels are excluded. Shorts selections browse the
+  public Shorts tab; ordinary playlists use selected RSS sources. Explicit seed sources remain.
+- Versioned plans invalidate previous unrestricted subscription rotations. A fingerprint of
+  the playlist brief and source constraints invalidates generated queries, channels and
+  subscriptions after edits. If replanning fails, only current explicit sources remain and
+  their rotation keeps its position. User briefs, seeds and subscriptions are preserved.
+- The title screen receives the entire brief and honors a valid all-off-topic result. Only
+  actual model failures retain the existing full-judge fallback. RSS provenance now includes
+  its channel ID; planning receives category-scoped search/channel/RSS outcomes, including
+  recovered channel provenance for historical generic RSS rows.
+- Independent review approved the final patch. Full backend suite: **580 passed, six skipped**;
+  after the final context/failure-path refinements, **69 agent tests passed, one skipped**.
+  Frontend check/build passed with the existing three CSS warnings; **10 agent/Shorts browser
+  regressions passed**, including local-only playback and mobile pagination.
+- Fresh online and stopped-service backups: `/root/compose/watchcraft-backups/20261102-pre-playlist-relevance`.
+  Retained rollback image: `watchcraft:rollback-20261102-playlist-relevance` (previous `b03cce0`).
+  The release initialized a restored database twice without changing original rows and passed
+  network-isolated server startup, health and affected routes.
+- Real configured-model rehearsal used only the verified existing private endpoint at
+  `10.0.10.23:8080`, with a destination guard and isolated database. Cooking selected Sorted Food
+  and Poppy Cooks; cooking Shorts selected Poppy Cooks. Hacker news produced technology-focused
+  queries and three selected subscriptions. The report is retained beside the backup.
+- Re-screened 13 historical pending RSS candidates on the isolated copy. Guarded rollout
+  cleanup rejected only three unambiguously unrelated hardware clips in cooking Shorts,
+  checking candidate ID, category, video, title, prior status and source before mutation.
+  Accepted/history rows were retained; technology candidates under a terse Hacker news brief
+  remain for full review rather than a manual interpretation of that brief.
+- `DEPLOYED_COMMIT=a3dea76`. API, worker and downloader run image `sha256:72aad76a613defee…`
+  with zero restarts; API is healthy. Public/local health, `/shorts`, `/agent`, `/settings`,
+  live subscription-source policy across all enabled playlists, database integrity,
+  profile/PIN/config checksums and saved-media HTTP206 plus 20 decoded frames passed.
+  Stopped-service baseline: six profiles, 7,193 videos, 267 content items and 267 capture jobs.
+
 
 ## Deployment record — public Shorts discovery recovery (`b03cce0`, 2026-11-02)
 
