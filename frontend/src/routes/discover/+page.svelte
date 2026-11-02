@@ -8,6 +8,7 @@
 	import type { Item } from '$lib/hub/types';
 	import ContentCard from '$lib/hub/ContentCard.svelte';
 	import ItemFilters from '$lib/hub/ItemFilters.svelte';
+	import LiveFilter from '$lib/hub/LiveFilter.svelte';
 
 	const LIMIT = 30;
 	const LAST = 'wc.discover.lastVisit';
@@ -21,7 +22,6 @@
 	let view = $state<'grid' | 'list'>('grid');
 	let lastVisit = $state<number | null>(null);
 	let ready = $state(false);
-	let search = $state('');
 	let seq = 0;
 
 	const tab = $derived(page.url.searchParams.get('tab') ?? 'all');
@@ -39,7 +39,6 @@
 	});
 
 	onMount(() => {
-		search = page.url.searchParams.get('q') ?? '';
 		const v = Number(lsGet(LAST));
 		lastVisit = v > 0 ? v : null;
 		view = lsGet('wc.discover.view') === 'list' ? 'list' : 'grid';
@@ -73,10 +72,9 @@
 		if (it.state.dismissed) { items = items.filter((x) => x.id !== it.id); total = Math.max(0, total - 1); }
 	}
 	function setView(v: 'grid' | 'list') { view = v; lsSet('wc.discover.view', v); }
-	function applySearch(e: SubmitEvent) {
-		e.preventDefault();
+	function filterTag(tag: string) {
 		const u = new URL(page.url);
-		if (search.trim()) u.searchParams.set('q', search.trim()); else u.searchParams.delete('q');
+		u.searchParams.set('q', tag);
 		goto(u, { replaceState: true, keepFocus: true, noScroll: true });
 	}
 </script>
@@ -97,11 +95,7 @@
 			</div>
 		</div>
 	</header>
-	<form class="discover-search" onsubmit={applySearch}>
-		<input class="input" type="search" bind:value={search} placeholder="Search discoveries…" aria-label="Search discoveries" />
-		<button class="btn" use:focusable>Search</button>
-		{#if page.url.searchParams.get('q')}<a class="btn ghost" href="/discover" use:focusable>Clear</a>{/if}
-	</form>
+	<LiveFilter placeholder="Filter discoveries by words or tags…" label="Filter discoveries" count={loading ? null : total} />
 
 	<div class="tabs" role="tablist" aria-label="Discover views">
 		{#each tabs as [k, name]}
@@ -138,7 +132,7 @@
 	{:else}
 		<div class={view === 'grid' ? 'grid-cards' : 'stack'}>
 			{#each items as it, i (it.id)}
-				<ContentCard bind:item={items[i]} layout={view === 'grid' ? 'card' : 'row'} onchange={changed} />
+				<ContentCard bind:item={items[i]} layout={view === 'grid' ? 'card' : 'row'} onchange={changed} ontag={filterTag} />
 			{/each}
 		</div>
 		{#if items.length < total}
@@ -156,8 +150,6 @@
 	.seg .btn:last-child { border-radius: 0 var(--r-pill) var(--r-pill) 0; }
 	.seg .btn[aria-pressed='true'] { background: var(--accent); color: var(--accent-ink); }
 	.tabs { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
-	.discover-search { display: flex; gap: .5rem; max-width: 42rem; }
-	.discover-search .input { flex: 1; min-width: 0; min-height: 2.75rem; }
 	.tab { min-height: 2.75rem; padding: .4rem 1rem; }
 	.count { margin-left: auto; }
 	.sk { height: 18rem; }

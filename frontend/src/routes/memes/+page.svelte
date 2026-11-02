@@ -7,6 +7,7 @@
 	import { sinceTs, errMsg } from '$lib/hub/util';
 	import type { Item, MemeExplain, MemeFormat, MemeTrend, Topic } from '$lib/hub/types';
 	import MemeCard from '$lib/hub/MemeCard.svelte';
+	import LiveFilter from '$lib/hub/LiveFilter.svelte';
 	import LocalImage from '$lib/hub/LocalImage.svelte';
 	import LocalVideo from '$lib/hub/LocalVideo.svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -27,7 +28,6 @@
 	let loading = $state(true);
 	let more = $state(false);
 	let error = $state('');
-	let search = $state('');
 	let seq = 0;
 	let open = $state<Item | null>(null);
 	let similar = $state<Item[]>([]);
@@ -85,7 +85,6 @@
 	$effect(() => { if (feed) void loadFeed(false); else { loading = true; void loadSide().finally(() => (loading = false)); } });
 
 	onMount(() => {
-		search = page.url.searchParams.get('q') ?? '';
 		hub.memeFacets().then((f) => { communities = f.communities; languages = f.languages; }).catch(() => {});
 		hub.topics().then((t) => (topics = t)).catch(() => {});
 		let refreshing = false;
@@ -167,10 +166,6 @@
 		} catch (e) { sweepNote = errMsg(e); }
 		finally { sweeping = false; }
 	}
-	function applySearch(e: SubmitEvent) {
-		e.preventDefault();
-		setParam('q', search.trim());
-	}
 	const spark = (t: MemeTrend) => t.observations.map((o) => o.count);
 </script>
 
@@ -199,10 +194,7 @@
 	</div>
 
 	{#if feed}
-		<form class="radar-search" onsubmit={applySearch}>
-			<input class="input" type="search" bind:value={search} placeholder="Search memes…" aria-label="Search memes" />
-			<button class="btn" use:focusable>Search</button>
-		</form>
+		<LiveFilter placeholder="Filter memes by words or tags…" label="Filter memes" count={loading ? null : total} />
 		<div class="filters">
 			<select class="input" aria-label="Community filter" value={page.url.searchParams.get('community') ?? ''} onchange={(e) => setParam('community', e.currentTarget.value)}>
 				<option value="">All communities</option>
@@ -347,8 +339,6 @@
 	.tabs { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
 	.tab { min-height: 2.75rem; padding: .4rem 1rem; }
 	.count { margin-left: auto; }
-	.radar-search { display: flex; gap: .5rem; max-width: 42rem; }
-	.radar-search .input { flex: 1; min-width: 0; min-height: 2.75rem; }
 	.filters { display: flex; gap: .6rem; flex-wrap: wrap; }
 	.filters .input { min-height: 2.75rem; width: auto; max-width: 16rem; }
 	.skeletons { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 1rem; }

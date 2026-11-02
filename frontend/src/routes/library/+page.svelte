@@ -7,6 +7,7 @@
 	import { errMsg, isGalleryType, lsGet, lsSet } from '$lib/hub/util';
 	import type { Collection, Item } from '$lib/hub/types';
 	import ContentCard from '$lib/hub/ContentCard.svelte';
+	import LiveFilter from '$lib/hub/LiveFilter.svelte';
 
 	const LIMIT = 30;
 	const views = [['all', 'All saved'], ['favorites', 'Favorites'], ['later', 'Read later'], ['archive', 'Archive'], ['collections', 'Collections']] as const;
@@ -43,7 +44,7 @@
 	const colId = $derived(Number(page.url.searchParams.get('collection')) || null);
 	const activeCol = $derived(collections.find((c) => c.id === colId) ?? null);
 	const showCollections = $derived(view === 'collections' && !colId);
-	const key = $derived(`${view}|${colId}`);
+	const key = $derived(`${view}|${colId}|${page.url.searchParams.get('q') ?? ''}`);
 
 	const eff = $derived<'grid' | 'list' | 'compact' | 'gallery'>(
 		mode !== 'auto' ? mode : items.length && items.every((i) => isGalleryType(i.type)) ? 'gallery' : 'grid'
@@ -61,7 +62,9 @@
 	}
 
 	function params() {
-		const q: Record<string, string | number | boolean | undefined> = { section: 'library', limit: LIMIT, sort: 'newest' };
+		const q: Record<string, string | number | boolean | undefined> = {
+			section: 'library', limit: LIMIT, sort: 'newest', q: page.url.searchParams.get('q') ?? undefined
+		};
 		if (colId) q.collection = colId;
 		else if (view === 'favorites') q.favorite = true;
 		else if (view === 'later') q.read_later = true;
@@ -91,6 +94,11 @@
 		goto(u, { keepFocus: true, noScroll: true });
 	}
 	function setMode(m: Mode) { mode = m; lsSet('wc.library.mode', m); }
+	function filterTag(tag: string) {
+		const u = new URL(page.url);
+		u.searchParams.set('q', tag);
+		goto(u, { replaceState: true, keepFocus: true, noScroll: true });
+	}
 
 	function changed(it: Item) {
 		// drop items that no longer belong to this view
@@ -211,6 +219,10 @@
 		{#if activeCol}<span class="chip on tab">{activeCol.name}</span>{/if}
 	</div>
 
+	{#if !showCollections}
+		<LiveFilter placeholder="Filter saved items by words or tags…" label="Filter library" count={loading ? null : total} />
+	{/if}
+
 	<form class="import" onsubmit={doImport}>
 		<input class="input" type="url" bind:value={importUrl} placeholder="Import a page by URL (https://…)" aria-label="URL to import" aria-invalid={!!importError} />
 		<button class="btn" disabled={!importUrl.trim() || importing} use:focusable>{importing ? 'Importing…' : 'Import'}</button>
@@ -271,7 +283,7 @@
 		<p class="faint small">{total} item{total === 1 ? '' : 's'}</p>
 		<div class={eff === 'list' || eff === 'compact' ? 'stack' : eff === 'gallery' ? 'gallery' : 'grid-cards'}>
 							{#each items as it, i (it.id)}
-								<ContentCard bind:item={items[i]} {layout} onchange={changed}>
+								<ContentCard bind:item={items[i]} {layout} onchange={changed} ontag={filterTag}>
 									{#snippet extra(item)}
 										<button class="btn ghost" use:focusable onclick={() => archive(i)}>{item.state.archived ? 'Unarchive' : 'Archive'}</button>
 										<button class="btn ghost" aria-expanded={editingNotes === item.id} use:focusable onclick={() => editNotes(item)}>{item.state.notes ? 'Edit note' : 'Add note'}</button>

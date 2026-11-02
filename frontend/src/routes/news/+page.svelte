@@ -1,10 +1,13 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { page } from '$app/state';
+	import { goto } from '$app/navigation';
 	import { focusable } from '$lib/nav';
 	import { hub, ago } from '$lib/hub/api';
 	import { errMsg } from '$lib/hub/util';
-	import type { NewsGroup, Topic } from '$lib/hub/types';
+	import type { Item, NewsGroup, Topic } from '$lib/hub/types';
 	import ContentCard from '$lib/hub/ContentCard.svelte';
+	import LiveFilter from '$lib/hub/LiveFilter.svelte';
 
 	const ranges = [[1, 'Today'], [7, 'This week'], [30, 'Month']] as const;
 	let days = $state<1 | 7 | 30>(1);
@@ -35,7 +38,22 @@
 	function pickTopic(id: number | null) { topic = topic === id ? null : id; load(); }
 
 	const publishers = $derived([...new Set(groups.flatMap((g) => g.items.map((i) => i.publisher).filter(Boolean)))].sort());
-	const visible = $derived(publisher ? groups.map((g) => ({ g, idx: groups.indexOf(g) })).filter(({ g }) => g.items.some((i) => i.publisher === publisher)) : groups.map((g, idx) => ({ g, idx })));
+	// News loads every story in the range, so the filter runs here instead of a round trip.
+	const terms = $derived((page.url.searchParams.get('q') ?? '').toLowerCase().split(/\s+/).filter(Boolean));
+	const matches = (it: Item) => {
+		if (!terms.length) return true;
+		const tags = [...(it.state.tags ?? []), ...((it.meta?.tags as unknown[]) ?? [])].map((x) => String(x).toLowerCase());
+		const hay = [it.title, it.summary, it.publisher, it.author, ...tags].join(' ').toLowerCase();
+		return terms.every((term) => hay.includes(term));
+	};
+	const visible = $derived(groups.map((g, idx) => ({ g, idx })).filter(({ g }) =>
+		(!publisher || g.items.some((i) => i.publisher === publisher)) && g.items.some(matches)
+	));
+	function filterTag(tag: string) {
+		const u = new URL(page.url);
+		u.searchParams.set('q', tag);
+		goto(u, { replaceState: true, keepFocus: true, noScroll: true });
+	}
 
 	async function addTopic(e: SubmitEvent) {
 		e.preventDefault();
@@ -72,6 +90,8 @@
 		{/each}
 	</div>
 
+	<LiveFilter placeholder="Filter stories by words or tags…" label="Filter news" count={loading ? null : visible.length} />
+
 	<section class="topics" aria-label="Followed topics">
 		<div class="hstack">
 			{#each topics as t (t.id)}
@@ -102,7 +122,7 @@
 	{:else if !visible.length}
 		<div class="empty">
 			<span class="big-emoji">📰</span><h2>No news {days === 1 ? 'today' : 'in this range'}</h2>
-			<p>{publisher || topic ? 'Try removing the publisher or topic filter.' : 'Create a curator that watches news feeds and stories will cluster here.'}</p>
+			<p>{publisher || topic || terms.length ? 'Try removing the publisher, topic or text filter.' : 'Create a curator that watches news feeds and stories will cluster here.'}</p>
 			{#if !publisher && !topic}<a class="btn primary" href="/curators/new" use:focusable>Create a news curator</a>{/if}
 		</div>
 	{:else}
@@ -114,7 +134,7 @@
 						<h2><a href={`/item/${g.items[0].id}`} use:focusable>{g.title}</a></h2>
 						<span class="story-meta">{g.items.length} article{g.items.length === 1 ? '' : 's'} · {ago(g.latest)}</span>
 					</div>
-					<ContentCard bind:item={groups[idx].items[0]} layout="row" />
+					<ContentCard bind:item={groups[idx].items[0]} layout="row" ontag={filterTag} />
 					{#if rest > 0}
 						<button class="btn ghost" aria-expanded={!!open[g.key]} use:focusable onclick={() => (open[g.key] = !open[g.key])}>
 							{open[g.key] ? 'Hide' : `${rest} more article${rest === 1 ? '' : 's'}`}

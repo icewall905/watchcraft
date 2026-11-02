@@ -133,6 +133,26 @@ def fts_query(q: str) -> str:
     return expr
 
 
+def tag_terms(q: str, *, negated: bool = False) -> list[str]:
+    """Plain words from a user query, for matching item tags. Phrases are skipped; -terms are the negated set."""
+    rest = re.sub(r'"[^"]*"', ' ', q)
+    words = [w for w in re.findall(r'-?[\w.]+', rest) if len(w) > 1 and w.startswith('-') == negated]
+    return [w.lstrip('-').lower() for w in words][:6]
+
+
+def _tag_match(terms: list[str], pid: int):
+    """Items whose source tags (meta.tags) or this profile's own tags match any term."""
+    like = ' OR '.join(f'lower(je.value) LIKE :t{i}' for i in range(len(terms)))
+    params = {f't{i}': f'%{t}%' for i, t in enumerate(terms)}
+    source = text("SELECT ci.id FROM contentitem ci, "
+                  "json_each(CASE WHEN json_valid(ci.meta) THEN ci.meta ELSE '{}' END, '$.tags') je "
+                  f'WHERE {like}').bindparams(**params)
+    mine = text("SELECT ist.item_id FROM itemstate ist, "
+                "json_each(CASE WHEN json_valid(ist.tags) THEN ist.tags ELSE '[]' END) je "
+                f'WHERE ist.profile_id = :pid AND ({like})').bindparams(pid=pid, **params)
+    return or_(ContentItem.id.in_(source), ContentItem.id.in_(mine))
+
+
 def item_query(pid: int, *, section='discover', q='', type='', provider='', curator: int | None = None, saved=False,
                unread=False, favorite=False, read_later=False, archived=False, min_score: float | None = None,
                since: float | None = None, until: float | None = None, collection: int | None = None, topic: int | None = None):
@@ -150,9 +170,20 @@ def item_query(pid: int, *, section='discover', q='', type='', provider='', cura
     if section == 'news':
         stmt = stmt.where(ContentItem.type.in_(['news', 'article']))
     if q:
+        hits = []
         expr = fts_query(q)
         if expr:
-            stmt = stmt.where(ContentItem.id.in_(text('SELECT rowid FROM content_fts WHERE content_fts MATCH :q').bindparams(q=expr)))
+            hits.append(ContentItem.id.in_(text('SELECT rowid FROM content_fts WHERE content_fts MATCH :q').bindparams(q=expr)))
+        terms = tag_terms(q)
+        if terms:
+            # A tag match surfaces an item even when the word is absent from its text.
+            hits.append(_tag_match(terms, pid))
+        if hits:
+            stmt = stmt.where(or_(*hits))
+        excluded = tag_terms(q, negated=True)
+        if excluded:
+            # -term excludes tagged items too, not only items whose text mentions it.
+            stmt = stmt.where(~_tag_match(excluded, pid))
     if type:
         stmt = stmt.where(ContentItem.type.in_(type.split(',')))
     if provider:

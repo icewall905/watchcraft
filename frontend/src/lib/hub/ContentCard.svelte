@@ -7,8 +7,9 @@
 	import { str, num, list, bool, duration, sevClass, safeUrl } from './util';
 	import type { Item } from './types';
 
-	let { item = $bindable(), layout = 'card', onchange, extra }: {
+	let { item = $bindable(), layout = 'card', onchange, extra, ontag }: {
 		item: Item; layout?: 'card' | 'row' | 'compact'; onchange?: (item: Item) => void; extra?: Snippet<[Item]>;
+		ontag?: (tag: string) => void;
 	} = $props();
 
 	let why = $state(false);
@@ -43,6 +44,9 @@
 	const dur = $derived(duration(num(m, 'duration')));
 	const unread = $derived(!item.state.read_at);
 	const pub = $derived(item.publisher || item.author || host(item.url));
+	// Source tags (Mastodon hashtags, dev.to tags…) next to the profile's own tags.
+	const sourceTags = $derived(list(m, 'tags').map(String)
+		.filter((t) => t && !item.state.tags.includes(t)).slice(0, 6));
 </script>
 
 <article class="cc {layout}" class:unread class:dim={item.state.dismissed} data-type={item.type}>
@@ -88,7 +92,16 @@
 		</div>
 
 		{#if layout !== 'compact' && (item.enrichment?.summary || item.summary)}<p class="summary">{#if item.enrichment?.summary}<span class="muted">AI summary · </span>{String(item.enrichment.summary)}{:else}{item.summary}{/if}</p>{/if}
-		{#if item.state.tags.length && layout === 'card'}<p class="tags">{#each item.state.tags as t}<span>#{t}</span>{/each}</p>{/if}
+		{#if layout === 'card' && (item.state.tags.length || sourceTags.length)}
+			<p class="tags">
+				{#each item.state.tags as t (t)}
+					{#if ontag}<button type="button" class="tag" use:focusable onclick={() => ontag(t)}>#{t}</button>{:else}<span>#{t}</span>{/if}
+				{/each}
+				{#each sourceTags as t (t)}
+					{#if ontag}<button type="button" class="tag src" use:focusable onclick={() => ontag(t)}>#{t}</button>{:else}<span class="src">#{t}</span>{/if}
+				{/each}
+			</p>
+		{/if}
 
 		<div class="actions">
 			<button class="btn ghost" aria-pressed={item.state.saved} disabled={busy} use:focusable onclick={() => toggle('saved')}>{item.state.saved ? '✓ Saved' : 'Save'}</button>
@@ -145,7 +158,10 @@
 	.b.strong { font-weight: 800; }
 	.mono { font-family: ui-monospace, monospace; }
 	.summary { color: var(--muted); font-size: .88rem; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-	.tags { display: flex; gap: .5rem; flex-wrap: wrap; font-size: .75rem; color: var(--faint); margin-top: .35rem; }
+	.tags { display: flex; gap: .5rem; flex-wrap: wrap; font-size: .75rem; color: var(--faint); margin-top: .35rem; align-items: center; }
+	.tag { font: inherit; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-pill); padding: .15rem .55rem; cursor: pointer; min-height: 1.75rem; }
+	.tag:hover { border-color: var(--accent); color: var(--text); }
+	.tag.src { color: var(--faint); border-style: dashed; }
 	.actions { display: flex; gap: .15rem .25rem; flex-wrap: wrap; margin-top: .55rem; }
 	.actions :global(.btn) { min-height: 2.75rem; padding: .4rem .75rem; font-size: .85rem; }
 	.why { margin-top: .5rem; padding: .6rem .8rem; border-radius: var(--r-md); background: var(--bg-2); font-size: .85rem; border-left: 3px solid var(--ai); }
