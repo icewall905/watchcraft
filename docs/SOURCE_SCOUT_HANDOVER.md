@@ -1,5 +1,46 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — durable Seen it saves (`7af36bf`, 2026-11-02)
+
+- Seen it now atomically upserts watched history and dismisses only this profile's candidates in one commit.
+  Media eviction runs after the response in a separate session; failures are logged and the existing downloader
+  sweep retries cleanup. An unavailable media mount no longer blocks the saved-state response.
+- The client retries transient network/502/503/504 failures twice for this idempotent action, preserving the original
+  profile (including the default-profile case) and avoiding duplicate gateway-error toasts.
+- Release checks: 692 backend tests passed, six skipped; nine Seen it/feedback/remote browser checks passed, including
+  injected 502 recovery and a profile selection change during retry. Frontend build/type check passed with three
+  existing CSS warnings. Independent review approved the profile-preserving retry and backend changes.
+- Backup: `/root/compose/watchcraft-backups/20261102-pre-seen-7af36bf`, online and stopped-service databases plus
+  prior source/configuration; rollback image `watchcraft:rollback-20261102-seen-7af36bf` retains `36288b6`.
+- Isolated restored copy initialized twice with every original table count and profile/PIN checksum preserved.
+  Two real HTTP Seen it requests against disposable records returned 200 in 104 ms and 4 ms; one finished history
+  row and the dismissed candidate were verified. No production viewing history was altered for this check.
+- Production API/worker/downloader run image `sha256:1f7e62a90b3fd8cc8c408ac11e815d8d7afc792368755cd77b6c713371bda226`,
+  marker `7af36bf`, zero restarts. Both public health endpoints and affected routes returned 200; integrity and
+  profile/PIN/configuration checks passed. Saved media returned 206 and decoded two seconds without errors.
+- Rollback: retag the retained rollback image as `watchcraft:latest` and run the existing three-file Compose
+  `up -d --no-build --force-recreate --no-deps --wait bt-api bt-worker bt-downloader`; restore the prior marker.
+
+
+## Deployment record — relevant person research (`36288b6`, 2026-11-02)
+
+- Person research requires full-name or supplied-alias evidence, splits accidentally combined numeric handles,
+  prioritizes quoted identity searches, and excludes zero-scored discoveries. Old unrelated findings are filtered
+  before report/display limits; mixed-identity old reports require regeneration without renumbering their citations.
+- Reports request synthesized, cited paragraphs with captured source text when available and numbered original-source
+  links. Model failure is reported explicitly rather than replacing the summary with a raw search-result list.
+- Release checks: 691 backend tests passed, six skipped; five Hub browser checks; frontend build and type check passed
+  with three existing CSS warnings. Independent diff review approved the identity filtering and alias handling.
+- Backup: `/root/compose/watchcraft-backups/20261102-pre-research-36288b6`, including online and final stopped-service
+  SQLite backups, prior source/configuration and rollback image `watchcraft:rollback-20261102-research-36288b6`.
+  Isolated restore initialized twice with every table count and profile/PIN checksum preserved; startup/health and
+  identity checks passed. Production overlays, including the NVIDIA override, were retained unchanged.
+- API, worker and downloader ran image `sha256:26082abc9090a0504c2bd5d442d251a33218a6fc53abcc067fafcfd2c558600c`,
+  revision marker `36288b6`, with zero restarts. Local/public health, research/Find/TV/Memes routes, database integrity,
+  profile/PIN checksum and configuration preservation passed. Saved media returned HTTP 206 and decoded two seconds.
+  No real profile PINs were changed. The latest named report regeneration returned an explicit summary-unavailable state.
+
+
 ## Deployment record — search covers the whole video library (`4c99b05`, 2026-11-02)
 
 - Covers `f66b85f..4c99b05`. Searching "octopus" returned nothing while the household held thirteen octopus
