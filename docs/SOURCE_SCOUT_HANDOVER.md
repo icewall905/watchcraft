@@ -1,5 +1,41 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — search covers the whole video library (`4c99b05`, 2026-11-02)
+
+- Covers `f66b85f..4c99b05`. Searching "octopus" returned nothing while the household held thirteen octopus
+  videos: the video half of `/hub/search` only looked at candidates of this profile's playlists and its watch
+  history, so a video another playlist collected was invisible. The page promises "everything WatchCraft has
+  collected", and the video library is household media, so the search now covers all of it — channels this profile
+  blocked stay out, and the page is adult-only anyway because the hub requires an adult profile. The video cap went
+  from 12 to 24 and results are ordered by publish date.
+- The empty state no longer pretends nothing exists: it names the scope ("this profile's findings and the
+  household's video library") and offers the live YouTube search, and a typed query in the command palette offers
+  "Search YouTube for …" as its first entry.
+- Local verification: **688 backend tests passed, six skipped** (the video-search test now asserts that another
+  playlist's video is found and a blocked channel is not); **2 new browser specs** for the empty state and the
+  palette entry; **21 navigation/a11y/hub browser tests**; svelte-check 0 errors (three existing CSS warnings);
+  production build.
+- Fresh online and stopped-service backups: `/root/compose/watchcraft-backups/20261102-pre-search-library`
+  (integrity `ok`; 6 profiles, 7,766 videos, 29 categories, 501 items, 7,395 candidates, 2,299 downloads, 18
+  sources, 9 curators). Rollback image `watchcraft:rollback-20261102-search-library` retains `f66b85f`
+  (`f88da9de82d5`). Saved media was unchanged.
+- Isolated restore of the online backup ran `watchcraft:4c99b05` on `127.0.0.1:6697`: integrity `ok`, every count
+  and the profile/PIN checksum identical, started twice, all routes 200, no tracebacks. A disposable adult QA
+  profile reproduced the complaint and the fix: `/api/hub/search?q=octopus` returned **13 videos** (previously 0)
+  and `q=linux` returned 24 videos plus 14 items. The disposable containers and data were removed.
+- Rollout used rsync without `--delete` and preserved `.env` and `compose.host.yaml` (checksums verified before and
+  after). `DEPLOYED_COMMIT=4c99b05`; API, worker and downloader run image
+  `sha256:98fc935a2e4f2ca3074748ce8b0a79790f86ed39940e9e6fd9dc40d640e04bbf` with zero restarts and no tracebacks.
+- Post-deploy: local `/api/health` OK and `https://wc.tdgs.org` plus `https://watchcraft.tdgs.org` return 200; `/`,
+  `/shorts`, `/agent`, `/settings`, `/discover`, `/find`, `/memes`, `/api/categories` and `/api/downloads` return
+  200; DB integrity `ok`; profiles, roles and both PIN records unchanged (checksum `2c415ddd39a318be`); the
+  deployed bundle contains the new empty state and the backend the household-wide video query.
+- Rollback: `docker tag watchcraft:rollback-20261102-search-library watchcraft:latest` and rerun the three-file
+  compose command with `up -d --no-build --force-recreate --wait` (no schema change).
+- Still open: V-040 (curation measurement window), B-033, B-034, T-075 Stages E–G, and the physical device checks
+  V-002/V-003/V-010/V-027. Item search stays per profile (findings carry per-profile state); only the video library
+  is household-wide.
+
 ## Deployment record — meme language detection, language settings, GitHub backoff (`f66b85f`, 2026-11-02)
 
 - Covers `3ec97d0..f66b85f`. Three changes.
