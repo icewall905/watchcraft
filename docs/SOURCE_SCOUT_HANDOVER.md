@@ -1,6 +1,51 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — separate local-only feeds (`9820424`, 2026-11-02)
+
+- Corrects the earlier mixed Shorts stream. `/shorts` opens an explicit feed picker.
+  Settings → Feeds reuses playlist-style briefs, sources, language, thresholds and
+  queue sizes with second-based short-video durations. Feeds have a separate category
+  kind; existing categories remain playlists and are never silently converted.
+- The feed API requires an owned feed, excludes watched/unaccepted/unfinished clips,
+  and verifies a readable, nonempty local file inside the media root. The player uses
+  only `/api/video/{id}/file`; Shaka, YouTube manifests, proxy playback, streaming fallback
+  and streaming warmup links were removed from the feed flow. Missing files offer a
+  local availability refresh. Category-style feed links redirect to the picker before
+  requesting a playlist grid or streaming warmup. The unused floating cast control is
+  absent from Shorts.
+- Accepted feed clips enter the downloader even when regular playlist auto-downloads
+  are manual. Master storage/agent controls, pause, quota and backoff remain effective.
+  Dedicated feeds ignore Hide Shorts while regular playlists retain that preference.
+  Collection can be paused while existing local clips remain playable.
+- Independent cross-review approved backend and frontend changes. Backend: **554 passed,
+  six skipped**, followed by **five focused tests**, including added ownership/PIN cases.
+  Frontend check/build passed with the existing three CSS warnings. **25 focused settings
+  and feed tests passed**. The broader browser run passed 142 tests with one opt-in skip
+  and a malformed synthetic-touch fixture failure; after correcting the Touch identifiers
+  and target, **all 10 feed acceptance tests passed**, including phone swipes/pagination,
+  independently configured feeds, real local MP4 decoding and zero stream/proxy requests.
+- Fresh backup: `/root/compose/watchcraft-backups/20261102-pre-local-feeds`; rollback image
+  `watchcraft:rollback-20261102-local-feeds` retains the previous `ebc5588`. Online and
+  stopped-service SQLite snapshots, source/private configuration and data extras are
+  preserved. The additive migration ran twice on a fresh restored copy; all existing
+  table fields and playlist defaults matched. The final image booted without external
+  networking and served a local clip with HTTP 206, then decoded 20 frames successfully.
+- Existing playlists are preserved. New feeds are configured explicitly through the picker
+  or Settings → Feeds. Physical phone/TV acceptance is still deferred by the user and
+  tracked in the external vault.
+- Later rollback note: older images do not understand the new category kind. After real
+  feeds have been created, pause their collection (`enabled=0` for `kind='shorts'`) before
+  an older-image rollback so the old curator does not process them as ordinary playlists.
+  Preserve the rows and local media; no destructive database restore is required.
+- Production runs image `sha256:bf2118c07e85ab51…` on API, worker and downloader with
+  zero restarts; `DEPLOYED_COMMIT=9820424`. Public/local health passed. Database integrity,
+  original playlist kinds, profile/PIN checksums and `.env`/NVIDIA override checks passed.
+  The stopped-service baseline preserves six profiles, 7,149 videos, 262 content items
+  and 262 capture jobs. The live feed API requires a selection and initially lists no
+  automatically invented feeds. Public Shorts/settings pages return 200; existing saved
+  media returns HTTP 206 and decodes 20 frames.
+
 ## Deployment record — reviewed features (`ebc5588`, 2026-11-01)
 
 - Reviewed `db3a28c..8ac84a1`: curated YouTube Shorts swipe feed, capture work in its
