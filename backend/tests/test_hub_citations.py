@@ -62,3 +62,13 @@ def test_social_evidence_context_preserves_coverage_and_attribution(monkeypatch)
     assert 'not truth or consensus' in seen['system']
     assert 'Selected public community' in seen['user']
     assert 'https://publisher.example/release' in seen['user']
+
+
+def test_cited_summary_includes_captured_source_text(monkeypatch):
+    prompts = []
+    def respond(system, user, *args):
+        prompts.append(user)
+        return {'text': 'A fact [1].'}
+    monkeypatch.setattr(ai, '_call', respond)
+    ai._cited([ContentItem(url='https://example.com', title='Source', body='Captured source evidence')], 'Summarize', 100)
+    assert 'Captured source evidence' in prompts[0]

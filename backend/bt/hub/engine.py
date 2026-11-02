@@ -16,6 +16,7 @@ from . import activity, ai, polling, slots, narrate, watchers
 from .models import (Alert, Briefing, CollectionItem, ContentItem, Curator, CuratorDiscovery, CuratorRun,
                      CuratorSource, ItemState, PageRevision, SitemapEntry, Source, SourceCheck, TopicItem)
 from .providers import PROVIDERS, RateLimited
+from .research import identity_names, person_match
 
 log = logging.getLogger(__name__)
 LEASE_S = 900
@@ -267,10 +268,15 @@ def keyword_score(c: Curator, data: dict) -> tuple[float | None, str]:
     for x in _terms(c.exclusions):
         if x in hay:
             return None, f'Excluded term "{x}"'
+    if c.kind == 'research' and c.subject_type == 'person':
+        if not person_match(c, data):
+            return None, 'No full-name or alias evidence'
     kws = _terms(c.keywords)
     if c.content_types and data.get('type') not in c.content_types:
         return None, TYPE_BLOCKED
-    if not kws:
+    if c.kind == 'research' and c.subject_type == 'person':
+        score, reason = 75.0, 'Full name or supplied alias appears in source evidence'
+    elif not kws:
         score, reason = 50.0, ''
     else:
         hits = [k for k in kws if k in hay]
@@ -383,6 +389,9 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
                                                                   seed=str(r.id), note=note))
             sources = _sources(cid)
     queries = [q for q in (c.queries or []) if q.strip()][:8] or ([c.subject] if c.subject else [])
+    if c.kind == 'research' and c.subject_type == 'person':
+        identities = ['"' + name.replace('"', '') + '"' for name in identity_names(c)]
+        queries = list(dict.fromkeys([*identities, *queries]))[:8]
     for src in sources:
         label = (src.name or src.provider)[:100]
         activity.emit(c, r.id, 'checking', narrate.say(c.tone, 'curator.checking', seed=f'{r.id}-{src.id}', label=label), source_id=src.id)
@@ -458,6 +467,8 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         if key in seen_urls:
             continue
         seen_urls.add(key)
+        if not person_match(c, d):
+            continue
         score, reason = keyword_score(c, d)
         if score is None:
             type_blocked += reason == TYPE_BLOCKED
@@ -495,7 +506,7 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         if not c or not hub_allowed(s, c.profile_id):
             raise ValueError('Hub access was restricted during the run.')
         for src, q, d, score, reason in fresh:
-            if score < c.min_score:
+            if score < c.min_score or (c.kind == 'research' and score <= 0):
                 continue
             item = upsert(s, d, src.provider)
             if not item or s.exec(select(CuratorDiscovery).where(CuratorDiscovery.curator_id == cid, CuratorDiscovery.item_id == item.id)).first():

@@ -9,11 +9,13 @@ import logging
 import re
 import time
 import uuid
+from itertools import islice
 
 from sqlmodel import select
 
 from .. import llm
 from ..db import get_settings, session
+from .research import identity_names, person_match
 from .models import Briefing, BriefingIssue, ContentItem, Curator, CuratorDiscovery, Topic, TopicItem
 
 log = logging.getLogger(__name__)
@@ -37,6 +39,7 @@ def _data(items: list[dict]) -> str:
         rows.append(json.dumps({'n': i, 'type': d.get('type'), 'title': (d.get('title') or '')[:300],
                                 'source': d.get('publisher') or '', 'url': (d.get('url') or '')[:500],
                                 'summary': (d.get('summary') or '')[:600],
+                                **({'body': str(d['body'])[:3000]} if d.get('body') else {}),
                                 **{k: str(d[k])[:500] for k in ('provider', 'coverage', 'linked_article') if d.get(k)}}, ensure_ascii=False))
     return '<data>\n' + _esc('\n'.join(rows)) + '\n</data>'
 
@@ -203,11 +206,12 @@ def _citation_sentences(text: str) -> list[str]:
 
 def _cited(items: list[ContentItem], instruction: str, words: int) -> str:
     rows = [{'title': i.title, 'type': i.type, 'publisher': i.publisher, 'url': i.url, 'summary': i.summary,
-             'provider': i.provider, 'coverage': i.meta.get('coverage', ''),
+             'body': i.body, 'provider': i.provider, 'coverage': i.meta.get('coverage', ''),
              'linked_article': i.meta.get('article_url', '')} for i in items]
     res = _call(f'{instruction} Write about {words} words of plain text paragraphs (no markdown headings). Every factual '
                 'sentence must end with citations like [3] referring to item numbers n. Only state what the items say; '
-                'clearly mark uncertainty. Separate verified facts from interpretation. Social posts are attributed claims or opinions, '
+                'clearly mark uncertainty. If only a search snippet is provided, explicitly limit conclusions to that snippet. '
+                'Separate verified facts from interpretation. Social posts are attributed claims or opinions, '
                 'not independent confirmation. Trending ranks and engagement measure sampled attention, not truth or consensus. '
                 'A linked article is not verified unless its own content is supplied. Do not count federated copies as corroboration.', _data(rows), SUMMARY_SCHEMA, 2500)
     text = str(res.get('text', '')).strip()
@@ -242,7 +246,8 @@ def research_report(cid: int) -> Curator | None:
         if not c or not hub_allowed(s, c.profile_id):
             return None
         items = s.exec(select(ContentItem).join(CuratorDiscovery, CuratorDiscovery.item_id == ContentItem.id)
-                       .where(CuratorDiscovery.curator_id == cid).order_by(CuratorDiscovery.score.desc(), CuratorDiscovery.found_at.desc()).limit(40)).all()
+                       .where(CuratorDiscovery.curator_id == cid).order_by(CuratorDiscovery.score.desc(), CuratorDiscovery.found_at.desc()))
+        items = list(islice((i for i in items if person_match(c, i.model_dump())), 40))
         if not items:
             c.report, c.report_at = '', time.time()
         else:
@@ -250,13 +255,16 @@ def research_report(cid: int) -> Curator | None:
                 if not enabled():
                     raise RuntimeError('AI disabled')
                 c.report = _cited(items, f'Write a public-source research brief about "{c.subject or c.name}" '
-                                      f'({c.subject_type or "topic"}). Cover: overview, key facts, recent developments, notable '
+                                      f'({c.subject_type or "topic"}). User-supplied identity hints: {identity_names(c)}. '
+                                      'Require explicit identity evidence; shared name fragments do not establish identity. '
+                                      'Mention handle-only matches as possible matches, not confirmed ownership. '
+                                      'Synthesize findings into a coherent summary, not a list of search results. Cover: overview, key facts, recent developments, notable '
                                       'relations, open questions. Group related findings when they come from the same publisher, '
                                       'and make clear when a claim is only reported by one source. Do not speculate about private '
                                       'lives or sensitive personal data.', 450)
             except Exception as e:  # noqa: BLE001
                 log.info('report AI failed: %s', e)
-                c.report = 'AI summary unavailable — findings by type:\n\n' + fallback_digest(items)
+                c.report = 'AI summary unavailable. Retry generating the report; source findings remain available below.'
             c.report_at = time.time()
         # Citations [n] refer to this ordering.
         c.report_refs = [i.id for i in items]

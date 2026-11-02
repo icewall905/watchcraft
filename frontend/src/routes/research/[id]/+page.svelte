@@ -110,7 +110,15 @@
 		</section>
 
 		<section>
-			<h2>Findings</h2>
+			<h2>Sources and findings</h2>
+            {#if citeIds.length}
+                <ol class="sources">
+                    {#each citeIds as itemId, index}
+                        {@const source = c.recent.find((item) => item.id === itemId)}
+                        <li>{#if source}<a href={source.url} target="_blank" rel="noopener noreferrer" use:focusable>{source.title}</a>{:else}<a href={`/item/${itemId}`} use:focusable>Source {index + 1}</a>{/if}</li>
+                    {/each}
+                </ol>
+            {/if}
 			{#if !c.recent.length}
 				<div class="empty"><p>{c.last_run ? 'No findings yet.' : 'Findings will appear here after the first run.'}</p></div>
 			{:else}

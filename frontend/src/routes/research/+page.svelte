@@ -67,12 +67,14 @@
 				if (!row) row = await hub.createSource({ provider: key });
 				ids.push(row.id);
 			}
-			const queries = [...new Set([...(d.queries ?? []), subj, ...aliases])];
+			const queries = subjectType === 'person'
+                ? [subj, ...aliases].map((q) => `"${q.replaceAll('"', '')}"`)
+                : [...new Set([...(d.queries ?? []), subj, ...aliases])];
 			const c = await hub.createCurator({
 				name: subj.slice(0, 100), kind: 'research', subject: subj, subject_type: subjectType, aliases, queries,
 				keywords: [...new Set([subj, ...aliases])], exclusions: d.exclusions ?? [], content_types: d.content_types ?? [],
 				instructions: d.instructions || `Research ${subj} from public sources and report with citations.`,
-				source_ids: ids, interval_hours: watch ? 24 : 0, ai_enabled: true, icon: '🕵️', color: '#6cc6ff', min_score: 0, max_per_run: 40
+				source_ids: ids, interval_hours: watch ? 24 : 0, ai_enabled: true, icon: '🕵️', color: '#6cc6ff', min_score: 25, max_per_run: 40
 			});
 			await hub.curatorAction(c.id, 'run');
 			goto(`/research/${c.id}`);

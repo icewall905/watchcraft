@@ -380,7 +380,8 @@ def test_research_report_fallback_and_draft(client, monkeypatch):
     client.post(f"/api/hub/curators/{c['id']}/run")
     assert hub.run(c['id'], 'manual').new_items == 1
     rep = client.post(f"/api/hub/curators/{c['id']}/report").json()
-    assert 'Acme Corp' in rep['report'] and rep['report_refs']
+    assert 'AI summary unavailable' in rep['report'] and rep['report_refs']
+    assert 'findings by type' not in rep['report']
 
 
 def test_import_url_extracts_recipe(client, monkeypatch):
@@ -1932,3 +1933,47 @@ def test_busy_capture_lane_does_not_consume_retry_attempt(client, monkeypatch):
     with session() as s:
         job = s.exec(select(CaptureJob).where(CaptureJob.item_id == iid)).one()
         assert job.status == 'queued' and job.attempts == 1 and job.lease == 0
+
+
+def test_person_identity_gate():
+    from bt.hub.research import person_match
+    from bt.hub.models import Curator
+    c = Curator(profile_id=1, name='Henrik Nygård Boysen', subject='Henrik Nygård Boysen',
+                kind='research', subject_type='person', aliases=['icewall905', 'deluder905'])
+    assert person_match(c, {'title': 'icewall905 (Henrik Nygård Boysen) · GitHub'})
+    assert person_match(c, {'url': 'https://github.com/icewall905'})
+    assert hub.keyword_score(c, {'url': 'https://github.com/icewall905', 'title': 'Profile'})[0] > 0
+    assert person_match(c, {'title': 'Thread', 'summary': 'Henrik Nygård Boysen reacted'})
+    assert not person_match(c, {'title': 'Henrik Boysen — insurance director'})
+    assert not person_match(c, {'title': 'Prins Henrik', 'summary': 'Nygård and Boysen'})
+    assert not person_match(c, {'url': 'https://example.org/noticewall905other'})
+    c.aliases = ['icewall905 deluder905']
+    assert person_match(c, {'url': 'https://github.com/deluder905'})
+
+
+def test_person_report_filters_old_unrelated_discoveries(client, monkeypatch):
+    from bt.hub.models import ContentItem, CuratorDiscovery
+    c = make_curator(client, [], name='Henrik Nygård Boysen', kind='research',
+                     subject='Henrik Nygård Boysen', subject_type='person')
+    with session() as s:
+        for title in ['Henrik Nygård Boysen on GitHub', 'Prins Henrik']:
+            item = ContentItem(url='https://example.org/' + str(len(title)), title=title)
+            s.add(item); s.flush()
+            s.add(CuratorDiscovery(curator_id=c['id'], item_id=item.id, profile_id=c['profile_id'], score=90))
+        for n in range(65):
+            unrelated = ContentItem(url=f'https://example.org/noise/{n}', title='Another Henrik')
+            s.add(unrelated); s.flush()
+            s.add(CuratorDiscovery(curator_id=c['id'], item_id=unrelated.id, profile_id=c['profile_id'], score=100))
+        from bt.hub.models import Curator
+        cur = s.get(Curator, c['id'])
+        cur.report, cur.report_refs = 'An old mixed report [1].', [item.id]
+        s.add(cur); s.commit()
+    detail = client.get(f"/api/hub/curators/{c['id']}").json()
+    assert [i['title'] for i in detail['recent']] == ['Henrik Nygård Boysen on GitHub']
+    assert detail['report'] == '' and detail['report_refs'] == []
+    seen = []
+    monkeypatch.setattr(ai, 'enabled', lambda: True)
+    monkeypatch.setattr(ai, '_cited', lambda items, *args: seen.extend(i.title for i in items) or 'A summary [1].')
+    rep = client.post(f"/api/hub/curators/{c['id']}/report").json()
+    assert seen == ['Henrik Nygård Boysen on GitHub']
+    assert len(rep['report_refs']) == 1

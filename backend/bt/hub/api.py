@@ -1506,8 +1506,16 @@ def curator(cid: int, pid: int = Depends(profile_id)):
         out = curator_dict(s, c)
         out['runs'] = [r.model_dump() for r in s.exec(select(CuratorRun).where(CuratorRun.curator_id == cid).order_by(CuratorRun.started_at.desc()).limit(30)).all()]
         recent = s.exec(select(ContentItem).join(CuratorDiscovery, CuratorDiscovery.item_id == ContentItem.id)
-                        .where(CuratorDiscovery.curator_id == cid).order_by(CuratorDiscovery.found_at.desc()).limit(60)).all()
-        out['recent'] = serialize(s, pid, list(recent))
+                        .where(CuratorDiscovery.curator_id == cid).order_by(CuratorDiscovery.found_at.desc()))
+        from itertools import islice
+        from .research import person_match
+        out['recent'] = serialize(s, pid, list(islice((i for i in recent if person_match(c, i.model_dump())), 60)))
+        if c.kind == 'research' and c.subject_type == 'person' and c.report_refs:
+            refs = [s.get(ContentItem, iid) for iid in c.report_refs]
+            if any(i is None or not person_match(c, i.model_dump()) for i in refs):
+                # Old reports can contain unrelated identities. Require regeneration
+                # rather than silently changing their numbered citation mapping.
+                out.update(report='', report_at=None, report_refs=[])
         return out
 
 
