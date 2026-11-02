@@ -1,5 +1,47 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — child-friendliness scoped to the Kid-safe toggle (`6e82ee9`, 2026-11-02)
+
+- Covers `4789e51..6e82ee9`. B-032: the judge prompt carried the child-safety rules for every playlist. The
+  shared `FAMILY` preamble described the household as "parents and young kids", and the red-flag list
+  unconditionally included sexual content, gore, swearing, scary content and "dangerous stunts kids could
+  copy", so a playlist without the toggle was judged against what suits a six-year-old. Production has 27
+  playlists, 14 of them without the toggle (Grownups, Cooking, Linux news, CVEs, Tech humor, …).
+- The child-safety block now lives in `KID_SAFE_JUDGE` and is appended by `judge_system(cat)` only when that
+  playlist has the toggle on. The base prompt keeps the integrity red flags (clickbait, low-effort,
+  engagement bait, sponsorship, gambling, misinformation, cruelty presented as entertainment) and states
+  that adult language, mature themes, violence, horror and sexual content are not red flags by themselves.
+  `kid_safe` is still reported but is information only unless the playlist is marked kid-safe. `FAMILY` no
+  longer assumes young children. The brief autofill no longer assumes a young audience or lists pranks and
+  shouting as things to avoid. The per-playlist gate in `judge.decide` was already conditional and is
+  unchanged.
+- Local verification: **600 backend tests passed, two skipped**. A new test asserts the child-safety block is
+  absent without the toggle and present with it; the brief-autofill test asserts the system prompt no longer
+  assumes a young audience.
+- Fresh online and stopped-service backups: `/root/compose/watchcraft-backups/20261102-pre-kid-safe-scope`
+  (integrity `ok`; 6 profiles, 7,496 videos, 27 categories, 141 history, 274 items, 274 capture jobs).
+  Rollback image `watchcraft:rollback-20261102-kid-safe-scope` retains `4789e51`.
+- Isolated restore of the online backup ran `watchcraft:6e82ee9`. The same synthetic stand-up clip (swearing,
+  adult grievances) was judged twice against the real model at `10.0.10.23:8080`: under a playlist **without**
+  the toggle it scored 62 with the single red flag "surface-level travel humor with minimal development" and
+  no mention of swearing or children; under a playlist **with** the toggle it scored 12 with "swearing:
+  'damn', 'what the hell'", "adult-themed comedy not suitable for young children" and "not appropriate for a
+  ~6-year-old viewer". The API then started twice on that copy: health OK, integrity `ok`, all counts
+  preserved, no tracebacks. `autofill-brief` for "Stand-up comedy" returned an adult-appropriate brief naming
+  Dave Chappelle and John Mulaney with no child framing. The disposable container and data were removed.
+- Rollout used rsync without `--delete` (five files changed, nothing removed) and preserved `.env` and
+  `compose.host.yaml` (checksums verified before and after). `DEPLOYED_COMMIT=6e82ee9`; API, worker and
+  downloader run image `sha256:de20ebb2e6b1…` with zero restarts and no tracebacks.
+- Post-deploy: local and public `/api/health` OK; `/`, `/shorts`, `/agent`, `/settings`, `/api/categories` and
+  `/api/downloads` return 200; DB integrity `ok`; profiles, roles and both PIN records unchanged; the running
+  image reports the KID-SAFE block absent for a non-kid-safe category and present for a kid-safe one, and
+  `FAMILY` no longer mentions young kids.
+- Rollback: `docker tag watchcraft:rollback-20261102-kid-safe-scope watchcraft:latest` and rerun the compose
+  command (no schema change).
+- Still open: B-008 (merge pause), B-019 (browser egress), T-069 (non-YouTube providers), and the physical
+  device checks V-002/V-003/V-010/V-027. The planner prompt still lists "prank" and "reaction" among the
+  formats to avoid, which will fight a playlist explicitly about them.
+
 ## Deployment record — dead download queue rows (`4789e51`, 2026-11-02)
 
 - Covers `598e242..4789e51`. B-031: `next_download` only returns a non-pinned row whose candidate is still
