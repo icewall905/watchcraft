@@ -1,5 +1,46 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — meme language detection, language settings, GitHub backoff (`f66b85f`, 2026-11-02)
+
+- Covers `3ec97d0..f66b85f`. Three changes.
+- `19a3b5b`: Mastodon often leaves a status language null, so 27 of the collected memes had no language and could
+  not offer the language reason. `memes.detect_language` now fills the gap from the caption: only words that belong
+  to a single language count, and only a clear winner is used, so an emoji-only or two-word caption stays unknown
+  rather than guessing and hiding the wrong memes. Existing examples are backfilled on the next sweep. Settings
+  gains a **Meme languages** tab listing every language in the feed with its count and a Shown/Hidden switch, and
+  `/memes/facets` reports the hidden list.
+- `f66b85f`: the 6.5 s GitHub gap sat at 92% of the ten-a-minute search budget and six curators share one source, so
+  a cycle asks for about thirty searches; the window tipped over and every later query 403'd, which is why the
+  source still reported a rate limit after the first fix. The gap is now 12 s (half the budget), a refusal that
+  names a reset blocks the host until that reset, and the engine stops asking that source instead of recording the
+  same error six times.
+- Local verification: **688 backend tests passed, six skipped** (new: language detection, the facets hidden list,
+  the block-until-reset behaviour and the engine stopping after the first rate-limited query); **6 meme-feedback
+  browser specs** including the Settings language switch; **32 settings-walk/a11y/memes browser tests**;
+  svelte-check 0 errors (three existing CSS warnings); production build.
+- Fresh online and stopped-service backups: `/root/compose/watchcraft-backups/20261102-pre-lang-settings`
+  (integrity `ok`; 6 profiles, 7,746 videos, 29 categories, 446 items, 7,340 candidates, 2,287 downloads, 18
+  sources, 9 curators). Rollback image `watchcraft:rollback-20261102-lang-settings` retains `3ec97d0`
+  (`85ba954bf77e`). Saved media was unchanged.
+- Isolated restore of the online backup ran `watchcraft:f66b85f` on `127.0.0.1:6697`: integrity `ok`, every count
+  and the profile/PIN checksum identical, started twice, all routes 200, no tracebacks. On that copy the backfill
+  filled 12 of the 27 unknown languages (`en` 49→58, `es` 2→3, `pt` 0→2, 15 left unknown), and a disposable adult
+  QA profile read `/memes/facets` (languages with counts, `hidden_languages: []`), hid `de` and saw it reported,
+  then undid it. The disposable containers and data were removed.
+- Rollout used rsync without `--delete` and preserved `.env` and `compose.host.yaml` (checksums verified before and
+  after). `DEPLOYED_COMMIT=f66b85f`; API, worker and downloader run image
+  `sha256:f88da9de82d501f5e26f7901b296918ab269e7740f72b017c06ee9b2a59a77ce` with zero restarts and no tracebacks.
+- Post-deploy: local `/api/health` OK and `https://wc.tdgs.org` plus `https://watchcraft.tdgs.org` return 200; `/`,
+  `/shorts`, `/agent`, `/settings`, `/discover`, `/news`, `/library`, `/memes`, `/api/categories` and
+  `/api/downloads` return 200; DB integrity `ok`; profiles, roles and both PIN records unchanged (checksum
+  `2c415ddd39a318be`); the deployed bundle contains the Meme languages tab and the backend exposes
+  `detect_language` and `RateLimited`.
+- Rollback: `docker tag watchcraft:rollback-20261102-lang-settings watchcraft:latest` and rerun the three-file
+  compose command with `up -d --no-build --force-recreate --wait` (no schema change).
+- Still open: V-040 (curation measurement window), B-033, B-034, T-075 Stages E–G, and the physical device checks
+  V-002/V-003/V-010/V-027. The language detector is a stopword heuristic for Latin-script captions; Cyrillic, Greek
+  and CJK captions stay unknown, and 15 memes remain unknown because their captions carry no words at all.
+
 ## Deployment record — thumbs down asks why, and a language answer really hides it (`3ec97d0`, 2026-11-02)
 
 - Covers `1fb720f..3ec97d0`. Learning the title words was wrong: a German meme taught the curator "humor", "memes"
