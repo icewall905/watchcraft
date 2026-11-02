@@ -261,6 +261,32 @@ def purge_unwanted(s: Session) -> int:
     return freed
 
 
+def drop_dead_queue(s: Session) -> int:
+    """Delete queued/error rows that can never be downloaded.
+
+    `next_download` only returns a non-pinned row whose candidate is still accepted and not dismissed, so a
+    row left behind by a deleted or dismissed candidate would sit in the queue forever and inflate the count
+    the Storage tab and `/api/downloads` report. Pinned rows are kept: they are returned before the candidate
+    lookup, so a manual "Save offline" still runs. Deleting the row (rather than marking it evicted) lets
+    `sync_queue` queue the video again if its candidate is accepted later.
+    """
+    rows = s.exec(select(Download).where(col(Download.status).in_(["queued", "error"]),
+                                         Download.pinned == False)).all()  # noqa: E712
+    if not rows:
+        return 0
+    ids = [d.video_id for d in rows]
+    wanted = set(s.exec(select(Candidate.video_id).where(col(Candidate.video_id).in_(ids),
+                                                         Candidate.status == "accepted",
+                                                         Candidate.dismissed == False)).all())  # noqa: E712
+    dead = [d for d in rows if d.video_id not in wanted]
+    for d in dead:
+        s.delete(d)
+    if dead:
+        s.commit()
+        log.info("dropped %d dead queue rows (no accepted candidate)", len(dead))
+    return len(dead)
+
+
 def make_room(s: Session, cfg: dict, need: int, allow_wanted: bool) -> bool:
     """Evict until used + need <= cap. Returns False if it can't (everything left is pinned/wanted)."""
     cap = max_bytes(cfg)
@@ -639,6 +665,7 @@ class Downloader:
         """One scheduling step. Returns seconds to sleep before the next step."""
         with session() as s:
             purge_unwanted(s)  # rejected by Family/Judge or finished-watched: remove the copy even while paused/disabled
+            drop_dead_queue(s)  # queued rows whose candidate is gone or dismissed: never downloadable
         b = self.blocker(check_cap=False)
         if b:
             self.set_state(b[0], detail=b[1])

@@ -11,7 +11,7 @@ from sqlmodel import delete, select
 
 from bt import ytdl
 from bt.config import MEDIA_DIR
-from bt.db import init_db, save_setting, session, set_agent_state, update_agent_control
+from bt.db import get_kv, init_db, save_setting, session, set_agent_state, update_agent_control
 from bt.downloader import service as svc
 from bt.downloader import transcode
 from bt.models import Candidate, Category, Download, Profile, ReencodeJob, ReencodeResult, Video, WatchHistory, YtRequest, now
@@ -649,3 +649,43 @@ def test_a_copy_being_streamed_is_never_evicted():
         playing.last_played_at = now() - timedelta(seconds=svc.ACTIVE_PLAY_S + 60)
         s.add(playing); s.commit()
         assert [d.video_id for d in svc.eviction_order(s, allow_wanted=True)] == [IDS[1]]
+
+
+def test_drop_dead_queue_removes_rows_that_can_never_run():
+    with session() as s:
+        cat = _cat(s)
+        _cand(s, cat, IDS[0])                          # accepted and wanted
+        _cand(s, cat, IDS[1], dismissed=True)          # accepted but dismissed
+        _cand(s, cat, IDS[2], status="rejected")       # rejected
+        _cand(s, cat, IDS[6])                          # accepted, error row below
+        s.add(Download(video_id=IDS[0], status="queued"))
+        s.add(Download(video_id=IDS[1], status="queued"))
+        s.add(Download(video_id=IDS[2], status="queued"))
+        s.add(Download(video_id=IDS[3], status="queued"))          # no candidate at all
+        s.add(Download(video_id=IDS[4], status="queued", pinned=True))  # manual save, no candidate
+        s.add(Download(video_id=IDS[5], status="error"))           # no candidate
+        s.add(Download(video_id=IDS[6], status="error"))
+        s.add(Download(video_id=IDS[7], status="done", path=svc.rel_path(IDS[7]), size_bytes=1))
+        s.commit()
+    with session() as s:
+        assert svc.drop_dead_queue(s) == 4
+    with session() as s:
+        left = {d.video_id: d.status for d in s.exec(select(Download)).all()}
+    assert left == {IDS[0]: "queued", IDS[4]: "queued", IDS[6]: "error", IDS[7]: "done"}
+
+
+def test_iterate_drops_dead_queue_rows_and_reports_the_real_count():
+    with session() as s:
+        cat = _cat(s)
+        _cand(s, cat, IDS[0])
+        s.add(Download(video_id=IDS[0], status="queued"))
+        s.add(Download(video_id=IDS[1], status="queued"))  # no candidate: never downloadable
+        s.commit()
+    # Disabled cache keeps the loop out of run_one so the reported count is the only thing under test.
+    save_setting("cache", {"enabled": False, "max_gb": 1, "max_height": 720, "rate_limit": 0,
+                           "min_gap_s": 0, "auto": "accepted"})
+    assert svc.Downloader(sleep=lambda s: None).iterate() == 30
+    with session() as s:
+        assert s.get(Download, IDS[1]) is None
+        assert s.get(Download, IDS[0]).status == "queued"
+    assert get_kv("downloader_state")["queue"] == 1
