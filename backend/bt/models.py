@@ -91,6 +91,7 @@ class Video(SQLModel, table=True):
     transcript: str = Field(default="", sa_column=Column(Text))
     comments: list = J()  # [{author,text,likes}]
     is_short: bool = False
+    shorts_verified: bool = False  # Public Shorts tab or canonical Shorts URL, not a duration guess.
     is_live: bool = False
     fetched_at: Optional[datetime] = None  # basic metadata
     enriched_at: Optional[datetime] = None  # transcript+comments

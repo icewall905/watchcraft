@@ -276,6 +276,13 @@ def _is_live(d: dict) -> bool:
     return bool(d.get("is_live")) or d.get("live_status") in ("is_live", "is_upcoming")
 
 
+def _shorts_url(url: str, video_id: str) -> bool:
+    """Positive provider evidence; arbitrary URL substrings are not proof."""
+    parsed = up.urlparse(url)
+    return ((parsed.hostname or "").lower() in {"youtube.com", "www.youtube.com", "m.youtube.com"}
+            and parsed.path.rstrip("/") == f"/shorts/{video_id}")
+
+
 def _entry(e: dict, channel: dict | None = None) -> dict | None:
     vid = e.get("id")
     if not vid or not re.fullmatch(r"[A-Za-z0-9_-]{11}", str(vid)):
@@ -292,7 +299,8 @@ def _entry(e: dict, channel: dict | None = None) -> dict | None:
         "view_count": int(e.get("view_count") or 0),
         "thumbnail": f"https://i.ytimg.com/vi/{vid}/hqdefault.jpg",
         "published_at": _ts(e),
-        "is_short": "/shorts/" in url or (0 < dur <= SHORT_MAX_S),
+        "is_short": _shorts_url(url, str(vid)) or (0 < dur <= SHORT_MAX_S),
+        "shorts_verified": _shorts_url(url, str(vid)),
         "is_live": _is_live(e),
     }
 
@@ -310,7 +318,7 @@ def _channel_url(ref: str, tab: str | None = None) -> str:
     if tab not in (None, "videos", "shorts", "streams"):
         raise YtError("unsupported channel tab")
     ref = ref.strip()
-    if not ref or re.search(r"[\s\\?#]", ref):
+    if not ref or re.search(r"[\s\\]", ref):
         raise YtError("invalid public channel reference")
     if re.fullmatch(r"UC[A-Za-z0-9_-]{22}", ref):
         path = f"/channel/{ref}"
@@ -319,8 +327,10 @@ def _channel_url(ref: str, tab: str | None = None) -> str:
         allowed_hosts = {"youtube.com", "www.youtube.com", "m.youtube.com"}
         if p.netloc.lower() not in {host + port for host in allowed_hosts for port in ("", ":80", ":443")}:
             raise YtError("not a public youtube channel URL")
-        path = p.path.rstrip("/")
+        path = up.unquote(p.path).rstrip("/")
     else:
+        if "?" in ref or "#" in ref:
+            raise YtError("invalid public channel reference")
         path = "/" + (ref if ref.startswith("@") else "@" + ref)
     match = re.fullmatch(r"(/(?:@[\w.-]+|channel/UC[A-Za-z0-9_-]{22}|(?:c|user)/[\w.-]+))(?:/(videos|shorts|streams))?", path)
     if not match:
@@ -355,6 +365,7 @@ def channel_videos(ref: str, n: int = 30, origin: str = "worker", *, tab: str | 
     if url.endswith("/shorts"):
         for entry in entries:
             entry["is_short"] = True  # Flat entries may omit the URL or last up to three minutes.
+            entry["shorts_verified"] = True
     return ch, entries
 
 
@@ -518,7 +529,10 @@ def upsert_video(s, d: dict) -> Video:
     if d.get("like_count"):
         v.like_count = int(d["like_count"])
     url = d.get("webpage_url") or d.get("url") or ""
-    v.is_short = bool(d["is_short"]) if "is_short" in d else ("/shorts/" in url or 0 < v.duration_s <= SHORT_MAX_S)
+    v.shorts_verified = v.shorts_verified or bool(d.get("shorts_verified")) or _shorts_url(url, vid)
+    # Full watch metadata often omits the Shorts classification. Positive tab/URL
+    # evidence survives refreshes; duration-only guesses can still be corrected.
+    v.is_short = v.shorts_verified or (bool(d["is_short"]) if "is_short" in d else 0 < v.duration_s <= SHORT_MAX_S)
     v.is_live = _is_live(d)
     if full:
         v.description = d.get("description") or ""

@@ -34,6 +34,8 @@ def init_db() -> None:
         SQLModel.metadata.create_all(connection)
         if 'kind' not in {c['name'] for c in inspect(connection).get_columns('category')}:
             connection.exec_driver_sql("ALTER TABLE category ADD COLUMN kind VARCHAR NOT NULL DEFAULT 'playlist'")
+        if 'shorts_verified' not in {c['name'] for c in inspect(connection).get_columns('video')}:
+            connection.exec_driver_sql("ALTER TABLE video ADD COLUMN shorts_verified BOOLEAN NOT NULL DEFAULT 0")
         # Additive household-access migration, before querying the updated Profile model.
         # Existing households retain one administrator: their first profile.
         if 'role' not in {c['name'] for c in inspect(connection).get_columns('profile')}:

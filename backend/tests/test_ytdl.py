@@ -426,3 +426,8 @@ def test_public_channel_authcheck_skip_is_scoped(monkeypatch, tab, expected):
 def test_explicit_short_tab_replaces_other_channel_tab():
     assert ytdl._channel_url('https://youtube.com/@Tasty/videos', 'shorts').endswith('/@Tasty/shorts')
     assert ytdl._channel_url('https://youtube.com/@Tasty/shorts').endswith('/@Tasty/shorts')
+
+
+def test_public_channel_share_urls_preserve_valid_identity():
+    assert ytdl._channel_url('https://www.youtube.com/@Tasty?si=share#about') == 'https://www.youtube.com/@Tasty/videos'
+    assert ytdl._channel_url('https://www.youtube.com/@%E6%96%99%E7%90%86/shorts?si=share') == 'https://www.youtube.com/@料理/shorts'
