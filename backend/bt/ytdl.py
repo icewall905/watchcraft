@@ -426,6 +426,21 @@ def _cached(video_id: str) -> dict | None:
     return None
 
 
+def cached_video_info(video_id: str) -> dict | None:
+    """Return fresh cached metadata only; never start an extraction on a miss.
+
+    A cached error is raised just as in video_info. Callers must obtain their
+    own request admission before invoking video_info after a miss.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id or ""):
+        raise YtUnavailable(f"bad video id {video_id!r}")
+    with _cache_lock:
+        hit = _cached(video_id)
+    if hit is not None:
+        return hit
+    return _db_read_info(video_id)
+
+
 def video_info(video_id: str, origin: str = "worker") -> dict:
     """Full yt-dlp info (formats with bt_init_range/bt_index_range, subtitles, chapters...). Cached 4h
     in memory and in the shared KV store (read across processes: worker enrich warms api plays);

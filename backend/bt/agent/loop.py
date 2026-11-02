@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from time import monotonic
 import traceback
@@ -11,7 +12,7 @@ from sqlmodel import col, select
 
 from ..db import session
 from ..models import Candidate, Video
-from . import data, enrich, judge, learn, memory, planner
+from . import data, enrich, judge, learn, memory, planner, timing
 from .ratelimit import RateLimiter
 from ..models import now
 from .runtime import Disabled, Interrupt, Paused, Runtime, Stopped
@@ -44,10 +45,16 @@ class Worker:
         # Research and AI have independent resources; keep one task per lane.
         # Join before discovery so planning sees all newly accepted picks.
         started = monotonic()
-        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="curator-ai") as pool:
-            ai = pool.submit(self._ai_work)
-            did = self._research_one()
-            did = ai.result() or did
+        trace_id = timing.new_trace_id()
+        research_done = threading.Event()
+        with timing.span("pass", trace_id=trace_id):
+            with ThreadPoolExecutor(max_workers=1, thread_name_prefix="curator-ai") as pool:
+                ai = pool.submit(self._timed_ai, research_done, trace_id)
+                try:
+                    did = self._research_one(trace_id)
+                finally:
+                    research_done.set()
+                did = ai.result() or did
         log.info("curator research/judge pass finished in %.2fs", monotonic() - started)
 
         # (3)+(4) YouTube work
@@ -56,6 +63,10 @@ class Worker:
             needs = data.category_needs(s, rt.focus_category_id)
         if not needs:
             return did
+        # If a cached video or AI work just advanced, run another pass first:
+        # an external blocker must not delay network-free research or judging.
+        if self.rl.blocker() and did:
+            return True
         if self.rl.wait_blocker(max_wait=YT_WAIT_CHUNK_S, category=needs[0].cat):
             return True
         yt = rt.yt
@@ -68,7 +79,8 @@ class Worker:
                 pend = need.counts.get("found", 0) + need.counts.get("enriched", 0)
                 if pend < data.LOW_WATER:
                     cat = need.cat
-                    res = planner.discover(rt, self.rl, cat)
+                    with timing.span("discovery", trace_id=trace_id, category_id=cat.id, profile_id=cat.profile_id):
+                        res = planner.discover(rt, self.rl, cat)
                     if rt.focus_category_id == cat.id:
                         rt.focus_category_id = None
                     if res is not None:
@@ -83,7 +95,11 @@ class Worker:
             raise
         return did
 
-    def _ai_work(self) -> bool:
+    def _timed_ai(self, research_done: threading.Event, trace_id: str) -> bool:
+        with timing.span("ai", trace_id=trace_id):
+            return self._ai_work(research_done, trace_id)
+
+    def _ai_work(self, research_done: threading.Event | None = None, trace_id: str | None = None) -> bool:
         rt = self.rt
         did = False
         # (1) learn — LLM only, highest priority
@@ -98,39 +114,57 @@ class Worker:
             rt.check()
             if not rt.llm_ok():
                 break
-            if judge.judge_one(rt, cand):
-                did = True
+            with timing.span("judgment", trace_id=trace_id, candidate_id=cand.id, category_id=cand.category_id) as measured:
+                verdict = judge.judge_one(rt, cand)
+                if verdict:
+                    measured.result = verdict
+                    did = True
+                else:
+                    measured.outcome = "error"
             if learn.pending_count() and rt.llm_ok():  # feedback arrived meanwhile → learn first
                 learn.process(rt)
+            # Keep the AI busy while research is running, but after research
+            # finishes yield the lane after this verdict so the next video can
+            # start. The first verdict is always allowed to avoid starvation.
+            if research_done is not None and research_done.is_set():
+                break
 
         return did
 
-    def _research_one(self) -> bool:
+    def _research_one(self, trace_id: str | None = None) -> bool:
         rt = self.rt
         rt.check()
         with session() as s:
             needs = data.category_needs(s, rt.focus_category_id)
-        # Let AI finish before the bounded blocker wait in iterate().
-        if self.rl.blocker():
-            return False
-        cand = self._next_found(needs)
+        # Cached research requires no YouTube request and can advance during
+        # backoff, quiet hours, playback or exhausted request budgets.
+        blocked = bool(self.rl.blocker())
+        cand = self._next_found(needs, cached_only=blocked)
         if cand is None:
             return False
         cat = next(n.cat for n in needs if n.cat.id == cand.category_id)
         try:
-            enrich.enrich_one(rt, self.rl, cand, cat)
+            with timing.span("research", trace_id=trace_id, candidate_id=cand.id,
+                             category_id=cat.id, profile_id=cat.profile_id) as measured:
+                result = enrich.enrich_one(rt, self.rl, cand, cat)
+                if result == "error":
+                    measured.outcome = "error"
+                elif result == "gone":
+                    measured.outcome = "cancelled"
         except rt.yt.YtBlocked as e:
             self.rl.blocked(e, cat)
         return True
 
     @staticmethod
-    def _next_found(needs: list[data.Need]) -> Optional[Candidate]:
+    def _next_found(needs: list[data.Need], *, cached_only: bool = False) -> Optional[Candidate]:
         with session() as s:
             for need in needs:
-                rows = s.exec(select(Candidate).where(Candidate.category_id == need.cat.id,
+                query = select(Candidate).where(Candidate.category_id == need.cat.id,
                                                        Candidate.status == "found",
                                                        Candidate.dismissed == False)  # noqa: E712
-                              .order_by(col(Candidate.created_at), Candidate.id)).all()
+                if cached_only:
+                    query = query.join(Video, Video.id == Candidate.video_id).where(Video.enriched_at != None)  # noqa: E711
+                rows = s.exec(query.order_by(col(Candidate.created_at), Candidate.id)).all()
                 if rows:
                     # Cached research first, then positive channel feedback.
                     # Every pick still receives the complete quality judgment.
@@ -194,6 +228,8 @@ class Worker:
 
     def run(self) -> None:
         rt = self.rt
+        from ..config import DATA_DIR
+        timing.configure(DATA_DIR)
         memory.recover()
         try:
             rt.event("control", "🤖 Curator started", "info")

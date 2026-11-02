@@ -159,7 +159,14 @@ def _post(cfg: dict, body: dict, abort: Callable[[], None] | None = None) -> htt
     headers = {"Authorization": f"Bearer {cfg['api_key']}"} if cfg.get("api_key") else {}
     url = cfg["base_url"].rstrip("/") + "/chat/completions"
     timeout = float(cfg.get("timeout_s") or 300)
-    _acquire(abort)
+    # Only video-curator calls carry this context; do not label unrelated Hub
+    # or interactive inference as a video-curation measurement.
+    from .agent import timing
+    if timing.current_trace():
+        with timing.span("model_wait"):
+            _acquire(abort)
+    else:
+        _acquire(abort)
     if abort is None:
         try:
             with httpx.Client(timeout=timeout) as c:

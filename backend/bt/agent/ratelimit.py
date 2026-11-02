@@ -19,6 +19,7 @@ from sqlmodel import col, func, select
 from ..db import session
 from ..models import Category, YtRequest, now
 from .runtime import Runtime, aware, iso
+from . import timing
 
 
 def quiet_remaining(spec: str, local_now: Optional[datetime] = None) -> float:
@@ -111,8 +112,10 @@ class RateLimiter:
                 return self.rt.playing(ctl) is None
             return False
 
-        self.rt.sleep(wait, state, detail, category, until_check=done,
-                      until_end=iso(now() + timedelta(seconds=secs)))
+        with timing.span("limiter_wait", category_id=category.id if category else None,
+                         profile_id=category.profile_id if category else None):
+            self.rt.sleep(wait, state, detail, category, until_check=done,
+                          until_end=iso(now() + timedelta(seconds=secs)))
         return True
 
     def wait_turn(self, kind: str, category: Optional[Category] = None, **state_kw) -> None:
@@ -130,8 +133,10 @@ class RateLimiter:
                 self._next_at = (last + timedelta(seconds=delay)) if last else now()
             left = (self._next_at - now()).total_seconds()
             if left > 0:
-                rt.sleep(left, "sleeping", f"Throttle: next YouTube request ({kind}) in {int(left + 0.5)}s",
-                         category, **state_kw)
+                with timing.span("limiter_wait", category_id=category.id if category else None,
+                                 profile_id=category.profile_id if category else None):
+                    rt.sleep(left, "sleeping", f"Throttle: next YouTube request ({kind}) in {int(left + 0.5)}s",
+                             category, **state_kw)
                 continue
             self._next_at = None
             return
