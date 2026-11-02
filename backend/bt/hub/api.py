@@ -16,7 +16,7 @@ from ..access import hub_allowed, require_admin, require_hub
 from ..api.core import profile_id
 from ..config import DATA_DIR
 from ..db import get_settings, save_setting, session
-from ..models import AgentEvent, Download
+from ..models import AgentEvent, Download, Profile
 from . import activity, ai, engine, memes, polling, repair, scout, slots, watchers
 from .models import (Alert, Briefing, BriefingIssue, CaptureJob, CapturedAsset, CapturedPage, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
                      CuratorRun, CuratorSource, ItemState, MemeExample, MemeFormat, MemeTrend, MemeTrendState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, ScoutReportConfig, ScoutReportIssue, SitemapEntry, Source, SourceCheck, Topic, TopicItem, WatcherRevision)
@@ -2050,6 +2050,28 @@ def _attach_meme(s: Session, rows: list[dict]) -> None:
         r['meme'] = mapping.get(r['id'])
 
 
+class MemeLanguageIn(BaseModel):
+    hidden: bool = True
+
+
+@router.post('/memes/languages/{code}/hide')
+def hide_meme_language(code: str, body: MemeLanguageIn, pid: int = Depends(profile_id)):
+    """Remember a language this profile does not want in the meme feed, or forget it again."""
+    code = code.strip().lower()
+    if not re.fullmatch(r'[a-z]{2,3}(?:-[a-z]{2,4})?', code):
+        raise HTTPException(422, 'Use a language code such as de or pt-BR.')
+    with session() as s:
+        p = s.get(Profile, pid)
+        prefs = dict(p.prefs or {})
+        hidden = [x for x in (prefs.get('hidden_meme_languages') or []) if isinstance(x, str) and x != code]
+        if body.hidden:
+            hidden.append(code)
+        prefs['hidden_meme_languages'] = hidden[:20]
+        p.prefs = prefs
+        s.add(p); s.commit()
+        return {'hidden_languages': prefs['hidden_meme_languages']}
+
+
 @router.get('/memes/items')
 def meme_items(view: str = 'examples', q: str = '', community: str = '', provider: str = '', language: str = '',
                format_id: int | None = None, topic: int = 0, since: float | None = None, until: float | None = None,
@@ -2078,6 +2100,11 @@ def meme_items(view: str = 'examples', q: str = '', community: str = '', provide
             stmt = stmt.where(MemeExample.community == community)
         if language:
             stmt = stmt.where(MemeExample.language == language)
+        # Languages this profile asked never to see again, learned from thumbs-down reasons.
+        hidden_languages = [x for x in ((s.get(Profile, pid).prefs or {}).get('hidden_meme_languages') or [])
+                            if isinstance(x, str) and x]
+        if hidden_languages:
+            stmt = stmt.where(or_(MemeExample.language == '', MemeExample.language.not_in(hidden_languages)))
         if provider:
             stmt = stmt.where(ContentItem.provider.in_(provider.split(',')))
         if format_id:

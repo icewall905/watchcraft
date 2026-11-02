@@ -88,3 +88,31 @@ def test_feedback_terms_are_bounded_and_deduplicated(client):
     from bt.hub.api import _clean_terms
     assert _clean_terms(['  Spongebob ', 'spongebob', 'a', 'x' * 80]) == ['spongebob', 'x' * 40]
     assert _clean_terms(None) == []
+
+
+def test_hiding_a_language_keeps_it_out_of_the_meme_feed(client):
+    """A thumbs-down reason of "German" must actually stop German memes, not just rank them lower."""
+    from bt.hub.models import MemeExample
+    curator = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}])
+    ids = _discover(curator, [
+        ('de', ContentItem(url='https://example.org/de', type='meme', title='Ein Witz', summary='')),
+        ('en', ContentItem(url='https://example.org/en', type='meme', title='A joke', summary='')),
+    ])
+    with session() as s:
+        s.add(MemeExample(item_id=ids['de'], language='de'))
+        s.add(MemeExample(item_id=ids['en'], language='en'))
+        s.commit()
+
+    def feed():
+        return [i['id'] for i in client.get('/api/hub/memes/items?view=examples').json()['items']]
+
+    assert sorted(feed()) == sorted([ids['de'], ids['en']])
+    assert client.post('/api/hub/memes/languages/de/hide', json={'hidden': True}).json()['hidden_languages'] == ['de']
+    assert feed() == [ids['en']]
+    # Undo puts it back.
+    assert client.post('/api/hub/memes/languages/de/hide', json={'hidden': False}).json()['hidden_languages'] == []
+    assert sorted(feed()) == sorted([ids['de'], ids['en']])
+
+
+def test_hiding_a_language_rejects_nonsense_codes(client):
+    assert client.post('/api/hub/memes/languages/not a code/hide', json={'hidden': True}).status_code == 422

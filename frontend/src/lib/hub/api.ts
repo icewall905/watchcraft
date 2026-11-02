@@ -125,7 +125,9 @@ export const hub = {
 	memeSimilar: (id: number) => get<{ items: Item[] }>(`/memes/items/${id}/similar`),
 	memeExplain: (id: number, refresh = false) => send<{ ai: boolean; explanation: MemeExplain }>('POST', `/memes/items/${id}/explain`, { refresh }),
 	/** Analyze collected examples and recount trends now instead of on the next scheduler tick. */
-	memeSweep: () => send<{ analyzed: number; transitions: number; formats: number }>('POST', '/memes/sweep')
+	memeSweep: () => send<{ analyzed: number; transitions: number; formats: number }>('POST', '/memes/sweep'),
+	hideMemeLanguage: (code: string, hidden = true) =>
+		send<{ hidden_languages: string[] }>('POST', `/memes/languages/${encodeURIComponent(code)}/hide`, { hidden })
 };
 
 const span = (s: number) => s < 3600 ? `${Math.max(1, Math.floor(s / 60))}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`;

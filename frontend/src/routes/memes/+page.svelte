@@ -35,9 +35,11 @@
 	// Thumbs are per item and per session: the curator's tuned lists are the durable record.
 	let verdicts = $state<Record<number, 'more' | 'less'>>({});
 	let tuning = $state<number | null>(null);
-	// Set when a thumbs down had nothing to learn from and the person should say why.
+	// A thumbs down always asks why: the title words are often generic ("humor", "memes")
+	// and learning those would suppress good memes too.
 	let ask = $state<Item | null>(null);
 	let why = $state('');
+	let whyLang = $state('');
 	let similar = $state<Item[]>([]);
 	let explanation = $state<MemeExplain | null>(null);
 	let explainError = $state('');
@@ -165,34 +167,66 @@
 		if (tuning !== null || !it.curator_ids?.length) return;
 		tuning = it.id;
 		try {
-			// Hide first: the meme leaves the feed even when the curator has nothing to learn from.
-			if (verdict === 'less') await hide(it);
-			const words = await learn(it, verdict);
-			const said = words.length ? `Learned: ${words.join(', ')}. ` : '';
 			if (verdict === 'more') {
+				const words = await learn(it, 'more');
 				verdicts = { ...verdicts, [it.id]: verdict };
-				toast.success(`${said}Similar memes will rank higher.`);
+				toast.success(`${words.length ? `Learned: ${words.join(', ')}. ` : ''}Similar memes will rank higher.`);
 				return;
 			}
-			// A dismissal is not visible anywhere else, so keep the undo within reach.
-			toast.success(`${said}Hidden from your feed.`, { action: { label: 'Undo', run: () => void restore(it) }, timeout: 8000 });
-		} catch (e) {
-			// The title had nothing distinctive: ask what to avoid instead of leaving it unexplained.
-			if (verdict === 'less' && /nothing distinctive/i.test(errMsg(e))) { ask = it; why = ''; }
-			else toast.error(errMsg(e));
-		} finally { tuning = null; }
+			// Hide first, then ask: the meme leaves the feed whatever the answer is.
+			await hide(it);
+			ask = it; why = ''; whyLang = '';
+		} catch (e) { toast.error(errMsg(e)); }
+		finally { tuning = null; }
 	}
 	async function submitWhy(e: SubmitEvent) {
 		e.preventDefault();
 		const item = ask;
 		const word = why.trim();
-		ask = null; why = '';
-		if (!item || !word) return;
+		const lang = whyLang;
+		ask = null; why = ''; whyLang = '';
+		if (!item) return;
 		try {
+			if (lang) {
+				await hub.hideMemeLanguage(lang, true);
+				toast.success(`${languageName(lang)} memes will not appear again.`, {
+					action: { label: 'Undo', run: () => void unhideLanguage(lang) }, timeout: 8000
+				});
+				await loadFeed(false);
+				return;
+			}
+			if (word.length < 2) return;
 			const words = await learn(item, 'less', [word]);
-			toast.success(`Learned: ${words.join(', ') || word}. Similar memes will rank lower.`);
+			toast.success(`Learned: ${words.join(', ') || word}. Similar memes will rank lower.`,
+				{ action: { label: 'Undo', run: () => void restore(item) }, timeout: 8000 });
 		} catch (err) { toast.error(errMsg(err)); }
 	}
+	function skipWhy() {
+		const item = ask;
+		ask = null; why = ''; whyLang = '';
+		// Skipping still leaves the meme hidden, so keep the undo within reach.
+		if (item) toast.success('Hidden from your feed.', { action: { label: 'Undo', run: () => void restore(item) }, timeout: 8000 });
+	}
+	async function unhideLanguage(code: string) {
+		try { await hub.hideMemeLanguage(code, false); await loadFeed(false); }
+		catch (err) { toast.error(errMsg(err)); }
+	}
+	const languageName = (code: string) => {
+		try { return new Intl.DisplayNames(['en'], { type: 'language' }).of(code) ?? code.toUpperCase(); }
+		catch { return code.toUpperCase(); }
+	};
+	// Reasons worth offering: the language (the one that actually needs a filter), the
+	// community and the format. Anything else the person types.
+	const reasons = $derived.by(() => {
+		const it = ask;
+		if (!it) return [] as { label: string; value: string; lang?: string }[];
+		const out: { label: string; value: string; lang?: string }[] = [];
+		const lang = it.meme?.language;
+		if (lang && lang !== 'en') out.push({ label: `${languageName(lang)} memes`, value: languageName(lang), lang });
+		if (it.meme?.community) out.push({ label: it.meme.community, value: it.meme.community });
+		if (it.meme?.format_name) out.push({ label: it.meme.format_name, value: it.meme.format_name });
+		return out;
+	});
 	async function restore(it: Item) {
 		try {
 			await hub.setState(it.id, { dismissed: false });
@@ -403,13 +437,22 @@
 {/if}
 
 {#if ask}
-	<Modal title="What should I avoid?" size="sm" onClose={() => (ask = null)}
-		subtitle="This meme is hidden. Tell me what to look out for and I will rank similar ones lower.">
+	<Modal title="Why hide this?" size="sm" onClose={() => (ask = null)}
+		subtitle="It is already hidden. Tell me what to avoid and the Meme Tracker learns from it.">
 		<form class="why" onsubmit={submitWhy}>
-			<input class="input" bind:value={why} placeholder="e.g. spongebob" aria-label="What to avoid" maxlength="40" use:focusable />
+			{#if reasons.length}
+				<div class="reasons">
+					{#each reasons as r (r.label)}
+						<button type="button" class="chip" class:on={r.lang ? whyLang === r.lang : !whyLang && why === r.value}
+							use:focusable onclick={() => { why = r.value; whyLang = r.lang ?? ''; }}>{r.label}</button>
+					{/each}
+				</div>
+			{/if}
+			<input class="input" bind:value={why} oninput={() => (whyLang = '')} placeholder="e.g. spongebob"
+				aria-label="What to avoid" maxlength="40" use:focusable />
 			<div class="hstack">
-				<button class="btn primary" disabled={!why.trim()} use:focusable>Learn this</button>
-				<button type="button" class="btn ghost" use:focusable onclick={() => (ask = null)}>Skip</button>
+				<button class="btn primary" disabled={why.trim().length < 2} use:focusable>Learn this</button>
+				<button type="button" class="btn ghost" use:focusable onclick={skipWhy}>Skip</button>
 			</div>
 		</form>
 	</Modal>
@@ -454,6 +497,9 @@
 	.acts { display: flex; gap: .5rem; flex-wrap: wrap; }
 	.acts .btn.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
 	.why { display: grid; gap: .8rem; }
+	.reasons { display: flex; flex-wrap: wrap; gap: .4rem; }
+	.reasons .chip { min-height: 2.25rem; padding: .3rem .7rem; }
+	.reasons .chip.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 18%, transparent); }
 	.explain { display: grid; grid-template-columns: auto 1fr; gap: .3rem .8rem; margin: 0; font-size: .92rem; }
 	.explain dt { color: var(--muted); font-weight: 600; }
 	.explain dd { margin: 0; }
