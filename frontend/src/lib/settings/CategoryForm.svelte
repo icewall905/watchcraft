@@ -60,6 +60,30 @@
 	}
 	let playlistUrl = $state('');
 	let confirmDel = $state(false);
+	let confirmBrief = $state(false);
+	let briefFromAi = $state(false);
+
+	/** Write the brief from the name. Replacing a brief the family wrote needs a second press. */
+	async function autofillBrief() {
+		if (autofilling) return;
+		if (!f.name.trim()) return toast.warn(`Give the ${kind === 'shorts' ? 'feed' : 'playlist'} a name first.`);
+		if (f.brief.trim() && !briefFromAi && !confirmBrief) {
+			confirmBrief = true;
+			return;
+		}
+		confirmBrief = false;
+		autofilling = 'brief';
+		try {
+			const result = await api.autofillBrief(f.name.trim(), kind);
+			f.brief = result.brief;
+			briefFromAi = true;
+			toast.success('Brief written. Edit it to taste.');
+		} catch {
+			// The API client displays the error.
+		} finally {
+			autofilling = null;
+		}
+	}
 	// svelte-ignore state_referenced_locally
 	let minMin = $state(kind === 'shorts' ? f.min_duration_s : Math.round(f.min_duration_s / 60));
 	// svelte-ignore state_referenced_locally
@@ -119,7 +143,10 @@ Simple, fun science for kids 5–9: Mark Rober, cat videos, experiments, space, 
     {#if !category}
         <TextField label="Initial playlist URL (optional)" bind:value={playlistUrl} placeholder="https://www.youtube.com/playlist?list=PL…" hint="Import up to 200 starting videos and let AI generate the prompt from all of them. Imported videos skip judging; future replacements use your Keep ready setting. Public playlists work without cookies; private playlists need cookies in Settings → Cookies." id="cat-playlist" />
     {/if}
-	<TextField multiline rows={7} label="Brief for the AI" hint={playlistUrl.trim() && !category ? "Optional extra preferences to add to the generated prompt." : "The most important field. Say what you want, what to avoid, and who is watching."} bind:value={f.brief} placeholder={BRIEF_PLACEHOLDER} id="cat-brief" />
+	<div class="autofill-field">
+		<TextField multiline rows={7} label="Brief for the AI" hint={playlistUrl.trim() && !category ? "Optional extra preferences to add to the generated prompt." : "The most important field. Say what you want, what to avoid, and who is watching."} bind:value={f.brief} oninput={() => { briefFromAi = false; confirmBrief = false; }} placeholder={BRIEF_PLACEHOLDER} id="cat-brief" />
+		<button class="btn autofill" disabled={!!autofilling} use:focusable={{ group: 'cat-autofill', onSelect: autofillBrief }} aria-label="Write the brief with AI">{autofilling === 'brief' ? 'Generating…' : confirmBrief ? 'Press again: replaces the brief' : '✨ Autofill with AI'}</button>
+	</div>
 
 	<div class="two">
 		<div class="autofill-field">

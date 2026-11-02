@@ -289,6 +289,43 @@ def autofill_category(body: CategoryAutofillIn, pid: int = Depends(profile_id)):
     return {"values": list(dict.fromkeys(v.strip() for v in values if isinstance(v, str) and v.strip()))[:6]}
 
 
+class CategoryBriefIn(BaseModel):
+    name: str
+    kind: Literal["playlist", "shorts"] = "playlist"
+
+
+BRIEF_SYSTEM = """You write the brief for one WatchCraft playlist or Shorts feed. The brief is the only instruction the AI curator gets, so it must say what to collect, what to avoid and who is watching.
+
+Write 2-4 plain sentences under 600 characters, in the same language as the name.
+- Name the subject concretely and give 2-4 example creators, series or kinds of video that fit.
+- Say what to avoid: clickbait, pranks, shouting, compilations, or whatever genuinely does not fit.
+- Assume a family with young children watching together unless the name says otherwise.
+- Do not invent requirements the name does not imply. Do not mention scores, thresholds, durations or settings: those are separate fields.
+- Return only the brief text: no heading, no quotes, no markdown."""
+
+
+@router.post("/categories/autofill-brief")
+def autofill_brief(body: CategoryBriefIn, pid: int = Depends(profile_id)):
+    from .. import llm
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "Give the playlist a name first")
+    schema = {"type": "object", "properties": {"brief": {"type": "string"}},
+              "required": ["brief"], "additionalProperties": False}
+    try:
+        result = llm.chat_json([
+            {"role": "system", "content": BRIEF_SYSTEM},
+            {"role": "user", "content": f"Playlist name: {name}\nFormat: "
+                                        + ("short vertical clips" if body.kind == "shorts" else "regular videos")},
+        ], json_schema=schema, schema_name="category_brief", max_tokens=600, role="worker")
+    except llm.LlmError as e:
+        raise HTTPException(502, "AI suggestions failed. Check your AI settings and try again.") from e
+    brief = result.get("brief")
+    if not isinstance(brief, str) or not brief.strip():
+        raise HTTPException(502, "AI returned an empty brief. Try again.")
+    return {"brief": brief.strip()[:1200]}
+
+
 @router.get("/categories")
 def list_categories(pid: int = Depends(profile_id), s: Session = Depends(get_session)):
     cats = s.exec(select(Category).where(Category.profile_id == pid).order_by(Category.position, Category.id)).all()

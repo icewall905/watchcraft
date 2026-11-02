@@ -592,3 +592,35 @@ def test_shorts_page_deduplicates_before_limit_and_excludes_loaded_videos(tmp_pa
     assert last['next_offset'] is None
     assert c.get('/api/shorts', params={'category_id': cats[0], 'exclude_ids': 'bad'}, headers=h).status_code == 400
     assert c.get('/api/shorts', params={'category_id': cats[0]}, headers={'X-Profile-Id': '1'}).status_code == 404
+
+
+def test_autofill_brief_writes_a_brief_from_the_name(monkeypatch):
+    from bt import llm
+    seen = []
+
+    def fake(messages, **kw):
+        seen.append((messages, kw))
+        return {"brief": "  Simple, fun science for kids 5-9: experiments, space, animals.  "}
+
+    monkeypatch.setattr(llm, "chat_json", fake)
+    c = client()
+    r = c.post("/api/categories/autofill-brief", json={"name": "Science for kids"})
+    assert r.status_code == 200
+    assert r.json()["brief"] == "Simple, fun science for kids 5-9: experiments, space, animals."
+    assert "Science for kids" in seen[0][0][-1]["content"]
+    assert seen[0][1]["role"] == "worker"
+    assert seen[0][1]["schema_name"] == "category_brief"
+
+
+def test_autofill_brief_requires_a_name_and_rejects_empty_or_failed_output(monkeypatch):
+    from bt import llm
+    c = client()
+    assert c.post("/api/categories/autofill-brief", json={"name": "   "}).status_code == 400
+    monkeypatch.setattr(llm, "chat_json", lambda *a, **kw: {"brief": "   "})
+    assert c.post("/api/categories/autofill-brief", json={"name": "Cats"}).status_code == 502
+
+    def boom(*a, **kw):
+        raise llm.LlmError("no model")
+
+    monkeypatch.setattr(llm, "chat_json", boom)
+    assert c.post("/api/categories/autofill-brief", json={"name": "Cats"}).status_code == 502

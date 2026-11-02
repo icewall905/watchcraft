@@ -163,6 +163,7 @@ export const api = {
 	// categories
 	categories: () => get<Category[]>('/categories'),
 	autofillCategory: (brief: string, field: 'seed_queries' | 'seed_channels' | 'include_keywords' | 'exclude_keywords') => post<{ values: string[] }>('/categories/autofill', { brief, field }),
+	autofillBrief: (name: string, kind: 'playlist' | 'shorts') => post<{ brief: string }>('/categories/autofill-brief', { name, kind }),
 	category: (id: number) => get<Category>(`/categories/${id}`),
 	createCategory: (c: Partial<CategoryInput> & { playlist_url?: string }) => post<Category>('/categories', c),
 	updateCategory: (id: number, c: Partial<Category>) => patch<Category>(`/categories/${id}`, c),
