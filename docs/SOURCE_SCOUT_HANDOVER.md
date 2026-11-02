@@ -1,5 +1,45 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — judge calibration, date-aware discovery, profile-scoped manifests and brief autofill (`598e242`, 2026-11-02)
+
+- Covers `9c27ded..598e242`. B-028: the judge no longer reads popularity as quality, treats a missing
+  transcript/comment section/description as missing evidence rather than a fault (in the system prompt and at
+  the point of use), only treats a listed rejection as precedent when its reason is a real quality or safety
+  failure, reads broad briefs at their own breadth, and lets variety break close calls instead of tightening
+  them. Safety rules and the kid-safe gate are unchanged.
+- B-029: the planner receives today's date and recency guidance, future-dated queries and seeds are dropped
+  from the rotation and the prompt, and `approximate_date` is enabled for search and channel tabs so
+  `published_at` exists at discovery and `max_age_days` can act before enrichment.
+- B-024: Shaka now sends `X-Profile-Id` on same-origin manifest requests only, the prefetch fetch sends it
+  too, and playback reads profile-merged player prefs instead of the global `max_height`.
+- T-071: `POST /api/categories/autofill-brief` writes a 2-4 sentence brief from the playlist name; the form
+  button warns without a name, regenerates an AI-written brief in one click and asks for a second press
+  before replacing typed text.
+- Local verification: **597 backend tests passed, two skipped**; svelte-check 0 errors (three existing CSS
+  warnings); production build; **19 focused browser tests passed** including the new brief-autofill spec.
+  The full browser suite ran 138 passed with 11 two-minute timeouts in tv/welcome/voice-search/memory specs
+  that all pass in isolation on this loaded machine.
+- Fresh online and stopped-service backups: `/root/compose/watchcraft-backups/20261102-pre-brief-autofill`
+  (integrity `ok`; 6 profiles, 7,359 videos, 26 categories, 140 history, 267 items, 267 capture jobs).
+  Rollback image `watchcraft:rollback-20261102-brief-autofill` retains `9c27ded`.
+- Isolated restore of the online backup ran `watchcraft:598e242` on `127.0.0.1:6698`, started twice:
+  integrity `ok`, all counts preserved, no tracebacks. On that copy, with profile 1 PIN-locked, the manifest
+  endpoint returned **403 without the header** (the B-024 bug) and **200 with a 282 KB MPD for unlocked
+  profile 4**, while PIN-protected profile 2 stayed 403. `POST /api/categories/autofill-brief` returned a
+  usable brief from the real model. The disposable container and data were removed.
+- Rollout used rsync without `--delete` (12 source files changed, nothing removed) and preserved `.env` and
+  `compose.host.yaml` (checksums verified before and after). `DEPLOYED_COMMIT=598e242`; API, worker and
+  downloader run image `sha256:844e7b9fc470…` with zero restarts and no tracebacks.
+- Post-deploy: local and public `/api/health` OK; `/`, `/shorts`, `/agent`, `/settings` and `/api/categories`
+  return 200; DB integrity `ok`; profiles, roles and both PIN records unchanged; saved media served HTTP 206
+  and decoded 20 frames; the deployed bundle contains the new brief-autofill strings and the backend exposes
+  both autofill routes; the running image reports every new judge/planner prompt line and `future_dated`.
+  Live `autofill-brief` on prod returned a usable brief for "Space for kids".
+- Rollback: `docker tag watchcraft:rollback-20261102-brief-autofill watchcraft:latest` and rerun the compose
+  command (no schema change in this release, so no data restore is needed).
+- Still open: B-008 (merge pause), B-019 (browser egress), T-069 (non-YouTube providers), and the physical
+  device checks V-002/V-003/V-010/V-027.
+
 ## Deployment record — persistent channel availability feedback (`2ec62a9`, 2026-11-02)
 
 - Discovery plans retain up to 32 temporary unavailable-channel records across replanning,
