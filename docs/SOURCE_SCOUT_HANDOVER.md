@@ -1,5 +1,47 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — live item filters and tag search (`903b90e`, 2026-11-02)
+
+- Covers `cce22ea..903b90e`. Discover, News, Library and Meme Radar only filtered after a submit, and News and
+  Library had no text filter at all. A shared `LiveFilter` writes the existing `q` URL parameter as the user types
+  (250 ms debounce, `replaceState`, focus kept): Discover, Library and Meme Radar re-query, News filters its
+  already-loaded stories in place.
+- Item search now also matches tags. Source tags in `meta.tags` and the profile's own tags in `itemstate.tags` are
+  matched through `json_each`, so a tag surfaces an article whose text never mentions it; `-term` excludes tagged
+  items too and quoted phrases stay text-only. Cards show source tags beside the profile's own tags and both are
+  buttons that set the filter; pages without a filter keep rendering them as plain text.
+- Local verification: **675 backend tests passed, six skipped** (four new cover source tags, own tags, negation and
+  the term parser); **25 browser tests** across hub/memes/navigation/a11y plus **four new live-filter specs** that
+  stub the API and assert the list narrows without a submit and that a tag chip filters; svelte-check 0 errors
+  (three existing CSS warnings); production build; rendered desktop and 390 px layouts checked for chip containment
+  and horizontal overflow.
+- Fresh online and stopped-service backups: `/root/compose/watchcraft-backups/20261102-pre-live-filter`
+  (integrity `ok`; 6 profiles, 7,701 videos, 29 categories, 300 items, 7,276 candidates, 2,274 downloads, 17
+  sources, 5 curators). Rollback image `watchcraft:rollback-20261102-live-filter` retains `cce22ea`
+  (`9d1be9f1544a`). Saved media was unchanged.
+- Isolated restore of the online backup ran `watchcraft:903b90e` on `127.0.0.1:6697`: integrity `ok`, every count
+  and the profile/PIN checksum identical, started twice, `/`, `/shorts`, `/agent`, `/settings`, `/discover`,
+  `/news`, `/library`, `/memes` and `/api/categories` all 200, no tracebacks. On that copy a disposable adult QA
+  profile (created and PIN-set inside the copy only) exercised the HTTP path: `q=memes` returned 21 items,
+  `q=spongebob` 4, `q=linux` 7, `q=selfhosted` 0, at about 10 ms per query. Direct query comparison on the same
+  data: `memes` 64 text-only → 80 tag-aware (+16), `spongebob` 17 → 17, `linux` 28 → 28. The disposable
+  containers and data were removed.
+- Rollout used rsync without `--delete` (six frontend files changed, three added, one backend file changed) and
+  preserved `.env` and `compose.host.yaml` (checksums verified before and after). `DEPLOYED_COMMIT=903b90e`; API,
+  worker and downloader run image
+  `sha256:5871cb7fdb59220814d209a72f7c2726ee2318ffa3478240aa5bde4511528f26` with zero restarts and no tracebacks.
+- Post-deploy: local `/api/health` OK and `https://wc.tdgs.org` plus `https://watchcraft.tdgs.org` return 200; `/`,
+  `/shorts`, `/agent`, `/settings`, `/discover`, `/news`, `/library`, `/memes`, `/api/categories` and
+  `/api/downloads` return 200; DB integrity `ok`; profiles, roles and both PIN records unchanged (checksum
+  `2c415ddd39a318be`); the deployed bundle contains the new filter strings and the backend exposes `tag_terms`; a
+  read-only query against the live database reproduces the isolated result (`memes` 64 → 80). The curation timing
+  log from the previous release keeps growing (235 events) and the worker is judging normally.
+- Rollback: `docker tag watchcraft:rollback-20261102-live-filter watchcraft:latest` and rerun the three-file
+  compose command with `up -d --no-build --force-recreate --wait` (no schema change).
+- Still open: V-040 (curation measurement window), B-033, B-034, T-075 Stages E–G, and the physical device checks
+  V-002/V-003/V-010/V-027. The tag match is a `json_each` scan: fine at 300 items, the first thing to index if the
+  table grows.
+
 ## Deployment record — curator-form defaults and video-curation throughput (`cce22ea`, 2026-11-02)
 
 - Covers `a5f0e10..cce22ea`: `b3f280e` (default Mastodon and Lemmy endpoints in the curator form) and
