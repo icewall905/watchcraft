@@ -10,9 +10,11 @@
 		video: Video;
 	};
 	let feeds = $state<ShortsFeed[]>([]), selected = $state<ShortsFeed | null>(null);
+	let switchingProfile = $state(false);
 	let items = $state<Short[]>([]), index = $state(0), loading = $state(true), error = $state(''), playbackError = $state('');
 	let nextOffset = $state<number | null>(null), videoEl = $state<HTMLVideoElement>(), needsTap = $state(false), progress = $state(0), busy = $state(false);
 	let alive = true, generation = 0, navigation = 0, selectionEpoch = 0, activeId: string | null = null, fetching = false;
+	let feedRequest = 0;
 	let touchStart: {
 		y: number;
 		x: number;
@@ -40,6 +42,7 @@
 		stop();
 		navigation++;
 		selectionEpoch++;
+		feedRequest++;
 		selected = null;
 		items = [];
 		index = 0;
@@ -49,23 +52,41 @@
 		error = '';
 		playbackError = '';
 	}
-	async function loadFeeds() {
-		loading = true;
-		const profile = session.version, epoch = selectionEpoch;
+	async function loadFeeds(background = false) {
+		if (!background) loading = true;
+		const profile = session.version, epoch = selectionEpoch, request = ++feedRequest;
 		try {
 			const result = await api.shortsFeeds();
-			if (alive && profile === session.version && epoch === selectionEpoch) {
+			if (alive && request === feedRequest && profile === session.version && epoch === selectionEpoch) {
 				feeds = result;
 				error = '';
 			}
 		}
 		catch (e) {
-			if (alive && profile === session.version && epoch === selectionEpoch)
+			if (alive && request === feedRequest && profile === session.version && epoch === selectionEpoch)
 				error = errMsg(e);
 		}
 		finally {
-			if (alive && profile === session.version && epoch === selectionEpoch)
+			if (alive && request === feedRequest && profile === session.version && epoch === selectionEpoch)
 				loading = false;
+		}
+	}
+	function refreshFeeds() {
+		if (alive && !selected && !switchingProfile && !document.hidden)
+			void loadFeeds(true);
+	}
+	async function switchProfile(id: number) {
+		if (switchingProfile || id === session.profileId) return;
+		reset();
+		feeds = [];
+		loading = true;
+		switchingProfile = true;
+		try {
+			if (!(await session.switchProfile(id)) && alive) await loadFeeds();
+		} catch (e) {
+			if (alive) { error = errMsg(e); loading = false; }
+		} finally {
+			if (alive) switchingProfile = false;
 		}
 	}
 	async function load(append = false) {
@@ -250,6 +271,14 @@
 	onMount(() => {
 		offRaw = nav.onRawKey(onKey);
 		void loadFeeds();
+		window.addEventListener('focus', refreshFeeds);
+		document.addEventListener('visibilitychange', refreshFeeds);
+		const timer = setInterval(refreshFeeds, 15000);
+		return () => {
+			clearInterval(timer);
+			window.removeEventListener('focus', refreshFeeds);
+			document.removeEventListener('visibilitychange', refreshFeeds);
+		};
 	});
 	onDestroy(() => {
 		record();
@@ -263,10 +292,16 @@
 <div class="feed" role="region" aria-label="Shorts feed" ontouchstart={onTouchStart} ontouchend={onTouchEnd} ontouchcancel={()=>touchStart=null}>
 	{#if !selected}
 		<div class="state picker"><h1>Choose a feed</h1><p class="muted">Only videos stored locally are played.</p>
-		{#if loading}<p>Loading feeds…</p>{:else if error}<p class="err" role="alert">{error}</p><button class="btn" onclick={loadFeeds} use:focusable>Try again</button>{:else}
-			{#each feeds as feed (feed.id)}<button class="feed-choice" use:focusable onclick={()=>choose(feed)}><strong>{feed.emoji} {feed.name}</strong><span class="small muted">{feed.ready_count} ready locally · {feed.pending_count} waiting for local files{feed.error_count ? ` · ${feed.error_count} download errors` : ''}{!feed.enabled ? ' · Collection paused' : ''}</span></button>{/each}
-			{#if !feeds.length}<p>No feeds yet. Give your curator a brief to start collecting local clips.</p>{/if}
+		<p class="small muted">Feeds for <strong>{session.profile?.name ?? 'your profile'}</strong></p>
+		{#if session.profiles.length > 1}<div class="profile-choices" role="group" aria-label="Choose Shorts profile">
+			{#each session.profiles as profile (profile.id)}<button class="btn" class:current-profile={profile.id === session.profileId} aria-pressed={profile.id === session.profileId} disabled={switchingProfile} onclick={()=>switchProfile(profile.id)} use:focusable>{profile.emoji} {profile.name}{profile.pin_required ? ' 🔒' : ''}</button>{/each}
+		</div>{/if}
+		{#if loading}<p>Loading feeds…</p>{:else}
+			{#if error}<p class="err" role="alert">{error}</p><button class="btn" onclick={()=>loadFeeds()} use:focusable>Try again</button>{/if}
+			{#each feeds as feed (feed.id)}<button class="feed-choice" use:focusable onclick={()=>choose(feed)}><span class="feed-top"><strong>{feed.emoji} {feed.name}</strong><span class="play-label">{feed.ready_count ? '▶ Play' : 'View feed'}</span></span><span class="small muted">{feed.ready_count} ready locally · {feed.pending_count} waiting for local files{feed.error_count ? ` · ${feed.error_count} download errors` : ''}{!feed.enabled ? ' · Collection paused' : ''}</span></button>{/each}
+			{#if !feeds.length && !error}<p>No Shorts feeds for {session.profile?.name ?? 'this profile'} yet.</p><p class="small muted">{session.profiles.length > 1 ? 'Choose another profile above to see its feeds, or create a feed for this profile.' : 'Give your curator a brief to start collecting local clips.'}</p>{/if}
 		{/if}
+		<button class="btn ghost" disabled={loading || switchingProfile} onclick={()=>loadFeeds()} use:focusable>Refresh feeds</button>
 		<a class="btn primary" href="/settings?tab=feeds&new=1" use:focusable>New feed</a><a class="btn" href="/settings?tab=feeds" use:focusable>Manage feeds</a><a class="btn ghost" href="/" use:focusable>Leave Shorts</a></div>
 	{:else}
 		<button class="btn back" use:focusable onclick={picker}>← Feeds</button>
@@ -285,6 +320,10 @@
 	{/if}
 </div>
 <style>
+	.profile-choices { display:flex; flex-wrap:wrap; justify-content:center; gap:.5rem; }
+	.current-profile { border-color:var(--accent); background:rgba(124,92,255,.2); }
+	.feed-top { display:flex; align-items:center; justify-content:space-between; gap:1rem; }
+	.play-label { color:var(--accent); font-size:.85rem; white-space:nowrap; }
 	.picker { width: min(100%, 40rem); max-height: 100%; overflow-y:auto; touch-action:pan-y; }.feed-choice {display:grid;gap:.4rem;text-align:left;width:100%;padding:1rem;border:1px solid var(--line);border-radius:var(--r-md);background:rgba(255,255,255,.04);color:inherit;cursor:pointer;}
 
 	.feed { position: fixed; inset: 0; z-index: 140; background: #05040c; display: grid; place-items: center; overflow: hidden; touch-action: none; }

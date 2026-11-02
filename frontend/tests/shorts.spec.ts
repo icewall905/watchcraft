@@ -9,6 +9,83 @@ async function fixture(page: Page) {
 	await page.route('**/api/history', r => r.fulfill({ json: { ok: true } }));
 }
 test.beforeAll(async ({ request }) => resetBackend(request));
+test('empty profile can switch to its populated profile and start a feed with one click', async ({ page, request }) => {
+ const owner = await (await request.post('/api/profiles', { data: { name: 'Evening Shorts' } })).json();
+ const first = (await (await request.get('/api/profiles')).json())[0];
+ await fixture(page);
+ await page.route('**/api/shorts/feeds', r => r.fulfill({ json: r.request().headers()['x-profile-id'] === String(owner.id) ? feeds : [] }));
+ await freshPage(page, '/shorts');
+ await expect(page.getByText(`No Shorts feeds for ${first.name} yet.`)).toBeVisible();
+ await page.getByRole('group', { name: 'Choose Shorts profile' }).getByRole('button', { name: /Evening Shorts/ }).click();
+ const play = page.getByRole('button', { name: /Science clips/ });
+ await expect(play).toContainText('▶ Play');
+ await expect(play).toContainText('2 ready locally');
+ await page.screenshot({ path: '/tmp/watchcraft-shorts-profile-picker.png', fullPage: true });
+ await play.click();
+ await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');
+ await page.getByRole('button', { name: '← Feeds' }).click();
+ await page.getByRole('group', { name: 'Choose Shorts profile' }).getByRole('button', { name: first.name, exact: false }).click();
+ await expect(page.getByText(`No Shorts feeds for ${first.name} yet.`)).toBeVisible();
+ await expect(page.getByRole('button', { name: /Science clips/ })).toHaveCount(0);
+});
+
+test('returning to the picker refreshes newly created feeds without navigation', async ({ page }) => {
+ await fixture(page);
+ let available = false;
+ await page.route('**/api/shorts/feeds', r => r.fulfill({ json: available ? feeds : [] }));
+ await freshPage(page, '/shorts');
+ await expect(page.getByText(/No Shorts feeds for/)).toBeVisible();
+ available = true;
+ await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+ await expect(page.getByRole('button', { name: /Science clips/ })).toBeVisible();
+ await page.getByRole('button', { name: /Science clips/ }).click();
+ await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');
+});
+
+test('late background refresh cannot overwrite a newer list or interrupt playback', async ({ page }) => {
+ await fixture(page);
+ await freshPage(page, '/shorts');
+ await expect(page.getByRole('button', { name: /Science clips/ })).toBeVisible();
+ let release!: () => void, started!: () => void;
+ const gate = new Promise<void>(r => release = r), requestStarted = new Promise<void>(r => started = r);
+ let delayed = true;
+ await page.route('**/api/shorts/feeds', async r => {
+  if (delayed) { delayed = false; started(); await gate; await r.fulfill({ json: [] }); }
+  else await r.fulfill({ json: feeds });
+ });
+ await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+ await requestStarted;
+ await page.getByRole('button', { name: 'Refresh feeds', exact: true }).click();
+ await expect(page.getByRole('button', { name: /Science clips/ })).toBeVisible();
+ await page.getByRole('button', { name: /Science clips/ }).click();
+ release();
+ await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');
+ await expect(page.getByRole('heading', { name: 'Choose a feed' })).toHaveCount(0);
+});
+
+test('locked profile feeds remain hidden until PIN unlock and cancel retains the original profile', async ({ page, request }) => {
+ const owner = await (await request.post('/api/profiles', { data: { name: 'Locked Shorts', pin: '2468' } })).json();
+ const first = (await (await request.get('/api/profiles')).json())[0];
+ await request.post(`/api/profiles/${owner.id}/lock`);
+ await fixture(page);
+ const queried: string[] = [];
+ await page.route('**/api/shorts/feeds', r => {
+  const id = r.request().headers()['x-profile-id']; queried.push(id);
+  return r.fulfill({ json: id === String(owner.id) ? feeds : [] });
+ });
+ await freshPage(page, '/shorts');
+ await page.getByRole('group', { name: 'Choose Shorts profile' }).getByRole('button', { name: /Locked Shorts/ }).click();
+ await expect(page.getByRole('dialog', { name: 'Unlock Locked Shorts', exact: true })).toBeVisible();
+ expect(queried).not.toContain(String(owner.id));
+ await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+ await expect(page.getByText(`No Shorts feeds for ${first.name} yet.`)).toBeVisible();
+ await page.getByRole('group', { name: 'Choose Shorts profile' }).getByRole('button', { name: /Locked Shorts/ }).click();
+ await page.getByLabel('Profile PIN', { exact: true }).fill('2468');
+ await page.getByRole('button', { name: 'Unlock profile', exact: true }).click();
+ await expect(page.getByRole('button', { name: /Science clips/ })).toBeVisible();
+ expect(queried).toContain(String(owner.id));
+});
+
 test('opens a feed picker, selects isolated local files and clears playback on return', async ({ page }) => {
 	await fixture(page);
 	const forbidden: string[] = [];
