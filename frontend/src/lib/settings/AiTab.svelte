@@ -251,49 +251,11 @@
 			<TextField label="Judge model" hint="Load the available models below, or type a model name." bind:value={llm.value.model} placeholder="currentmodel" group="llm-model" />
 			<TextField label="Judge API key" hint="Leave empty for local servers. Stored on the server, never shown again." type="password" bind:value={llm.value.api_key} placeholder="none" group="llm-model" oninput={clearModels} />
 		</div>
-		{#if !connectionOnly}
-			<p class="small muted">Worker: optional cheap model for screening, summaries and imports. Empty fields use the judge's.</p>
-			<div class="grid">
-				<TextField label="Worker server" hint="For example a small local model." bind:value={llm.value.worker_base_url} placeholder="same as judge" type="url" group="llm-worker" />
-				<TextField label="Worker model" hint="Empty = the judge model does everything." bind:value={llm.value.worker_model} placeholder="same as judge" group="llm-worker" />
-				<TextField label="Worker API key" hint="Only needed when the worker server differs. Shown as ******** once saved." type="password" bind:value={llm.value.worker_api_key} placeholder="none" group="llm-worker" />
-			</div>
-			<div class="test-row">
-				<button class="btn" disabled={roleBusy === 'worker'} use:focusable={{ group: 'llm-worker', onSelect: () => testRole('worker') }}>
-					{roleBusy === 'worker' ? 'Testing…' : 'Test worker'}
-				</button>
-				{#if roleResult.worker}
-					<p class="small" class:ok={roleResult.worker.ok} class:bad={!roleResult.worker.ok} role="status">
-						{roleResult.worker.ok ? `Worker replied: ${roleResult.worker.reply || '(empty reply)'}` : `Worker failed: ${roleResult.worker.error}`}
-					</p>
-				{:else}
-					<p class="small faint">Sends one short prompt to the worker. Empty fields use the judge's server and key.</p>
-				{/if}
-			</div>
-			<p class="small muted">Embeddings: optional. Enables Search by meaning in Find; without a model only keyword search runs.</p>
-			<div class="grid">
-				<TextField label="Embeddings server" hint="The API base, for example http://host:8082/v1. A full /v1/embeddings URL works too." bind:value={llm.value.embed_base_url} placeholder="same as judge" type="url" group="llm-embed" />
-				<TextField label="Embeddings model" hint="Changing it re-indexes everything." bind:value={llm.value.embed_model} placeholder="text-embedding-3-small" group="llm-embed" />
-				<TextField label="Embeddings API key" hint="Only needed when the embeddings server differs. Shown as ******** once saved." type="password" bind:value={llm.value.embed_api_key} placeholder="none" group="llm-embed" />
-			</div>
-			<div class="test-row">
-				<button class="btn" disabled={roleBusy === 'embed'} use:focusable={{ group: 'llm-embed', onSelect: () => testRole('embed') }}>
-					{roleBusy === 'embed' ? 'Testing…' : 'Test embeddings'}
-				</button>
-				{#if roleResult.embed}
-					<p class="small" class:ok={roleResult.embed.ok} class:bad={!roleResult.embed.ok} role="status">
-						{roleResult.embed.ok ? `Embeddings work: ${roleResult.embed.dimensions} dimensions` : `Embeddings failed: ${roleResult.embed.error}`}
-					</p>
-				{:else}
-					<p class="small faint">Embeds one word and reports the vector size. No dimensions to configure.</p>
-				{/if}
-			</div>
-		{/if}
 		<div class="test-row">
 			<button class="btn" disabled={modelsLoading || !llm.value.base_url} use:focusable={{ group: 'llm-test', id: 'llm-model-list', onSelect: loadModels }}>
-				{modelsLoading ? 'Loading models…' : 'Load available models'}
+				{modelsLoading ? 'Loading models…' : 'Load judge models'}
 			</button>
-			<p class="small faint">Uses the URL and key above without saving or making a chat request.</p>
+			<p class="small faint">Lists the judge server's models without saving or making a chat request.</p>
 		</div>
 		{#if modelError}<p class="small" role="status">Could not load models: {modelError}. You can enter a model name manually.</p>{/if}
 		{#if modelsLoaded}
@@ -313,14 +275,14 @@
 		{/if}
 		<div class="test-row">
 			<button class="btn primary big" disabled={testing} use:focusable={{ group: 'llm-test', id: 'llm-test', onSelect: test }}>
-				{#if testing}<span class="spin"></span> Testing…{:else}Test connection{/if}
+				{#if testing}<span class="spin"></span> Testing…{:else}{connectionOnly ? 'Test connection' : 'Test judge'}{/if}
 			</button>
-			<p class="small faint">Lists the server's models and asks the selected model to reply "pong". Uses the values above, even before you save.</p>
+			<p class="small faint">Asks the judge model to reply "pong". Uses the judge values above, even before you save.</p>
 		</div>
 		{#if result}
 			<div class="result" class:ok={result.ok} class:bad={!result.ok} role="status">
 				{#if result.ok}
-					<div class="rh"><span class="big">✓</span><div><strong>Connected</strong><div class="small muted">Answered in {(tookMs / 1000).toFixed(1)} s</div></div></div>
+					<div class="rh"><span class="big">✓</span><div><strong>Judge connected</strong><div class="small muted">Answered in {(tookMs / 1000).toFixed(1)} s</div></div></div>
 					<div class="reply"><span class="small faint">Model replied</span><code>{result.reply || '(empty reply)'}</code></div>
 				{:else}
 					<div class="rh"><span class="big">✕</span><div><strong>Could not reach the model</strong><div class="small muted">After {(tookMs / 1000).toFixed(1)} s</div></div></div>
@@ -329,13 +291,51 @@
 				{/if}
 				{#if result.models?.length}
 					<div class="models">
-						<span class="small faint">Models on this server (first 20; use Load available models to search all)</span>
+						<span class="small faint">Models on this server (first 20; use Load judge models to search all)</span>
 						<div class="hstack">
 							{#each result.models.slice(0, 20) as m}
 								<button class="chip" class:on={m === llm.value.model} use:focusable={{ group: 'llm-models', onSelect: () => (llm.value.model = m) }}>{m}</button>
 							{/each}
 						</div>
 					</div>
+				{/if}
+			</div>
+		{/if}
+		{#if !connectionOnly}
+			<p class="small muted">Worker: optional cheap model for screening, summaries and imports. Empty fields use the judge's.</p>
+			<div class="grid">
+				<TextField label="Worker server" hint="For example a small local model." bind:value={llm.value.worker_base_url} placeholder="same as judge" type="url" group="llm-worker" />
+				<TextField label="Worker model" hint="Empty = the judge model, or the first model a separate worker server lists." bind:value={llm.value.worker_model} placeholder="same as judge" group="llm-worker" />
+				<TextField label="Worker API key" hint="Only needed when the worker server differs. Shown as ******** once saved." type="password" bind:value={llm.value.worker_api_key} placeholder="none" group="llm-worker" />
+			</div>
+			<div class="test-row">
+				<button class="btn" disabled={roleBusy === 'worker'} use:focusable={{ group: 'llm-worker', onSelect: () => testRole('worker') }}>
+					{roleBusy === 'worker' ? 'Testing…' : 'Test worker'}
+				</button>
+				{#if roleResult.worker}
+					<p class="small" class:ok={roleResult.worker.ok} class:bad={!roleResult.worker.ok} role="status">
+						{roleResult.worker.ok ? `Worker replied: ${roleResult.worker.reply || '(empty reply)'}` : `Worker failed: ${roleResult.worker.error}`}
+					</p>
+				{:else}
+					<p class="small faint">Asks the worker to reply "pong". An empty model uses one its server lists; empty server and key use the judge's.</p>
+				{/if}
+			</div>
+			<p class="small muted">Embeddings: optional. Enables Search by meaning in Find; without a model only keyword search runs.</p>
+			<div class="grid">
+				<TextField label="Embeddings server" hint="The API base, for example http://host:8082/v1. A full /v1/embeddings URL works too." bind:value={llm.value.embed_base_url} placeholder="same as judge" type="url" group="llm-embed" />
+				<TextField label="Embeddings model" hint="Changing it re-indexes everything." bind:value={llm.value.embed_model} placeholder="text-embedding-3-small" group="llm-embed" />
+				<TextField label="Embeddings API key" hint="Only needed when the embeddings server differs. Shown as ******** once saved." type="password" bind:value={llm.value.embed_api_key} placeholder="none" group="llm-embed" />
+			</div>
+			<div class="test-row">
+				<button class="btn" disabled={roleBusy === 'embed'} use:focusable={{ group: 'llm-embed', onSelect: () => testRole('embed') }}>
+					{roleBusy === 'embed' ? 'Testing…' : 'Test embeddings'}
+				</button>
+				{#if roleResult.embed}
+					<p class="small" class:ok={roleResult.embed.ok} class:bad={!roleResult.embed.ok} role="status">
+						{roleResult.embed.ok ? `Embeddings work: ${roleResult.embed.dimensions} dimensions` : `Embeddings failed: ${roleResult.embed.error}`}
+					</p>
+				{:else}
+					<p class="small faint">Embeds one word and reports the vector size. No dimensions to configure.</p>
 				{/if}
 			</div>
 		{/if}

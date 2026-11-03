@@ -27,7 +27,7 @@ test('choose a provider, discover models with its key, and keep the custom conne
 	await expect(key).toHaveValue('');
 	await expect(model).toHaveValue('');
 	await key.fill('go-test-key');
-	await page.getByRole('button', { name: 'Load available models' }).click();
+	await page.getByRole('button', { name: 'Load judge models' }).click();
 	await expect(page.getByRole('button', { name: 'kimi-example' })).toBeVisible();
 	expect(observed).toEqual({ base_url: 'https://opencode.ai/inference/go/openai/v1', api_key: 'go-test-key' });
 	await page.getByLabel('Filter models').fill('kimi');
