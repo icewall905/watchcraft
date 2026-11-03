@@ -8,6 +8,29 @@ export type Item = {
 	image: string; local_image: boolean; local_video?: boolean; published_at: number | null; first_seen: number; provider: string;
 	meta: Record<string, unknown>; enrichment: Record<string, unknown>;
 	state: ItemState; score: number | null; reason: string; curator_names: string[]; curator_ids?: number[]; meme?: MemeMeta | null;
+	/** The master curator's verdict, where the endpoint includes it. */
+	verdict?: Verdict | null;
+};
+export type Tier = 'feature' | 'keep' | 'set_aside' | 'reject';
+export type Verdict = {
+	tier: Tier; quality: number; relevance: number; final: number; reasons: string[];
+	judged_by: 'rules' | 'llm'; overruled: '' | 'promoted' | 'demoted'; judged_at: number;
+};
+export type CitationRef = { n: number; item_id: number | null; title?: string; url?: string };
+export type EditionEntry = {
+	item_id: number; item: Item; story_id?: number; sources?: number; summary?: string; summary_refs?: CitationRef[];
+};
+export type EditionSection =
+	| { key: 'lead' | 'stories' | 'reads' | 'memes'; title: string; entries: EditionEntry[] }
+	| { key: 'research'; title: string; curator_ids: number[]; curators: { id: number; name: string; subject: string; report_at: number | null }[] }
+	| { key: 'alerts'; title: string; count: number };
+export type TodayEdition = {
+	day: string; built_at: number; updated_at: number; intro: string; intro_refs: CitationRef[];
+	sections: EditionSection[]; set_aside: number; curated: boolean;
+};
+export type HubLesson = {
+	id: number; profile_id: number; text: string; scope: string; polarity: 1 | -1; weight: number; evidence: number;
+	active: boolean; user_edited: boolean; last_evidence_at: number; created_at: number; updated_at: number;
 };
 export type ItemDetail = Item & {
 	body: string; media_status: string | null; local_assets: string[]; capture_truncated: boolean; local_links: { id: number; label: string }[]; capture: { status: string; summary_status: string; error: string; attempts: number } | null;

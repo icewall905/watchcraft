@@ -1,0 +1,235 @@
+"""Master curator endpoints: the daily edition, what was set aside, overrules, stories,
+explanations and the learned preferences the curator reads."""
+import time
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, Field as Input
+from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import Session, select
+
+from ..access import require_hub
+from ..api.core import profile_id
+from ..db import session
+from .api import can_see, serialize
+from .master import edition, schedule, views
+from .models import ContentItem, Curator, Edition, HubLesson, HubPreferenceCore, ItemVerdict, StoryItem
+
+router = APIRouter(prefix='/hub', tags=['WatchCraft Hub'], dependencies=[Depends(require_hub)])
+SET_ASIDE_DAYS = 7
+
+
+def _verdict_dict(v: ItemVerdict | None) -> dict | None:
+    if not v:
+        return None
+    return {'tier': v.tier, 'quality': v.quality, 'relevance': v.relevance, 'final': v.final, 'reasons': v.reasons,
+            'judged_by': v.judged_by, 'overruled': v.overruled, 'judged_at': v.judged_at}
+
+
+def _items(s: Session, pid: int, ids: list[int]) -> dict[int, dict]:
+    rows = list(s.exec(select(ContentItem).where(ContentItem.id.in_(ids))).all()) if ids else []
+    verdicts = {v.item_id: v for v in s.exec(select(ItemVerdict).where(ItemVerdict.profile_id == pid, ItemVerdict.item_id.in_(ids))).all()} if ids else {}
+    out = {}
+    for d in serialize(s, pid, rows):
+        d['verdict'] = _verdict_dict(verdicts.get(d['id']))
+        out[d['id']] = d
+    return out
+
+
+def _refs(found: dict[int, dict], refs: list[int]) -> list[dict]:
+    """Citation [n] → the item it points to, or None where this profile cannot open it."""
+    return [{'n': n, **({'item_id': i, 'title': found[i]['title'], 'url': found[i]['url']} if i in found else {'item_id': None})}
+            for n, i in enumerate(refs, 1)]
+
+
+def _set_aside_count(s: Session, pid: int, now: float) -> int:
+    return s.exec(select(func.count()).select_from(ItemVerdict).join(ContentItem, ContentItem.id == ItemVerdict.item_id)
+                  .where(ItemVerdict.profile_id == pid, ItemVerdict.tier == 'set_aside', views.visible(pid, ItemVerdict.item_id),
+                         ContentItem.first_seen >= now - SET_ASIDE_DAYS * 86400)).one()
+
+
+@router.get('/today')
+def today(pid: int = Depends(profile_id)):
+    """Today's edition, ready to render. What it returns counts as seen, so it stays put today."""
+    now = time.time()
+    with session() as s:
+        day = edition.today(now)
+        ed = s.exec(select(Edition).where(Edition.profile_id == pid, Edition.day == day)).first()
+        if ed is None:
+            try:
+                ed = edition.patch(s, pid, now)  # a new day before the nightly pass: build from current verdicts
+            except IntegrityError:  # another request built it first
+                s.rollback()
+                ed = s.exec(select(Edition).where(Edition.profile_id == pid, Edition.day == day)).first()
+        entry_ids = [e['item_id'] for sec in ed.sections for e in sec.get('entries', [])]
+        refs = [*ed.intro_refs, *(r for sec in ed.sections for e in sec.get('entries', []) for r in e.get('summary_refs', []))]
+        visible = views.visible_set(s, pid, set(entry_ids) | set(refs))
+        found = _items(s, pid, list(visible))
+        sections = []
+        for sec in ed.sections:
+            out = {k: v for k, v in sec.items() if k != 'entries'}
+            if 'entries' in sec:
+                out['entries'] = [{**{k: v for k, v in e.items() if k not in ('summary_refs',)},
+                                   'item': found[e['item_id']],
+                                   **({'summary_refs': _refs(found, e['summary_refs'])} if e.get('summary_refs') else {})}
+                                  for e in sec['entries'] if e['item_id'] in found]
+            if sec.get('key') == 'research':
+                out['curators'] = [{'id': c.id, 'name': c.name, 'subject': c.subject, 'report_at': c.report_at}
+                                   for c in s.exec(select(Curator).where(Curator.id.in_(sec.get('curator_ids', [])),
+                                                                         Curator.profile_id == pid)).all()]
+            sections.append(out)
+        shown = [i for i in entry_ids if i in found]
+        if set(shown) - set(ed.shown_item_ids):
+            ed.shown_item_ids = list(dict.fromkeys([*ed.shown_item_ids, *shown]))
+            s.add(ed)
+            s.commit()
+        return {'day': ed.day, 'built_at': ed.built_at, 'updated_at': ed.updated_at,
+                'intro': ed.intro, 'intro_refs': _refs(found, ed.intro_refs), 'sections': sections,
+                'set_aside': _set_aside_count(s, pid, now), 'curated': views.has_verdicts(s, pid)}
+
+
+@router.get('/today/set-aside')
+def set_aside(type: str = '', offset: int = 0, limit: int = 30, pid: int = Depends(profile_id)):
+    """What the curator left out this week, with its reasons, so the reader can check and overrule."""
+    limit = max(1, min(limit, 100))
+    now = time.time()
+    with session() as s:
+        stmt = (select(ContentItem.id).join(ItemVerdict, ItemVerdict.item_id == ContentItem.id)
+                .where(ItemVerdict.profile_id == pid, ItemVerdict.tier == 'set_aside', views.visible(pid, ItemVerdict.item_id),
+                       ContentItem.first_seen >= now - SET_ASIDE_DAYS * 86400))
+        types = [t.strip() for t in type.split(',') if t.strip()]
+        if types:
+            stmt = stmt.where(ContentItem.type.in_(types))
+        total = s.exec(select(func.count()).select_from(stmt.subquery())).one()
+        ids = list(s.exec(stmt.order_by(ContentItem.first_seen.desc(), ContentItem.id.desc()).offset(max(0, offset)).limit(limit)).all())
+        found = _items(s, pid, ids)
+        return {'items': [found[i] for i in ids if i in found], 'total': total}
+
+
+class OverruleIn(BaseModel):
+    action: str = Input(pattern='^(promote|demote|clear)$')
+
+
+@router.post('/items/{iid}/overrule')
+def overrule(iid: int, body: OverruleIn, pid: int = Depends(profile_id)):
+    """The reader knows best: show this after all, take it off the front page, or hand it back to the curator."""
+    with session() as s:
+        if not can_see(s, pid, iid):
+            raise HTTPException(404, 'Item not found')
+        v = s.get(ItemVerdict, (pid, iid))
+        if v is None and body.action == 'clear':
+            return None  # nothing to hand back
+        v = v or ItemVerdict(profile_id=pid, item_id=iid)
+        if body.action == 'clear':
+            v.overruled, v.forced = '', False  # the queued pass re-judges it
+        else:
+            v.overruled = 'promoted' if body.action == 'promote' else 'demoted'
+            v.tier, v.forced = ('feature' if body.action == 'promote' else 'set_aside'), True
+            v.reasons = [f'you {v.overruled} it', *[r for r in v.reasons if not r.startswith('you ')]][:8]
+        v.judged_at = time.time()
+        s.add(v)
+        s.commit()
+        edition.patch(s, pid)
+        out = _verdict_dict(s.get(ItemVerdict, (pid, iid)))
+    schedule.mark(pid)  # re-tier around the change, and let the next pass learn from it
+    return out
+
+
+@router.get('/items/{iid}/why')
+def explain(iid: int, pid: int = Depends(profile_id)):
+    """Why the curator showed, kept or set this item aside."""
+    with session() as s:
+        if not can_see(s, pid, iid):
+            raise HTTPException(404, 'Item not found')
+        out = {'verdict': _verdict_dict(s.get(ItemVerdict, (pid, iid))), 'story': None}
+        link = s.get(StoryItem, iid)
+        if link:
+            out['story'] = {'id': link.story_id, 'sources': edition._sources(s, pid, [link.story_id]).get(link.story_id, 1)}
+        return out
+
+
+@router.get('/stories/{sid}')
+def story(sid: int, pid: int = Depends(profile_id)):
+    """Every report of one story that this profile may see, best first."""
+    with session() as s:
+        ids = list(s.exec(select(StoryItem.item_id).join(ItemVerdict, (ItemVerdict.item_id == StoryItem.item_id) & (ItemVerdict.profile_id == pid))
+                          .where(StoryItem.story_id == sid, ItemVerdict.tier != 'reject')
+                          .order_by(ItemVerdict.final.desc())).all())
+        found = _items(s, pid, list(views.visible_set(s, pid, ids)))
+        if not found:
+            raise HTTPException(404, 'Story not found')
+        items = [found[i] for i in ids if i in found]
+        return {'id': sid, 'title': items[0]['title'], 'items': items}
+
+
+# ---------- learned preferences
+
+class LessonIn(BaseModel):
+    text: str = Input(min_length=3, max_length=300)
+    scope: str = Input(default='', pattern='^(|meme|news|article|web|project|document|advisory)$')
+    polarity: Literal[1, -1] = 1
+
+
+class LessonPatch(BaseModel):
+    text: str | None = Input(default=None, min_length=3, max_length=300)
+    polarity: Literal[1, -1] | None = None
+    active: bool | None = None
+
+
+def _lesson(l: HubLesson) -> dict:
+    return l.model_dump(exclude={'source_item_ids'})
+
+
+@router.get('/curator/preferences')
+def preferences(pid: int = Depends(profile_id)):
+    with session() as s:
+        core = s.get(HubPreferenceCore, pid)
+        lessons = s.exec(select(HubLesson).where(HubLesson.profile_id == pid).order_by(HubLesson.active.desc(), HubLesson.weight.desc(),
+                                                                                  HubLesson.updated_at.desc())).all()
+        return {'summary': core.text if core else '', 'built_at': core.built_at if core else None,
+                'lessons': [_lesson(l) for l in lessons]}
+
+
+@router.post('/curator/preferences')
+def add_preference(body: LessonIn, pid: int = Depends(profile_id)):
+    with session() as s:
+        if s.exec(select(func.count()).select_from(HubLesson).where(HubLesson.profile_id == pid)).one() >= 200:
+            raise HTTPException(422, 'Remove a preference before adding another.')
+        l = HubLesson(profile_id=pid, text=body.text.strip(), scope=body.scope, polarity=body.polarity, user_edited=True)
+        s.add(l); s.commit(); s.refresh(l)
+        out = _lesson(l)
+    schedule.mark(pid)
+    return out
+
+
+def _own_lesson(s: Session, pid: int, lid: int) -> HubLesson:
+    l = s.get(HubLesson, lid)
+    if not l or l.profile_id != pid:
+        raise HTTPException(404, 'Preference not found')
+    return l
+
+
+@router.patch('/curator/preferences/{lid}')
+def edit_preference(lid: int, body: LessonPatch, pid: int = Depends(profile_id)):
+    with session() as s:
+        l = _own_lesson(s, pid, lid)
+        if body.text is not None:
+            l.text = body.text.strip()
+        if body.polarity is not None:
+            l.polarity = body.polarity
+        if body.active is not None:
+            l.active = body.active
+        l.user_edited, l.updated_at = True, time.time()
+        s.add(l); s.commit(); s.refresh(l)
+        out = _lesson(l)
+    schedule.mark(pid)
+    return out
+
+
+@router.delete('/curator/preferences/{lid}')
+def delete_preference(lid: int, pid: int = Depends(profile_id)):
+    with session() as s:
+        s.delete(_own_lesson(s, pid, lid)); s.commit()
+    schedule.mark(pid)
+    return {'ok': True}

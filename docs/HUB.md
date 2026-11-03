@@ -90,14 +90,16 @@ All list endpoints return `{items, total}` unless noted. Times are unix seconds 
 
 ```
 GET  registry                         {types:[{key,label,icon}], providers:[{key,label,mode,needs_url,capabilities[],available,reason}]}
-GET  counts                           {discover_unread, alerts_new, news_today}
+GET  counts                           {discover_unread, alerts_new, news_today}  (once the master curator has run: featured items only)
 
 GET  items?section=discover|news|library&q&type&provider&curator&saved&unread&favorite&read_later
-          &archived&min_score&since&until&sort=newest|published|relevance&collection&topic&offset&limit
+          &archived&min_score&since&until&sort=newest|published|relevance|best&collection&topic&offset&limit
+          &curation=curated|all   curated (default): hides what the master curator set aside or rejected (unjudged
+                                  items stay visible); library, saved, collection and topic views are never filtered
 GET  items/{id}                       Item + {curators:[{id,name,found_at,score,reason}], collections:[id], related:[Item]}
 POST items/{id}/state                 body partial {saved,favorite,read_later,archived,dismissed,read,notes,tags,rating}
 POST items/import                     {url}  → Item (page extraction, saved=true)
-GET  news?days=1|7|30&topic          {groups:[{key,title,items:[Item],latest}], topics:[Topic]}
+GET  news?days=1|7|30&topic&curation {groups:[{key,title,items:[Item],latest}], topics:[Topic]}
 
 Item = {id,url,type,title,summary,author,publisher,image,published_at,first_seen,provider,meta,enrichment,
         state:{saved,favorite,read_later,archived,dismissed,read_at,notes,tags,rating},
@@ -153,7 +155,7 @@ GET  search?q&type&provider&scope=all|library|knowledge&offset&limit   local FTS
 POST search/web                       {q, providers[]} live → {results:[{title,url,snippet,provider,type}], errors:[{provider,message}]}
 GET/POST/DELETE saved-searches        {id,name,query,filters,pinned}
 
-GET  memes/items?view=examples|saved|history&q&community&provider&language&topic&format_id&since&until&offset&limit
+GET  memes/items?view=examples|saved|history&q&community&provider&language&topic&format_id&since&until&offset&limit&curation
                                         meme Items, each + meme:{media_sha,has_media,dup_of,format_id,format_name,community,handle,language,sensitive,spoiler}
 GET  memes/facets                       {communities:[{key,count}], languages:[{key,count}]}
 GET  memes/trends?state=a,b&include_hidden  {trends:[{id,target_kind:format|community,target_key,name,kind,state,prev_state,
@@ -167,6 +169,29 @@ GET  memes/items/{id}/similar           {items:[Item]}  near-duplicates by perce
 POST memes/items/{id}/explain           {refresh?} → {ai,explanation:{what_shows,why_funny,referencing,origin,why_now,uncertain,ai,at}}
                                         needs AI; stored in enrichment.meme_explain, never overwrites source facts
 POST memes/sweep                        analyze pending examples + recount trends now
+```
+
+### Master curator
+
+Judges every non-video item per profile (`bt/hub/master/`). Verdict = `{tier: feature|keep|set_aside|reject, quality,
+relevance, final, reasons[], judged_by: rules|llm, overruled: ''|promoted|demoted, judged_at}`.
+
+```
+GET  today                              {day, built_at, updated_at, intro, intro_refs:[Ref], set_aside, curated,
+                                         sections:[{key:lead|stories|reads|memes, title, entries:[{item_id, item:Item+verdict,
+                                         story_id?, sources?, summary?, summary_refs?:[Ref]}]}
+                                         | {key:research, curator_ids, curators:[{id,name,subject,report_at}]}
+                                         | {key:alerts, count}]}
+                                        Ref = {n, item_id|null, title?, url?}; item_id null = not visible to this profile.
+                                        Returned entries count as seen: later patches today never move them.
+GET  today/set-aside?type&offset&limit  this week's set-aside Items (+verdict), newest first
+POST items/{id}/overrule                {action: promote|demote|clear} → Verdict (null: clear with no verdict); edition
+                                        updated at once; after clear the tier stays until the queued pass re-judges
+GET  items/{id}/why                     {verdict, story:{id,sources}|null}
+GET  stories/{id}                       {id, title, items:[Item+verdict]}  only this profile's non-rejected reports
+GET  curator/preferences                {summary, built_at, lessons:[HubLesson]}
+POST curator/preferences                {text, scope?: ''|meme|news|article|web|project|document|advisory, polarity?: 1|-1}
+PATCH/DELETE curator/preferences/{id}   {text?, polarity?, active?}
 ```
 
 

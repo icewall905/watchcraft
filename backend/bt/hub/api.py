@@ -20,6 +20,7 @@ from ..models import AgentEvent, Download, Profile, Setting
 from . import activity, ai, engine, memes, polling, repair, scout, slots, watchers
 from .models import (Alert, Briefing, BriefingIssue, CaptureJob, CapturedAsset, CapturedPage, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
                      CuratorRun, CuratorSource, Edition, HubLesson, HubPreferenceCore, ItemState, ItemVerdict, MasterQueue, MemeExample, MemeFormat, MemeTrend, MemeTrendState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, ScoutReportConfig, ScoutReportIssue, SitemapEntry, Source, SourceCheck, Topic, TopicItem, WatcherRevision)
+from .master import views as curation_views
 from .master.cluster import same_story, title_key
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
 from .templates import TEMPLATES
@@ -119,12 +120,18 @@ def registry():
 def counts(pid: int = Depends(profile_id)):
     with session() as s:
         read = select(ItemState.item_id).where(ItemState.profile_id == pid, or_(ItemState.read_at != None, ItemState.dismissed == True))  # noqa: E711
-        unread = s.exec(select(func.count(func.distinct(CuratorDiscovery.item_id))).where(
-            CuratorDiscovery.profile_id == pid, CuratorDiscovery.item_id.not_in(read))).one()
+        curated = curation_views.has_verdicts(s, pid)
+        found = select(CuratorDiscovery.item_id).where(CuratorDiscovery.profile_id == pid)
+        if curated:
+            # Only what the curator chose to feature: a badge is an invitation, not a backlog.
+            found = select(ItemVerdict.item_id).where(ItemVerdict.profile_id == pid, ItemVerdict.tier == 'feature',
+                                                      curation_views.visible(pid, ItemVerdict.item_id))
+        unread = s.exec(select(func.count(func.distinct(ContentItem.id))).where(
+            ContentItem.id.in_(found), ContentItem.id.not_in(read))).one()
         alerts = s.exec(select(func.count()).select_from(Alert).where(Alert.profile_id == pid, Alert.state == 'new',
                                                                        or_(Alert.snooze_until == None, Alert.snooze_until < time.time()))).one()  # noqa: E711
-        news = s.exec(select(func.count(func.distinct(ContentItem.id))).join(CuratorDiscovery, CuratorDiscovery.item_id == ContentItem.id).where(
-            CuratorDiscovery.profile_id == pid, ContentItem.type.in_(['news', 'article']),
+        news = s.exec(select(func.count(func.distinct(ContentItem.id))).where(
+            ContentItem.id.in_(found), ContentItem.type.in_(['news', 'article']),
             func.coalesce(ContentItem.published_at, ContentItem.first_seen) >= time.time() - 86400)).one()
         return {'discover_unread': unread, 'alerts_new': alerts, 'news_today': news}
 
@@ -231,7 +238,8 @@ def item_query(pid: int, *, section='discover', q='', type='', provider='', cura
 def items(section: str = 'discover', q: str = '', type: str = '', provider: str = '', curator: int | None = None,
           saved: bool = False, unread: bool = False, favorite: bool = False, read_later: bool = False, archived: bool = False,
           min_score: float | None = None, since: float | None = None, until: float | None = None, sort: str = 'newest',
-          collection: int | None = None, topic: int | None = None, offset: int = 0, limit: int = 30, pid: int = Depends(profile_id)):
+          collection: int | None = None, topic: int | None = None, offset: int = 0, limit: int = 30,
+          curation: str = 'curated', pid: int = Depends(profile_id)):
     limit = max(1, min(limit, 100))
     with session() as s:
         if collection: owned(s, Collection, collection, pid)
@@ -239,8 +247,16 @@ def items(section: str = 'discover', q: str = '', type: str = '', provider: str 
         stmt = item_query(pid, section=section, q=q, type=type, provider=provider, curator=curator, saved=saved, unread=unread,
                           favorite=favorite, read_later=read_later, archived=archived, min_score=min_score, since=since,
                           until=until, collection=collection, topic=topic)
+        # Feeds show what the curator kept; what you saved yourself is never filtered.
+        mine = section == 'library' or saved or favorite or read_later or archived or collection or topic
+        if curation != 'all' and not mine:
+            stmt = stmt.where(curation_views.curated(pid, ContentItem.id))
         total = s.exec(select(func.count()).select_from(stmt.subquery())).one()
-        if sort == 'relevance':
+        if sort == 'best':
+            final = select(ItemVerdict.final).where(ItemVerdict.item_id == ContentItem.id,
+                                                    ItemVerdict.profile_id == pid).scalar_subquery()
+            stmt = stmt.order_by(final.desc().nulls_last(), ContentItem.first_seen.desc())
+        elif sort == 'relevance':
             best = select(func.max(CuratorDiscovery.score)).where(CuratorDiscovery.item_id == ContentItem.id,
                                                                   CuratorDiscovery.profile_id == pid).scalar_subquery()
             stmt = stmt.order_by(best.desc().nulls_last(), ContentItem.first_seen.desc())
@@ -585,7 +601,8 @@ def import_url(body: UrlIn, pid: int = Depends(profile_id)):
 
 
 @router.get('/news')
-def news(days: int = 1, topic: int | None = None, pid: int = Depends(profile_id)):
+def news(days: int = 1, topic: int | None = None, curation: str = 'curated',
+         pid: int = Depends(profile_id)):
     """Recent articles grouped into stories by title overlap. Uses publication time, not discovery time."""
     since = time.time() - max(1, min(days, 90)) * 86400
     with session() as s:
@@ -593,6 +610,8 @@ def news(days: int = 1, topic: int | None = None, pid: int = Depends(profile_id)
             owned(s, Topic, topic, pid)
         topics = s.exec(select(Topic).where(Topic.profile_id == pid, Topic.kind == 'news')).all()
         stmt = item_query(pid, section='news', topic=None)
+        if curation != 'all':
+            stmt = stmt.where(curation_views.curated(pid, ContentItem.id))
         when = func.coalesce(ContentItem.published_at, ContentItem.first_seen)
         stmt = stmt.where(when >= since).order_by(when.desc()).limit(400)
         rows = list(s.exec(stmt).all())
@@ -2067,7 +2086,8 @@ def hide_meme_language(code: str, body: MemeLanguageIn, pid: int = Depends(profi
 @router.get('/memes/items')
 def meme_items(view: str = 'examples', q: str = '', community: str = '', provider: str = '', language: str = '',
                format_id: int | None = None, topic: int = 0, since: float | None = None, until: float | None = None,
-               offset: int = 0, limit: int = 30, pid: int = Depends(profile_id)):
+               offset: int = 0, limit: int = 30, curation: str = 'curated',
+               pid: int = Depends(profile_id)):
     """Image-first feed. 'examples' hides exact duplicates, dismissed items and examples of hidden trends."""
     limit = max(1, min(limit, 100))
     with session() as s:
@@ -2088,6 +2108,8 @@ def meme_items(view: str = 'examples', q: str = '', community: str = '', provide
                 stmt = stmt.where(or_(MemeExample.format_id == None, MemeExample.format_id.not_in(hidden)))  # noqa: E711
         if view == 'saved':
             stmt = stmt.where(st.saved == True)  # noqa: E711
+        elif view == 'examples' and curation != 'all':
+            stmt = stmt.where(curation_views.curated(pid, ContentItem.id))
         if community:
             stmt = stmt.where(MemeExample.community == community)
         if language:

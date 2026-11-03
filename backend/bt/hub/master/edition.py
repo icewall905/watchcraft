@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 from ...db import get_settings
 from .. import ai
 from ..models import Alert, ContentItem, Curator, Edition, ItemVerdict, StoryItem
+from . import views
 
 log = logging.getLogger(__name__)
 
@@ -37,7 +38,7 @@ def _featured(s: Session, pid: int) -> list[tuple[ItemVerdict, ContentItem, int 
     rows = s.exec(select(ItemVerdict, ContentItem, StoryItem.story_id)
                   .join(ContentItem, ContentItem.id == ItemVerdict.item_id)
                   .outerjoin(StoryItem, StoryItem.item_id == ItemVerdict.item_id)
-                  .where(ItemVerdict.profile_id == pid, ItemVerdict.tier == 'feature')
+                  .where(ItemVerdict.profile_id == pid, ItemVerdict.tier == 'feature', views.visible(pid, ItemVerdict.item_id))
                   .order_by(ItemVerdict.final.desc())).all()
     return list(rows)
 
@@ -90,8 +91,9 @@ def merge(old: list[dict], new: dict[str, list[dict]], shown: set[int], alive: s
         sections.append({'key': key, 'title': title, 'entries': kept, 'size': size})
     taken_stories = {e.get('story_id') for sec in sections for e in sec['entries'] if e.get('story_id')}
     for sec in sections:
-        # An empty lead takes the best story still free, so the page always opens with one.
-        offered = new.get('lead', []) + new.get('stories', []) if sec['key'] == 'lead' else new.get(sec['key'], [])
+        # Lead and stories draw from one ranked list: an empty lead takes the best story still
+        # free, and a new best story that cannot lead (the seen lead stays) joins the stories.
+        offered = new.get('lead', []) + new.get('stories', []) if sec['key'] in ('lead', 'stories') else new.get(sec['key'], [])
         for e in offered:
             if len(sec['entries']) >= sec['size']:
                 break

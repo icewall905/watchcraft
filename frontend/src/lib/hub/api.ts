@@ -3,7 +3,7 @@ import { request } from '$lib/api';
 import type {
 	Alert, Briefing, Collection, Counts, Curator, CuratorDetail, CuratorInput, Issue, Item, ItemDetail, ItemState,
 	NewsGroup, Page, Registry, SavedSearch, SearchResult, ScoutPlan, ScoutReport, ScoutReportConfig, ScoutRun, Source, SourceTest, PageRevision, SitemapChanges, WatcherConfig, WatcherState, WatcherSave, RepairResult, Team, Template, Topic, TopicDetail, WebResult,
-	MemeExplain, MemeFormat, MemeTrend
+	MemeExplain, MemeFormat, MemeTrend, TodayEdition, Verdict, HubLesson
 } from './types';
 
 type Params = Record<string, string | number | boolean | undefined | null>;
@@ -127,7 +127,18 @@ export const hub = {
 	/** Analyze collected examples and recount trends now instead of on the next scheduler tick. */
 	memeSweep: () => send<{ analyzed: number; transitions: number; formats: number }>('POST', '/memes/sweep'),
 	hideMemeLanguage: (code: string, hidden = true) =>
-		send<{ hidden_languages: string[] }>('POST', `/memes/languages/${encodeURIComponent(code)}/hide`, { hidden })
+		send<{ hidden_languages: string[] }>('POST', `/memes/languages/${encodeURIComponent(code)}/hide`, { hidden }),
+
+	// Master curator: the daily edition and what it left out.
+	today: (signal?: AbortSignal) => get<TodayEdition>('/today', signal),
+	setAside: (params: Params) => get<Page<Item>>('/today/set-aside' + qs(params)),
+	overrule: (id: number, action: 'promote' | 'demote' | 'clear') => send<Verdict | null>('POST', `/items/${id}/overrule`, { action }),
+	why: (id: number) => get<{ verdict: Verdict | null; story: { id: number; sources: number } | null }>(`/items/${id}/why`),
+	story: (id: number) => get<{ id: number; title: string; items: Item[] }>(`/stories/${id}`),
+	preferences: () => get<{ summary: string; built_at: number | null; lessons: HubLesson[] }>('/curator/preferences'),
+	addPreference: (body: { text: string; scope?: string; polarity?: 1 | -1 }) => send<HubLesson>('POST', '/curator/preferences', body),
+	editPreference: (id: number, body: { text?: string; polarity?: 1 | -1; active?: boolean }) => send<HubLesson>('PATCH', `/curator/preferences/${id}`, body),
+	deletePreference: (id: number) => send<{ ok: boolean }>('DELETE', `/curator/preferences/${id}`)
 };
 
 const span = (s: number) => s < 3600 ? `${Math.max(1, Math.floor(s / 60))}m` : s < 86400 ? `${Math.floor(s / 3600)}h` : `${Math.floor(s / 86400)}d`;

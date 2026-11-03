@@ -12,7 +12,7 @@ from bt import db
 from bt.db import init_db, save_setting, session
 from bt.hub import ai, engine, slots
 from bt.hub.master import edition, judge, schedule
-from bt.hub.models import Alert, ContentItem, Curator, Edition, ItemVerdict, MasterQueue, Story, StoryItem
+from bt.hub.models import Alert, ContentItem, Curator, CuratorDiscovery, Edition, ItemVerdict, MasterQueue, Story, StoryItem
 
 _n = iter(range(1, 10_000))
 
@@ -34,6 +34,7 @@ def featured(s, type='news', final=70.0, story=None, publisher='', pid=1, tier='
     if story is not None:
         s.add(StoryItem(item_id=it.id, story_id=story))
     s.add(ItemVerdict(profile_id=pid, item_id=it.id, tier=tier, final=final))
+    s.add(CuratorDiscovery(curator_id=1, item_id=it.id, profile_id=pid))
     s.flush()
     return it.id
 
