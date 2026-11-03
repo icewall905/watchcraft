@@ -114,7 +114,7 @@ function qualitySummary(s: Source) {
 
 <svelte:head><title>Sources · WatchCraft</title></svelte:head>
 
-<div class="page">
+<div class="page workshop-page">
 	<header>
 		<p class="eyebrow">AUTOMATION</p>
 		<h1>Where WatchCraft is allowed to look</h1>
@@ -280,7 +280,7 @@ function qualitySummary(s: Source) {
 	.cap.mode { border: 1px solid var(--line-strong); background: none; }
 	.reason { color: var(--warn); }
 	.add { display: grid; gap: .9rem; max-width: 40rem; }
-	.err { padding: .7rem 1rem; border-radius: var(--r-md); border: 1px solid rgba(255,92,122,.45); background: rgba(255,92,122,.1); color: #ffd1d9; }
+	.err { padding: .7rem 1rem; border-radius: var(--r-md); border: 1px solid rgba(255,92,122,.45); background: rgba(255,92,122,.1); color: var(--bad); }
 	.list { list-style: none; margin: 0; padding: 0; display: grid; gap: .7rem; }
 	.row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .9rem; align-items: start; padding: 1rem; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); }
 	.dot { width: .8rem; height: .8rem; border-radius: 50%; margin-top: .45rem; background: var(--faint); }

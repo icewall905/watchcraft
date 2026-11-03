@@ -101,7 +101,7 @@
 {/snippet}
 
 
-<div class="page stack stats" style="gap:2.2rem">
+<div class="page stack stats workshop-page" style="gap:2.2rem">
 	<header class="head">
 		<h1>Statistics</h1>
 		<p class="muted">Your family's viewing library, discoveries, and verdicts across all profiles. Click a number to explore the records behind it.</p>

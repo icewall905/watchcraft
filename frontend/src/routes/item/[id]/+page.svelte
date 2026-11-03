@@ -5,6 +5,8 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import { str, num, list, bool, fmtDate, label, safeUrl, sevClass, duration, errMsg } from '$lib/hub/util';
 	import type { ItemDetail, Collection, Topic } from '$lib/hub/types';
+	import WhyPopover from '$lib/hub/calm/WhyPopover.svelte';
+	import type { Verdict } from '$lib/hub/types';
 	import ContentCard from '$lib/hub/ContentCard.svelte';
 	import LocalImage from '$lib/hub/LocalImage.svelte';
 	import { currentProfileId } from '$lib/api';
@@ -22,16 +24,19 @@
 	let msg = $state('');
 	let capturing = $state(false);
 	let seq = 0;
+	let verdict = $state<Verdict | null>(null);
+	let overruling = $state(false);
 
 	const id = $derived(Number(page.params.id));
 
 	async function load() {
 		const my = ++seq;
-		loading = true; error = '';
+		loading = true; error = ''; verdict = null;
 		try {
 			const r = await hub.item(id);
 			if (my !== seq) return;
 			item = r; notes = r.state.notes ?? '';
+			hub.why(id).then((r) => { if (my === seq) verdict = r.verdict; }).catch(() => {});
 			hub.setState(id, { read: true }).catch(() => {});
 			hub.collections().then((c) => (collections = c)).catch(() => {});
 			hub.topics('knowledge').then((t) => (topics = t)).catch(() => {});
@@ -67,6 +72,15 @@
 		return String(x);
 	}
 	function linkOf(x: unknown): string { return typeof x === 'string' ? safeUrl(x) : x && typeof x === 'object' ? safeUrl((x as Record<string, unknown>).url) : ''; }
+
+	async function overrule(action: 'promote' | 'demote' | 'clear') {
+		if (overruling) return;
+		const my = seq;
+		overruling = true;
+		try { const result = await hub.overrule(id, action); if (my === seq) verdict = result; }
+		catch (e) { if (my === seq) msg = errMsg(e); }
+		finally { overruling = false; }
+	}
 
 	async function capture() {
 		if (!item) return;
@@ -140,7 +154,7 @@
 
 <svelte:head><title>{item ? `${item.title} · ` : ''}WatchCraft</title></svelte:head>
 
-<div class="page">
+<div class="page reading-page">
 	<a class="back small muted" href="/discover" use:focusable>← Back to Discover</a>
 
 	{#if loading}
@@ -165,6 +179,16 @@
 					<button class="btn" aria-pressed={item.state.read_later} use:focusable onclick={() => patch({ read_later: !item!.state.read_later })}>{item.state.read_later ? 'Queued' : 'Read later'}</button>
 				</div>
 				{#if msg}<p class="err small" role="alert">{msg}</p>{/if}
+				{#if verdict}
+					<div class="hstack" data-nav-row="verdict" aria-label="Curator selection">
+						<span class="small muted">{verdict.tier === 'set_aside' ? 'Set aside' : verdict.tier === 'feature' ? 'Featured today' : verdict.tier === 'reject' ? 'Excluded by your rules' : 'Kept for you'}</span>
+						<WhyPopover reasons={verdict.reasons} />
+						<button class="btn ghost" disabled={overruling} use:focusable onclick={() => overrule('promote')}>Promote</button>
+						<button class="btn ghost" disabled={overruling} use:focusable onclick={() => overrule('demote')}>Set aside</button>
+						{#if verdict.overruled}<button class="btn ghost" disabled={overruling} use:focusable onclick={() => overrule('clear')}>Use curator selection</button>{/if}
+					</div>
+				{/if}
+
 
 
 				{#if ai}
@@ -332,10 +356,10 @@
 	.fact dt { color: var(--muted); font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; }
 	.fact dd { margin: .2rem 0 0; overflow-wrap: anywhere; }
 	.tag { font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; padding: .1rem .5rem; border-radius: var(--r-pill); background: var(--surface-2); color: var(--muted); }
-	.tag.ai { background: rgba(157, 134, 255, .2); color: #d9d0ff; }
+	.tag.ai { background: rgba(157, 134, 255, .2); color: var(--ai); }
 	.aib { border-left: 3px solid var(--ai); padding-left: 1rem; }
 	.b { font-size: .8rem; font-weight: 650; padding: .15rem .6rem; border-radius: var(--r-pill); background: var(--surface-2); border: 1px solid var(--line); }
-	.b.bad { color: #ffd1d9; border-color: rgba(255, 92, 122, .5); background: rgba(255, 92, 122, .14); }
+	.b.bad { color: var(--bad); border-color: rgba(255, 92, 122, .5); background: rgba(255, 92, 122, .14); }
 	.b.warn { color: var(--warn); } .b.ok { color: var(--ok); }
 	.mono { font-family: ui-monospace, monospace; }
 	table.meta { width: 100%; border-collapse: collapse; font-size: .92rem; }
@@ -345,7 +369,7 @@
 	aside { display: grid; gap: 1rem; position: sticky; top: calc(var(--topbar-h) + 1rem); }
 	.box { border: 1px solid var(--line); background: var(--surface); border-radius: var(--r-lg); padding: 1rem 1.1rem; display: grid; gap: .6rem; }
 	.box h2 { font-size: 1rem; margin: 0; }
-	.box select.input { background: rgba(10, 8, 25, .85); flex: 1; min-width: 0; }
+	.box select.input { background: var(--paper-raised); flex: 1; min-width: 0; }
 	.box textarea.input { min-height: 7rem; }
 	.prov { list-style: none; padding: 0; margin: 0; display: grid; gap: .6rem; }
 	.prov a { font-weight: 650; text-decoration: underline; }

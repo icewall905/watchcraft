@@ -40,7 +40,7 @@
 
 <svelte:head><title>Knowledge · WatchCraft</title></svelte:head>
 
-<div class="page">
+<div class="page reading-page">
 	<header class="head">
 		<div>
 			<p class="eyebrow">EXPLORE</p>

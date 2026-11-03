@@ -11,7 +11,7 @@ from ...access import hub_allowed
 from ...db import get_kv, get_settings, save_setting, session
 from ...models import Profile
 from ..models import Curator, MasterQueue
-from . import edition, judge, pipeline
+from . import edition, judge, pipeline, prefs
 
 log = logging.getLogger(__name__)
 
@@ -85,6 +85,12 @@ def light_pass(pid: int, claimed: int) -> dict:
             return {'skipped': 'hub not allowed'}
     out: dict = {}
     try:
+        # Preference CRUD queues this pass too; refresh the core before any judging
+        # so edits and deletions reach the reader prompt on the next scheduled pass.
+        with session() as s:
+            core = prefs.rebuild_core(s, pid)
+            s.commit()
+            out['preference_core_chars'] = len(core.text)
         with session() as s:
             out['rules'] = pipeline.run(s, pid)
         with session() as s:
@@ -155,7 +161,14 @@ def _night_done(pid: int, day: str) -> None:
 def night_pass(pid: int, claimed: int, day: str) -> dict:
     """Everything recent gets a model's reading, then a fresh morning edition with its prose."""
     out: dict = {}
+    with session() as s:
+        if not hub_allowed(s, pid):
+            s.exec(delete(MasterQueue).where(MasterQueue.profile_id == pid))
+            s.commit()
+            return {'skipped': 'hub not allowed'}
     try:
+        with session() as s:
+            out['preferences'] = prefs.collect(s, pid)
         with session() as s:
             out['rules'] = pipeline.run(s, pid)
         with session() as s:

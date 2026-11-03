@@ -188,11 +188,28 @@ GET  today/set-aside?type&offset&limit  this week's set-aside Items (+verdict), 
 POST items/{id}/overrule                {action: promote|demote|clear} → Verdict (null: clear with no verdict); edition
                                         updated at once; after clear the tier stays until the queued pass re-judges
 GET  items/{id}/why                     {verdict, story:{id,sources}|null}
-GET  stories/{id}                       {id, title, items:[Item+verdict]}  only this profile's non-rejected reports
+GET  stories/{id}                       {id, title, items:[Item+verdict]}  only sources eligible for this profile's curated News feed
 GET  curator/preferences                {summary, built_at, lessons:[HubLesson]}
 POST curator/preferences                {text, scope?: ''|meme|news|article|web|project|document|advisory, polarity?: 1|-1}
 PATCH/DELETE curator/preferences/{id}   {text?, polarity?, active?}
 ```
+
+
+`/today` assembles a finite daily edition, with a small preview on the video Home page in the profile's chosen
+Scouts position. `/today/set-aside` groups held items by type; promotion removes a held item and teaches the curator.
+News folds stored story memberships and falls back to headline grouping for newly fetched items. Story source lists
+use the same discovery, dismissal, type, curation and muted-topic rules as News, including unjudged arrivals.
+Meme Radar opens on its curated Explore grid; Trends and Formats are secondary views.
+
+The nightly pass collects bounded per-profile reading, saving, ratings, overrules, meme-language and curator feedback
+into preference lessons. The worker must cite supplied evidence. Repeated evidence does not increase confidence;
+user-edited lessons are preserved. Active lessons decay from their evidence age, feed a core capped at 3,000 characters,
+and apply small, bounded keyword nudges in scoring. Settings → Curator lets adult readers add, edit, pause and delete
+preferences. Only administrators change the shared nightly time and enabled switch. Agent Activity includes the master
+curator's real slot/queue state.
+
+Paper and Dusk use the editorial reading layout throughout the Hub and Workshop. Paper retains the original dark
+palette on video routes; the selected reading theme is restored when returning to the Hub.
 
 
 ### Meme video capture and Mastodon sources

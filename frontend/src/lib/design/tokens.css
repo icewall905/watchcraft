@@ -130,3 +130,53 @@ html[data-scheme='light'][data-modality='keys'] .focusable:focus {
 	font-size: var(--fs-md);
 	line-height: var(--lh-body);
 }
+
+/* Shared reading room. Lists keep their breadth; long text stays within a readable measure. */
+[data-area='hub'] .reading-page {
+	max-width: var(--measure-wide);
+	margin-inline: auto;
+	width: 100%;
+	gap: var(--sp-6);
+}
+[data-area='hub'] .reading-page :is(.prose, .read, .issue, .report-body) {
+	max-width: var(--measure);
+	line-height: var(--lh-body);
+}
+[data-area='hub'] .reading-page :is(.card, .finding, .findings > li, .result) {
+	background: transparent;
+	border-color: var(--rule);
+	box-shadow: none;
+}
+[data-area='hub'] .reading-page :is(.card, .result) h3 {
+	font-family: var(--font-display);
+	font-size: var(--fs-lg);
+	line-height: var(--lh-snug);
+}
+[data-area='hub'] .reading-page :is(.eyebrow, .type) {
+	text-transform: none;
+	letter-spacing: normal;
+}
+
+[data-area='hub'] .workshop-page {
+	max-width: var(--measure-wide);
+	margin-inline: auto;
+	width: 100%;
+}
+[data-area='hub'] .workshop-page :is(.card, .agent, .box, .stat) {
+	background: var(--paper-raised);
+	border-color: var(--rule);
+	box-shadow: none;
+}
+[data-area='hub'] .workshop-page :is(.eyebrow, .role, .label) {
+	text-transform: none;
+	letter-spacing: normal;
+}
+[data-area='hub'] .workshop-page :is(select, textarea, input).input {
+	background: var(--paper-raised);
+	color: var(--ink);
+}
+
+/* The shared status control also sits in the light reading-room header. */
+:root[data-scheme='light'] .pill {
+	background: var(--paper-raised);
+}

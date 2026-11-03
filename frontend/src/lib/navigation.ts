@@ -18,7 +18,7 @@ export const SETTINGS = entry('/settings', 'Settings', 'settings');
 
 export const SECTIONS: NavSection[] = [
 	{ key: 'watch', title: 'Watch', items: [TV, SHORTS, entry('/subscriptions', 'Subscriptions', 'subs')] },
-	{ key: 'explore', title: 'Explore', items: [DISCOVER, entry('/news', 'News', 'news'), entry('/memes', 'Meme Radar', 'meme'), LIBRARY, entry('/knowledge', 'Knowledge', 'book'), entry('/briefings', 'Briefings', 'briefing'), ALERTS] },
+	{ key: 'explore', title: 'Explore', items: [entry('/today', 'Today', 'news'), DISCOVER, entry('/news', 'News', 'news'), entry('/memes', 'Meme Radar', 'meme'), LIBRARY, entry('/knowledge', 'Knowledge', 'book'), entry('/briefings', 'Briefings', 'briefing'), ALERTS] },
 	{ key: 'research', title: 'Research', items: [entry('/research', 'Research', 'research'), entry('/scout-report', 'Scout Report', 'briefing')] },
 	{ key: 'workshop', title: 'Workshop', quiet: true, items: [entry('/team', 'Agent Activity', 'team'), entry('/curators', 'Curators', 'curator'), entry('/sources', 'Sources', 'source'), entry('/agent', 'Video AI', 'agent'), entry('/stats', 'Statistics', 'chart')] }
 ];
@@ -32,15 +32,15 @@ export const TV_DRAWER: DrawerEntry[] = [
 	{ href: '/search', label: 'Video search', icon: 'search', active: (p) => p.startsWith('/search') },
 	{ href: '/subscriptions', label: 'Subscriptions', icon: 'subs', active: (p) => p.startsWith('/subscriptions') },
 	{ href: '/settings?tab=categories', label: 'Playlists', icon: 'list', active: (p, s) => p.startsWith('/settings') && s.includes('tab=categories') },
-	{ href: '/discover', label: 'Hub', icon: 'compass', active: (p) => p.startsWith('/discover') },
+	{ href: '/today', label: 'Hub', icon: 'compass', active: (p) => p === '/today' || p.startsWith('/today/') },
 	{ href: '/settings', label: 'Settings', icon: 'settings', active: (p, s) => p.startsWith('/settings') && !s.includes('tab=categories') }
 ];
 
-export const MOBILE_PRIMARY: NavEntry[] = [TV, DISCOVER, LIBRARY, ALERTS];
+export const MOBILE_PRIMARY: NavEntry[] = [TV, entry('/today', 'Today', 'news'), LIBRARY, ALERTS];
 export const MOBILE_MORE = { label: 'More', icon: 'more' };
 export const FIND = { href: '/find', label: 'Find', icon: 'search' };
 
 export function isHubPath(path: string): boolean {
-	return ['/discover', '/news', '/knowledge', '/library', '/memes', '/briefings', '/alerts', '/research', '/scout-report', '/team', '/curators', '/sources', '/find', '/item']
+	return ['/today', '/discover', '/news', '/knowledge', '/library', '/memes', '/briefings', '/alerts', '/research', '/scout-report', '/team', '/curators', '/sources', '/find', '/item']
 		.some((p) => path === p || path.startsWith(p + '/'));
 }

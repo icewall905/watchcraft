@@ -31,6 +31,7 @@ test('TV mode hides the desktop sidebar and offers the small drawer', async ({ p
 	// The drawer is deliberately small: TV Home, video search, subscriptions, playlists, Hub, settings.
 	await expect(drawer.getByRole('link', { name: 'TV' })).toBeVisible();
 	await expect(drawer.getByRole('link', { name: 'Discover' })).toHaveCount(0);
+	await expect(drawer.getByRole('link', { name: 'Hub' })).toHaveAttribute('href', '/today');
 	await page.getByRole('button', { name: 'Close menu →' }).click();
 	await expect(drawer).toBeHidden();
 });

@@ -433,6 +433,7 @@ class ItemVerdict(SQLModel, table=True):
     judged_by: str = 'rules'  # rules | llm
     pass_version: int = 0
     overruled: str = ''      # '' | promoted | demoted: the user's call, which later passes keep
+    overruled_at: float | None = None  # user's action time; judge passes update judged_at independently
     forced: bool = False     # tier fixed by a rule or the user, not by score: a model has nothing to add
     judged_at: float = Field(default_factory=time.time)
 

@@ -51,7 +51,7 @@
 
 <svelte:head><title>Curators · WatchCraft</title></svelte:head>
 
-<div class="page">
+<div class="page workshop-page">
 	<header class="head">
 		<div>
 			<p class="eyebrow">AUTOMATION</p>

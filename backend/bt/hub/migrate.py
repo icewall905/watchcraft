@@ -11,9 +11,9 @@ from sqlalchemy import inspect
 from sqlmodel import Session, select
 
 from ..models import Setting
-from .models import Curator, CuratorSource, Source
+from .models import Curator, CuratorSource, ItemVerdict, Source
 
-VERSION = 3
+VERSION = 4
 
 
 JSON_DEFAULTS = {'queries': '[]', 'keywords': '[]', 'exclusions': '[]', 'content_types': '[]', 'alert_keywords': '[]',
@@ -21,7 +21,7 @@ JSON_DEFAULTS = {'queries': '[]', 'keywords': '[]', 'exclusions': '[]', 'content
 
 
 def _add_missing_columns(conn) -> None:
-    for model in (Curator, Source, CuratorSource):
+    for model in (Curator, Source, CuratorSource, ItemVerdict):
         table = model.__table__.name
         have = {c['name'] for c in inspect(conn).get_columns(table)}
         for col in model.__table__.columns:

@@ -20,7 +20,7 @@ export const THEMES: Theme[] = [
 	{ id: 'copper', name: 'Lime', description: 'Pure black with acid lime.', bg: '#090909', bg1: '#0f0f0f', bg2: '#161616', surface: '#1d1d1d', accent: '#c6f432', accentInk: '#1a2200', ai: '#a78bfa', text: '#f0f0f0', muted: '#a1a1a1', faint: '#6e6e6e' },
 	{ id: 'noir', name: 'Noir', description: 'True black, silver type and a single red.', bg: '#050505', bg1: '#0b0b0c', bg2: '#121214', surface: '#1a1a1d', accent: '#ff4d5e', accentInk: '#2a0006', ai: '#9aa0b5', text: '#f0f0f0', muted: '#a3a3a8', faint: '#6c6c72' },
 	{ id: 'lagoon', name: 'Tide', description: 'Cool charcoal with cyan.', bg: '#0a0d10', bg1: '#0f1317', bg2: '#151a20', surface: '#1b2128', accent: '#22d3ee', accentInk: '#032229', ai: '#c4a5ff', text: '#e8eef2', muted: '#97a3ad', faint: '#66727c' },
-	{ id: 'paper', name: 'Paper', description: 'Warm off-white, ink type and terracotta. A light, calm reading room.', scheme: 'light', bg: '#f4efe6', bg1: '#f9f6ef', bg2: '#ebe4d7', surface: '#fffdf9', accent: '#a64b2a', accentInk: '#ffffff', ai: '#2f6b57', text: '#1f1c18', muted: '#5c564d', faint: '#6b6357' },
+	{ id: 'paper', name: 'Paper', description: 'Warm off-white, ink type and terracotta. A light, calm reading room. Video pages keep their dark appearance.', scheme: 'light', bg: '#f4efe6', bg1: '#f9f6ef', bg2: '#ebe4d7', surface: '#fffdf9', accent: '#a64b2a', accentInk: '#ffffff', ai: '#2f6b57', text: '#1f1c18', muted: '#5c564d', faint: '#6b6357' },
 	{ id: 'dusk', name: 'Dusk', description: 'Soft blue-grey evening with a quiet brass light.', bg: '#121319', bg1: '#171921', bg2: '#1f212b', surface: '#262935', accent: '#e2ad78', accentInk: '#251708', ai: '#a3b5e0', text: '#ece9f1', muted: '#a7a4b6', faint: '#75728a' }
 ];
 

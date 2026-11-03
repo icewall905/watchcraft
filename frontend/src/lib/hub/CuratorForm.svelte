@@ -182,7 +182,10 @@
 		<legend>What to find</legend>
 		<TextField multiline rows={4} label="Goal and instructions" hint="Plain language. With AI on, this decides what counts as relevant." bind:value={f.instructions} placeholder="Tell me about new open-source AI model releases, ignore hype pieces." />
 		<ChipInput label="Search queries" hint="Each query is run by search providers. Press Enter or comma to add." bind:values={f.queries} group="cf-q" />
-		<ChipInput label="Keywords" hint="Feeds are filtered by these. Empty keeps everything." bind:values={f.keywords} group="cf-k" />
+		<ChipInput label="Keywords" hint="Feeds are filtered by these. Leave empty to let nightly judging assess relevance." bind:values={f.keywords} group="cf-k" />
+		{#if !f.keywords.length && f.queries.length}
+			<button class="btn ghost" type="button" use:focusable onclick={() => { f.keywords = [...new Set(f.queries.flatMap(q => q.toLowerCase().split(/[^\p{L}\p{N}]+/u)).filter(w => w.length >= 3 && !['the', 'and', 'for', 'latest', 'best', 'with'].includes(w)))].slice(0, 12); }}>Suggest keywords from my queries</button>
+		{/if}
 		<ChipInput label="Exclusions" hint="Skip anything mentioning these." bind:values={f.exclusions} group="cf-x" />
 		<div class="field">
 			<span class="label">Content types <span class="faint">(none selected = any)</span></span>

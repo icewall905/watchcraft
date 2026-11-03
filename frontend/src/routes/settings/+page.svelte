@@ -18,11 +18,13 @@
 	import AppearanceTab from '$lib/settings/AppearanceTab.svelte';
 	import SearchTab from '$lib/settings/SearchTab.svelte';
 	import NotificationsTab from '$lib/settings/NotificationsTab.svelte';
+	import CuratorTab from '$lib/settings/CuratorTab.svelte';
 	import MemeLanguagesTab from '$lib/settings/MemeLanguagesTab.svelte';
 
 	const TABS = [
 		{ key: 'categories', label: 'Playlists', icon: '🗂️', hint: 'What the AI looks for' },
 		{ key: 'feeds', label: 'Feeds', icon: '▶', hint: 'Local short-video collections' },
+		{ key: 'curator', label: 'Curator', icon: '✧', hint: 'Learned preferences and nightly selection' },
 		{ key: 'memory', label: 'AI memory', icon: '🧠', hint: 'Rules learned from feedback' },
 		{ key: 'ai', label: 'AI and limits', icon: '✦', hint: 'Model, curator, pace' },
 		{ key: 'search', label: 'Search & sources', icon: '🔎', hint: 'Web search provider for curators' },
@@ -47,7 +49,7 @@
 </script>
 
 
-<div class="page settings">
+<div class="page settings workshop-page">
 	<nav class="side" aria-label="Settings sections" data-nav-zone="side">
 		<h1>Settings</h1>
 		{#each TABS as t}
@@ -69,10 +71,11 @@
 		{:else}
 			{#key tab}
 				<div class="pane">
-					{#if !session.isAdmin && !['categories', 'feeds', 'profiles', 'keys', 'appearance'].includes(tab)}
+					{#if !session.isAdmin && !['categories', 'feeds', 'profiles', 'keys', 'appearance', ...(session.hubAllowed ? ['curator'] : [])].includes(tab)}
 						<h2>Administrator access required</h2><p class="muted">Switch to an administrator profile to change shared server settings.</p>
 					{:else if tab === 'categories'}<CategoriesTab />
 					{:else if tab === 'feeds'}<FeedsTab />
+					{:else if tab === 'curator'}<CuratorTab />
 					{:else if tab === 'memory'}<MemoryTab />
 					{:else if tab === 'ai'}<AiTab />
 					{:else if tab === 'search'}<SearchTab />

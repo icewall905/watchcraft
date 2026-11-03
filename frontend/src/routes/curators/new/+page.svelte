@@ -43,7 +43,7 @@
 	}
 	function useTemplate(t: Template) {
 		providerKeys = t.provider_keys; suggestions = []; ai = false; fromTemplate = t.name;
-		proposal = { ...emptyCurator(t.kind === 'research' ? 'research' : 'watch'), name: t.name, description: t.description, icon: t.icon, queries: [...t.queries], keywords: [...t.keywords], content_types: [...t.content_types], interval_hours: t.interval_hours, instructions: goal.trim() || t.description };
+		proposal = { ...emptyCurator(t.kind === 'research' ? 'research' : 'watch'), name: t.name, description: t.description, icon: t.icon, queries: [...t.queries], keywords: [...t.keywords], content_types: [...t.content_types], interval_hours: t.interval_hours, ...(t.max_per_run ? { max_per_run: t.max_per_run } : {}), instructions: goal.trim() || t.description };
 	}
 	async function approve(v: CuratorInput) {
 		const c = await hub.createCurator(v);
@@ -54,7 +54,7 @@
 
 <svelte:head><title>New curator · WatchCraft</title></svelte:head>
 
-<div class="page narrow">
+<div class="page narrow workshop-page">
 	<a class="small muted" href="/curators" use:focusable>← Curators</a>
 	{#if !proposal}
 		<h1>What would you like WatchCraft to find?</h1>

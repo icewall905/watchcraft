@@ -40,7 +40,7 @@
 </script>
 
 <svelte:head><title>Scout Report · WatchCraft</title></svelte:head>
-<div class="page report">
+<div class="page report reading-page">
 	<header><p class="eyebrow">RESEARCH TEAM</p><h1>Your Scout Report</h1><p class="muted">What your research team has been up to, with the discoveries and sources behind it.</p></header>
 	{#if error}<ErrorBox message={error} onretry={load} />{/if}
 	{#if loading}<div class="skeleton" style="height:10rem"></div>{:else if config}

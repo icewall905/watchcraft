@@ -92,7 +92,7 @@
 </script>
 
 
-<div class="page agent">
+<div class="page agent workshop-page">
 	<section class="status panel {tone}">
 		<div class="glyph"><AgentGlyph state={st} size="clamp(3rem, 5vw, 5.5rem)" /></div>
 		<div class="main">
@@ -350,7 +350,7 @@
 		margin-top: 0.8rem;
 	}
 	.warnline {
-		color: #ffd1d9;
+		color: var(--bad);
 	}
 	.now {
 		width: clamp(14rem, 20vw, 24rem);

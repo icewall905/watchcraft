@@ -196,7 +196,7 @@
 
 <svelte:head><title>Library · WatchCraft</title></svelte:head>
 
-<div class="page">
+<div class="page reading-page">
 	<header class="head">
 		<div>
 			<h1>{activeCol ? activeCol.name : 'Library'}</h1>
@@ -332,7 +332,7 @@
 	.col h3 { margin-bottom: .2rem; }
 	.open { display: block; min-height: 2.75rem; }
 	.inline-note { display: grid; gap: .4rem; flex-basis: 100%; padding: .35rem 0; }
-	.addc { width: auto; min-height: 2.75rem; font-size: .85rem; padding: .2rem .5rem; background: rgba(10, 8, 25, .85); }
+	.addc { width: auto; min-height: 2.75rem; font-size: .85rem; padding: .2rem .5rem; background: var(--paper-raised); }
 	.sk { height: 16rem; }
 	.moreb { display: grid; place-items: center; padding: 1rem; }
 	@media (max-width: 760px) { .tabs { overflow-x: auto; flex-wrap: nowrap; } .import { flex-direction: column; } }

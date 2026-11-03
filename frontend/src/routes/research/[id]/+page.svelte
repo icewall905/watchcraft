@@ -70,7 +70,7 @@
 
 <svelte:head><title>{c?.subject || c?.name || 'Research'} · WatchCraft</title></svelte:head>
 
-<div class="page">
+<div class="page reading-page">
 	<a class="small muted" href="/research" use:focusable>← Research</a>
 	{#if loading}
 		<div class="skeleton" style="height:5rem;margin:1rem 0"></div><div class="skeleton" style="height:16rem"></div>
@@ -172,7 +172,7 @@
 	.head p { margin: .15rem 0; }
 	.acts { display: flex; gap: .5rem; flex-wrap: wrap; }
 	.ethics { padding: .6rem 1rem; border-left: 3px solid var(--warn); background: rgba(255,207,92,.08); border-radius: var(--r-sm); color: var(--warn); font-size: .85rem; }
-	.errbox { padding: .8rem 1rem; border-radius: var(--r-md); border: 1px solid rgba(255,92,122,.45); background: rgba(255,92,122,.1); color: #ffd1d9; margin: 1rem 0; }
+	.errbox { padding: .8rem 1rem; border-radius: var(--r-md); border: 1px solid rgba(255,92,122,.45); background: rgba(255,92,122,.1); color: var(--bad); margin: 1rem 0; }
 	.narrow { max-width: 34rem; margin: 1rem 0; }
 	section { margin-top: 2rem; }
 	h2 { font-size: 1.2rem; }

@@ -175,7 +175,7 @@
 
 <svelte:head><title>Find · WatchCraft</title></svelte:head>
 
-<div class="page">
+<div class="page reading-page">
 	<header><h1>Find</h1><p class="muted">Search everything WatchCraft has collected, or look live on the web.</p></header>
 
 	<search class="bar">
@@ -347,10 +347,10 @@
 	.filters { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
 	.tags { min-width: 13rem; flex: 1 1 13rem; }
 	.bar .big { flex: 1; min-width: 14rem; min-height: 3.2rem; font-size: 1.1rem; }
-	.sel { width: auto; min-height: 3.2rem; background: rgba(10, 8, 25, .85); }
+	.sel { width: auto; min-height: 3.2rem; background: var(--paper-raised); }
 	.layout { display: grid; grid-template-columns: minmax(0, 1fr) 22rem; gap: 2rem; align-items: start; }
 	.main, .results { display: grid; gap: 1.5rem; }
-	.meaning { display: grid; gap: .6rem; padding: 1rem; border: 1px solid var(--border); border-radius: var(--r-card); background: var(--surface); }
+	.meaning { display: grid; gap: .6rem; padding: 1rem; border: 1px solid var(--rule); border-radius: var(--r-md); background: var(--paper-raised); }
 	.meaning h2 { margin: 0; font-size: 1.05rem; }
 	.index-note { margin: 0; }
 	.mlist { display: grid; gap: .5rem; margin: 0; padding: 0; list-style: none; }
@@ -361,7 +361,7 @@
 	.vid { display: grid; gap: .25rem; min-height: 2.75rem; }
 	.vid img { width: 100%; aspect-ratio: 16/9; object-fit: cover; border-radius: var(--r-md); background: var(--bg-2); }
 	.vt { font-weight: 650; font-size: .9rem; line-height: 1.25; }
-	.box { border: 1px solid var(--line); background: var(--surface); border-radius: var(--r-lg); padding: 1rem 1.1rem; display: grid; gap: .7rem; }
+	.box { border: 1px solid var(--line); background: var(--paper-raised); border-radius: var(--r-lg); padding: 1rem 1.1rem; display: grid; gap: .7rem; }
 	aside { display: grid; gap: 1rem; }
 	.box h2 { margin: 0; }
 	fieldset { border: 0; padding: 0; margin: 0; display: grid; gap: .1rem; }

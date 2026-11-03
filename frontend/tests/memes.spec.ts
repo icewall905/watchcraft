@@ -7,8 +7,10 @@ test('Meme Radar is in navigation and renders its empty states', async ({ page }
 	await expect(nav.getByRole('link', { name: 'Meme Radar' })).toBeVisible();
 	await nav.getByRole('link', { name: 'Meme Radar' }).click();
 	await expect(page.getByRole('heading', { name: 'Meme Radar', level: 1 })).toBeVisible();
-	for (const t of ['Trending', 'Emerging', 'Formats', 'Explore', 'Saved', 'History'])
+	for (const t of ['Explore', 'Trends', 'Emerging', 'Formats', 'Saved', 'History', 'Set aside'])
 		await expect(page.getByRole('tab', { name: t, exact: true })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'No memes yet' })).toBeVisible();
+	await page.getByRole('tab', { name: 'Trends', exact: true }).click();
 	await expect(page.getByRole('heading', { name: 'Nothing counted trending yet' })).toBeVisible();
 	await page.getByRole('tab', { name: 'Explore', exact: true }).click();
 	await expect(page.getByRole('heading', { name: 'No memes yet' })).toBeVisible();
@@ -80,4 +82,20 @@ test('Refresh radar forces analysis now and reports what it did', async ({ page 
 	await page.route('**/api/hub/memes/sweep', (route) => route.fulfill({ json: { analyzed: 0, transitions: 0, formats: 2 } }));
 	await page.getByRole('button', { name: 'Refresh radar' }).click();
 	await expect(page.getByText('Nothing new to analyze yet — give your curators a run first.')).toBeVisible();
+});
+
+test('Set aside lists meme reasons and promotes an item out of the list', async ({ page }) => {
+	let promoted = false;
+	await page.route('**/api/hub/today/set-aside?*', (route) => route.fulfill({ json: promoted ? { total: 0, items: [] } : {
+		total: 1, items: [{ id: 991, title: 'Quietly set aside', summary: '', first_seen: 1, url: 'https://example.com/post',
+			provider: 'mastodon', local_image: false, state: {}, curator_ids: [], verdict: { tier: 'set_aside', reasons: ['too little context'] } }]
+	} }));
+	await page.route('**/api/hub/items/991/overrule', async (route) => {
+		promoted = true;
+		await route.fulfill({ json: { tier: 'feature', overruled: 'promoted', reasons: ['you promoted it'] } });
+	});
+	await freshPage(page, '/memes?tab=set-aside');
+	await expect(page.getByText('too little context')).toBeVisible();
+	await page.getByRole('button', { name: 'Promote' }).click();
+	await expect(page.getByText('Quietly set aside')).toHaveCount(0);
 });

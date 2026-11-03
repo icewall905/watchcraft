@@ -59,7 +59,7 @@
 
 <svelte:head><title>Welcome to WatchCraft</title></svelte:head>
 
-<div class="page welcome">
+<div class="page welcome workshop-page">
 	<header>
 		<img src="/logo.png" alt="" width="56" height="56" />
 		<div><h1>Make yourself at home.</h1><p class="muted">A few choices, then you're ready to watch. You can change them later in Settings.</p></div>

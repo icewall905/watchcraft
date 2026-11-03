@@ -82,6 +82,7 @@
 		if (a.status === 'running') {
 			if (a.kind === 'curator' && a.doing) return a.doing;
 			if (a.kind === 'scout') return a.doing || `Researching “${a.query}”.`;
+			if (a.kind === 'master') return a.doing || 'Selecting your edition.';
 			if (a.kind === 'briefing') return a.doing || 'Writing a briefing.';
 			return a.role === 'research' ? 'Investigating its subject across sources.' : 'Checking its sources for new finds.';
 		}
@@ -91,6 +92,7 @@
 			if (a.last) return a.last.status === 'complete' ? `Last trip: ${plural(a.last.suggestions ?? 0, 'validated source')} for “${a.last.query}”.` : `Last trip for “${a.last.query}” did not finish.`;
 			return 'Has not been sent out yet. Give it a site or topic under Sources.';
 		}
+		if (a.kind === 'master') return a.last_run ? `Edition updated ${ago(a.last_run)}.` : 'The first selection is on its way.';
 		if (a.kind === 'briefing') return a.last_run ? `Last briefing written ${ago(a.last_run)}.` : 'No briefing written yet.';
 		if (a.found_today) return `Brought back ${plural(a.found_today, 'find')} today.`;
 		if (a.last?.new_items) return `Last run brought back ${plural(a.last.new_items, 'new item')}.`;
@@ -108,13 +110,13 @@
 		a.next_run && !working(a) ? `Next run ${ago(a.next_run)}` : a.last_run ? `Last run ${ago(a.last_run)}` : '',
 		a.kind === 'scout' && a.plans ? plural(a.plans, 'scheduled search') : ''
 	].filter(Boolean).join(' · ');
-	const href = (a: TeamAgent) => (a.kind === 'scout' ? '/sources' : a.kind === 'briefing' ? '/briefings' : a.role === 'research' ? `/research/${a.id}` : `/curators/${a.id}`);
+	const href = (a: TeamAgent) => (a.kind === 'master' ? '/today' : a.kind === 'scout' ? '/sources' : a.kind === 'briefing' ? '/briefings' : a.role === 'research' ? `/research/${a.id}` : `/curators/${a.id}`);
 	const entryHref = (e: TeamEntry) => (e.kind === 'scout_run' ? '/sources' : e.kind === 'briefing' ? '/briefings' : `/curators/${e.agent.split('-')[1]}`);
 </script>
 
 <svelte:head><title>Agent Activity · WatchCraft</title></svelte:head>
 
-<div class="page team">
+<div class="page team workshop-page">
 	<a class="btn report-shortcut" href="/scout-report" use:focusable>Open Scout Report →</a>
 	<header class="head">
 		<div>
@@ -171,7 +173,7 @@
 				<a class="card-link" href={href(a)} use:focusable>
 				<div class="top">
 					<span class="avatar emoji">{a.icon}{#if a.status === 'running'}<span class="spark" aria-hidden="true"><AgentGlyph state={GLYPH[a.status]} size="1rem" /></span>{/if}</span>
-					<div class="ttl"><h2>{a.name}</h2><span class="role">{a.kind === 'scout' ? 'Source Scout' : a.kind === 'briefing' ? 'Briefings' : a.role === 'research' ? 'Researcher' : 'Watcher'}</span></div>
+					<div class="ttl"><h2>{a.name}</h2><span class="role">{a.kind === 'master' ? 'Master curator' : a.kind === 'scout' ? 'Source Scout' : a.kind === 'briefing' ? 'Briefings' : a.role === 'research' ? 'Researcher' : 'Watcher'}</span></div>
 					<span class="st {a.status}">{LABEL[a.status] + (a.status === 'running' && a.since ? ` · ${elapsed(a.since)}` : '')}</span>
 				</div>
 				{#if a.mission}<p class="mission muted">{a.mission}</p>{/if}

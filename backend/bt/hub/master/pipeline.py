@@ -4,7 +4,7 @@ import time
 from sqlmodel import Session, select
 
 from ..models import ContentItem, CuratorDiscovery, ItemState, ItemVerdict
-from . import LOCK, PASS_VERSION, cluster, rules, score
+from . import LOCK, PASS_VERSION, cluster, prefs, rules, score
 
 WINDOW = 7 * 86400.0
 MAX_ITEMS = 2000
@@ -30,6 +30,7 @@ def _run(s: Session, pid: int, now: float) -> dict:
     ids = [i.id for i in items]
     profile_rules = rules.load(s, pid)
     taste = score.load_taste(s, pid)
+    lessons = prefs.nudges(s, pid, now)
     examples, waiting, uncaptured = cluster.analyze_memes(s, items, now)
     stories = cluster.assign_stories(s, items)
     s.commit()  # stories and meme identity are shared and settled; do not hold the write lock while scoring
@@ -44,6 +45,7 @@ def _run(s: Session, pid: int, now: float) -> dict:
         old = prior.get(item.id)
         verdict = rules.check(item, examples.get(item.id), profile_rules, now)
         rel, why = score.relevance(item, scouts.get(item.id), taste)
+        rel, why = score.apply_lessons(s, pid, item, rel, why, now, lessons)
         quality = verdict.quality
         editor = []
         if old and old.judged_by == 'llm' and old.pass_version == PASS_VERSION and not verdict.reject:

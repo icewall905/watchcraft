@@ -22,6 +22,7 @@
 
 	function apply(v: string) {
 		const u = new URL(page.url);
+		u.searchParams.delete('page');
 		if (v.trim()) u.searchParams.set('q', v.trim()); else u.searchParams.delete('q');
 		goto(u, { replaceState: true, keepFocus: true, noScroll: true });
 	}

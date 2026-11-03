@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { freshPage, resetBackend } from './helpers';
 
 // Every control on every Settings tab must be reachable with the arrow keys alone.
-const TABS = ['categories', 'feeds', 'memory', 'ai', 'search', 'notify', 'player', 'appearance', 'storage', 'sponsorblock', 'extras', 'cookies', 'profiles', 'screens', 'keys'];
+const TABS = ['categories', 'feeds', 'curator', 'memory', 'ai', 'search', 'notify', 'player', 'appearance', 'storage', 'sponsorblock', 'extras', 'cookies', 'profiles', 'screens', 'keys'];
 const DIRS = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'] as const;
 let screen: { id: string } | null = null;
 
@@ -46,7 +46,7 @@ for (const tab of TABS) {
 				await page.evaluate((i) => {
 					const el = document.querySelector<HTMLElement>(`[data-walk="${i}"]`);
 					el?.focus();
-					if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+					if (el instanceof HTMLTextAreaElement || (el instanceof HTMLInputElement && ['text', 'search', 'url', 'tel', 'password'].includes(el.type))) {
 						const end = el.value.length;
 						el.setSelectionRange(end, end);
 					}

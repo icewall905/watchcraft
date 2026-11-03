@@ -50,7 +50,7 @@
 
 <svelte:head><title>Alerts · WatchCraft</title></svelte:head>
 
-<div class="page">
+<div class="page reading-page">
 	<header>
 		<p class="eyebrow">EXPLORE</p>
 		<h1>Alerts</h1>

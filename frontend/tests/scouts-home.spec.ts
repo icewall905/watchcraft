@@ -17,3 +17,22 @@ test('scouts shelf is opt-in and shows genuine findings', async ({ page, request
  await expect(page.getByRole('link', { name: 'View activity' })).toHaveAttribute('href', '/team');
  await request.patch(`/api/profiles/${profile.id}`, { data: { prefs: profile.prefs } });
 });
+
+test('Today preview respects the profile video-row position', async ({ page, request }) => {
+ const profile = (await (await request.get('/api/profiles')).json())[0];
+ await page.route('**/api/hub/today', route => route.fulfill({ json: { day: '2026-11-03', curated: true, sections: [], intro: '', intro_refs: [], set_aside: 0 } }));
+ await page.route('**/api/feed/home**', route => route.fulfill({ json: [{ kind: 'category', category_id: 777, title: 'Placement video row', emoji: '▶', color: '#aaa', items: [] }] }));
+ try {
+  for (const position of ['top', 'bottom']) {
+   await request.patch(`/api/profiles/${profile.id}`, { data: { prefs: { ...profile.prefs, scouts_home_position: position } } });
+   await freshPage(page, '/');
+   await expect(page.getByRole('link', { name: 'Open Today', exact: true })).toBeVisible();
+   await expect(page.getByRole('heading', { name: 'Placement video row' })).toBeVisible();
+   const before = await page.locator('.today-card').evaluate(el => {
+    const heading = [...document.querySelectorAll('h2')].find(h => h.textContent?.includes('Placement video row'))!;
+    return !!(el.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING);
+   });
+   expect(before).toBe(position === 'top');
+  }
+ } finally { await request.patch(`/api/profiles/${profile.id}`, { data: { prefs: profile.prefs } }); }
+});

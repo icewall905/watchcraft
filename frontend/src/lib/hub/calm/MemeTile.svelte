@@ -2,25 +2,26 @@
 	import type { Snippet } from 'svelte';
 	// Calm meme tile: thumbnail (image or video still), caption. Sensitive media stays blurred at 7px.
 	import { focusable } from '$lib/nav';
-	let { caption, meta, href, onopen, imageSrc, imageAlt = '', media, sensitive = false, video = false }: {
+	let { caption, meta, href, onopen, label, imageSrc, imageAlt = '', media, mediaAvailable = true, why, sensitive = false, video = false }: {
 		caption: string; meta?: string; href?: string; onopen?: () => void;
-		imageSrc?: string; imageAlt?: string; media?: Snippet; sensitive?: boolean; video?: boolean;
+		label?: string;
+		imageSrc?: string; imageAlt?: string; media?: Snippet; mediaAvailable?: boolean; why?: Snippet; sensitive?: boolean; video?: boolean;
 	} = $props();
 </script>
 
 {#snippet inner()}
 	<span class="thumb" class:sensitive>
-		{#if media}{@render media()}{:else if imageSrc}<img src={imageSrc} alt={imageAlt} loading="lazy" />{:else}<span class="text">{caption}</span>{/if}
+		{#if media && mediaAvailable}{@render media()}{:else if imageSrc}<img src={imageSrc} alt={imageAlt} loading="lazy" />{:else}<span class="text">{caption}</span>{/if}
 		{#if video}<span class="badge" aria-label="Video">▶</span>{/if}
 	</span>
 	<span class="caption" class:sensitive>{caption}</span>
-	{#if meta}<span class="meta">{meta}</span>{/if}
+	{#if meta || why}<span class="meta">{#if meta}{meta}{/if}{#if why}<span class="why">{@render why()}</span>{/if}</span>{/if}
 {/snippet}
 
 {#if href}
 	<a class="meme-tile" {href} use:focusable>{@render inner()}</a>
 {:else}
-	<button class="meme-tile" type="button" use:focusable={{ onSelect: () => onopen?.() }}>{@render inner()}</button>
+	<button class="meme-tile" type="button" aria-label={label} use:focusable={{ onSelect: () => onopen?.() }}>{@render inner()}</button>
 {/if}
 
 <style>
@@ -33,4 +34,5 @@
 	.badge { position: absolute; right: var(--sp-2); bottom: var(--sp-2); padding: .1rem .45rem; border-radius: var(--r-pill); background: rgba(0, 0, 0, .55); color: #f5f5f5; font-size: var(--fs-xs); }
 	.caption { font-size: var(--fs-sm); line-height: var(--lh-snug); display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 	.meta { font-size: var(--fs-xs); color: var(--faint); }
+	.why { position: relative; z-index: 1; margin-left: var(--sp-2); }
 </style>

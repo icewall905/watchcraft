@@ -1,7 +1,7 @@
 <script lang="ts">
 	// Plain-text paragraphs; "[n]" markers become links to the nth cited item.
 	import { focusable } from '$lib/nav';
-	let { text, itemIds = [] }: { text: string; itemIds?: number[] } = $props();
+	let { text, itemIds = [] }: { text: string; itemIds?: (number | null)[] } = $props();
 	const paras = $derived(
 		text.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean).map((p) => p.split(/(\[\d+\])/).map((part) => {
 			const m = /^\[(\d+)\]$/.exec(part);
@@ -18,7 +18,7 @@
 </div>
 
 <style>
-	.cited { display: grid; gap: .9rem; line-height: 1.65; max-width: 46rem; white-space: pre-line; }
+	.cited { display: grid; gap: var(--sp-5); line-height: var(--lh-body); max-width: var(--measure); font-size: var(--fs-md); white-space: pre-line; }
 	.cited p { margin: 0; color: var(--text); }
-	.cite { color: var(--accent); font-weight: 700; font-size: .8em; vertical-align: super; padding: 0 .1em; }
+	.cite { color: var(--accent); font-weight: 700; font-size: .8em; vertical-align: super; padding: .15em .3em; border-radius: var(--r-sm); text-decoration: underline; text-underline-offset: .2em; }
 </style>

@@ -4,6 +4,10 @@ import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import sharp from 'sharp';
 
+// The PWA thumbnail cache otherwise bypasses page.route after a reload.
+// These tests supply deterministic thumbnail bytes; offline.spec covers the worker.
+test.use({ serviceWorkers: 'block' });
+
 // Hover previews keep playing across feed refreshes: agent 'accept' events reload the home rows
 // every few seconds in real use, and the preview under the pointer must survive them untouched.
 const DATA = process.env.BT_E2E_DATA;
@@ -25,14 +29,16 @@ from bt.models import Candidate, Category, Download, Profile, Video, now as mnow
 init_db()
 with session() as s:
     pid = s.exec(select(Profile)).first().id
-    s.add(Video(id="${ID}", title="Preview hover clip", channel_name="Test", duration_s=20, fetched_at=mnow()))
-    s.add(Video(id="${NEW_ID}", title="Second hover video", channel_name="Test", duration_s=20, fetched_at=mnow()))
+    s.merge(Video(id="${ID}", title="Preview hover clip", channel_name="Test", duration_s=20, fetched_at=mnow()))
+    s.merge(Video(id="${NEW_ID}", title="Second hover video", channel_name="Test", duration_s=20, fetched_at=mnow()))
     s.merge(Download(video_id="${ID}", status="done", path="${ID.slice(0, 2)}/${ID}.mp4", size_bytes=100000, height=360, progress=1.0))
-    cat = Category(profile_id=pid, name="PV hover")
+    cat = s.exec(select(Category).where(Category.profile_id == pid, Category.name == "PV hover")).first() or Category(profile_id=pid, name="PV hover")
     s.add(cat)
     s.commit()
     s.refresh(cat)
-    s.add(Candidate(category_id=cat.id, video_id="${ID}", status="accepted", score=90))
+    candidate = s.exec(select(Candidate).where(Candidate.category_id == cat.id, Candidate.video_id == "${ID}")).first() or Candidate(category_id=cat.id, video_id="${ID}")
+    candidate.status, candidate.score = "accepted", 90
+    s.add(candidate)
     s.commit()
 `], { cwd: BACKEND, env: { ...process.env, BT_DATA_DIR: DATA! } });
 });
@@ -126,4 +132,35 @@ with session() as s:
 	}
 	await expect(card.locator('.hit')).toBeFocused();
 	await expect.poll(async () => cardVideo.evaluate((v: HTMLVideoElement) => !v.paused).catch(() => false), { timeout: 8000 }).toBe(true);
+});
+
+test('Paper preserves the existing video-card pixels on Home', async ({ page, request }) => {
+	await page.route('**/api/thumb/**', route => route.fulfill({ contentType: 'image/svg+xml', body: '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="180"><rect width="320" height="180" fill="#325a70"/></svg>' }));
+	await page.addInitScript(() => localStorage.setItem('bt.profile', '1'));
+	try {
+		const captures: Buffer[] = [];
+		for (const theme of ['projector', 'paper']) {
+			await request.put('/api/settings/appearance', { data: { theme } });
+			await page.goto('/');
+			await expect(page.locator('html')).toHaveAttribute('data-theme', 'projector');
+			const card = page.locator('.card', { hasText: 'Preview hover clip' });
+			await expect(card).toBeVisible();
+			await card.scrollIntoViewIfNeeded();
+			await page.mouse.move(0, 0);
+			const thumbnail = card.locator('.thumb img');
+			await expect(thumbnail).toBeVisible();
+			await expect.poll(() => thumbnail.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0)).toBe(true);
+			await expect(card.locator('video.bt-hover-pv')).toHaveCount(0);
+			await page.evaluate(() => document.fonts.ready);
+			const box = await card.boundingBox();
+			await expect.poll(async () => {
+				const next = await card.boundingBox();
+				return next && box && next.width === box.width && next.height === box.height;
+			}).toBe(true);
+			const capture = await card.screenshot({ animations: 'disabled' });
+			captures.push(await sharp(capture).removeAlpha().raw().toBuffer());
+			await card.screenshot({ path: `/tmp/watchcraft-video-card-${theme}.png`, animations: 'disabled' });
+		}
+		expect(captures[1].equals(captures[0])).toBe(true);
+	} finally { await request.put('/api/settings/appearance', { data: { theme: 'projector' } }); }
 });

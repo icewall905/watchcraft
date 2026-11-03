@@ -106,13 +106,13 @@ export type Curator = {
 };
 export type CuratorDetail = Curator & { runs: Run[]; recent: Item[] };
 export type CuratorInput = Partial<Omit<Curator, 'id' | 'report' | 'report_at' | 'next_run' | 'last_run' | 'last_success' | 'last_status' | 'error' | 'discovery_count' | 'created_at'>> & { name: string };
-export type Template = { key: string; name: string; description: string; icon: string; kind: string; queries: string[]; keywords: string[]; provider_keys: string[]; content_types: string[]; interval_hours: number };
+export type Template = { key: string; name: string; description: string; icon: string; kind: string; queries: string[]; keywords: string[]; provider_keys: string[]; content_types: string[]; interval_hours: number; max_per_run?: number };
 export type Topic = { id: number; name: string; description: string; keywords: string[]; notes: string; kind: 'knowledge' | 'news'; muted: boolean; pinned: boolean; count: number; last_added?: number | null };
 export type TopicDetail = Topic & { items: Item[]; recent: Item[]; curators: { id: number; name: string }[]; related: Topic[] };
 export type Briefing = { id: number; name: string; curator_ids: number[]; topic_ids: number[]; frequency: 'manual' | 'daily' | 'weekly'; length: 'concise' | 'detailed'; last_generated: number | null; next_run: number | null };
 export type Issue = { id: number; created_at: number; content: string; item_ids: number[]; ai: boolean };
 export type Alert = { id: number; severity: string; state: string; title: string; reason: string; curator_id: number | null; item: Item; created_at: number; snooze_until?: number | null };
-export type NewsGroup = { key: string; title: string; items: Item[]; latest: number };
+export type NewsGroup = { key: string; story_id?: number | null; title: string; items: Item[]; latest: number };
 export type SearchResult = Page<Item> & {
 	videos: { id: string; title: string; channel_name: string; thumbnail: string }[];
 	curators: { id: number; name: string; kind: string }[];
@@ -124,7 +124,7 @@ export type SavedSearch = { id: number; name: string; query: string; filters: Re
 
 export type TeamStatus = 'running' | 'waiting' | 'idle' | 'attention' | 'paused';
 export type TeamAgent = {
-	key: string; kind: 'curator' | 'scout' | 'briefing'; id: number | null; name: string; icon: string; color: string; mission: string;
+	key: string; kind: 'curator' | 'scout' | 'briefing' | 'master'; id: number | null; name: string; icon: string; color: string; mission: string;
 	tone?: ToneName;
 	status: TeamStatus; since: number | null; next_run: number | null; last_run?: number | null; doing?: string | null; query?: string;
 	role?: 'watch' | 'research'; error?: string; enabled?: boolean; found_today?: number; plans?: number;

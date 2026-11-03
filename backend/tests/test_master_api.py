@@ -7,7 +7,7 @@ from test_curation import client  # noqa: F401  (isolated DB/API fixture)
 
 from bt.db import session
 from bt.hub.master import edition
-from bt.hub.models import ContentItem, CuratorDiscovery, Edition, ItemVerdict, MemeExample, Story, StoryItem
+from bt.hub.models import ContentItem, CuratorDiscovery, Edition, ItemState, ItemVerdict, MemeExample, Story, StoryItem, Topic
 
 _n = iter(range(1, 10_000))
 
@@ -123,6 +123,34 @@ def test_a_story_shows_only_this_profiles_reports(client):
     assert client.get(f'/api/hub/stories/{new_story()}').status_code == 404
 
 
+def test_story_view_matches_curated_news_visibility_and_muted_topics(client):
+    st = new_story()
+    kept = add(story=st, title='Community report remains visible')
+    unjudged = add(story=st, title='New unjudged report', verdict=False)
+    aside = add(story=st, title='Set aside report', tier='set_aside')
+    dismissed = add(story=st, title='Dismissed report')
+    client.post(f'/api/hub/items/{dismissed}/state', json={'dismissed': True})
+    add(story=st, title='MutedMarker report')
+    wrong_type = add(type='web', story=st, title='A non-news report')
+    with session() as s:
+        touched = ContentItem(url='https://example.org/touched-only', type='news', title='Touched-only report')
+        s.add(touched); s.flush()
+        s.add(StoryItem(item_id=touched.id, story_id=st))
+        s.add(ItemState(profile_id=1, item_id=touched.id, saved=True))
+        s.commit()
+    with session() as s:
+        topic = Topic(profile_id=1, name='Muted', kind='news', muted=True, keywords=['mutedmarker'])
+        s.add(topic); s.commit()
+    other_profile_id, other_headers = other_profile(client)
+    private = add(story=st, pid=other_profile_id, title='Private profile source')
+    got = client.get(f'/api/hub/stories/{st}')
+    assert got.status_code == 200
+    assert {i['id'] for i in got.json()['items']} == {kept, unjudged}
+    assert {i['id'] for g in client.get('/api/hub/news?days=30').json()['groups'] for i in g['items']} == {kept, unjudged}
+    assert not {private, aside, dismissed, wrong_type, touched.id} & {i['id'] for i in got.json()['items']}
+    assert client.get(f'/api/hub/stories/{st}', headers=other_headers).json()['items'][0]['id'] == private
+
+
 # ---------- curated feeds
 
 def test_feeds_show_what_the_curator_kept_and_all_on_request(client):
@@ -137,6 +165,20 @@ def test_feeds_show_what_the_curator_kept_and_all_on_request(client):
     # Saved items are the reader's own and are never filtered.
     client.post(f'/api/hub/items/{aside}/state', json={'saved': True})
     assert aside in ids(section='library')
+
+
+def test_news_prefers_stored_story_links_and_keeps_sources_profile_scoped(client):
+    st = new_story()
+    first = add(story=st, title='Completely different headline alpha', publisher='One')
+    second = add(story=st, title='Another unrelated wording beta', publisher='Two')
+    pid, headers = other_profile(client)
+    private = add(story=st, pid=pid, title='Private report gamma', publisher='Private')
+    groups = client.get('/api/hub/news?days=30').json()['groups']
+    group = next(g for g in groups if g.get('story_id') == st)
+    assert {i['id'] for i in group['items']} == {first, second}
+    assert all(i['publisher'] != 'Private' for i in group['items'])
+    other_groups = client.get('/api/hub/news?days=30', headers=headers).json()['groups']
+    assert {i['id'] for g in other_groups for i in g['items']} == {private}
 
 
 def test_feeds_are_unfiltered_before_the_first_pass(client):

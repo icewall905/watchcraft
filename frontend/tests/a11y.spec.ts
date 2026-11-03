@@ -5,7 +5,7 @@ import { freshPage } from './helpers';
 // name, every image has an alt attribute, every field has a label, and nothing traps the
 // keyboard with a positive tabindex.
 
-const PAGES = ['/', '/discover', '/memes', '/library', '/settings', '/find?q=test', '/curators'];
+const PAGES = ['/', '/today', '/today/set-aside', '/discover', '/memes', '/library', '/settings', '/find?q=test', '/curators'];
 
 for (const url of PAGES) {
 	test(`${url} gives every control an accessible name`, async ({ page }) => {

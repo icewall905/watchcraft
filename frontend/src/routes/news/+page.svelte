@@ -6,7 +6,8 @@
 	import { hub, ago } from '$lib/hub/api';
 	import { errMsg } from '$lib/hub/util';
 	import type { Item, NewsGroup, Topic } from '$lib/hub/types';
-	import ContentCard from '$lib/hub/ContentCard.svelte';
+	import { StoryCard } from '$lib/hub/calm';
+	import LocalImage from '$lib/hub/LocalImage.svelte';
 	import LiveFilter from '$lib/hub/LiveFilter.svelte';
 
 	const ranges = [[1, 'Today'], [7, 'This week'], [30, 'Month']] as const;
@@ -49,12 +50,6 @@
 	const visible = $derived(groups.map((g, idx) => ({ g, idx })).filter(({ g }) =>
 		(!publisher || g.items.some((i) => i.publisher === publisher)) && g.items.some(matches)
 	));
-	function filterTag(tag: string) {
-		const u = new URL(page.url);
-		u.searchParams.set('q', tag);
-		goto(u, { replaceState: true, keepFocus: true, noScroll: true });
-	}
-
 	async function addTopic(e: SubmitEvent) {
 		e.preventDefault();
 		const name = follow.trim();
@@ -127,22 +122,29 @@
 		</div>
 	{:else}
 		<div class="stories">
-			{#each visible as { g, idx } (g.key)}
+			{#each visible as { g } (g.key)}
 				{@const rest = g.items.length - 1}
+				{@const lead = g.items[0]}
+				{@const href = g.story_id ? `/news/${g.story_id}` : `/item/${lead.id}`}
 				<section class="story" aria-label={g.title}>
-					<div class="story-head">
-						<h2><a href={`/item/${g.items[0].id}`} use:focusable>{g.title}</a></h2>
-						<span class="story-meta">{g.items.length} article{g.items.length === 1 ? '' : 's'} · {ago(g.latest)}</span>
-					</div>
-					<ContentCard bind:item={groups[idx].items[0]} layout="row" ontag={filterTag} />
+					{#if lead.local_image}
+						<StoryCard {href} title={g.title} source={lead.publisher || lead.provider} summary={lead.summary}
+							more={rest} moreSources={g.items.slice(1).map((i) => i.publisher || i.provider).filter(Boolean)}>
+							{#snippet image()}<LocalImage id={lead.id} alt={lead.title} />{/snippet}
+						</StoryCard>
+					{:else}
+						<StoryCard {href} title={g.title} source={lead.publisher || lead.provider} summary={lead.summary}
+							more={rest} moreSources={g.items.slice(1).map((i) => i.publisher || i.provider).filter(Boolean)} />
+					{/if}
+					<p class="story-meta">{g.items.length} source{g.items.length === 1 ? '' : 's'} · {ago(g.latest)}</p>
 					{#if rest > 0}
 						<button class="btn ghost" aria-expanded={!!open[g.key]} use:focusable onclick={() => (open[g.key] = !open[g.key])}>
-							{open[g.key] ? 'Hide' : `${rest} more article${rest === 1 ? '' : 's'}`}
+							{open[g.key] ? 'Hide sources' : `${rest} more source${rest === 1 ? '' : 's'}`}
 						</button>
 						{#if open[g.key]}
 							<div class="more">
-								{#each g.items.slice(1) as _, j (g.items[j + 1].id)}
-									<ContentCard bind:item={groups[idx].items[j + 1]} layout="compact" />
+								{#each g.items.slice(1) as item (item.id)}
+								<a class="source-link" href={item.url} target="_blank" rel="noreferrer" use:focusable>{item.publisher || item.provider}: {item.title}</a>
 								{/each}
 							</div>
 						{/if}
@@ -154,7 +156,7 @@
 </div>
 
 <style>
-	.page { display: grid; gap: 1rem; align-content: start; }
+	.page { display: grid; gap: var(--sp-5); align-content: start; }
 	.head { display: flex; justify-content: space-between; align-items: end; gap: 1rem; flex-wrap: wrap; }
 	.tabs { display: flex; gap: .5rem; }
 	.tab { min-height: 2.75rem; padding: .4rem 1.1rem; }
@@ -165,18 +167,13 @@
 	.sm { min-height: 2.75rem; padding: .2rem .6rem; font-size: .8rem; }
 	.follow { flex: 1; min-width: 14rem; max-width: 26rem; }
 	.pub { width: auto; min-width: 11rem; background: rgba(10, 8, 25, .85); }
-	.stories { display: grid; gap: 1rem; max-width: 62rem; }
-	.story { display: grid; gap: .55rem; padding: 1rem 1.1rem 1.1rem; border: 1px solid var(--line);
-		border-radius: var(--r-lg); background: var(--surface); transition: border-color .2s; }
-	.story:hover { border-color: var(--line-strong); }
-	.story-head { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; }
-	.story-head h2 { font-size: 1.2rem; line-height: 1.25; margin: 0; letter-spacing: -.01em; }
-	.story-head h2 a { color: var(--text); text-decoration: none; }
-	.story-head h2 a:hover { color: var(--accent-2); }
+	.stories { display: grid; gap: var(--sp-3); max-width: 62rem; }
+	.story { display: grid; gap: .2rem; }
 	.story-meta { flex: none; padding: .15rem .55rem; border-radius: var(--r-pill); background: var(--bg-2);
 		color: var(--muted); font-size: .75rem; white-space: nowrap; }
 	.more { display: grid; gap: .5rem; padding-left: 1.2rem; border-left: 2px solid var(--line-strong); }
+	.source-link { color: var(--ink-soft); font-size: var(--fs-sm); padding: .35rem 0; }
 	.sk { height: 9rem; }
 	.err { color: var(--bad); font-size: .85rem; }
-	@media (max-width: 760px) { .tabs { overflow-x: auto; } .follow { min-width: 0; max-width: none; } .more { padding-left: .6rem; } .story-head { display: grid; gap: .1rem; } }
+	@media (max-width: 760px) { .tabs { overflow-x: auto; } .follow { min-width: 0; max-width: none; } .more { padding-left: .6rem; } }
 </style>

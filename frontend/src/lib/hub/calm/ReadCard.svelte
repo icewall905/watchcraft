@@ -3,20 +3,20 @@
 	// Editorial card: optional large image, kicker, serif title, short summary, source + read time, why slot.
 	// The title link covers the card; the why slot sits above it so its button stays clickable.
 	import { focusable } from '$lib/nav';
-	let { href, title, kicker, summary, source, readMinutes, imageSrc, imageAlt = '', image, why, external = false, size = 'normal' }: {
-		href: string; title: string; kicker?: string; summary?: string; source?: string; readMinutes?: number;
-		imageSrc?: string; imageAlt?: string; image?: Snippet; why?: Snippet; external?: boolean; size?: 'normal' | 'lead';
+	let { href, title, kicker, summary, source, summaryLabel, readMinutes, imageSrc, imageAlt = '', image, mediaAvailable = true, why, external = false, size = 'normal', onopen }: {
+		href: string; title: string; kicker?: string; summary?: string; source?: string; summaryLabel?: string; readMinutes?: number;
+		imageSrc?: string; imageAlt?: string; image?: Snippet; mediaAvailable?: boolean; why?: Snippet; external?: boolean; size?: 'normal' | 'lead'; onopen?: () => void;
 	} = $props();
 </script>
 
-<article class="read-card" class:lead={size === 'lead'} class:has-media={!!(image || imageSrc)}>
-	{#if image || imageSrc}
+<article class="read-card" class:lead={size === 'lead'} class:has-media={!!((image || imageSrc) && mediaAvailable)}>
+	{#if (image || imageSrc) && mediaAvailable}
 		<div class="media">{#if image}{@render image()}{:else}<img src={imageSrc} alt={imageAlt} loading="lazy" />{/if}</div>
 	{/if}
 	<div class="body">
 		{#if kicker}<p class="kicker">{kicker}</p>{/if}
-		<h3 class="title"><a {href} use:focusable target={external ? '_blank' : undefined} rel={external ? 'noreferrer' : undefined}>{title}</a></h3>
-		{#if summary}<p class="summary">{summary}</p>{/if}
+		<h3 class="title"><a {href} onclick={onopen} use:focusable target={external ? '_blank' : undefined} rel={external ? 'noreferrer' : undefined}>{title}</a></h3>
+		{#if summary}<p class="summary">{#if summaryLabel}<span class="summary-label">{summaryLabel} · </span>{/if}{summary}</p>{/if}
 		{#if source || readMinutes || why}
 			<div class="meta">
 				{#if source}<span>{source}</span>{/if}

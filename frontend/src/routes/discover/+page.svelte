@@ -8,6 +8,7 @@
 	import type { Item } from '$lib/hub/types';
 	import ContentCard from '$lib/hub/ContentCard.svelte';
 	import ItemFilters from '$lib/hub/ItemFilters.svelte';
+	import EmptyCalm from '$lib/hub/calm/EmptyCalm.svelte';
 	import LiveFilter from '$lib/hub/LiveFilter.svelte';
 
 	const LIMIT = 30;
@@ -28,10 +29,10 @@
 	const query = $derived.by(() => {
 		const p = page.url.searchParams;
 		const q: Record<string, string | number | boolean | undefined> = {
-			section: 'discover', limit: LIMIT,
+			section: 'discover', limit: LIMIT, offset: Math.max(0, Math.floor(Number(p.get('page')) || 0)) * LIMIT,
 			q: p.get('q') ?? undefined,
 			type: p.get('type') ?? undefined, provider: p.get('provider') ?? undefined, curator: p.get('curator') ?? undefined,
-			min_score: p.get('min_score') ?? undefined, since: sinceTs(p.get('since')), sort: p.get('sort') ?? undefined,
+			min_score: p.get('min_score') ?? undefined, since: sinceTs(p.get('since')), sort: p.get('sort') ?? 'best', curation: p.get('curation') ?? undefined,
 			unread: tab === 'unread' || p.get('unread') === '1', saved: tab === 'saved' || p.get('saved') === '1'
 		};
 		if (tab === 'new' && lastVisit) q.since = Math.max(Number(q.since ?? 0), lastVisit);
@@ -54,7 +55,7 @@
 		if (append) more = true; else { loading = true; }
 		error = '';
 		try {
-			const r = await hub.items({ ...query, offset: append ? items.length : 0 });
+			const r = await hub.items({ ...query, offset: append ? items.length : Number(query.offset ?? 0) });
 			if (id !== seq) return;
 			items = append ? [...items, ...r.items.filter((n) => !items.some((o) => o.id === n.id))] : r.items;
 			total = r.total;
@@ -65,8 +66,14 @@
 
 	function setTab(t: string) {
 		const u = new URL(page.url);
+		u.searchParams.delete('page');
 		if (t === 'all') u.searchParams.delete('tab'); else u.searchParams.set('tab', t);
 		goto(u, { replaceState: true, keepFocus: true, noScroll: true });
+	}
+	function nextSelection(delta: number) {
+		const u = new URL(page.url);
+		u.searchParams.set('page', String(Math.max(0, Number(query.offset ?? 0) / LIMIT + delta)));
+		goto(u, { keepFocus: true });
 	}
 	function changed(it: Item) {
 		if (it.state.dismissed) { items = items.filter((x) => x.id !== it.id); total = Math.max(0, total - 1); }
@@ -74,6 +81,7 @@
 	function setView(v: 'grid' | 'list') { view = v; lsSet('wc.discover.view', v); }
 	function filterTag(tag: string) {
 		const u = new URL(page.url);
+		u.searchParams.delete('page');
 		u.searchParams.set('q', tag);
 		goto(u, { replaceState: true, keepFocus: true, noScroll: true });
 	}
@@ -81,11 +89,11 @@
 
 <svelte:head><title>Discover · WatchCraft</title></svelte:head>
 
-<div class="page">
+<div class="page reading-page">
 	<header class="head">
 		<div>
 			<h1>Discover</h1>
-			<p class="muted">What have my curators found?</p>
+			<p class="muted">A considered selection from your curators.</p>
 		</div>
 		<div class="hstack">
 			<a class="btn ghost" href="/curators" use:focusable>Manage curators</a>
@@ -95,6 +103,7 @@
 			</div>
 		</div>
 	</header>
+	<div class="hstack"><a class="btn ghost" href={page.url.searchParams.get('curation') === 'all' ? '/discover' : '/discover?curation=all'} use:focusable>{page.url.searchParams.get('curation') === 'all' ? 'Curated selection' : 'Show everything'}</a><a class="btn ghost" href="/today/set-aside" use:focusable>Set aside</a></div>
 	<LiveFilter placeholder="Filter discoveries by words or tags…" label="Filter discoveries" count={loading ? null : total} />
 
 	<div class="tabs" role="tablist" aria-label="Discover views">
@@ -105,7 +114,7 @@
 	</div>
 	{#if tab === 'new' && !lastVisit && !loading}<p class="muted small">No earlier visit recorded, so everything counts as new once you leave and return.</p>{/if}
 
-	<ItemFilters hide={tab === 'unread' ? ['unread'] : tab === 'saved' ? ['saved'] : []} />
+	<ItemFilters defaultSort="best" hide={tab === 'unread' ? ['unread'] : tab === 'saved' ? ['saved'] : []} />
 
 	{#if loading}
 		<div class={view === 'grid' ? 'grid-cards' : 'stack'} aria-busy="true" aria-label="Loading">
@@ -135,9 +144,14 @@
 				<ContentCard bind:item={items[i]} layout={view === 'grid' ? 'card' : 'row'} onchange={changed} ontag={filterTag} />
 			{/each}
 		</div>
-		{#if items.length < total}
+		{#if items.length < total && page.url.searchParams.get('curation') === 'all'}
 			<div class="more"><button class="btn big" disabled={more} use:focusable onclick={() => load(true)}>{more ? 'Loading…' : `Load more (${total - items.length} left)`}</button></div>
-		{/if}
+		{:else if page.url.searchParams.get('curation') !== 'all'}
+			<nav class="hstack" aria-label="Curated selections" data-nav-row="selections">
+				{#if Number(query.offset) > 0}<button class="btn ghost" use:focusable onclick={() => nextSelection(-1)}>Previous selection</button>{/if}
+				{#if Number(query.offset) + items.length < total}<button class="btn ghost" use:focusable onclick={() => nextSelection(1)}>Next selection</button>{:else}<EmptyCalm />{/if}
+			</nav>
+		{:else}<EmptyCalm />{/if}
 	{/if}
 </div>
 

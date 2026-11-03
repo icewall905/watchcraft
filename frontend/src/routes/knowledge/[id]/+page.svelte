@@ -39,7 +39,7 @@
 
 <svelte:head><title>{t?.name ?? 'Topic'} · WatchCraft</title></svelte:head>
 
-<div class="page">
+<div class="page reading-page">
 	<a class="small muted" href="/knowledge" use:focusable>← Knowledge</a>
 	{#if loading}
 		<div class="skeleton" style="height:5rem;margin:1rem 0"></div><div class="skeleton" style="height:14rem"></div>

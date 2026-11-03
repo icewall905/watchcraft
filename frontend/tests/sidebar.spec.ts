@@ -8,7 +8,7 @@ test('desktop sidebar, device preference, and TV remote drawer', async ({ page }
 	// Workshop (curators, sources, …) starts collapsed unless it holds the current page.
 	await expect(navigation.getByRole('link', { name: 'Curators', exact: true })).toHaveCount(0);
 	await navigation.getByRole('button', { name: 'Workshop', exact: true }).click();
-	for (const name of ['TV', 'Discover', 'News', 'Knowledge', 'Library', 'Briefings', 'Alerts', 'Research', 'Curators', 'Sources'])
+	for (const name of ['TV', 'Today', 'Discover', 'News', 'Knowledge', 'Library', 'Briefings', 'Alerts', 'Research', 'Curators', 'Sources'])
 		await expect(navigation.getByRole('link', { name, exact: true })).toBeVisible();
 	await page.screenshot({ path: '/tmp/wc-sidebar-desktop.png' });
 	await page.getByRole('button', { name: /^TV mode/ }).click();
@@ -36,10 +36,10 @@ test('desktop sidebar, device preference, and TV remote drawer', async ({ page }
 	await expect(navigation).toHaveCount(0);
 	await expect(toggle).toHaveCSS('position', 'fixed');
 	await toggle.click();
-	// The TV drawer stays minimal; the rest of the hub is one entry away.
+	// The TV drawer stays minimal; Today is the landing point for curated reading.
 	await expect(navigation.getByRole('link', { name: 'News' })).toHaveCount(0);
 	await navigation.getByRole('link', { name: 'Hub' }).click();
-	await expect(page).toHaveURL(/\/discover$/);
+	await expect(page).toHaveURL(/\/today$/);
 	await expect(navigation).toHaveCount(0);
 	await page.goto('/settings?tab=appearance');
 	await page.getByRole('button', { name: /^Desktop mode/ }).click();

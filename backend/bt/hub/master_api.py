@@ -12,9 +12,9 @@ from sqlmodel import Session, select
 from ..access import require_hub
 from ..api.core import profile_id
 from ..db import session
-from .api import can_see, serialize
+from .api import can_see, item_query, serialize
 from .master import edition, schedule, views
-from .models import ContentItem, Curator, Edition, HubLesson, HubPreferenceCore, ItemVerdict, StoryItem
+from .models import ContentItem, Curator, Edition, HubLesson, HubPreferenceCore, ItemVerdict, StoryItem, Topic
 
 router = APIRouter(prefix='/hub', tags=['WatchCraft Hub'], dependencies=[Depends(require_hub)])
 SET_ASIDE_DAYS = 7
@@ -122,9 +122,10 @@ def overrule(iid: int, body: OverruleIn, pid: int = Depends(profile_id)):
             return None  # nothing to hand back
         v = v or ItemVerdict(profile_id=pid, item_id=iid)
         if body.action == 'clear':
-            v.overruled, v.forced = '', False  # the queued pass re-judges it
+            v.overruled, v.overruled_at, v.forced = '', None, False  # the queued pass re-judges it
         else:
             v.overruled = 'promoted' if body.action == 'promote' else 'demoted'
+            v.overruled_at = time.time()
             v.tier, v.forced = ('feature' if body.action == 'promote' else 'set_aside'), True
             v.reasons = [f'you {v.overruled} it', *[r for r in v.reasons if not r.startswith('you ')]][:8]
         v.judged_at = time.time()
@@ -151,12 +152,19 @@ def explain(iid: int, pid: int = Depends(profile_id)):
 
 @router.get('/stories/{sid}')
 def story(sid: int, pid: int = Depends(profile_id)):
-    """Every report of one story that this profile may see, best first."""
+    """Curated, visible sources for one story, matching the news feed's filters."""
     with session() as s:
-        ids = list(s.exec(select(StoryItem.item_id).join(ItemVerdict, (ItemVerdict.item_id == StoryItem.item_id) & (ItemVerdict.profile_id == pid))
-                          .where(StoryItem.story_id == sid, ItemVerdict.tier != 'reject')
-                          .order_by(ItemVerdict.final.desc())).all())
-        found = _items(s, pid, list(views.visible_set(s, pid, ids)))
+        muted = [k.lower() for t in s.exec(select(Topic).where(Topic.profile_id == pid, Topic.kind == 'news', Topic.muted)).all()
+                 for k in (t.keywords or [t.name])]
+        rows = list(s.exec(item_query(pid, section='news')
+                           .join(StoryItem, StoryItem.item_id == ContentItem.id)
+                           .outerjoin(ItemVerdict, (ItemVerdict.item_id == ContentItem.id) & (ItemVerdict.profile_id == pid))
+                           .where(StoryItem.story_id == sid, views.curated(pid, ContentItem.id))
+                           .order_by(func.coalesce(ItemVerdict.final, 50).desc(),
+                                     func.coalesce(ContentItem.published_at, ContentItem.first_seen).desc())).all())
+        rows = [item for item in rows if not any(word in f'{item.title} {item.summary}'.lower() for word in muted)]
+        ids = [item.id for item in rows]
+        found = _items(s, pid, ids)
         if not found:
             raise HTTPException(404, 'Story not found')
         items = [found[i] for i in ids if i in found]
@@ -181,6 +189,11 @@ def _lesson(l: HubLesson) -> dict:
     return l.model_dump(exclude={'source_item_ids'})
 
 
+def _refresh_preference_core(s: Session, pid: int) -> None:
+    from .master.prefs import rebuild_core
+    rebuild_core(s, pid)
+
+
 @router.get('/curator/preferences')
 def preferences(pid: int = Depends(profile_id)):
     with session() as s:
@@ -197,7 +210,9 @@ def add_preference(body: LessonIn, pid: int = Depends(profile_id)):
         if s.exec(select(func.count()).select_from(HubLesson).where(HubLesson.profile_id == pid)).one() >= 200:
             raise HTTPException(422, 'Remove a preference before adding another.')
         l = HubLesson(profile_id=pid, text=body.text.strip(), scope=body.scope, polarity=body.polarity, user_edited=True)
-        s.add(l); s.commit(); s.refresh(l)
+        s.add(l); s.flush()
+        _refresh_preference_core(s, pid)
+        s.commit(); s.refresh(l)
         out = _lesson(l)
     schedule.mark(pid)
     return out
@@ -221,7 +236,9 @@ def edit_preference(lid: int, body: LessonPatch, pid: int = Depends(profile_id))
         if body.active is not None:
             l.active = body.active
         l.user_edited, l.updated_at = True, time.time()
-        s.add(l); s.commit(); s.refresh(l)
+        s.add(l)
+        _refresh_preference_core(s, pid)
+        s.commit(); s.refresh(l)
         out = _lesson(l)
     schedule.mark(pid)
     return out
@@ -230,6 +247,8 @@ def edit_preference(lid: int, body: LessonPatch, pid: int = Depends(profile_id))
 @router.delete('/curator/preferences/{lid}')
 def delete_preference(lid: int, pid: int = Depends(profile_id)):
     with session() as s:
-        s.delete(_own_lesson(s, pid, lid)); s.commit()
+        s.delete(_own_lesson(s, pid, lid))
+        _refresh_preference_core(s, pid)
+        s.commit()
     schedule.mark(pid)
     return {'ok': True}

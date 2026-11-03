@@ -20,6 +20,7 @@ from ..models import AgentEvent, Download, Profile, Setting
 from . import activity, ai, engine, memes, polling, repair, scout, slots, watchers
 from .models import (Alert, Briefing, BriefingIssue, CaptureJob, CapturedAsset, CapturedPage, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
                      CuratorRun, CuratorSource, Edition, HubLesson, HubPreferenceCore, ItemState, ItemVerdict, MasterQueue, MemeExample, MemeFormat, MemeTrend, MemeTrendState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, ScoutReportConfig, ScoutReportIssue, SitemapEntry, Source, SourceCheck, Topic, TopicItem, WatcherRevision)
+from .models import StoryItem
 from .master import views as curation_views
 from .master.cluster import same_story, title_key
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
@@ -349,6 +350,16 @@ def curator_feedback(iid: int, body: FeedbackIn, pid: int = Depends(profile_id))
         # The newest feedback wins: a word moves out of the opposite list, and the oldest words make room.
         setattr(c, keep, (values + added)[-20:])
         setattr(c, drop, [t for t in _clip_list(getattr(c, drop)) if t not in terms])
+        profile = s.get(Profile, pid)
+        profile_prefs = dict(profile.prefs or {}) if profile else {}
+        feedback_at = dict(profile_prefs.get('curator_feedback_at') or {})
+        direction = 'up' if body.verdict == 'more' else 'down'
+        for term in terms:
+            feedback_at[f'{c.id}:{direction}:{str(term).casefold()}'] = time.time()
+        profile_prefs['curator_feedback_at'] = {k: feedback_at[k] for k in list(feedback_at)[-200:]}
+        if profile:
+            profile.prefs = profile_prefs
+            s.add(profile)
         s.add(c); s.commit(); s.refresh(c)
         return {'curator_id': c.id, 'verdict': body.verdict, 'added': added,
                 'tuned_up': c.tuned_up, 'tuned_down': c.tuned_down}
@@ -603,7 +614,7 @@ def import_url(body: UrlIn, pid: int = Depends(profile_id)):
 @router.get('/news')
 def news(days: int = 1, topic: int | None = None, curation: str = 'curated',
          pid: int = Depends(profile_id)):
-    """Recent articles grouped into stories by title overlap. Uses publication time, not discovery time."""
+    """Recent articles grouped by the curator's stored stories, with title fallback."""
     since = time.time() - max(1, min(days, 90)) * 86400
     with session() as s:
         if topic is not None:
@@ -623,24 +634,38 @@ def news(days: int = 1, topic: int | None = None, curation: str = 'curated',
                 return False
             return not follow or any(k.lower() in hay for k in (follow.keywords or [follow.name]))
         rows = [i for i in rows if keep(i)]
+        rows_by_id = {i.id: i for i in rows}
+        # Stored stories are profile-independent, so only accept links whose item
+        # survived this profile's visibility, topic and curator filters above.
+        stored: dict[int, list] = {}
+        if rows_by_id:
+            links = s.exec(select(StoryItem.item_id, StoryItem.story_id).where(StoryItem.item_id.in_(rows_by_id))).all()
+            for iid, sid in links:
+                stored.setdefault(sid, []).append(rows_by_id[iid])
         groups: list[dict] = []
+        assigned = set()
+        for sid, members in stored.items():
+            groups.append({'_items': members, '_keys': [], '_story_id': sid})
+            assigned.update(i.id for i in members)
+        # Items not yet clustered by the master curator retain the former title
+        # overlap behavior as a graceful migration and fresh-ingest fallback.
         for i in rows:
+            if i.id in assigned:
+                continue
             key = title_key(i.title)
             for g in groups:
-                # Compare against each headline in the group. Comparing to a
-                # growing union lets unrelated stories join transitively via
-                # one common word.
-                if any(same_story(key, prior) for prior in g['_keys']):
+                if g['_story_id'] is None and any(same_story(key, prior) for prior in g['_keys']):
                     g['_items'].append(i); g['_keys'].append(key); break
             else:
-                groups.append({'_keys': [key], '_items': [i]})
+                groups.append({'_keys': [key], '_items': [i], '_story_id': None})
         out = []
-        for g in groups[:120]:
+        for g in groups:
             its = sorted(g['_items'], key=lambda x: -(x.published_at or x.first_seen))
-            out.append({'key': str(min(i.id for i in its)), 'title': its[0].title, 'items': serialize(s, pid, its),
+            out.append({'key': f"story:{g['_story_id']}" if g['_story_id'] is not None else f"item:{min(i.id for i in its)}",
+                        'story_id': g['_story_id'], 'title': its[0].title, 'items': serialize(s, pid, its),
                         'latest': its[0].published_at or its[0].first_seen})
         out.sort(key=lambda g: (-len(g['items']) if days > 1 else 0, -g['latest']))
-        return {'groups': out, 'topics': [topic_dict(s, t) for t in topics]}
+        return {'groups': out[:120], 'topics': [topic_dict(s, t) for t in topics]}
 
 
 # ---------- collections
@@ -1133,6 +1158,20 @@ def team(pid: int = Depends(profile_id)):
             if r.status != 'running':
                 journal.append({'at': r.finished_at or r.created_at, 'agent': 'scout', 'name': 'Source Scout', 'icon': '🧭',
                                 'kind': 'scout_run', 'status': r.status, 'query': r.query, 'suggestions': len(r.suggestions)})
+
+        master_job = jobs.get(f'master-{pid}')
+        master_queue = s.get(MasterQueue, pid)
+        master_enabled = get_settings(s)['hub_master'].get('enabled', True)
+        latest_edition = s.exec(select(Edition).where(Edition.profile_id == pid)
+                                .order_by(Edition.updated_at.desc()).limit(1)).first()
+        agents.append({'key': f'master-{pid}', 'kind': 'master', 'id': None,
+                       'name': 'Master Curator', 'icon': '✧', 'color': '#a3b5e0',
+                       'mission': 'Selects your daily edition and learns what matters to you.',
+                       'status': master_job['state'] if master_job else 'paused' if not master_enabled else 'waiting' if master_queue else 'idle',
+                       'since': master_job['since'] if master_job else None,
+                       'next_run': master_queue.due_at if master_enabled and master_queue else None,
+                       'last_run': latest_edition.updated_at if latest_edition else None,
+                       'enabled': master_enabled, 'doing': 'Selecting your edition.' if master_job else None})
 
         briefs = s.exec(select(Briefing).where(Briefing.profile_id == pid)).all()
         if briefs:
@@ -2075,9 +2114,15 @@ def hide_meme_language(code: str, body: MemeLanguageIn, pid: int = Depends(profi
         p = s.get(Profile, pid)
         prefs = dict(p.prefs or {})
         hidden = [x for x in (prefs.get('hidden_meme_languages') or []) if isinstance(x, str) and x != code]
+        timestamps = dict(prefs.get('hidden_meme_languages_at') or {})
         if body.hidden:
+            if code not in (prefs.get('hidden_meme_languages') or []):
+                timestamps[code] = time.time()
             hidden.append(code)
+        else:
+            timestamps.pop(code, None)
         prefs['hidden_meme_languages'] = hidden[:20]
+        prefs['hidden_meme_languages_at'] = timestamps
         p.prefs = prefs
         s.add(p); s.commit()
         return {'hidden_languages': prefs['hidden_meme_languages']}

@@ -2,14 +2,14 @@
 	import type { Snippet } from 'svelte';
 	// One story = a lead item plus folded duplicates from other sources ("+N more sources").
 	import { focusable } from '$lib/nav';
-	let { href, title, source, summary, imageSrc, imageAlt = '', image, more = 0, moreSources = [], why }: {
+	let { href, title, source, summary, imageSrc, imageAlt = '', image, mediaAvailable = true, more = 0, moreSources = [], why }: {
 		href: string; title: string; source?: string; summary?: string; imageSrc?: string; imageAlt?: string;
-		image?: Snippet; more?: number; moreSources?: string[]; why?: Snippet;
+		image?: Snippet; mediaAvailable?: boolean; more?: number; moreSources?: string[]; why?: Snippet;
 	} = $props();
 </script>
 
-<article class="story-card" class:has-media={!!(image || imageSrc)}>
-	{#if image || imageSrc}
+<article class="story-card" class:has-media={!!((image || imageSrc) && mediaAvailable)}>
+	{#if (image || imageSrc) && mediaAvailable}
 		<div class="media">{#if image}{@render image()}{:else}<img src={imageSrc} alt={imageAlt} loading="lazy" />{/if}</div>
 	{/if}
 	<div class="body">
@@ -17,7 +17,7 @@
 		{#if summary}<p class="summary">{summary}</p>{/if}
 		<div class="meta">
 			{#if source}<span class="source">{source}</span>{/if}
-			{#if more > 0}<span class="more" title={moreSources.length ? moreSources.join(', ') : undefined}>+{more} more {more === 1 ? 'source' : 'sources'}</span>{/if}
+			{#if more > 0}<span class="more" title={moreSources.length ? moreSources.join(', ') : undefined}>+{more} {more === 1 ? 'source' : 'sources'}</span>{/if}
 			{#if why}<span class="why">{@render why()}</span>{/if}
 		</div>
 	</div>

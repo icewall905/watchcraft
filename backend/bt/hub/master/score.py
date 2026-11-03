@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 
 from .. import engine
 from ..models import ContentItem, CuratorDiscovery, ItemState
+from . import prefs
 
 FEATURE_MIN = 60.0   # final score an item needs to be featured (calibrate on real data: V-048)
 KEEP_MIN = 45.0      # below this it is set aside
@@ -19,6 +20,8 @@ DAILY_FEATURE_OTHER = 4
 PER_PUBLISHER = 2
 TASTE_POINTS = 8.0
 REPUTATION_POINTS = 15.0
+LESSON_POINTS = 5.0
+LESSON_STOP = {'more', 'less', 'prefer', 'fewer', 'avoid', 'like', 'likes', 'items', 'content', 'about', 'with', 'from'}
 
 
 @dataclass
@@ -72,6 +75,30 @@ def relevance(item: ContentItem, scout: float | None, taste: Taste) -> tuple[flo
         score += REPUTATION_POINTS * rep
         reasons.append('a source you keep' if rep > 0 else 'a source you dismiss')
     return max(0.0, min(100.0, score)), reasons
+
+
+def apply_lessons(s: Session, pid: int, item: ContentItem, score: float, reasons: list[str], at: float | None = None,
+                  lessons=None) -> tuple[float, list[str]]:
+    """Apply small, explainable nudges only when a scoped lesson's words match the item."""
+    words = set(re.split(r'[^a-z0-9]+', f'{item.title} {item.summary}'.lower()))
+    nudges = []
+    for lesson in lessons if lessons is not None else prefs.nudges(s, pid, at):
+        if lesson.scope and lesson.scope != item.type:
+            continue
+        keywords = [w for w in re.split(r'[^a-z0-9]+', lesson.text.lower())
+                    if len(w) >= 4 and w not in LESSON_STOP]
+        hits = [w for w in keywords if w in words]
+        if not hits:
+            continue
+        strength = min(1.0, prefs.decay(lesson, at) / 1.5)
+        delta = LESSON_POINTS * strength * (1 if lesson.polarity > 0 else -1)
+        nudges.append((delta, hits[0], lesson.polarity))
+    total = max(-10.0, min(10.0, sum(row[0] for row in nudges)))
+    for _delta, term, polarity in sorted(nudges, key=lambda row: -abs(row[0]))[:2]:
+        reason = f'you prefer "{term}"' if polarity > 0 else f'you prefer fewer "{term}"'
+        if reason not in reasons:
+            reasons.append(reason)
+    return max(0.0, min(100.0, score + total)), reasons
 
 
 def final(quality: float, rel: float) -> float:

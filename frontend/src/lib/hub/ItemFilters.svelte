@@ -7,7 +7,7 @@
 	import { FILTER_KEYS } from './util';
 	import type { Curator, Registry } from './types';
 
-	let { hide = [] }: { hide?: string[] } = $props();
+	let { hide = [], defaultSort = 'newest' }: { hide?: string[]; defaultSort?: string } = $props();
 
 	let reg = $state<Registry | null>(null);
 	let curators = $state<Curator[]>([]);
@@ -23,12 +23,14 @@
 
 	function set(key: string, value: string | boolean) {
 		const u = new URL(page.url);
+		u.searchParams.delete('page');
 		if (value === '' || value === false) u.searchParams.delete(key);
 		else u.searchParams.set(key, value === true ? '1' : String(value));
 		goto(u, { replaceState: true, keepFocus: true, noScroll: true });
 	}
 	function clear() {
 		const u = new URL(page.url);
+		u.searchParams.delete('page');
 		for (const k of FILTER_KEYS) u.searchParams.delete(k);
 		goto(u, { replaceState: true, keepFocus: true, noScroll: true });
 	}
@@ -82,7 +84,8 @@
 		{/if}
 		{#if show('sort')}
 			<label><span>Sort</span>
-				<select class="input" value={p.get('sort') ?? 'newest'} onchange={(e) => set('sort', e.currentTarget.value === 'newest' ? '' : e.currentTarget.value)}>
+				<select class="input" value={p.get('sort') ?? defaultSort} onchange={(e) => set('sort', e.currentTarget.value === defaultSort ? '' : e.currentTarget.value)}>
+					<option value="best">Curator selection</option>
 					<option value="newest">Newest found</option>
 					<option value="published">Newest published</option>
 					<option value="relevance">Most relevant</option>
@@ -107,7 +110,7 @@
 	label .input { min-height: 2.75rem; padding: .4rem .7rem; font-size: .9rem; }
 	label.check { display: flex; align-items: center; gap: .5rem; min-height: 2.75rem; font-size: .88rem; min-width: 0; }
 	label.check input { width: 1.2rem; height: 1.2rem; accent-color: var(--accent); }
-	select.input { background: rgba(10, 8, 25, .85); }
+	select.input { background: var(--paper-raised); }
 	@media (max-width: 760px) {
 		.toggle { display: inline-flex; }
 		.panel { display: none; }

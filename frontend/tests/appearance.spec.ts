@@ -45,3 +45,22 @@ test('all themes apply immediately, persist, and retain readable text and button
 		await request.put('/api/settings/appearance', { data: { theme: 'projector' } });
 	}
 });
+
+
+test('Paper stays light in the hub and preserves the dark video interface', async ({ page, request }) => {
+	await request.put('/api/settings/appearance', { data: { theme: 'paper' } });
+	try {
+		await freshPage(page, '/today');
+		await expect(page.locator('html')).toHaveAttribute('data-theme', 'paper');
+		await expect(page.locator('html')).toHaveAttribute('data-scheme', 'light');
+		await page.goto('/');
+		await expect(page.locator('html')).toHaveAttribute('data-theme', 'projector');
+		await expect(page.locator('html')).toHaveAttribute('data-scheme', 'dark');
+		await page.goto('/watch/themecheck1');
+		await expect(page.locator('html')).toHaveAttribute('data-scheme', 'dark');
+		await page.goto('/today');
+		await expect(page.locator('html')).toHaveAttribute('data-theme', 'paper');
+	} finally {
+		await request.put('/api/settings/appearance', { data: { theme: 'projector' } });
+	}
+});

@@ -1,6 +1,8 @@
 <script lang="ts">
 	// Shared content card. Props are a stable contract (docs/HUB.md); visuals may evolve.
 	import LocalImage from './LocalImage.svelte';
+	import ReadCard from './calm/ReadCard.svelte';
+	import WhyPopover from './calm/WhyPopover.svelte';
 	import type { Snippet } from 'svelte';
 	import { focusable } from '$lib/nav';
 	import { hub, ago, host } from './api';
@@ -49,7 +51,7 @@
 		.filter((t) => t && !item.state.tags.includes(t)).slice(0, 6));
 </script>
 
-<article class="cc {layout}" class:unread class:dim={item.state.dismissed} data-type={item.type}>
+<article class="cc {layout} item" class:unread class:dim={item.state.dismissed} data-type={item.type}>
 	{#if (item.local_image || (item.image && !noPicture)) && layout !== 'compact'}
 		<a class="thumb" href={href} tabindex="-1" aria-hidden="true" onclick={opened}>
 			<LocalImage id={item.id} remote={!item.local_image} onfail={() => (noPicture = true)} />
@@ -67,8 +69,9 @@
 			{#if unread}<span class="dot" title="Unread" aria-label="Unread"></span>{/if}
 		</p>
 		{#if str(m, 'coverage')}<p class="small muted">{str(m, 'coverage')}</p>{/if}
-		<h3><a href={href} use:focusable onclick={opened}>{item.title}</a></h3>
-
+		<ReadCard {href} onopen={opened} title={item.title} summaryLabel={item.enrichment?.summary ? 'AI summary' : undefined} summary={layout !== 'compact' && item.type !== 'meme' ? String(item.enrichment?.summary || item.summary || '') : undefined}>
+			{#snippet why()}{#if item.verdict}<WhyPopover reasons={item.verdict.reasons} />{/if}{/snippet}
+		</ReadCard>
 		<div class="badges">
 			{#if item.type === 'advisory'}
 				{#if str(m, 'cve_id')}<span class="b mono">{str(m, 'cve_id')}</span>{/if}
@@ -91,7 +94,6 @@
 			{#if item.score !== null && item.score !== undefined}<span class="score" title="Relevance to your curators">{Math.round(item.score <= 1 ? item.score * 100 : item.score)}</span>{/if}
 		</div>
 
-		{#if layout !== 'compact' && (item.enrichment?.summary || item.summary)}<p class="summary">{#if item.enrichment?.summary}<span class="muted">AI summary · </span>{String(item.enrichment.summary)}{:else}{item.summary}{/if}</p>{/if}
 		{#if layout === 'card' && (item.state.tags.length || sourceTags.length)}
 			<p class="tags">
 				{#each item.state.tags as t (t)}
@@ -125,39 +127,34 @@
 </article>
 
 <style>
-	.cc { display: grid; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); overflow: hidden; align-content: start; min-width: 0; }
+	.cc { display: grid; border: 1px solid var(--line); border-radius: var(--r-md); background: transparent; overflow: visible; align-content: start; min-width: 0; }
 	.cc.unread { border-color: var(--line-strong); }
 	.cc.dim { opacity: .55; }
 	.cc.row { grid-template-columns: 11rem 1fr; }
 	.cc.row:not(:has(.thumb)) { grid-template-columns: 1fr; }
 	.cc.compact { border-radius: var(--r-md); }
-	.thumb { position: relative; display: block; background: var(--bg-2); }
+	.thumb { overflow: hidden; border-radius: var(--r-md); position: relative; display: block; background: var(--bg-2); }
 	.cc.row .thumb { height: 100%; }
 	.cc :global(img) { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: var(--bg-2); }
 	.cc.row :global(img) { height: 100%; aspect-ratio: auto; min-height: 7rem; }
 	.cc[data-type='recipe'] :global(img), .cc[data-type='pattern'] :global(img) { aspect-ratio: 4/3; }
 	/* A meme is the picture: show all of it instead of a 16:9 crop, and keep the caption short. */
 	.cc[data-type='meme'] :global(img) { aspect-ratio: auto; height: auto; max-height: 30rem; object-fit: contain; }
-	.cc[data-type='meme'] .summary { display: none; }
 	.dur { position: absolute; right: .4rem; bottom: .4rem; background: rgba(0,0,0,.75); color: #fff; font-size: .72rem; font-weight: 700; padding: .1rem .4rem; border-radius: .3rem; font-variant-numeric: tabular-nums; }
 	.body { padding: .9rem 1.05rem 1rem; min-width: 0; }
 	.compact .body { padding: .6rem .85rem; }
 	.meta { font-size: .75rem; color: var(--muted); margin: 0; display: flex; flex-wrap: wrap; gap: .1rem .55rem; align-items: center; }
 	.type { text-transform: uppercase; letter-spacing: .1em; color: var(--accent); font-weight: 700; }
 	.dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--accent); }
-	h3 { font-size: 1.05rem; margin: .3rem 0; line-height: 1.3; overflow-wrap: anywhere; }
-	.compact h3 { font-size: .95rem; margin: .2rem 0; }
-	h3 a { color: var(--text); display: inline-block; min-height: 1.5rem; }
 	.badges { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; margin: .2rem 0 .4rem; }
 	.badges:empty { display: none; }
 	.b { font-size: .74rem; font-weight: 650; padding: .1rem .55rem; border-radius: var(--r-pill); background: var(--surface-2); border: 1px solid var(--line); }
-	.b.bad { color: #ffd1d9; border-color: rgba(255,92,122,.5); background: rgba(255,92,122,.14); }
+	.b.bad { color: var(--bad); border-color: rgba(255,92,122,.5); background: rgba(255,92,122,.14); }
 	.b.warn { color: var(--warn); border-color: rgba(255,207,92,.4); background: rgba(255,207,92,.1); }
 	.b.ok { color: var(--ok); border-color: rgba(61,220,151,.4); background: rgba(61,220,151,.1); }
-	.b.ai { color: #d9d0ff; border-color: rgba(157,134,255,.4); }
+	.b.ai { color: var(--ai); border-color: rgba(157,134,255,.4); }
 	.b.strong { font-weight: 800; }
 	.mono { font-family: ui-monospace, monospace; }
-	.summary { color: var(--muted); font-size: .88rem; display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 	.tags { display: flex; gap: .5rem; flex-wrap: wrap; font-size: .75rem; color: var(--faint); margin-top: .35rem; align-items: center; }
 	.tag { font: inherit; color: var(--muted); background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--r-pill); padding: .15rem .55rem; cursor: pointer; min-height: 1.75rem; }
 	.tag:hover { border-color: var(--accent); color: var(--text); }

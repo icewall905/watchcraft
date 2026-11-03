@@ -76,7 +76,11 @@
 		const stopPlayback = playback.start();
 		return () => { stopNotify(); stopPlayback(); };
 	});
-	$effect(() => { applyTheme(session.settings?.appearance?.theme); });
+	$effect(() => {
+		const selected = session.settings?.appearance?.theme;
+		// Paper is a reading-room theme. Existing video chrome keeps its original palette.
+		applyTheme(selected === 'paper' && !hubArea ? 'projector' : selected);
+	});
 	$effect(() => {
 		if (session.ready && !session.needsLogin && session.settings?.setup?.completed === false && page.url.pathname === '/') {
 			goto('/welcome', { replaceState: true });
@@ -84,7 +88,7 @@
 	});
 
 	// Calm editorial styling (tokens.css [data-area='hub']) applies only to non-video routes.
-	const hubArea = $derived(isHubPath(page.url.pathname) || ['/today', '/settings', '/stats', '/agent'].some((p) => page.url.pathname === p || page.url.pathname.startsWith(p + '/')));
+	const hubArea = $derived(isHubPath(page.url.pathname) || ['/settings', '/stats', '/agent', '/welcome'].some((p) => page.url.pathname === p || page.url.pathname.startsWith(p + '/')));
 	const fullscreen = $derived(page.url.pathname.startsWith('/watch/') || page.url.pathname === '/shorts');
 </script>
 
