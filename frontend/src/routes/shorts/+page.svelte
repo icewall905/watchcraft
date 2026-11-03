@@ -1,3 +1,8 @@
+<script module lang="ts">
+	// Memory only: never persist private feed names or briefs to browser storage.
+	let feedCache: { profileId: number; version: number; savedAt: number; feeds: ShortsFeed[] } | null = null;
+	const FEED_CACHE_MS = 5 * 60 * 1000;
+</script>
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { api } from '$lib/api';
@@ -15,19 +20,32 @@
 	let nextOffset = $state<number | null>(null), videoEl = $state<HTMLVideoElement>(), needsTap = $state(false), progress = $state(0), busy = $state(false);
 	let showMeta = $state(false);
 	let alive = true, generation = 0, navigation = 0, selectionEpoch = 0, activeId: string | null = null, fetching = false;
-	let feedRequest = 0;
+	let feedRequest = 0, activeFeedRequest: number | null = null;
+	let feedsLoaded = false;
 	let touchStart: {
 		y: number;
 		x: number;
 	} | null = null;
 	const current = $derived(items[index] ?? null);
-	let observedVersion = session.version;
+	let observedVersion = session.version, observedProfileId = session.profileId;
 	$effect(() => {
-		const version = session.version;
-		if (version !== observedVersion) {
+		const version = session.version, profileId = session.profileId;
+		if (version !== observedVersion || profileId !== observedProfileId) {
 			observedVersion = version;
+			observedProfileId = profileId;
 			reset();
+			feeds = [];
+			feedsLoaded = false;
 			void loadFeeds();
+		}
+	});
+	$effect(() => {
+		if (session.profile?.pin_locked || session.needsLogin) {
+			feedCache = null;
+			reset();
+			feeds = [];
+			feedsLoaded = false;
+			loading = false;
 		}
 	});
 	function stop() {
@@ -55,21 +73,38 @@
 		playbackError = '';
 	}
 	async function loadFeeds(background = false) {
-		if (!background) loading = true;
+		if (background && activeFeedRequest === feedRequest) return;
+		const profileId = session.profileId;
+		if (profileId == null || session.profile?.pin_locked || session.needsLogin) {
+			feedCache = null;
+			feeds = [];
+			feedsLoaded = false;
+			loading = false;
+			return;
+		}
+		if (!feedsLoaded && feedCache?.profileId === profileId && feedCache.version === session.version && Date.now() - feedCache.savedAt < FEED_CACHE_MS) {
+			feeds = feedCache.feeds;
+			feedsLoaded = true;
+		}
+		if (!background) loading = !feedsLoaded;
 		const profile = session.version, epoch = selectionEpoch, request = ++feedRequest;
+		activeFeedRequest = request;
 		try {
 			const result = await api.shortsFeeds();
-			if (alive && request === feedRequest && profile === session.version && epoch === selectionEpoch) {
+			if (alive && request === feedRequest && profile === session.version && profileId === session.profileId && !session.profile?.pin_locked && !session.needsLogin && epoch === selectionEpoch) {
 				feeds = result;
+				feedsLoaded = true;
+				feedCache = { profileId, version: profile, savedAt: Date.now(), feeds: result };
 				error = '';
 			}
 		}
 		catch (e) {
-			if (alive && request === feedRequest && profile === session.version && epoch === selectionEpoch)
+			if (alive && request === feedRequest && profile === session.version && profileId === session.profileId && !session.profile?.pin_locked && !session.needsLogin && epoch === selectionEpoch)
 				error = errMsg(e);
 		}
 		finally {
-			if (alive && request === feedRequest && profile === session.version && epoch === selectionEpoch)
+			if (activeFeedRequest === request) activeFeedRequest = null;
+			if (alive && request === feedRequest && profile === session.version && profileId === session.profileId && !session.profile?.pin_locked && !session.needsLogin && epoch === selectionEpoch)
 				loading = false;
 		}
 	}
@@ -81,6 +116,8 @@
 		if (switchingProfile || id === session.profileId) return;
 		reset();
 		feeds = [];
+		feedsLoaded = false;
+		feedCache = null;
 		loading = true;
 		switchingProfile = true;
 		try {
@@ -305,6 +342,10 @@
 </script>
 <svelte:head><title>Shorts · WatchCraft</title></svelte:head>
 <div class="feed" role="region" aria-label="Shorts feed" ontouchstart={onTouchStart} ontouchend={onTouchEnd} ontouchcancel={()=>touchStart=null}>
+	<nav class="shorts-navigation" aria-label="Shorts navigation">
+		<a class="btn" href="/" use:focusable>← Back to WatchCraft</a>
+		{#if selected}<button class="btn" use:focusable onclick={picker}>← Feeds</button>{/if}
+	</nav>
 	{#if !selected}
 		<div class="state picker"><h1>Choose a feed</h1><p class="muted">Only videos stored locally are played.</p>
 		<p class="small muted">Feeds for <strong>{session.profile?.name ?? 'your profile'}</strong></p>
@@ -319,7 +360,6 @@
 		<button class="btn ghost" disabled={loading || switchingProfile} onclick={()=>loadFeeds()} use:focusable>Refresh feeds</button>
 		<a class="btn primary" href="/settings?tab=feeds&new=1" use:focusable>New feed</a><a class="btn" href="/settings?tab=feeds" use:focusable>Manage feeds</a><a class="btn ghost" href="/" use:focusable>Leave Shorts</a></div>
 	{:else}
-		<button class="btn back" use:focusable onclick={picker}>← Feeds</button>
 		{#if loading}<div class="state"><p>Checking local videos…</p></div>
 		{:else if !current}<div class="state"><h1>{selected.name}</h1>{#if error}<p role="alert" class="err">{error}</p>{:else}<p>No local clips ready yet.</p>{#if !session.settings?.cache.enabled}<p class="muted">Enable Storage → Offline cache in Settings so accepted clips can download.</p>{/if}{#if !session.settings?.agent.enabled}<p class="muted">Enable the AI agent in Settings to collect new clips.</p>{/if}<p class="muted">{selected.pending_count} waiting for local files{selected.error_count ? `; ${selected.error_count} download errors` : ''}. Refresh once downloads finish.</p>{/if}<button class="btn primary" use:focusable onclick={retry}>Refresh availability</button><a class="btn" href={`/settings?tab=feeds&edit=${selected.id}`} use:focusable>Edit feed</a></div>
 		{:else}
@@ -341,15 +381,16 @@
 	.play-label { color:var(--accent); font-size:.85rem; white-space:nowrap; }
 	.picker { width: min(100%, 40rem); max-height: 100%; overflow-y:auto; touch-action:pan-y; }.feed-choice {display:grid;gap:.4rem;text-align:left;width:100%;padding:1rem;border:1px solid var(--line);border-radius:var(--r-md);background:rgba(255,255,255,.04);color:inherit;cursor:pointer;}
 
-	.feed { position: fixed; inset: 0; z-index: 140; background: #05040c; display: grid; place-items: center; overflow: hidden; touch-action: none; }
+	.feed { --shorts-toolbar-height: calc(4.5rem + env(safe-area-inset-top, 0px)); position: fixed; inset: 0; z-index: 140; background: #05040c; display: grid; place-items: center; overflow: hidden; touch-action: none; }
 	.stage { width: 100%; height: 100%; object-fit: contain; background: #000; }
-	.state { display: grid; gap: .8rem; justify-items: center; text-align: center; padding: 2rem; max-width: 34rem; }
+	.state { display: grid; gap: .8rem; justify-items: center; text-align: center; padding: var(--shorts-toolbar-height) 2rem calc(2rem + env(safe-area-inset-bottom, 0px)); max-width: 34rem; }
 	.state h1 { margin: 0; font-size: 1.4rem; }
 	.err { color: var(--bad); }
 	.playback-error { position: absolute; z-index: 3; top: 20%; padding: 1rem; max-width: 90%; background: #201528; color: #fff; text-align: center; }
 	.tap { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; gap: .5rem; background: rgba(5, 4, 12, .55); color: #fff; border: 0; font-size: 1.1rem; cursor: pointer; }
-	.back { position: absolute; top: 1rem; left: 1rem; z-index: 2; }
-	:global(html[data-modality='keys']) .back:focus { position: absolute; z-index: 2; }
+	.shorts-navigation { position:absolute; top:0; left:0; right:0; z-index:5; display:flex; flex-wrap:wrap; gap:.5rem; padding:calc(.75rem + env(safe-area-inset-top, 0px)) max(.75rem, env(safe-area-inset-right, 0px)) .75rem max(.75rem, env(safe-area-inset-left, 0px)); background:linear-gradient(#05040c 65%, transparent); touch-action:manipulation; }
+	.shorts-navigation .btn { white-space:nowrap; }
+	@media (max-width: 360px) { .shorts-navigation { gap:.35rem; } .shorts-navigation .btn { padding-inline:.55rem; font-size:.85rem; } }
 	:global(html[data-modality='keys']) .tap:focus { position: absolute; z-index: 1; }
 	.meta, .acts, .hint, .bar { z-index: 2; }
 	.bar { position: absolute; top: 0; left: 0; right: 0; height: 3px; background: rgba(255, 255, 255, .15); }

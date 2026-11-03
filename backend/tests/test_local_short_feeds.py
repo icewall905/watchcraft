@@ -112,3 +112,48 @@ def test_short_feed_ownership_and_locked_profile_cannot_be_bypassed():
         for path in ['/api/shorts/feeds', f"/api/shorts?category_id={feed['id']}", f"/api/categories/{feed['id']}"]:
             assert c.get(path, headers=h).status_code == 403
         assert c.post('/api/categories', json={'name': 'Bypass', 'kind': 'shorts'}, headers=h).status_code == 403
+
+
+def test_short_feed_counts_batch_queries_without_loading_video_payloads(tmp_path, monkeypatch):
+    from sqlalchemy import event
+    from bt.api import core
+    from bt.models import Profile, WatchHistory
+
+    monkeypatch.setattr(service, 'MEDIA_DIR', tmp_path)
+    (tmp_path / 'shared.mp4').write_bytes(b'local clip')
+    with db.session() as s:
+        p = Profile(name='Batch Shorts', role='child')
+        s.add(p); s.flush()
+        cats = [Category(profile_id=p.id, name=f'Clips {n}', kind='shorts') for n in range(4)]
+        s.add_all(cats); s.flush()
+        for vid in ['batchclip01', 'batchseen01', 'batchwait01', 'batchfail01']:
+            s.add(Video(id=vid, is_short=True, transcript='Large transcript ' * 1000))
+        s.add(Download(video_id='batchclip01', status='done', path='shared.mp4'))
+        s.add(Download(video_id='batchseen01', status='done', path='shared.mp4'))
+        s.add(Download(video_id='batchfail01', status='error'))
+        s.add(WatchHistory(profile_id=p.id, video_id='batchseen01', finished=True))
+        for cat in cats:
+            for vid in ['batchclip01', 'batchseen01', 'batchwait01', 'batchfail01']:
+                s.add(Candidate(category_id=cat.id, video_id=vid, status='accepted'))
+        s.commit()
+        pid = p.id
+    statements, paths = [], []
+    original = core._readable_short_file
+    def readable(path):
+        paths.append(path)
+        return original(path)
+    monkeypatch.setattr(core, '_readable_short_file', readable)
+    def record(conn, cursor, statement, parameters, context, executemany):
+        if statement.lstrip().upper().startswith('SELECT'):
+            statements.append(statement)
+    event.listen(db.engine, 'before_cursor_execute', record)
+    try:
+        with db.session() as s:
+            result = core.shorts_feeds(pid, s)
+    finally:
+        event.remove(db.engine, 'before_cursor_execute', record)
+    assert len(result) == 4
+    assert all((r['ready_count'], r['pending_count'], r['error_count']) == (1, 1, 1) for r in result)
+    assert paths == ['shared.mp4']
+    assert len(statements) == 4  # profile feed list, watched IDs, stats and availability
+    assert not any('video.transcript' in sql or 'video.comments' in sql for sql in statements)

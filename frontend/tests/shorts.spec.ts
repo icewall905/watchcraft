@@ -217,3 +217,134 @@ test.describe('phone local playback', () => {
 });
 
 });
+
+
+test('repeat visits show cached feeds during a slow refresh and keep them on failure', async ({ page }) => {
+ await fixture(page);
+ await freshPage(page, '/shorts');
+ await expect(page.getByRole('button', { name: /Science clips/ })).toBeVisible();
+ await page.getByRole('link', { name: 'Leave Shorts', exact: true }).click();
+ let release!: () => void;
+ const gate = new Promise<void>(resolve => release = resolve);
+ await page.route('**/api/shorts/feeds', async route => {
+  await gate;
+  await route.fulfill({ status: 503, json: { detail: 'Feeds temporarily unavailable' } });
+ });
+ await page.getByRole('link', { name: 'Shorts', exact: true }).first().click();
+ await expect(page.getByRole('button', { name: /Science clips/ })).toBeVisible();
+ await expect(page.getByText('Loading feeds…', { exact: true })).toHaveCount(0);
+ release();
+ await expect(page.getByRole('alert')).toBeVisible();
+ await expect(page.getByRole('button', { name: /Science clips/ })).toBeVisible();
+});
+
+test('manual refresh retains feed choices until fresh counts arrive', async ({ page }) => {
+ await fixture(page);
+ await freshPage(page, '/shorts');
+ await expect(page.getByRole('button', { name: /Science clips/ })).toContainText('2 ready locally');
+ let release!: () => void;
+ const gate = new Promise<void>(resolve => release = resolve);
+ await page.route('**/api/shorts/feeds', async route => {
+  await gate;
+  await route.fulfill({ json: [{ ...feeds[0], ready_count: 9 }] });
+ });
+ await page.getByRole('button', { name: 'Refresh feeds', exact: true }).click();
+ await expect(page.getByRole('button', { name: /Science clips/ })).toContainText('2 ready locally');
+ await expect(page.getByText('Loading feeds…', { exact: true })).toHaveCount(0);
+ release();
+ await expect(page.getByRole('button', { name: /Science clips/ })).toContainText('9 ready locally');
+});
+
+test('a cached populated profile is cleared while another profile loads', async ({ page, request }) => {
+ const other = await (await request.post('/api/profiles', { data: { name: 'Private feed isolation' } })).json();
+ await fixture(page);
+ await freshPage(page, '/shorts');
+ await expect(page.getByRole('button', { name: /Science clips/ })).toBeVisible();
+ let release!: () => void, started!: () => void;
+ const gate = new Promise<void>(resolve => release = resolve);
+ const pending = new Promise<void>(resolve => started = resolve);
+ await page.route('**/api/shorts/feeds', async route => {
+  if (route.request().headers()['x-profile-id'] === String(other.id)) {
+   started();
+   await gate;
+   await route.fulfill({ json: [] });
+  } else await route.fulfill({ json: feeds });
+ });
+ await page.getByRole('group', { name: 'Choose Shorts profile' }).getByRole('button', { name: /Private feed isolation/ }).click();
+ await pending;
+ await expect(page.getByRole('button', { name: /Science clips/ })).toHaveCount(0);
+ await expect(page.getByText('Loading feeds…', { exact: true })).toBeVisible();
+ release();
+ await expect(page.getByText('No Shorts feeds for Private feed isolation yet.', { exact: true })).toBeVisible();
+});
+
+
+test('focus and polling do not supersede a slow initial feed request', async ({ page }) => {
+ await fixture(page);
+ let release!: () => void;
+ const gate = new Promise<void>(resolve => release = resolve);
+ let requests = 0;
+ await page.route('**/api/shorts/feeds', async route => {
+  requests++;
+  await gate;
+  await route.fulfill({ json: feeds });
+ });
+ await page.clock.install();
+ await freshPage(page, '/shorts');
+ await expect.poll(() => requests).toBe(1);
+ await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+ await page.clock.fastForward(31000);
+ expect(requests).toBe(1);
+ release();
+ await expect(page.getByRole('button', { name: /Science clips/ })).toBeVisible();
+});
+
+test('main navigation remains available while the initial feed request is pending', async ({ page }) => {
+ await fixture(page);
+ let release!: () => void;
+ const gate = new Promise<void>(resolve => release = resolve);
+ await page.route('**/api/shorts/feeds', async route => {
+  await gate;
+  await route.fulfill({ json: feeds });
+ });
+ await freshPage(page, '/shorts');
+ await expect(page.getByText('Loading feeds…', { exact: true })).toBeVisible();
+ const back = page.getByRole('link', { name: '← Back to WatchCraft', exact: true });
+ await expect(back).toBeVisible();
+ await back.click();
+ await expect(page).toHaveURL('/');
+ release();
+});
+
+test('main navigation remains available over blocked playback and playback errors', async ({ page }) => {
+ await fixture(page);
+ await page.addInitScript(() => { HTMLMediaElement.prototype.play = async function () { throw new Error('Autoplay blocked'); }; });
+ await freshPage(page, '/shorts');
+ await page.getByRole('button', { name: /Science clips/ }).click();
+ await expect(page.getByRole('button', { name: '▶ Tap to play', exact: true })).toBeVisible();
+ const back = page.getByRole('link', { name: '← Back to WatchCraft', exact: true });
+ await expect(back).toBeVisible();
+ await page.locator('video').dispatchEvent('error');
+ await expect(page.getByRole('alert')).toBeVisible();
+ await back.click();
+ await expect(page).toHaveURL('/');
+});
+
+test('phone navigation leaves empty availability and does not overlap the picker', async ({ page }) => {
+ await page.setViewportSize({ width: 390, height: 600 });
+ await fixture(page);
+ await page.route(/\/api\/shorts\?/, route => route.fulfill({ json: { items: [], next_offset: null } }));
+ await freshPage(page, '/shorts');
+ const navigation = page.getByRole('navigation', { name: 'Shorts navigation', exact: true });
+ const heading = page.getByRole('heading', { name: 'Choose a feed', exact: true });
+ await expect(heading).toBeVisible();
+ const navBounds = await navigation.boundingBox(), headingBounds = await heading.boundingBox();
+ expect(headingBounds!.y).toBeGreaterThanOrEqual(navBounds!.y + navBounds!.height);
+ await page.screenshot({ path: '/tmp/watchcraft-shorts-navigation-phone.png', fullPage: true });
+ await page.getByRole('button', { name: /Science clips/ }).click();
+ await expect(page.getByText('No local clips ready yet.', { exact: true })).toBeVisible();
+ await page.getByRole('button', { name: '← Feeds', exact: true }).click();
+ await page.getByRole('button', { name: /Science clips/ }).click();
+ await page.getByRole('link', { name: '← Back to WatchCraft', exact: true }).click();
+ await expect(page).toHaveURL('/');
+});

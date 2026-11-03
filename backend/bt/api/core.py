@@ -467,32 +467,53 @@ def _local_short_rows(s: Session, pid: int, cid: int):
     for c, v, d in rows:
         if v.id in watched:
             continue
-        path = abs_path(d.path) if d.path else None
-        try:
-            if path and path.is_file() and path.stat().st_size > 0:
-                with path.open("rb") as f:
-                    if f.read(1):
-                        ready.append((c, v))
-        except OSError:
-            continue
+        if _readable_short_file(d.path):
+            ready.append((c, v))
     return ready
+
+
+def _readable_short_file(relative):
+    path = abs_path(relative) if relative else None
+    try:
+        if path and path.is_file() and path.stat().st_size > 0:
+            with path.open("rb") as f:
+                return bool(f.read(1))
+    except OSError:
+        pass
+    return False
 
 
 @router.get("/shorts/feeds")
 def shorts_feeds(pid: int = Depends(profile_id), s: Session = Depends(get_session)):
-    out = []
-    for c in s.exec(select(Category).where(Category.profile_id == pid, Category.kind == "shorts")
-                    .order_by(Category.position, Category.id)).all():
-        ready = len(_local_short_rows(s, pid, c.id))
-        accepted = s.exec(select(Candidate, Download).outerjoin(Download, Download.video_id == Candidate.video_id)
-            .join(Video, Video.id == Candidate.video_id)
-            .where(Candidate.category_id == c.id, Candidate.status == "accepted",
-                   Candidate.dismissed == False, Video.is_short == True)).all()  # noqa: E712
-        accepted = [(a, d) for a, d in accepted if a.video_id not in _watched_ids(s, pid)]
-        errors = sum(1 for _, d in accepted if d and d.status == "error")
-        out.append({**c.model_dump(), "stats": _category_stats(s, c.id), "ready_count": ready,
-                    "pending_count": max(0, len(accepted) - ready - errors), "error_count": errors})
-    return out
+    categories = s.exec(select(Category).where(Category.profile_id == pid, Category.kind == "shorts")
+                        .order_by(Category.position, Category.id)).all()
+    if not categories:
+        return []
+    ids = [c.id for c in categories]
+    watched = _watched_ids(s, pid)
+    stats = {cid: {} for cid in ids}
+    for cid, status, count in s.exec(select(Candidate.category_id, Candidate.status, func.count())
+            .where(Candidate.category_id.in_(ids), Candidate.dismissed == False)
+            .group_by(Candidate.category_id, Candidate.status)).all():  # noqa: E712
+        stats[cid][status] = count
+    counts = {cid: {'ready_count': 0, 'pending_count': 0, 'error_count': 0} for cid in ids}
+    # Counts do not need transcripts, comments or any other video payload. Read
+    # only the availability columns, once across all of this profile's feeds.
+    rows = s.exec(select(Candidate.category_id, Candidate.video_id, Download.status, Download.path)
+        .join(Video, Video.id == Candidate.video_id)
+        .outerjoin(Download, Download.video_id == Candidate.video_id)
+        .where(Candidate.category_id.in_(ids), Candidate.status == "accepted",
+               Candidate.dismissed == False, Video.is_short == True)).all()  # noqa: E712
+    readable = {}
+    for cid, vid, status, path in rows:
+        if vid in watched:
+            continue
+        if status == 'done' and path not in readable:
+            readable[path] = _readable_short_file(path)
+        key = ('error_count' if status == 'error' else
+               'ready_count' if status == 'done' and readable[path] else 'pending_count')
+        counts[cid][key] += 1
+    return [{**c.model_dump(), 'stats': stats[c.id], **counts[c.id]} for c in categories]
 
 
 @router.get("/shorts")
