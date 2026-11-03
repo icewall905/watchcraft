@@ -13,6 +13,7 @@
 	let switchingProfile = $state(false);
 	let items = $state<Short[]>([]), index = $state(0), loading = $state(true), error = $state(''), playbackError = $state('');
 	let nextOffset = $state<number | null>(null), videoEl = $state<HTMLVideoElement>(), needsTap = $state(false), progress = $state(0), busy = $state(false);
+	let showMeta = $state(false);
 	let alive = true, generation = 0, navigation = 0, selectionEpoch = 0, activeId: string | null = null, fetching = false;
 	let feedRequest = 0;
 	let touchStart: {
@@ -49,6 +50,7 @@
 		nextOffset = null;
 		busy = false;
 		fetching = false;
+		showMeta = false;
 		error = '';
 		playbackError = '';
 	}
@@ -126,6 +128,7 @@
 		stop();
 		const request = generation, item = items[i];
 		needsTap = false;
+		showMeta = false;
 		playbackError = '';
 		progress = 0;
 		await tick();
@@ -225,6 +228,12 @@
 				busy = false;
 		}
 	}
+	function onStageClick() {
+		showMeta = !showMeta;
+		if (videoEl?.paused)
+			videoEl.play().catch(() => {
+			});
+	}
 	function onKey(e: KeyboardEvent) {
 		if (!selected)
 			return;
@@ -235,6 +244,12 @@
 		else if (e.key === 'ArrowUp' || e.key === 'k') {
 			e.preventDefault();
 			void go(-1);
+		}
+		else if (e.key === 'Enter' || e.key === ' ') {
+			if ((e.target as HTMLElement)?.closest('button,a,input,select,textarea'))
+				return;
+			e.preventDefault();
+			showMeta = !showMeta;
 		}
 		else if (e.key === 'Escape') {
 			e.preventDefault();
@@ -308,14 +323,14 @@
 		{#if loading}<div class="state"><p>Checking local videos…</p></div>
 		{:else if !current}<div class="state"><h1>{selected.name}</h1>{#if error}<p role="alert" class="err">{error}</p>{:else}<p>No local clips ready yet.</p>{#if !session.settings?.cache.enabled}<p class="muted">Enable Storage → Offline cache in Settings so accepted clips can download.</p>{/if}{#if !session.settings?.agent.enabled}<p class="muted">Enable the AI agent in Settings to collect new clips.</p>{/if}<p class="muted">{selected.pending_count} waiting for local files{selected.error_count ? `; ${selected.error_count} download errors` : ''}. Refresh once downloads finish.</p>{/if}<button class="btn primary" use:focusable onclick={retry}>Refresh availability</button><a class="btn" href={`/settings?tab=feeds&edit=${selected.id}`} use:focusable>Edit feed</a></div>
 		{:else}
-		<video bind:this={videoEl} class="stage" playsinline preload="metadata" ontimeupdate={onTime} onended={onEnded} onerror={()=>{if(activeId===current?.video.id)playbackError='This local file is unavailable or cannot be played. Refresh availability to check stored clips.';}} onclick={()=>videoEl?.paused && videoEl.play().catch(()=>{})}></video>
+		<video bind:this={videoEl} class="stage" playsinline preload="metadata" ontimeupdate={onTime} onended={onEnded} onerror={()=>{if(activeId===current?.video.id)playbackError='This local file is unavailable or cannot be played. Refresh availability to check stored clips.';}} onclick={onStageClick}></video>
 		{#if playbackError}<div class="playback-error" role="alert"><p>{playbackError}</p><button class="btn primary" use:focusable onclick={retry}>Refresh availability</button></div>
 		{:else if error}<div class="playback-error" role="alert"><p>{error}</p><button class="btn" use:focusable onclick={()=>go(1)}>Retry next short</button></div>
 		{:else if needsTap}<button class="tap" use:focusable onclick={()=>videoEl?.play().then(()=>needsTap=false).catch(()=>{})}>▶ Tap to play</button>{/if}
 		<div class="bar" aria-hidden="true"><span style:width={`${progress*100}%`}></span></div>
-		<div class="meta"><p class="small muted">{selected.name} · Stored locally</p><h1>{current.video.title}</h1><p class="small muted">{current.video.channel_name||current.video.channel_id}{current.score!==null ? ` · ${current.score}% match` : ''}</p>{#if current.summary}<p class="small why">{current.summary}</p>{/if}</div>
+		<div class="meta" class:show={showMeta}><p class="small muted">{selected.name} · Stored locally</p><h1>{current.video.title}</h1><p class="small muted">{current.video.channel_name||current.video.channel_id}{current.score!==null ? ` · ${current.score}% match` : ''}</p>{#if current.summary}<p class="small why">{current.summary}</p>{/if}</div>
 		<div class="acts"><button class="btn round" aria-label="Not for me" disabled={busy} use:focusable={{group:'shorts',onSelect:()=>rate(-1)}}>👎</button><button class="btn round" aria-label="More like this" disabled={busy} use:focusable={{group:'shorts',onSelect:()=>rate(1)}}>👍</button></div>
-		<p class="hint small faint">Swipe up, or press ↓</p>
+		<p class="hint small faint">Swipe up, or press ↓ · Tap for details</p>
 		{/if}
 	{/if}
 </div>
@@ -339,7 +354,8 @@
 	.meta, .acts, .hint, .bar { z-index: 2; }
 	.bar { position: absolute; top: 0; left: 0; right: 0; height: 3px; background: rgba(255, 255, 255, .15); }
 	.bar span { display: block; height: 100%; background: var(--accent); transition: width .2s linear; }
-	.meta { position: absolute; left: 0; right: 0; bottom: 5.5rem; padding: 0 1.2rem; display: grid; gap: .25rem; text-shadow: 0 1px 6px rgba(0, 0, 0, .9); }
+	.meta { position: absolute; left: 0; right: 0; bottom: 5.5rem; padding: 0 1.2rem; display: grid; gap: .25rem; text-shadow: 0 1px 6px rgba(0, 0, 0, .9); opacity: 0; visibility: hidden; transition: opacity .18s ease; }
+	.meta.show { opacity: 1; visibility: visible; }
 	.meta h1 { margin: 0; font-size: 1.15rem; line-height: 1.3; color: #fff; }
 	.meta .muted { color: rgba(255, 255, 255, .75); }
 	.why { color: rgba(255, 255, 255, .8); max-height: 4.5rem; overflow: hidden; }

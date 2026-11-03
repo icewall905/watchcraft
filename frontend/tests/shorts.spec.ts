@@ -105,6 +105,22 @@ test('opens a feed picker, selects isolated local files and clears playback on r
 	await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000003/file');
 	expect(forbidden).toEqual([]);
 });
+test('the description stays hidden until the screen is tapped and hides again on the next clip', async ({ page }) => {
+	await fixture(page);
+	await freshPage(page, '/shorts');
+	await page.getByRole('button', { name: /Science clips/ }).click();
+	const first = page.getByRole('heading', { name: 'short000001' });
+	await expect(first).toBeHidden();
+	await page.locator('video').click();
+	await expect(first).toBeVisible();
+	await expect(page.getByText('A local clip')).toBeVisible();
+	await page.locator('video').click();
+	await expect(first).toBeHidden();
+	await page.locator('video').click();
+	await page.keyboard.press('ArrowDown');
+	await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
+	await expect(page.getByRole('heading', { name: 'short000002' })).toBeHidden();
+});
 test('empty or failed local availability never falls back to streaming', async ({ page }) => {
 	await fixture(page);
 	await page.route(/\/api\/shorts\?/, r => r.fulfill({ json: { items: [], next_offset: null } }));
@@ -146,6 +162,7 @@ test('a delayed dislike preserves the clip selected after swiping', async ({ pag
 	await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
 	release();
 	await expect(page.getByRole('button', { name: 'Not for me' })).toBeEnabled();
+	await page.locator('video').click();
 	await expect(page.getByRole('heading', { name: 'short000002' })).toBeVisible();
 	await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
 });
@@ -167,6 +184,7 @@ test('refresh invalidates pending pagination and loads availability anew', async
 	await page.getByRole('button', { name: 'Refresh availability' }).click();
 	await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000003/file');
 	release();
+	await page.locator('video').click();
 	await expect(page.getByRole('heading', { name: 'short000003' })).toBeVisible();
 	await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000003/file');
 });
