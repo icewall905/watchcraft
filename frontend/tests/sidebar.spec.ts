@@ -10,6 +10,20 @@ test('desktop sidebar, device preference, and TV remote drawer', async ({ page }
 	await navigation.getByRole('button', { name: 'Workshop', exact: true }).click();
 	for (const name of ['TV', 'Today', 'Discover', 'News', 'Knowledge', 'Library', 'Briefings', 'Alerts', 'Research', 'Curators', 'Sources'])
 		await expect(navigation.getByRole('link', { name, exact: true })).toBeVisible();
+	const collapse = page.getByRole('button', { name: 'Collapse sidebar', exact: true });
+	await expect(collapse).toHaveText('<<');
+	await expect(collapse).toBeInViewport();
+	await collapse.click();
+	const expand = page.getByRole('button', { name: 'Expand sidebar', exact: true });
+	await expect(expand).toHaveText('>>');
+	await expect(page.locator('aside.desktop')).toHaveClass(/compact/);
+	await expect(navigation.getByRole('link', { name: 'News', exact: true })).toBeVisible();
+	await expect(navigation.locator('.lbl')).toHaveCount(0);
+	await page.screenshot({ path: '/tmp/wc-sidebar-compact.png' });
+	await page.reload();
+	await expect(page.locator('aside.desktop')).toHaveClass(/compact/);
+	await page.getByRole('button', { name: 'Expand sidebar', exact: true }).click();
+	await expect(page.locator('aside.desktop')).not.toHaveClass(/compact/);
 	await page.screenshot({ path: '/tmp/wc-sidebar-desktop.png' });
 	await page.getByRole('button', { name: /^TV mode/ }).click();
 	await expect(navigation).toHaveCount(0);

@@ -95,6 +95,9 @@
 
 {#if !isTv}
 	<aside class="sidebar desktop" class:compact data-nav-noscroll data-nav-zone="main-navigation" data-nav-side data-nav-skip-initial>
+		<button class="toggle" aria-label={compact ? 'Expand sidebar' : 'Collapse sidebar'} aria-pressed={compact} title={compact ? 'Expand sidebar' : 'Collapse sidebar'} onclick={toggleCompact}>
+			<span aria-hidden="true">{compact ? '>>' : '<<'}</span>
+		</button>
 		<a class="brand" href="/tv" aria-label="WatchCraft">
 			<img src="/logo.png" alt="" width="36" height="36" />
 			{#if !compact}<span class="bt"><b>WatchCraft</b><small>Watching the Internet for you.</small></span>{/if}
@@ -142,9 +145,7 @@
 					<Icon name={it.icon} />{#if !compact}<span class="lbl">{it.label}</span>{/if}
 				</a>
 			{/each}
-			<button class="toggle" aria-label={compact ? 'Expand sidebar' : 'Collapse sidebar'} aria-pressed={compact} title={compact ? 'Expand sidebar' : 'Collapse sidebar'} onclick={toggleCompact}>
-				<Icon name="sidebar" />{#if !compact}<span class="lbl">Collapse</span>{/if}
-			</button>
+
 		</div>
 	</aside>
 {:else}
@@ -195,7 +196,8 @@
 	.count { min-width: 1.35rem; padding: .05rem .4rem; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-ink); font: 800 .7rem var(--font); text-align: center; }
 	.compact .count { position: absolute; top: .2rem; right: .35rem; min-width: 1.1rem; padding: 0 .25rem; font-size: .62rem; }
 	.foot { border-top: 1px solid var(--line); padding-top: .5rem; display: grid; gap: .15rem; }
-	.toggle { background: none; border: 0; cursor: pointer; font-family: inherit; }
+	.toggle { position: sticky; top: 0; z-index: 2; align-self: flex-end; flex-shrink: 0; justify-content: center; min-width: 2.5rem; min-height: 2.5rem; margin-bottom: .35rem; background: var(--bg-1); border: 1px solid var(--line); cursor: pointer; font-family: inherit; }
+	.compact .toggle { align-self: center; }
 	.toggle:focus-visible, .sec-head:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 	.overlay { position: fixed; inset: 0; z-index: 200; }
 	.backdrop { position: absolute; inset: 0; width: 100%; border: 0; background: rgba(0,0,0,.6); }
