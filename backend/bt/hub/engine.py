@@ -532,6 +532,12 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
     activity.emit(c, r.id, 'completed', narrate.say(c.tone, 'curator.completed', seed=str(r.id),
                         new=narrate.phrase(new, 'new item'), seen=narrate.phrase(len(candidates), 'source item'),
                         issues=narrate.phrase(len(errors), 'issue')), status=status)
+    if new:
+        try:
+            from .master import schedule as master
+            master.mark(c.profile_id)  # the master curator judges what arrived, once the burst settles
+        except Exception:  # noqa: BLE001 — curation of the feed must never fail a finished run
+            log.exception('could not queue the master curator for profile %s', c.profile_id)
     if c.kind == 'research' and new and ai.enabled():
         try:
             activity.emit(c, r.id, 'writing_report', narrate.say(c.tone, 'curator.writing_report', seed=str(r.id)))
@@ -632,6 +638,14 @@ def dispatch_due() -> None:
         if free <= 0:
             return
         if slots.spawn(f'curator-{c.id}', 'curator', c.id, c.profile_id, c.name, run, c.id):
+            free -= 1
+    from .master import schedule as master
+    for pid in master.due(now):
+        if free <= 0:
+            return
+        claimed = master.claim(pid, now)
+        if claimed is not None and slots.spawn(f'master-{pid}', 'master', None, pid, 'Master curator',
+                                               master.light_pass, pid, claimed):
             free -= 1
     for b in briefs:
         if free <= 0:

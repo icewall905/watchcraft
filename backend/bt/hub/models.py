@@ -493,3 +493,13 @@ class HubPreferenceCore(SQLModel, table=True):
     text: str = T()
     sources: dict = J({})
     built_at: float = Field(default_factory=time.time)
+
+
+class MasterQueue(SQLModel, table=True):
+    """A profile whose hub items changed and await a curator pass. Runs debounce into one pass."""
+    profile_id: int = Field(primary_key=True)
+    first_at: float = Field(default_factory=time.time)  # first unjudged change; bounds the debounce
+    due_at: float = Field(default_factory=time.time, index=True)
+    lease_until: float = 0
+    gen: int = 0       # bumped by every change; a pass only clears the row if nothing changed since its claim
+    attempts: int = 0  # passes that skipped model judging (GPU busy) or failed; bounded retries

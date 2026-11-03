@@ -45,9 +45,11 @@ def _run(s: Session, pid: int, now: float) -> dict:
         verdict = rules.check(item, examples.get(item.id), profile_rules, now)
         rel, why = score.relevance(item, scouts.get(item.id), taste)
         quality = verdict.quality
+        editor = []
         if old and old.judged_by == 'llm' and old.pass_version == PASS_VERSION and not verdict.reject:
             quality, rel = old.quality, old.relevance  # a model's refinement outlives the rules pass
-        c = score.Candidate(item, quality, rel, score.final(quality, rel), verdict.reasons + why, story_id=stories.get(item.id))
+            editor = [x for x in old.reasons if x.startswith('editor:')]
+        c = score.Candidate(item, quality, rel, score.final(quality, rel), editor + verdict.reasons + why, story_id=stories.get(item.id))
         state = states.get(item.id)
         if verdict.reject or (state and state.dismissed):
             c.tier, c.forced = 'reject', True
