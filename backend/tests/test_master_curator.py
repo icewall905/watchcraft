@@ -136,8 +136,8 @@ def test_memes_wait_for_capture_before_their_duplicate_check():
 
 # ---------- tiering
 
-def _cand(s, final, type='meme', publisher='', story=None, age=3600.0):
-    it = item(s, type=type, publisher=publisher, age=age, pid=0)
+def _cand(s, final, type='meme', publisher='', story=None, age=3600.0, title=None):
+    it = item(s, type=type, publisher=publisher, age=age, pid=0, title=title or f'distinct headline {next(_n)}')
     return score.Candidate(it, final, final, final, [], story_id=story)
 
 
@@ -156,6 +156,45 @@ def test_tiers_respect_daily_limits_sources_and_stories():
         assert [c.tier for c in story].count('feature') == 1
         assert 'folded into its story' in story[1].reasons
         assert weak.tier == 'set_aside' and old.tier == 'keep'
+
+
+def test_front_pages_and_hashtag_titles_stay_off_the_front_page():
+    with session() as s:
+        r = rules.ProfileRules()
+        front = [rules.check(item(s, type='web', title=t), None, r, NOW) for t in (
+            'Latest news from around the world | The Guardian',
+            'Latest News: Breaking Headlines and Video on Today\'s Top Stories | NBC News',
+            'The Local Denmark - News and practical guides in English')]
+        site = item(s, type='web', title='Home Assistant')
+        site.url = 'https://www.home-assistant.io/'
+        launch = item(s, title='Show HN: an open-source dashboard')
+        launch.url = 'https://dashboard.example/'
+        tagged = meme(s, title='# scrum # dev # coding # programming # programminghumor', reactions=40)
+        assert all(f.set_aside and 'a front page, not a story' in f.reasons for f in front)
+        assert rules.check(site, None, r, NOW).set_aside
+        assert not rules.check(launch, None, r, NOW).set_aside
+        assert 'hashtag spam' in rules.check(tagged, None, r, NOW).reasons
+        stories = [item(s, title=t) for t in (
+            'Latest Windows update breaks printers for millions', 'BREAKING NEWS: 7.1 earthquake strikes off Japan',
+            'Ukraine war latest news: Russia strikes Kyiv', 'Top stories of 2025: what AI changed')]
+        nourl = item(s, type='web', title='Notes on a quiet morning')
+        nourl.url = ''
+        wp = item(s, type='web', title='A post about bridges')
+        wp.url = 'https://blog.example/?p=123'
+        ranked = meme(s, title='#1 vs #2 vs #3 vs #4 ranking')
+        assert not any(rules.check(x, None, r, NOW).set_aside for x in stories + [nourl, wp])
+        assert 'hashtag spam' not in rules.check(ranked, None, r, NOW).reasons
+
+
+def test_one_post_shared_to_two_communities_is_featured_once():
+    with session() as s:
+        a = _cand(s, 70, publisher='lemmy.a', title='come and take it, Sam https:// a.example/post/1')
+        b = _cand(s, 69, publisher='lemmy.b', title='Come and take it, Sam https:// b.example/post/2')
+        score.tier([a, b], NOW)
+        assert (a.tier, b.tier) == ('feature', 'keep') and 'same as a featured item' in b.reasons
+        rules_ = [_cand(s, 68, publisher=f'lemmy.{i}', title='Rule') for i in range(2)]
+        score.tier(rules_, NOW)
+        assert [c.tier for c in rules_] == ['feature', 'feature']
 
 
 # ---------- the pass

@@ -117,11 +117,18 @@ class Candidate:
     story_id: int | None = None
 
 
+def _same_title(item) -> tuple[str, str]:
+    """Key for one post shared to several places. Short generic titles ("rule", "me irl")
+    name many different posts, so they never match."""
+    words = re.findall(r'\w+', re.sub(r'https?://\S+|https?:// \S+', ' ', (item.title or '').lower()))
+    return item.type, ' '.join(words) if len(words) >= 4 else f'#{item.id}'
+
+
 def tier(cands: list[Candidate], now: float | None = None) -> None:
     """Assign tiers in place: best fresh items are featured within per-type, per-source and
     per-story limits; weak ones are set aside. Forced tiers (rules, the user) are left alone."""
     now = now or time.time()
-    per_type, per_publisher, stories = Counter(), Counter(), set()
+    per_type, per_publisher, stories, titles = Counter(), Counter(), set(), set()
     # What the user promoted is on the front page too, so it uses up the same room.
     for c in cands:
         if c.forced and c.tier == 'feature':
@@ -130,6 +137,7 @@ def tier(cands: list[Candidate], now: float | None = None) -> None:
                 per_publisher[c.item.publisher] += 1
             if c.story_id is not None:
                 stories.add(c.story_id)
+            titles.add(_same_title(c.item))
     for c in sorted((c for c in cands if not c.forced), key=lambda c: -c.final):
         if c.final < KEEP_MIN:
             c.tier = 'set_aside'
@@ -150,6 +158,11 @@ def tier(cands: list[Candidate], now: float | None = None) -> None:
         if c.item.publisher and per_publisher[c.item.publisher] >= PER_PUBLISHER:
             c.reasons.append('enough from this source today')
             continue
+        # The same post shared to several communities is one item on the front page.
+        if _same_title(c.item) in titles:
+            c.reasons.append('same as a featured item')
+            continue
+        titles.add(_same_title(c.item))
         c.tier = 'feature'
         per_type[c.item.type] += 1
         if c.item.publisher:

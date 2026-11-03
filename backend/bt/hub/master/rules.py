@@ -2,6 +2,7 @@
 import re
 import time
 from dataclasses import dataclass, field
+from urllib.parse import urlsplit
 
 from sqlmodel import Session, select
 
@@ -17,6 +18,11 @@ CLICKBAIT = re.compile(r"you won'?t believe|will shock you|what happens next|mus
 # below, so they start higher instead of waiting for a summary they will never have.
 STRUCTURED = {'project', 'document', 'advisory', 'person', 'organization', 'domain', 'recipe', 'pattern'}
 BASE = 50.0
+# A site's front page or section index is a list of stories, not a story.
+HOMEPAGE_TITLE = re.compile(r"^latest\b|\blatest (\w+ )?news\b|\bbreaking (news|headlines)\b|"
+                            r"\btop (news|stories|headlines)\b|\bnews (and|&) [a-z ]*guides\b|"
+                            r"\bheadlines and video\b|\bnews (&|and) archive\b", re.I)
+HASHTAG = re.compile(r'(?:^|\s)#\s?[^\W\d]')
 
 
 @dataclass
@@ -70,6 +76,16 @@ def engagement(meta: dict) -> float | None:
     return None
 
 
+def _homepage(item: ContentItem) -> bool:
+    """A web result that is a site's front page or section index. News and articles are
+    stories by construction, so only web results are judged by their title."""
+    if item.type != 'web':
+        return False
+    u = urlsplit(item.url or '')
+    bare = bool(u.netloc) and not u.path.strip('/') and not u.query and not u.fragment
+    return bare or bool(HOMEPAGE_TITLE.search(item.title or ''))
+
+
 def _placeholder_title(item: ContentItem) -> bool:
     t = (item.title or '').strip()
     return not t or t == item.url or t.endswith(' post') and ' ' not in t[:-5]
@@ -107,6 +123,9 @@ def check(item: ContentItem, ex: MemeExample | None, rules: ProfileRules, now: f
 
     if _placeholder_title(item):
         adjust(-20, 'no real title')
+    if _homepage(item):
+        r.set_aside = True
+        adjust(-20, 'a front page, not a story')
     if CLICKBAIT.search(item.title or ''):
         adjust(-15, 'clickbait headline')
     letters = [c for c in item.title or '' if c.isalpha()]
@@ -123,8 +142,8 @@ def check(item: ContentItem, ex: MemeExample | None, rules: ProfileRules, now: f
             adjust(5, 'described image')
         if len(item.summary or '') > 400:
             adjust(-10, 'wall of text')
-        if len(meta.get('tags') or []) > 6:
-            adjust(-10, 'hashtag spam')
+        if len(meta.get('tags') or []) > 6 or len(HASHTAG.findall(item.title or '')) >= 4:
+            adjust(-30, 'hashtag spam')
         if meta.get('sensitive'):
             adjust(-10, 'sensitive')
     elif item.type in ('news', 'article', 'web'):
