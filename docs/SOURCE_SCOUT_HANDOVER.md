@@ -1,5 +1,16 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — master curator scout card (`41ded70`, 2026-11-03)
+
+- The Home scouts shelf linked the master curator (no curator id) to `/curators/null`, which failed with an integer
+  parse error. It now links to Today and says "Selection queued" while a pass waits. Browser checks: scouts home,
+  team and home focus (5 passed).
+- Backup `/root/compose/watchcraft-backups/20261103-pre-shelf-41ded70`; rollback image
+  `watchcraft:rollback-20261103-shelf-41ded70` retains `8869358`. Isolated restore ok (integrity, counts,
+  profile/PIN checksum, started twice, routes 200, no tracebacks).
+- `DEPLOYED_COMMIT=41ded70`; image `sha256:ae5f27716aadfa3a9185782fbea117f320657940b10d3f918753d560ac95a89e`, zero
+  restarts; health, routes, integrity, profiles/PINs and configuration unchanged; bundle carries the new label.
+
 ## Deployment record — worker model on its own server, per-model test buttons (`8869358`, 2026-11-03)
 
 - A worker with its own server and no model now uses a model that server lists instead of the judge's model name
