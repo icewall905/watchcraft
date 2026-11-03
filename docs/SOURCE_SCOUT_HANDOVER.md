@@ -1,5 +1,12 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — immediate Shorts picker and visible exit (`eb9ae84`, 2026-11-03)
+
+- Ships `84408b5` + `eb9ae84`: a five-minute memory-only feed cache scoped to profile/session; first visits seed profile-owned feed names from loaded categories while local availability is checked; counts remain explicitly unknown until refreshed. Background polling no longer supersedes slow pending requests. Batched scalar availability/stats queries avoid loading video transcripts/comments; playback still validates local files. Back to WatchCraft stays visible in picker/loading/playback/error states, with Feeds during playback.
+- Validation: 794 backend tests passed, six skipped; final 21 Shorts browser checks passed, covering cached revisits, slow polling, profile/PIN isolation, provisional choices, authoritative empty replacement and exit controls. Frontend check/build passed (three existing CSS warnings); independent review approved; phone layout inspected at 390×600. Live availability timing varied from warm subsecond to a cold 7.8 s, so picker visibility is decoupled from that check rather than promising fixed I/O latency.
+- Backup `/root/compose/watchcraft-backups/20261103-shorts-cache` retains original and fresh pre-picker databases and source. Rollbacks `watchcraft:rollback-20261103-shorts-cache` (69e7ec4) and `watchcraft:rollback-20261103-shorts-picker` (84408b5). Both isolated restored copies initialized with integrity/counts/profiles/PINs preserved and started twice successfully.
+- Deployed `eb9ae84`; API/worker/downloader image `sha256:f82fd0eba54b7cbf80aa6e416cd767b0498e93ea5d41c366c4f9f2b1cb291034`, zero restarts. Local/public health and production integrity/configuration checks passed; new picker bundle present. Live Back to WatchCraft navigation returned to the main interface; actual adult feed rendering remains covered by isolated browser fixtures rather than entering real PINs.
+
 ## Deployment record — visible sidebar collapse toggle (`69e7ec4`, 2026-11-03)
 
 - The sidebar collapse control now stays visible at the top, with `<<` to show icons only and `>>` to restore labels. Existing browser preference persists across reloads. Frontend check/build passed (three existing CSS warnings); both sidebar/TV browser regressions passed, including compact layout, reload persistence and expansion. Live public TV page was visually checked after collapsing.
