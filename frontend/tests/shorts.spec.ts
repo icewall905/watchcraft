@@ -348,3 +348,46 @@ test('phone navigation leaves empty availability and does not overlap the picker
  await page.getByRole('link', { name: '← Back to WatchCraft', exact: true }).click();
  await expect(page).toHaveURL('/');
 });
+
+test('first visit shows profile-owned category choices before slow availability counts', async ({ page, request }) => {
+ const profile = (await (await request.get('/api/profiles')).json())[0];
+ await fixture(page);
+ await page.route('**/api/categories', route => route.fulfill({ json: [
+  { ...feeds[0], profile_id: profile.id },
+  { ...feeds[1], profile_id: profile.id + 999 }
+ ] }));
+ let release!: () => void;
+ const gate = new Promise<void>(resolve => release = resolve);
+ await page.route('**/api/shorts/feeds', async route => {
+  await gate;
+  await route.fulfill({ json: [{ ...feeds[0], ready_count: 7 }] });
+ });
+ await freshPage(page, '/shorts');
+ const choice = page.getByRole('button', { name: /Science clips/ });
+ await expect(choice).toContainText('Checking local availability…');
+ await expect(choice).not.toContainText('0 ready locally');
+ await expect(page.getByText('Loading feeds…', { exact: true })).toHaveCount(0);
+ await expect(page.getByRole('button', { name: /Cooking clips/ })).toHaveCount(0);
+ release();
+ await expect(choice).toContainText('7 ready locally');
+ await expect(choice).not.toContainText('Checking local availability…');
+});
+
+test('provisional choices allow playback and authoritative empty feeds remove them', async ({ page, request }) => {
+ const profile = (await (await request.get('/api/profiles')).json())[0];
+ await fixture(page);
+ await page.route('**/api/categories', route => route.fulfill({ json: [{ ...feeds[0], profile_id: profile.id }] }));
+ let release!: () => void;
+ const gate = new Promise<void>(resolve => release = resolve);
+ await page.route('**/api/shorts/feeds', async route => {
+  await gate;
+  await route.fulfill({ json: [] });
+ });
+ await freshPage(page, '/shorts');
+ await page.getByRole('button', { name: /Science clips/ }).click();
+ await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');
+ release();
+ await page.getByRole('button', { name: '← Feeds', exact: true }).click();
+ await expect(page.getByText(/No Shorts feeds for/)).toBeVisible();
+ await expect(page.getByRole('button', { name: /Science clips/ })).toHaveCount(0);
+});

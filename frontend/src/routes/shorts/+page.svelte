@@ -22,6 +22,7 @@
 	let alive = true, generation = 0, navigation = 0, selectionEpoch = 0, activeId: string | null = null, fetching = false;
 	let feedRequest = 0, activeFeedRequest: number | null = null;
 	let feedsLoaded = false;
+	let feedsProvisional = $state(false), selectedProvisional = $state(false);
 	let touchStart: {
 		y: number;
 		x: number;
@@ -63,6 +64,7 @@
 		selectionEpoch++;
 		feedRequest++;
 		selected = null;
+		selectedProvisional = false;
 		items = [];
 		index = 0;
 		nextOffset = null;
@@ -84,15 +86,24 @@
 		}
 		if (!feedsLoaded && feedCache?.profileId === profileId && feedCache.version === session.version && Date.now() - feedCache.savedAt < FEED_CACHE_MS) {
 			feeds = feedCache.feeds;
+			feedsProvisional = false;
 			feedsLoaded = true;
 		}
-		if (!background) loading = !feedsLoaded;
+		if (!feedsLoaded) {
+			const owned = session.categories.filter(category => category.kind === 'shorts' && category.profile_id === profileId);
+			if (owned.length) {
+				feeds = owned.map(category => ({ ...category, ready_count: 0, pending_count: 0, error_count: 0 }));
+				feedsProvisional = true;
+			}
+		}
+		if (!background) loading = !feedsLoaded && !feeds.length;
 		const profile = session.version, epoch = selectionEpoch, request = ++feedRequest;
 		activeFeedRequest = request;
 		try {
 			const result = await api.shortsFeeds();
 			if (alive && request === feedRequest && profile === session.version && profileId === session.profileId && !session.profile?.pin_locked && !session.needsLogin && epoch === selectionEpoch) {
 				feeds = result;
+				feedsProvisional = false;
 				feedsLoaded = true;
 				feedCache = { profileId, version: profile, savedAt: Date.now(), feeds: result };
 				error = '';
@@ -153,7 +164,9 @@
 		}
 	}
 	async function choose(feed: ShortsFeed) {
+		const provisional = feedsProvisional;
 		reset();
+		selectedProvisional = provisional;
 		const epoch = selectionEpoch;
 		selected = feed;
 		loading = true;
@@ -354,14 +367,14 @@
 		</div>{/if}
 		{#if loading}<p>Loading feeds…</p>{:else}
 			{#if error}<p class="err" role="alert">{error}</p><button class="btn" onclick={()=>loadFeeds()} use:focusable>Try again</button>{/if}
-			{#each feeds as feed (feed.id)}<button class="feed-choice" use:focusable onclick={()=>choose(feed)}><span class="feed-top"><strong>{feed.emoji} {feed.name}</strong><span class="play-label">{feed.ready_count ? '▶ Play' : 'View feed'}</span></span><span class="small muted">{feed.ready_count} ready locally · {feed.pending_count} waiting for local files{feed.error_count ? ` · ${feed.error_count} download errors` : ''}{!feed.enabled ? ' · Collection paused' : ''}</span></button>{/each}
+			{#each feeds as feed (feed.id)}<button class="feed-choice" use:focusable onclick={()=>choose(feed)}><span class="feed-top"><strong>{feed.emoji} {feed.name}</strong><span class="play-label">{!feedsProvisional && feed.ready_count ? '▶ Play' : 'View feed'}</span></span><span class="small muted">{#if feedsProvisional}Checking local availability…{:else}{feed.ready_count} ready locally · {feed.pending_count} waiting for local files{feed.error_count ? ` · ${feed.error_count} download errors` : ''}{!feed.enabled ? ' · Collection paused' : ''}{/if}</span></button>{/each}
 			{#if !feeds.length && !error}<p>No Shorts feeds for {session.profile?.name ?? 'this profile'} yet.</p><p class="small muted">{session.profiles.length > 1 ? 'Choose another profile above to see its feeds, or create a feed for this profile.' : 'Give your curator a brief to start collecting local clips.'}</p>{/if}
 		{/if}
 		<button class="btn ghost" disabled={loading || switchingProfile} onclick={()=>loadFeeds()} use:focusable>Refresh feeds</button>
 		<a class="btn primary" href="/settings?tab=feeds&new=1" use:focusable>New feed</a><a class="btn" href="/settings?tab=feeds" use:focusable>Manage feeds</a><a class="btn ghost" href="/" use:focusable>Leave Shorts</a></div>
 	{:else}
 		{#if loading}<div class="state"><p>Checking local videos…</p></div>
-		{:else if !current}<div class="state"><h1>{selected.name}</h1>{#if error}<p role="alert" class="err">{error}</p>{:else}<p>No local clips ready yet.</p>{#if !session.settings?.cache.enabled}<p class="muted">Enable Storage → Offline cache in Settings so accepted clips can download.</p>{/if}{#if !session.settings?.agent.enabled}<p class="muted">Enable the AI agent in Settings to collect new clips.</p>{/if}<p class="muted">{selected.pending_count} waiting for local files{selected.error_count ? `; ${selected.error_count} download errors` : ''}. Refresh once downloads finish.</p>{/if}<button class="btn primary" use:focusable onclick={retry}>Refresh availability</button><a class="btn" href={`/settings?tab=feeds&edit=${selected.id}`} use:focusable>Edit feed</a></div>
+		{:else if !current}<div class="state"><h1>{selected.name}</h1>{#if error}<p role="alert" class="err">{error}</p>{:else}<p>No local clips ready yet.</p>{#if !session.settings?.cache.enabled}<p class="muted">Enable Storage → Offline cache in Settings so accepted clips can download.</p>{/if}{#if !session.settings?.agent.enabled}<p class="muted">Enable the AI agent in Settings to collect new clips.</p>{/if}<p class="muted">{#if selectedProvisional}Refresh once local downloads finish.{:else}{selected.pending_count} waiting for local files{selected.error_count ? `; ${selected.error_count} download errors` : ''}. Refresh once downloads finish.{/if}</p>{/if}<button class="btn primary" use:focusable onclick={retry}>Refresh availability</button><a class="btn" href={`/settings?tab=feeds&edit=${selected.id}`} use:focusable>Edit feed</a></div>
 		{:else}
 		<video bind:this={videoEl} class="stage" playsinline preload="metadata" ontimeupdate={onTime} onended={onEnded} onerror={()=>{if(activeId===current?.video.id)playbackError='This local file is unavailable or cannot be played. Refresh availability to check stored clips.';}} onclick={onStageClick}></video>
 		{#if playbackError}<div class="playback-error" role="alert"><p>{playbackError}</p><button class="btn primary" use:focusable onclick={retry}>Refresh availability</button></div>
