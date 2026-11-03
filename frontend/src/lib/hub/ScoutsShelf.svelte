@@ -9,7 +9,8 @@
  let unavailable = $state(false);
  const working = $derived(team?.agents.filter(a => a.status === 'running' || a.status === 'waiting').slice(0, 3) ?? []);
  const findings = $derived((team?.agents.flatMap(a => (a.finds ?? []).map(f => ({ ...f, agent: a }))) ?? []).sort((a, b) => b.found_at - a.found_at).filter((f, i, all) => all.findIndex(x => x.id === f.id) === i).slice(0, 3));
- const agentHref = (a: TeamAgent) => a.kind === 'scout' ? '/sources' : a.kind === 'briefing' ? '/briefings' : a.role === 'research' ? `/research/${a.id}` : `/curators/${a.id}`;
+ // The master curator and briefings have no curator page of their own.
+ const agentHref = (a: TeamAgent) => a.kind === 'master' ? '/today' : a.kind === 'scout' ? '/sources' : a.kind === 'briefing' ? '/briefings' : a.role === 'research' ? `/research/${a.id}` : `/curators/${a.id}`;
  $effect(() => {
   const profileId = session.profileId;
   const allowed = session.hubAllowed && session.profile?.prefs?.scouts_home === true;
@@ -33,7 +34,7 @@
  <Row title="Your scouts" emoji="🔭" color="var(--accent)">
   {#if working.length}
    {#each working as a (a.key)}
-    <a class="scout-card" href={agentHref(a)} use:focusable={{ group: 'scouts-home' }}><span class="status">{a.status === 'running' ? 'Working now' : 'Waiting for a slot'}</span><strong>{a.icon} {a.name}</strong><span>{a.doing || a.mission || 'Getting ready to work.'}</span></a>
+    <a class="scout-card" href={agentHref(a)} use:focusable={{ group: 'scouts-home' }}><span class="status">{a.status === 'running' ? 'Working now' : a.kind === 'master' ? 'Selection queued' : 'Waiting for a slot'}</span><strong>{a.icon} {a.name}</strong><span>{a.doing || a.mission || 'Getting ready to work.'}</span></a>
    {/each}
   {:else if findings.length}
    {#each findings as f (f.id)}

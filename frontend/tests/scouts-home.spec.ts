@@ -18,6 +18,20 @@ test('scouts shelf is opt-in and shows genuine findings', async ({ page, request
  await request.patch(`/api/profiles/${profile.id}`, { data: { prefs: profile.prefs } });
 });
 
+test('a queued master curator links to Today, not a curator page', async ({ page, request }) => {
+ const profile = (await (await request.get('/api/profiles')).json())[0];
+ await request.patch(`/api/profiles/${profile.id}`, { data: { prefs: { ...profile.prefs, scouts_home: true } } });
+ const curatorPages: string[] = [];
+ page.on('request', r => { if (/\/api\/hub\/curators\/[^/?]+$/.test(r.url())) curatorPages.push(r.url()); });
+ await page.route('**/api/hub/team', async route => route.fulfill({ json: { limit: 1, running: 0, waiting: 1, journal: [], agents: [{ key: 'master-1', kind: 'master', id: null, name: 'Master Curator', icon: '✧', color: '#fff', mission: 'Selects your daily edition.', status: 'waiting', since: null, next_run: Date.now()/1000 + 300 }] } }));
+ await freshPage(page, '/');
+ const card = page.getByRole('link', { name: /Master Curator/ });
+ await expect(card).toHaveAttribute('href', '/today');
+ await expect(card).toContainText('Selection queued');
+ expect(curatorPages).toEqual([]);
+ await request.patch(`/api/profiles/${profile.id}`, { data: { prefs: profile.prefs } });
+});
+
 test('Today preview respects the profile video-row position', async ({ page, request }) => {
  const profile = (await (await request.get('/api/profiles')).json())[0];
  await page.route('**/api/hub/today', route => route.fulfill({ json: { day: '2026-11-03', curated: true, sections: [], intro: '', intro_refs: [], set_aside: 0 } }));
