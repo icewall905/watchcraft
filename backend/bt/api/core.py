@@ -980,7 +980,8 @@ def write_settings(key: str, value: dict, s: Session = Depends(get_session)):
     if key == "appearance":
         theme = value.get("theme", cur["theme"])
         if not isinstance(theme, str) or theme not in {
-            "projector", "ocean", "forest", "ember", "midnight", "slate", "rose", "aurora", "copper", "noir", "lagoon"
+            "projector", "ocean", "forest", "ember", "midnight", "slate", "rose", "aurora", "copper", "noir", "lagoon",
+            "paper", "dusk"
         }:
             raise HTTPException(400, "Unknown appearance theme")
     if key == "memory":

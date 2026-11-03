@@ -61,9 +61,9 @@
 	.text-meme { padding: 1.2rem 1rem; font-size: .95rem; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 	.shot.sensitive :global(img), .text-meme.sensitive { filter: blur(7px); }
 	.clip { position: absolute; bottom: .5rem; left: .5rem; padding: .2rem .6rem; border-radius: var(--r-pill); background: rgba(0, 0, 0, .7); }
-	.fmt, .dup { position: absolute; top: .5rem; font-size: .72rem; font-weight: 700; border-radius: var(--r-pill); padding: .15rem .55rem; background: rgba(0, 0, 0, .55); color: var(--fg); }
+	.fmt, .dup { position: absolute; top: .5rem; font-size: .72rem; font-weight: 700; border-radius: var(--r-pill); padding: .15rem .55rem; background: rgba(0, 0, 0, .55); color: #f5f5f5; }
 	.fmt { left: .5rem; }
-	.dup { right: .5rem; color: var(--warning); }
+	.dup { right: .5rem; color: #ffcf5c; }
 	.meta { display: grid; gap: .15rem; padding: 0 .7rem .5rem; }
 	/* Caption is a label, not the point of the page: one quiet line. */
 	.title { margin: 0; font-size: .82rem; font-weight: 500; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }

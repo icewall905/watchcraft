@@ -7,11 +7,11 @@ test('all themes apply immediately, persist, and retain readable text and button
 		await freshPage(page, '/settings?tab=appearance');
 		await expect(page.getByRole('heading', { name: 'Appearance', exact: true })).toBeVisible();
 		const cards = page.getByLabel('Themes', { exact: true }).locator('.theme-card');
-		await expect(cards).toHaveCount(11);
+		await expect(cards).toHaveCount(13);
 		await expect(cards.first()).toHaveAttribute('aria-pressed', 'true');
 		const original = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--bg-0').trim());
 		expect(original.toLowerCase()).toBe('#0a0817');
-		for (const name of ['Studio', 'Reel', 'Clay', 'Twilight', 'Graphite', 'Blossom', 'Cobalt', 'Lime', 'Noir', 'Tide']) {
+		for (const name of ['Studio', 'Reel', 'Clay', 'Twilight', 'Graphite', 'Blossom', 'Cobalt', 'Lime', 'Noir', 'Paper', 'Dusk', 'Tide']) {
 			const card = page.getByRole('button', { name: new RegExp(`^${name}`) });
 			await card.click();
 			await expect(card).toHaveAttribute('aria-pressed', 'true');

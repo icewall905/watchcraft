@@ -1,6 +1,8 @@
 <script lang="ts">
 	import '@fontsource-variable/inter';
+	import '@fontsource-variable/newsreader';
 	import '../app.css';
+	import '$lib/design/tokens.css';
 	import { onMount, type Snippet } from 'svelte';
 	import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -81,6 +83,8 @@
 		}
 	});
 
+	// Calm editorial styling (tokens.css [data-area='hub']) applies only to non-video routes.
+	const hubArea = $derived(isHubPath(page.url.pathname) || ['/today', '/settings', '/stats', '/agent'].some((p) => page.url.pathname === p || page.url.pathname.startsWith(p + '/')));
 	const fullscreen = $derived(page.url.pathname.startsWith('/watch/') || page.url.pathname === '/shorts');
 </script>
 
@@ -93,7 +97,7 @@
 		{#if !fullscreen}<Sidebar /><MobileNav />{/if}
 		<div class:desktop={!fullscreen && deviceMode.mode === 'desktop'}>
 		{#if !fullscreen}<TopBar />{:else if page.url.pathname.startsWith('/watch/')}<PlaybackPicker floating />{/if}
-		<main class:fullscreen>
+		<main class:fullscreen data-area={hubArea ? 'hub' : undefined}>
 			{#if !session.hubAllowed && isHubPath(page.url.pathname)}
 				<div class="page"><h1>Hub is unavailable for this profile</h1><p>Discovery, external sources and research are disabled. Switch to an adult profile to use the Hub.</p><a class="btn primary" href="/tv" use:focusable>Back to TV</a></div>
 			{:else}{#key session.version}

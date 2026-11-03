@@ -4,7 +4,7 @@ import { freshPage } from './helpers';
 test('desktop sidebar: sections, links, active state, compact toggle', async ({ page }) => {
 	await freshPage(page, '/stats');
 	const nav = page.getByRole('navigation', { name: 'Main', exact: true });
-	for (const h of ['Watch', 'Explore', 'Research', 'Automation']) await expect(nav.getByRole('button', { name: h, exact: true })).toBeVisible();
+	for (const h of ['Watch', 'Explore', 'Research', 'Workshop']) await expect(nav.getByRole('button', { name: h, exact: true })).toBeVisible();
 	await expect(nav.getByRole('link', { name: 'News' })).toHaveAttribute('href', '/news');
 	await expect(nav.getByRole('link', { name: 'Research' })).toHaveAttribute('href', '/research');
 	await expect(nav.getByRole('link', { name: 'Statistics' })).toHaveAttribute('aria-current', 'page');

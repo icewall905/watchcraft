@@ -3,7 +3,8 @@ export type NavEntry = {
 	href: string; label: string; icon: string; countKey?: CountKey;
 	active: (pathname: string) => boolean;
 };
-export type NavSection = { key: string; title: string; items: NavEntry[] };
+/** `quiet` sections render smaller and start collapsed until the user opens them. */
+export type NavSection = { key: string; title: string; items: NavEntry[]; quiet?: boolean };
 
 const prefix = (href: string) => (p: string) => p === href || p.startsWith(href + '/');
 const entry = (href: string, label: string, icon: string, countKey?: CountKey, active = prefix(href)): NavEntry => ({ href, label, icon, countKey, active });
@@ -17,10 +18,12 @@ export const SETTINGS = entry('/settings', 'Settings', 'settings');
 
 export const SECTIONS: NavSection[] = [
 	{ key: 'watch', title: 'Watch', items: [TV, SHORTS, entry('/subscriptions', 'Subscriptions', 'subs')] },
-	{ key: 'explore', title: 'Explore', items: [DISCOVER, entry('/news', 'News', 'news'), entry('/knowledge', 'Knowledge', 'book'), LIBRARY, entry('/memes', 'Meme Radar', 'meme'), entry('/briefings', 'Briefings', 'briefing'), ALERTS] },
+	{ key: 'explore', title: 'Explore', items: [DISCOVER, entry('/news', 'News', 'news'), entry('/memes', 'Meme Radar', 'meme'), LIBRARY, entry('/knowledge', 'Knowledge', 'book'), entry('/briefings', 'Briefings', 'briefing'), ALERTS] },
 	{ key: 'research', title: 'Research', items: [entry('/research', 'Research', 'research'), entry('/scout-report', 'Scout Report', 'briefing')] },
-	{ key: 'automation', title: 'Automation', items: [entry('/team', 'Agent Activity', 'team'), entry('/curators', 'Curators', 'curator'), entry('/sources', 'Sources', 'source'), entry('/agent', 'Video AI', 'agent'), entry('/stats', 'Statistics', 'chart')] }
+	{ key: 'workshop', title: 'Workshop', quiet: true, items: [entry('/team', 'Agent Activity', 'team'), entry('/curators', 'Curators', 'curator'), entry('/sources', 'Sources', 'source'), entry('/agent', 'Video AI', 'agent'), entry('/stats', 'Statistics', 'chart')] }
 ];
+/** Persisted collapse keys from before the Automation section was renamed. */
+export const LEGACY_SECTION_KEYS: Record<string, string> = { automation: 'workshop' };
 export const ALL_ENTRIES: NavEntry[] = [...SECTIONS.flatMap((s) => s.items), SETTINGS];
 
 export type DrawerEntry = { href: string; label: string; icon: string; active: (pathname: string, search: string) => boolean };

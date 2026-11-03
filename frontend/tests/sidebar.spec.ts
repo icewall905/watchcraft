@@ -5,6 +5,9 @@ test('desktop sidebar, device preference, and TV remote drawer', async ({ page }
 	await freshPage(page, '/settings?tab=appearance');
 	const navigation = page.getByRole('navigation', { name: 'Main', exact: true });
 	await expect(navigation).toBeVisible();
+	// Workshop (curators, sources, …) starts collapsed unless it holds the current page.
+	await expect(navigation.getByRole('link', { name: 'Curators', exact: true })).toHaveCount(0);
+	await navigation.getByRole('button', { name: 'Workshop', exact: true }).click();
 	for (const name of ['TV', 'Discover', 'News', 'Knowledge', 'Library', 'Briefings', 'Alerts', 'Research', 'Curators', 'Sources'])
 		await expect(navigation.getByRole('link', { name, exact: true })).toBeVisible();
 	await page.screenshot({ path: '/tmp/wc-sidebar-desktop.png' });

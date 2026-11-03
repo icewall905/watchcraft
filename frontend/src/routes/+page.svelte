@@ -503,4 +503,14 @@
 	.end {
 		height: 3rem;
 	}
+	/* Light themes (Paper): the hero text sits on the page colour, not a dark room. Dark themes are unchanged. */
+	:global(html[data-scheme='light']) .hero h1 {
+		text-shadow: 0 2px 24px color-mix(in srgb, var(--bg-0) 85%, transparent);
+	}
+	:global(html[data-scheme='light']) .why {
+		color: var(--text);
+	}
+	:global(html[data-scheme='light']) .how li {
+		background: var(--surface);
+	}
 </style>

@@ -1,12 +1,12 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { nav, focusable, navScope } from '$lib/nav';
 	import { deviceMode } from '$lib/stores/deviceMode.svelte';
 	import { hub } from '$lib/hub/api';
 	import { session } from '$lib/stores/session.svelte';
 	import type { Counts, Collection, Topic } from '$lib/hub/types';
-	import { SECTIONS, SETTINGS, TV_DRAWER, isHubPath } from '$lib/navigation';
+	import { LEGACY_SECTION_KEYS, SECTIONS, SETTINGS, TV_DRAWER, isHubPath } from '$lib/navigation';
 	import Icon from './Icon.svelte';
 
 	const store = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -58,9 +58,21 @@
 
 	$effect(() => { void session.version; void session.profile?.id; void loadCounts(); void loadPinned(); });
 
+	// Opening a page inside a collapsed section shows it, without changing the saved choice.
+	$effect(() => {
+		const p = path;
+		untrack(() => {
+			const hit = SECTIONS.find((s) => collapsed.includes(s.key) && s.items.some((it) => it.active(p)));
+			if (hit) collapsed = collapsed.filter((k) => k !== hit.key);
+		});
+	});
+
 	onMount(() => {
 		compact = store('wc.nav.compact') === '1';
-		try { const c = JSON.parse(store('wc.nav.collapsed') ?? '[]'); if (Array.isArray(c)) collapsed = c.filter((x) => typeof x === 'string'); } catch { /* ignore */ }
+		const saved = store('wc.nav.collapsed');
+		// Without a saved choice, quiet sections start collapsed unless they hold the current page.
+		if (saved === null) collapsed = SECTIONS.filter((s) => s.quiet && !s.items.some((it) => it.active(path))).map((s) => s.key);
+		else try { const c = JSON.parse(saved); if (Array.isArray(c)) collapsed = c.filter((x) => typeof x === 'string').map((x) => LEGACY_SECTION_KEYS[x] ?? x); } catch { /* ignore */ }
 		const timer = setInterval(loadCounts, 60_000);
 		const off = nav.handleKeys((key) => {
 			if (deviceMode.mode !== 'tv') return;
@@ -89,7 +101,7 @@
 		</a>
 		<nav aria-label="Main" data-nav-skip-initial>
 			{#each sections as sec}
-				<section>
+				<section class:quiet={sec.quiet}>
 					{#if !compact}
 						<button class="sec-head" aria-expanded={!collapsed.includes(sec.key)} onclick={() => toggleGroup(sec.key)}>
 							<span>{sec.title}</span><Icon name={collapsed.includes(sec.key) ? 'next' : 'down'} size=".8em" />
@@ -177,6 +189,8 @@
 	a:hover, a.active, .toggle:hover { color: var(--text); background: var(--surface-2); }
 	a.active { box-shadow: inset 3px 0 var(--accent); }
 	a.active :global(.icon) { color: var(--accent); }
+	.quiet .sec-head { margin-top: .35rem; }
+	.quiet a { padding-block: .48rem; font-size: .86rem; font-weight: 550; }
 	.lbl { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 	.count { min-width: 1.35rem; padding: .05rem .4rem; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-ink); font: 800 .7rem var(--font); text-align: center; }
 	.compact .count { position: absolute; top: .2rem; right: .35rem; min-width: 1.1rem; padding: 0 .25rem; font-size: .62rem; }

@@ -4,6 +4,8 @@ export interface Theme {
 	id: string; name: string; description: string;
 	bg: string; bg1: string; bg2: string; surface: string; accent: string; accentInk: string;
 	ai: string; text: string; muted: string; faint: string;
+	/** Drives `color-scheme` and `html[data-scheme]`; defaults to dark. */
+	scheme?: 'dark' | 'light';
 }
 
 export const THEMES: Theme[] = [
@@ -17,7 +19,9 @@ export const THEMES: Theme[] = [
 	{ id: 'aurora', name: 'Cobalt', description: 'Blue-black with clear blue and violet.', bg: '#010409', bg1: '#0d1117', bg2: '#151b23', surface: '#1b222c', accent: '#4493f8', accentInk: '#04111f', ai: '#a371f7', text: '#e6edf3', muted: '#9198a1', faint: '#6e7681' },
 	{ id: 'copper', name: 'Lime', description: 'Pure black with acid lime.', bg: '#090909', bg1: '#0f0f0f', bg2: '#161616', surface: '#1d1d1d', accent: '#c6f432', accentInk: '#1a2200', ai: '#a78bfa', text: '#f0f0f0', muted: '#a1a1a1', faint: '#6e6e6e' },
 	{ id: 'noir', name: 'Noir', description: 'True black, silver type and a single red.', bg: '#050505', bg1: '#0b0b0c', bg2: '#121214', surface: '#1a1a1d', accent: '#ff4d5e', accentInk: '#2a0006', ai: '#9aa0b5', text: '#f0f0f0', muted: '#a3a3a8', faint: '#6c6c72' },
-	{ id: 'lagoon', name: 'Tide', description: 'Cool charcoal with cyan.', bg: '#0a0d10', bg1: '#0f1317', bg2: '#151a20', surface: '#1b2128', accent: '#22d3ee', accentInk: '#032229', ai: '#c4a5ff', text: '#e8eef2', muted: '#97a3ad', faint: '#66727c' }
+	{ id: 'lagoon', name: 'Tide', description: 'Cool charcoal with cyan.', bg: '#0a0d10', bg1: '#0f1317', bg2: '#151a20', surface: '#1b2128', accent: '#22d3ee', accentInk: '#032229', ai: '#c4a5ff', text: '#e8eef2', muted: '#97a3ad', faint: '#66727c' },
+	{ id: 'paper', name: 'Paper', description: 'Warm off-white, ink type and terracotta. A light, calm reading room.', scheme: 'light', bg: '#f4efe6', bg1: '#f9f6ef', bg2: '#ebe4d7', surface: '#fffdf9', accent: '#a64b2a', accentInk: '#ffffff', ai: '#2f6b57', text: '#1f1c18', muted: '#5c564d', faint: '#6b6357' },
+	{ id: 'dusk', name: 'Dusk', description: 'Soft blue-grey evening with a quiet brass light.', bg: '#121319', bg1: '#171921', bg2: '#1f212b', surface: '#262935', accent: '#e2ad78', accentInk: '#251708', ai: '#a3b5e0', text: '#ece9f1', muted: '#a7a4b6', faint: '#75728a' }
 ];
 
 const TOKENS = ['--bg-0', '--bg-1', '--bg-2', '--surface', '--surface-solid', '--surface-2', '--surface-hi', '--line', '--line-strong', '--text', '--muted', '--faint', '--accent', '--accent-2', '--accent-ink', '--accent-glow', '--ai', '--ambient-1', '--ambient-2', '--ambient-3', '--modal-top', '--modal-bottom', '--overlay-surface', '--overlay-surface-deep', '--keyboard-surface', '--toast-surface', '--status-pop-surface', '--savebar-surface'];
@@ -25,7 +29,11 @@ const TOKENS = ['--bg-0', '--bg-1', '--bg-2', '--surface', '--surface-solid', '-
 export function applyTheme(id: string | null | undefined) {
 	const theme = THEMES.find((t) => t.id === id) ?? THEMES[0];
 	const root = document.documentElement;
+	const scheme = theme.scheme ?? 'dark';
 	root.dataset.theme = theme.id;
+	root.dataset.scheme = scheme;
+	root.style.colorScheme = scheme;
+	document.querySelector('meta[name="color-scheme"]')?.setAttribute('content', scheme);
 	for (const token of TOKENS) root.style.removeProperty(token);
 	if (theme.id !== 'projector') {
 		const mix = (color: string, amount: number, into = 'transparent') => `color-mix(in srgb, ${color} ${amount}%, ${into})`;
@@ -35,7 +43,7 @@ export function applyTheme(id: string | null | undefined) {
 			'--surface-2': mix(theme.surface, 85, theme.ai), '--surface-hi': mix(theme.surface, 65, theme.ai),
 			'--line': mix(theme.text, 11), '--line-strong': mix(theme.text, 24),
 			'--text': theme.text, '--muted': theme.muted, '--faint': theme.faint,
-			'--accent': theme.accent, '--accent-2': mix(theme.accent, 75, 'white'), '--accent-ink': theme.accentInk,
+			'--accent': theme.accent, '--accent-2': mix(theme.accent, 75, scheme === 'light' ? 'black' : 'white'), '--accent-ink': theme.accentInk,
 			'--accent-glow': mix(theme.accent, 48), '--ai': theme.ai,
 			'--ambient-1': mix(theme.ai, 14), '--ambient-2': mix(theme.accent, 6), '--ambient-3': mix(theme.ai, 10),
 			'--modal-top': mix(theme.surface, 95), '--modal-bottom': mix(theme.bg1, 97),

@@ -1,0 +1,132 @@
+/* WatchCraft design tokens — editorial layer for the non-video hub.
+   Loaded after app.css. Video routes keep reading the original app.css tokens:
+   everything here is either a new token name, a light-scheme fix, or scoped to [data-area='hub']. */
+
+:root {
+	/* Aliases for names some hub components already use. */
+	--bg: var(--bg-0);
+	--fg: var(--text);
+	--border: var(--line);
+	--r-card: var(--r-md);
+	--success: var(--ok);
+	--warning: var(--warn);
+
+	/* Type */
+	--font-body: var(--font);
+	--font-display: 'Newsreader Variable', Newsreader, Charter, 'Iowan Old Style', Georgia, 'Times New Roman', serif;
+	--fs-xs: 0.75rem;
+	--fs-sm: 0.875rem;
+	--fs-base: 1rem;
+	--fs-md: 1.125rem;
+	--fs-lg: 1.375rem;
+	--fs-xl: 1.75rem;
+	--fs-2xl: clamp(1.9rem, 1vw + 1.5rem, 2.4rem);
+	--fs-3xl: clamp(2.2rem, 1.6vw + 1.6rem, 3.25rem);
+	--lh-tight: 1.15;
+	--lh-snug: 1.3;
+	--lh-body: 1.6;
+
+	/* Space */
+	--sp-1: 0.25rem;
+	--sp-2: 0.5rem;
+	--sp-3: 0.75rem;
+	--sp-4: 1rem;
+	--sp-5: 1.5rem;
+	--sp-6: 2rem;
+	--sp-7: 2.5rem;
+	--sp-8: 3rem;
+	--sp-9: 4rem;
+	--sp-10: 6rem;
+	--measure: 68ch;
+	--measure-wide: 82rem;
+
+	/* Calm motion: slow fades, no overshoot. */
+	--ease-calm: cubic-bezier(0.4, 0, 0.2, 1);
+	--dur-calm: 280ms;
+	--dur-calm-slow: 480ms;
+
+	/* Hub surfaces follow the active theme. */
+	--paper: var(--bg-1);
+	--paper-raised: var(--surface-solid);
+	--ink: var(--text);
+	--ink-soft: var(--muted);
+	--rule: var(--line);
+	--rule-strong: var(--line-strong);
+	--shadow-calm: 0 1px 2px rgba(0, 0, 0, 0.18), 0 8px 24px -16px rgba(0, 0, 0, 0.45);
+}
+
+/* ---------- light scheme (Paper theme) ----------
+   Theme tokens arrive inline from applyTheme(); these fix the few utilities in app.css
+   that hard-code dark-room colours. */
+:root[data-scheme='light'] {
+	color-scheme: light;
+	--ok: #1f7a4f;
+	--warn: #8a5a00;
+	--bad: #b42343;
+	--info: #1f5f8f;
+	--shadow-lg: 0 24px 60px -18px rgba(60, 40, 20, 0.28);
+	--shadow-calm: 0 1px 2px rgba(60, 40, 20, 0.06), 0 10px 28px -18px rgba(60, 40, 20, 0.3);
+}
+:root[data-scheme='light'] body::before {
+	opacity: 0.025;
+}
+:root[data-scheme='light'] .input {
+	background: var(--surface-solid);
+}
+:root[data-scheme='light'] .score {
+	background: color-mix(in srgb, var(--ai) 12%, transparent);
+	color: var(--ai);
+	border-color: color-mix(in srgb, var(--ai) 35%, transparent);
+}
+:root[data-scheme='light'] .btn.danger {
+	color: var(--bad);
+	border-color: color-mix(in srgb, var(--bad) 45%, transparent);
+	background: color-mix(in srgb, var(--bad) 8%, transparent);
+}
+:root[data-scheme='light'] .btn.danger:hover {
+	background: color-mix(in srgb, var(--bad) 15%, transparent);
+}
+:root[data-scheme='light'] .skeleton {
+	background: linear-gradient(100deg, rgba(0, 0, 0, 0.03) 20%, rgba(0, 0, 0, 0.07) 40%, rgba(0, 0, 0, 0.03) 60%) var(--surface);
+	background-size: 220% 100%;
+}
+html[data-scheme='light'][data-modality='keys'] .focusable:focus {
+	box-shadow:
+		0 0 0 3px var(--accent),
+		0 0 24px 4px var(--accent-glow),
+		0 14px 32px -10px rgba(60, 40, 20, 0.35);
+}
+
+/* ---------- hub area: calm editorial defaults ----------
+   Only matches inside <main data-area="hub">, which the layout sets on non-video routes. */
+[data-area='hub'] {
+	line-height: 1.55;
+}
+[data-area='hub'] h1,
+[data-area='hub'] h2 {
+	font-family: var(--font-display);
+	font-weight: 560;
+	letter-spacing: -0.012em;
+	line-height: var(--lh-tight);
+}
+[data-area='hub'] h1 {
+	font-size: var(--fs-3xl);
+}
+[data-area='hub'] h2 {
+	font-size: var(--fs-xl);
+}
+[data-area='hub'] .page {
+	padding: clamp(1.5rem, 3vw, 3.25rem) var(--gutter) var(--sp-10);
+}
+[data-area='hub'] .panel {
+	background: color-mix(in srgb, var(--paper-raised) 72%, transparent);
+	border-color: var(--rule);
+	box-shadow: var(--shadow-calm);
+	backdrop-filter: none;
+	-webkit-backdrop-filter: none;
+}
+[data-area='hub'] .reading {
+	max-width: var(--measure);
+	font-size: var(--fs-md);
+	line-height: var(--lh-body);
+}
