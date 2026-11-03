@@ -1,5 +1,20 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — worker model on its own server, per-model test buttons (`8869358`, 2026-11-03)
+
+- A worker with its own server and no model now uses a model that server lists instead of the judge's model name
+  (which a separate vLLM rejects with 404); lookups are cached for 10 minutes and failures retried after 30 s. The
+  model test shows the server's own error. In Settings the judge's model list and test now follow the judge fields
+  and say "judge"; worker and embeddings keep their own tests.
+- Release checks: 776 backend tests passed, six skipped; independent review approved; frontend type check clean
+  (three existing CSS warnings), build ok; 12 browser checks (LLM providers, welcome, memory, hub).
+- Backup `/root/compose/watchcraft-backups/20261103-pre-ai-8869358`; rollback image
+  `watchcraft:rollback-20261103-ai-8869358` retains `3d00fb2`. Isolated restore: integrity, counts and profile/PIN
+  checksum identical, started twice, routes 200, no tracebacks.
+- `DEPLOYED_COMMIT=8869358`; image `sha256:8e2a7d00f09414e4c27b524dd9007fca443ec46d11a70a54069b6e2d130065a2`, zero
+  restarts. Post-deploy: health, routes, integrity, profiles/PINs and configuration unchanged; the live worker
+  resolves to `currentmodel` on `10.0.10.23`; the bundle carries "Test judge".
+
 ## Deployment record — fresh Hacker News, clean meme captions, faster settings (`3d00fb2`, 2026-11-03)
 
 - General news queries ("latest news") read the Hacker News front page instead of a word search that only found
