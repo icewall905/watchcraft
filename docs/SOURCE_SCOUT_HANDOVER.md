@@ -1,5 +1,11 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — visible sidebar collapse toggle (`69e7ec4`, 2026-11-03)
+
+- The sidebar collapse control now stays visible at the top, with `<<` to show icons only and `>>` to restore labels. Existing browser preference persists across reloads. Frontend check/build passed (three existing CSS warnings); both sidebar/TV browser regressions passed, including compact layout, reload persistence and expansion. Live public TV page was visually checked after collapsing.
+- Backup `/root/compose/watchcraft-backups/20261103-sidebar`; rollback `watchcraft:rollback-20261103-sidebar` retains `d82a31c`. Isolated restored initialization preserved all table counts, profiles and PINs; service started twice and health/settings routes passed.
+- Deployed `69e7ec4`, image `sha256:4b3e6e49545ed4817dd56674d634b5b377787dd63c500cd086a335376aae0429`; API/worker/downloader running with zero restarts. Local/public health, database integrity and configuration checks passed.
+
 ## Deployment record — local news archives (`d82a31c`, 2026-11-03)
 
 - News story pages show archived text, AI summaries and uncropped locally stored images; the image opens at full size. Source titles lead to local archive details. Capture prefers fuller structured article text, rejects blank summaries, retains full social text, saves original social images, and follows Lemmy news article links while preserving post text and prior archives on failed retries.
