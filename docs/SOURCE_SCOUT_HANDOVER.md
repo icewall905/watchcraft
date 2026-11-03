@@ -1,5 +1,31 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — master curator and calm hub (`f3bbfca`, 2026-11-03)
+
+- Ships `9181a57..f3bbfca`: master curator (rules, meme dedup, stored stories, scoring, tiered quotas, worker-model
+  judging that yields to video, debounced post-run and nightly `hub_master` passes), daily Today edition, set-aside
+  review and overrule, learned hub preferences, curated News/Meme Radar, editorial reading and Workshop pages,
+  Paper/Dusk themes. Video routes unchanged. Calibrated on an offline replay of a local production snapshot
+  (`scripts/master_curator_replay.py`).
+- Release checks: 769 backend tests passed, six skipped; replay script tests 4 passed; frontend type check clean
+  (three existing CSS warnings) and build ok; 38 browser checks across appearance, home focus, hub, memes, meme
+  feedback, navigation, news, Scouts home, sidebar, Today and TV.
+- Production runs one uvicorn worker and the hub scheduler only in `wc-api`, so the per-process `master.LOCK` covers
+  every pass.
+- Backup: `/root/compose/watchcraft-backups/20261103-pre-master-f3bbfca` (online and stopped-service databases,
+  configuration, prior source); rollback image `watchcraft:rollback-20261103-master-f3bbfca` retains `98a0ba1`.
+- Isolated restore ran `watchcraft:f3bbfca` on `127.0.0.1:6697`: integrity `ok`, every table count and the
+  profile/PIN checksum identical, started twice, new tables created, `/`, `/today`, `/today/set-aside`, `/news`,
+  `/memes`, `/discover`, `/settings`, `/tv`, `/shorts` 200, no tracebacks; QA container and data removed.
+- Rollout extracted the committed source without deleting files, kept `.env` and `compose.host.yaml` (checksums
+  verified), `DEPLOYED_COMMIT=f3bbfca`; API, worker and downloader run image
+  `sha256:4f99ee15415d392d5bfd7cf780490cb97b9ba2dce4dfe34e01844f3f6dddaad8`, zero restarts.
+- Post-deploy: local and both public health endpoints 200, all routes above plus `/team` 200, database integrity
+  `ok`, profiles and PIN checksum unchanged. A first light pass ran for hub profiles 2 and 3: profile 2 got 377 verdicts (6 featured, 30 model-judged), both profiles have a 2026-11-03 edition, no tracebacks.
+- Rollback: retag `watchcraft:rollback-20261103-master-f3bbfca` as `watchcraft:latest`, restore `source.tar.gz` from
+  the backup, run the three-file Compose `up -d --no-build --force-recreate --no-deps --wait bt-api bt-worker
+  bt-downloader`, restore `DEPLOYED_COMMIT`. New tables are additive; the old image ignores them.
+
 ## Deployment record — Shorts description hidden until tapped (`98a0ba1`, 2026-11-03)
 
 - The Shorts player drew the description block (feed name, title, channel, score, summary) over every clip. It now
