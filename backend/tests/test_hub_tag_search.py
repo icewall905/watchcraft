@@ -129,6 +129,43 @@ def test_language_detection_fills_in_what_the_source_left_blank():
     assert detect_language('') == ''
 
 
+def test_language_detection_needs_more_than_one_word():
+    # B-040: one German function word in an English caption is not German.
+    from bt.hub.memes import detect_language
+    assert detect_language('das meme') == ''
+    assert detect_language('when das meme hits') == ''
+    assert detect_language('das ist nicht gut') == 'de'
+    # Accented names and loanwords in English captions are not evidence either.
+    for caption in ('Motörhead ist back', 'Häagen-Dazs mit sprinkles', 'me as a façade', 'el niño is coming',
+                    'nada to see here, Señor', 'we got the van', 'we need a bigger van', 'op we need more',
+                    'des moines plus'):
+        assert detect_language(caption) in ('', 'en'), caption
+    assert detect_language('hva gjør du') == 'no'
+    assert detect_language('jag är trött') == 'sv'
+
+
+def test_language_backfill_walks_past_undetectable_rows(client):
+    # B-041: captions that stay unknown must not pin the slice to the first rows forever.
+    from bt.db import session
+    from bt.hub import memes
+    from sqlmodel import select
+    from bt.hub.models import ContentItem, MemeExample
+    with session() as s:
+        ids = []
+        for i in range(5):
+            item = ContentItem(url=f'https://m.example/{i}', type='meme', title='😂' if i < 3 else 'das ist nicht gut')
+            s.add(item); s.flush()
+            s.add(MemeExample(item_id=item.id, language='de' if i == 0 else ''))
+            ids.append(item.id)
+        s.commit()
+        # The first slice only sees undetectable rows; it also clears the old loose guess.
+        assert memes.backfill_languages(s, limit=3) == 1
+        assert memes.backfill_languages(s, limit=3) == 2
+        assert memes.backfill_languages(s, limit=3) == 0
+        langs = {ex.item_id: ex.language for ex in s.exec(select(MemeExample)).all()}
+    assert [langs[i] for i in ids] == ['', '', '', 'de', 'de']
+
+
 def test_facets_report_the_hidden_languages(client):
     assert client.get('/api/hub/memes/facets').json()['hidden_languages'] == []
     client.post('/api/hub/memes/languages/de/hide', json={'hidden': True})

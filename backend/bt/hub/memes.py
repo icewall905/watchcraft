@@ -91,61 +91,85 @@ def _create_format(s: Session, kind: str, exemplar: ContentItem, phash: str) -> 
 
 # Function words that belong to one language only. Shared words are left out on purpose:
 # a word two languages use cannot tell them apart, and guessing wrong would hide the wrong
-# memes. This is a caption-sized heuristic, not a language model.
+# memes. Words English captions use too (van, op, plus, nada, as) are left out for the same
+# reason. This is a caption-sized heuristic, not a language model.
 _LANGUAGE_WORDS = {
     'en': {'the', 'and', 'you', 'that', 'this', 'with', 'have', 'not', 'for', 'but', 'what', 'when', 'just',
-           'like', 'they', 'from', 'your', 'about', 'would', 'there', 'their', 'been', 'because', 'really'},
+           'like', 'they', 'from', 'your', 'about', 'would', 'there', 'their', 'been', 'because', 'really',
+           'we'},
     'de': {'der', 'das', 'und', 'nicht', 'ist', 'ich', 'wir', 'mit', 'auf', 'ein', 'eine', 'zu', 'dem', 'auch',
-           'aber', 'wie', 'sind', 'wenn', 'oder', 'sehr', 'noch', 'nur', 'mein', 'dein', 'jetzt', 'immer', 'kein'},
+           'aber', 'wie', 'sind', 'wenn', 'oder', 'sehr', 'noch', 'nur', 'mein', 'dein', 'jetzt', 'immer', 'kein',
+           'über', 'für', 'du'},
     'es': {'el', 'los', 'las', 'un', 'una', 'por', 'con', 'para', 'pero', 'como', 'más', 'mi', 'está', 'esto',
-           'cuando', 'muy', 'porque', 'todo', 'nada', 'aquí', 'también', 'siempre'},
-    'fr': {'le', 'les', 'des', 'qui', 'pas', 'une', 'pour', 'avec', 'dans', 'sur', 'est', 'et', 'je', 'nous',
-           'vous', 'mais', 'plus', 'tout', 'comme', 'sont', 'cette', 'être', 'toujours'},
-    'nl': {'het', 'een', 'van', 'dat', 'niet', 'ik', 'je', 'we', 'met', 'op', 'voor', 'maar', 'ook', 'wat',
+           'cuando', 'muy', 'porque', 'todo', 'aquí', 'también', 'siempre'},
+    'fr': {'le', 'les', 'qui', 'pas', 'une', 'pour', 'avec', 'dans', 'sur', 'est', 'et', 'je', 'nous',
+           'vous', 'mais', 'tout', 'comme', 'sont', 'cette', 'être', 'toujours'},
+    'nl': {'het', 'een', 'dat', 'niet', 'ik', 'je', 'we', 'met', 'voor', 'maar', 'ook', 'wat',
            'zijn', 'hij', 'zij', 'dit', 'nog', 'wel', 'geen', 'naar', 'altijd'},
-    'pt': {'os', 'as', 'em', 'um', 'uma', 'por', 'com', 'para', 'mas', 'como', 'mais', 'meu', 'não', 'você',
+    'pt': {'os', 'em', 'um', 'uma', 'por', 'com', 'para', 'mas', 'como', 'mais', 'meu', 'não', 'você',
            'isso', 'quando', 'muito', 'também', 'aqui', 'sempre'},
     'it': {'il', 'lo', 'gli', 'che', 'non', 'una', 'per', 'con', 'su', 'è', 'sono', 'mio', 'tuo', 'come',
            'questo', 'quando', 'molto', 'anche', 'qui', 'perché', 'sempre'},
-    'da': {'og', 'ikke', 'jeg', 'hvad', 'meget', 'også', 'fordi', 'altid', 'sammen'},
-    'sv': {'och', 'inte', 'är', 'jag', 'vad', 'mycket', 'också', 'därför', 'alltid', 'tillsammans'},
-    'no': {'og', 'ikke', 'jeg', 'hva', 'veldig', 'også', 'fordi', 'alltid', 'sammen'},
+    'da': {'og', 'ikke', 'jeg', 'hvad', 'meget', 'også', 'fordi', 'altid', 'sammen', 'du'},
+    'sv': {'och', 'inte', 'är', 'jag', 'vad', 'mycket', 'också', 'därför', 'alltid', 'tillsammans', 'du'},
+    'no': {'og', 'ikke', 'jeg', 'hva', 'veldig', 'også', 'fordi', 'alltid', 'sammen', 'du'},
 }
 
 
 def detect_language(text: str) -> str:
     """Best-effort language of a short caption, for memes whose source did not say.
 
-    Only words that belong to a single language count, and only a clear winner is
-    returned: a tie or a single hit leaves it unknown rather than guessing wrong.
+    A language wins only with a clear lead in words that belong to it alone, backed by
+    at least two distinct words of that language (shared ones count as support): one
+    word such as "das" next to an English one is not enough, and an unknown language
+    hides nothing by mistake.
     """
-    words = re.findall(r"[a-zà-ÿ']+", (text or '').lower())
+    words = set(re.findall(r"[a-zà-ÿ']+", (text or '').lower()))
     if len(words) < 2:
         return ''
-    scores: dict[str, int] = {}
+    unique: dict[str, int] = {}
+    support: dict[str, int] = {}
     for word in words:
         owners = [lang for lang, common in _LANGUAGE_WORDS.items() if word in common]
+        for lang in owners:
+            support[lang] = support.get(lang, 0) + 1
         if len(owners) == 1:
-            scores[owners[0]] = scores.get(owners[0], 0) + 1
-    if not scores:
+            unique[owners[0]] = unique.get(owners[0], 0) + 1
+    if not unique:
         return ''
-    best = max(scores.values())
-    winners = [lang for lang, n in scores.items() if n == best]
-    return winners[0] if len(winners) == 1 else ''
+    best = max(unique.values())
+    winners = [lang for lang, n in unique.items() if n == best]
+    if len(winners) != 1 or support[winners[0]] < 2:
+        return ''
+    return winners[0]
+
+
+# Bump when detect_language changes, so earlier guesses are checked again.
+_LANGUAGE_PASS = 'watchcraft_meme_language_pass_v2'
 
 
 def backfill_languages(s: Session, limit: int = 200) -> int:
-    """Fill in the language of memes collected before detection existed."""
+    """Re-detect the language of memes whose source did not give one, a bounded slice per call.
+
+    A cursor walks every example once per detector version, so captions that stay
+    undetectable cannot keep the same first rows selected forever, and guesses made by
+    an older, looser detector get corrected.
+    """
+    after = int(get_kv(_LANGUAGE_PASS, {}, s=s).get('after') or 0)
     rows = s.exec(select(MemeExample, ContentItem).join(ContentItem, ContentItem.id == MemeExample.item_id)
-                  .where(MemeExample.language == '').limit(limit)).all()
-    filled = 0
+                  .where(MemeExample.item_id > after).order_by(MemeExample.item_id).limit(limit)).all()
+    changed = 0
     for ex, item in rows:
+        if str((item.meta or {}).get('language', '')):
+            continue
         lang = detect_language(f'{item.title or ""} {item.summary or ""}')
-        if lang:
+        if lang != ex.language:
             ex.language = lang
             s.add(ex)
-            filled += 1
-    return filled
+            changed += 1
+    if rows:
+        save_setting(_LANGUAGE_PASS, {'after': rows[-1][0].item_id}, s=s)  # commits with the rows
+    return changed
 
 
 def analyze_item(s: Session, item: ContentItem) -> MemeExample | None:

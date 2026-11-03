@@ -3,7 +3,7 @@ profile-specific (discoveries, state, collections, topics, alerts) is a relation
 import time
 from typing import Optional
 
-from sqlalchemy import JSON, Column, LargeBinary, Text, UniqueConstraint
+from sqlalchemy import JSON, Column, Index, LargeBinary, Text, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -416,3 +416,80 @@ class ItemVector(SQLModel, table=True):
     # costs microseconds where json.loads cost 0.22 ms. `dim` is the length check.
     vector: bytes = Field(default=b'', sa_column=Column(LargeBinary, default=b''))
     created_at: float = Field(default_factory=time.time)
+
+
+# ---------- Master curator: per-profile verdicts, stories, daily editions and learned taste
+
+class ItemVerdict(SQLModel, table=True):
+    """The master curator's final word on one item for one profile. Scouts find; this decides what is shown."""
+    __table_args__ = (Index('ix_itemverdict_feed', 'profile_id', 'tier', 'final'),)
+    profile_id: int = Field(primary_key=True)
+    item_id: int = Field(primary_key=True, index=True)
+    quality: float = 0       # 0–100: is it any good, regardless of taste
+    relevance: float = 0     # 0–100: does it match this profile
+    final: float = 0
+    tier: str = 'keep'  # feature | keep | set_aside | reject
+    reasons: list = J()      # short tags, e.g. ["stale", "duplicate", "liked source"]
+    judged_by: str = 'rules'  # rules | llm
+    pass_version: int = 0
+    overruled: str = ''      # '' | promoted | demoted: the user's call, which later passes keep
+    judged_at: float = Field(default_factory=time.time)
+
+
+class Story(SQLModel, table=True):
+    """Items about the same thing (a news event, a meme format, a topic thread), folded into one entry.
+    Shared across profiles like ContentItem; what each profile sees comes from its verdicts."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    kind: str = Field(default='news', index=True)  # news | meme_format | topic
+    title: str = ''
+    summary: str = T()
+    lead_item_id: int | None = None
+    first_seen: float = Field(default_factory=time.time)
+    last_seen: float = Field(default_factory=time.time, index=True)
+    heat: float = 0
+
+
+class StoryItem(SQLModel, table=True):
+    """An item belongs to at most one story."""
+    item_id: int = Field(primary_key=True)
+    story_id: int = Field(index=True)
+    added_at: float = Field(default_factory=time.time)
+
+
+class Edition(SQLModel, table=True):
+    """One profile's calm daily overview: ordered sections of featured items and stories."""
+    __table_args__ = (UniqueConstraint('profile_id', 'day'),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    profile_id: int = Field(index=True)
+    day: str = Field(index=True)  # YYYY-MM-DD in the profile's household timezone
+    intro: str = T()
+    sections: list = J()     # [{"key": "stories", "title": ..., "story_ids": [...], "item_ids": [...]}]
+    shown_item_ids: list = J()  # what the reader has already seen today; later passes never reshuffle these
+    source_run_ids: list = J()
+    built_at: float = Field(default_factory=time.time)
+    updated_at: float = Field(default_factory=time.time)
+
+
+class HubLesson(SQLModel, table=True):
+    """A plain-language taste rule learned from what a profile keeps, dismisses or overrules."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    profile_id: int = Field(index=True)
+    text: str = T()
+    scope: str = ''          # '' = all hub items, or a type such as meme / news / article
+    polarity: int = 1        # 1 more like this, -1 less like this
+    weight: float = 1.0
+    evidence: int = 0
+    active: bool = True
+    user_edited: bool = False  # the user wrote or changed it; consolidation must not rewrite it
+    source_item_ids: list = J()
+    last_evidence_at: float = Field(default_factory=time.time)  # decay runs from here, not from edits
+    created_at: float = Field(default_factory=time.time)
+    updated_at: float = Field(default_factory=time.time)
+
+
+class HubPreferenceCore(SQLModel, table=True):
+    """The consolidated taste summary the curator reads, rebuilt nightly from active lessons."""
+    profile_id: int = Field(primary_key=True)
+    text: str = T()
+    sources: dict = J({})
+    built_at: float = Field(default_factory=time.time)

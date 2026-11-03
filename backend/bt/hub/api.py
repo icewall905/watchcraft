@@ -19,7 +19,7 @@ from ..db import get_settings, save_setting, session
 from ..models import AgentEvent, Download, Profile
 from . import activity, ai, engine, memes, polling, repair, scout, slots, watchers
 from .models import (Alert, Briefing, BriefingIssue, CaptureJob, CapturedAsset, CapturedPage, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
-                     CuratorRun, CuratorSource, ItemState, MemeExample, MemeFormat, MemeTrend, MemeTrendState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, ScoutReportConfig, ScoutReportIssue, SitemapEntry, Source, SourceCheck, Topic, TopicItem, WatcherRevision)
+                     CuratorRun, CuratorSource, Edition, HubLesson, HubPreferenceCore, ItemState, ItemVerdict, MemeExample, MemeFormat, MemeTrend, MemeTrendState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, ScoutReportConfig, ScoutReportIssue, SitemapEntry, Source, SourceCheck, Topic, TopicItem, WatcherRevision)
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
 from .templates import TEMPLATES
 
@@ -2311,5 +2311,6 @@ def delete_profile_data(s: Session, pid: int) -> None:
     s.exec(delete(TopicItem).where(TopicItem.topic_id.in_(tids or [0])))
     s.exec(delete(AgentEvent).where(AgentEvent.kind.in_(['source_scout', activity.KIND]), AgentEvent.profile_id == pid))
     s.exec(delete(ScoutReportConfig).where(ScoutReportConfig.profile_id == pid))
-    for model in (CaptureJob, CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, PageRevision, SourceCheck, SitemapEntry, WatcherRevision, Source, Curator, ScoutRun, ScoutPlan, ScoutReportIssue, MemeTrendState):
+    for model in (CaptureJob, CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, PageRevision, SourceCheck, SitemapEntry, WatcherRevision, Source, Curator, ScoutRun, ScoutPlan, ScoutReportIssue, MemeTrendState,
+                  ItemVerdict, Edition, HubLesson, HubPreferenceCore):
         s.exec(delete(model).where(model.profile_id == pid))
