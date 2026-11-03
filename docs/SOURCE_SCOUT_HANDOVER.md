@@ -1,5 +1,13 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — local news archives (`d82a31c`, 2026-11-03)
+
+- News story pages show archived text, AI summaries and uncropped locally stored images; the image opens at full size. Source titles lead to local archive details. Capture prefers fuller structured article text, rejects blank summaries, retains full social text, saves original social images, and follows Lemmy news article links while preserving post text and prior archives on failed retries.
+- Verification: 793 backend tests passed, six skipped; final focused archive suite 69 passed; frontend check/build passed (three existing CSS warnings), six news/Hub browser checks plus two isolated renders of the actual story 57 content at desktop/phone widths with no overflow. Independent review approved.
+- Backup `/root/compose/watchcraft-backups/20261103-archive`; rollback image `watchcraft:rollback-20261103-archive`. Isolated restored copy started twice with network disabled, integrity/profile/PIN checksums and content counts preserved; only isolated scheduler audit rows were added.
+- Deployed `d82a31c`; API, worker and downloader run image `sha256:a26cac4f83b820d9c697564ea31f691fd1601d118e09bd0fcf24a0d14e1aecb6`, healthy with zero restarts. Local/public health and affected routes 200; new reader bundle present, production integrity/profile/PIN checksum and configuration unchanged. Story 57 retains 3,147 text characters, AI summary and an 80,848-byte WebP screenshot decoded at 972×717. Queued 125 existing captures for original-image upgrades; completion is background work.
+- Actual public-story content was rendered on an isolated test server. The live browser session only had unprotected profiles with Hub disabled; real adult-profile UI acceptance remains in the vault.
+
 ## Deployment record — master curator scout card (`41ded70`, 2026-11-03)
 
 - The Home scouts shelf linked the master curator (no curator id) to `/curators/null`, which failed with an integer
