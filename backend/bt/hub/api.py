@@ -20,6 +20,7 @@ from ..models import AgentEvent, Download, Profile
 from . import activity, ai, engine, memes, polling, repair, scout, slots, watchers
 from .models import (Alert, Briefing, BriefingIssue, CaptureJob, CapturedAsset, CapturedPage, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
                      CuratorRun, CuratorSource, Edition, HubLesson, HubPreferenceCore, ItemState, ItemVerdict, MemeExample, MemeFormat, MemeTrend, MemeTrendState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, ScoutReportConfig, ScoutReportIssue, SitemapEntry, Source, SourceCheck, Topic, TopicItem, WatcherRevision)
+from .master.cluster import same_story, title_key
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
 from .templates import TEMPLATES
 
@@ -583,18 +584,6 @@ def import_url(body: UrlIn, pid: int = Depends(profile_id)):
         return serialize(s, pid, [it])[0]
 
 
-_STORY_FILLER = ai.STOP | {
-    'breaking', 'update', 'updates', 'latest', 'live', 'report', 'reports',
-    'news', 'says', 'say', 'today', 'year', 'years'
-}
-
-
-def _title_key(title: str) -> set[str]:
-    """Return meaningful title terms for conservative story clustering."""
-    words = re.findall(r'[a-z0-9]{3,}', title.lower())
-    return {w for w in words if w not in _STORY_FILLER and not w.isdigit()}
-
-
 @router.get('/news')
 def news(days: int = 1, topic: int | None = None, pid: int = Depends(profile_id)):
     """Recent articles grouped into stories by title overlap. Uses publication time, not discovery time."""
@@ -617,19 +606,12 @@ def news(days: int = 1, topic: int | None = None, pid: int = Depends(profile_id)
         rows = [i for i in rows if keep(i)]
         groups: list[dict] = []
         for i in rows:
-            key = _title_key(i.title)
+            key = title_key(i.title)
             for g in groups:
                 # Compare against each headline in the group. Comparing to a
                 # growing union lets unrelated stories join transitively via
                 # one common word.
-                match = False
-                for prior in g['_keys']:
-                    shared = len(key & prior)
-                    denominator = max(1, min(len(key), len(prior)))
-                    if shared >= 2 and shared / denominator >= (0.75 if denominator <= 2 else 0.6):
-                        match = True
-                        break
-                if match:
+                if any(same_story(key, prior) for prior in g['_keys']):
                     g['_items'].append(i); g['_keys'].append(key); break
             else:
                 groups.append({'_keys': [key], '_items': [i]})

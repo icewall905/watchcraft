@@ -443,7 +443,8 @@ def sweep(throttled=True) -> dict:
     """Scheduled entry point: analyze new examples and recount trends; bounded work per tick."""
     if throttled and time.time() - float(get_kv('watchcraft_meme_sweep', {}).get('at') or 0) < 1800:
         return {'skipped': True}
-    with session() as s:
+    from .master import LOCK
+    with LOCK, session() as s:
         analyzed = analyze_pending(s)
         backfill_languages(s)
         transitions = refresh_trends(s)
