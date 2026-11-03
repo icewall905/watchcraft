@@ -35,6 +35,28 @@ def clean(text, limit=500) -> str:
     return re.sub(r'\s+', ' ', str(text or '')).strip()[:limit]
 
 
+_LINK_START = re.compile(r'(https?://|www\.)', re.I)
+_LINK_STUB = re.compile(r'(https?://)?(www\.)?', re.I)  # a link split before its host
+_LINK_PIECE = re.compile(r'[\w.-]*\.[a-z]{2,}(/\S*)?', re.I)
+
+
+def drop_links(text: str) -> str:
+    """A caption without its links. A stored caption can hold a link split into
+    "https://" and "host/path" words; a dangling "Source:" goes with the link."""
+    out, stub, dropped = [], False, False
+    for word in str(text or '').split():
+        if _LINK_START.match(word):
+            stub, dropped = bool(_LINK_STUB.fullmatch(word)), True
+            continue
+        if stub and _LINK_PIECE.fullmatch(word):
+            stub = False
+            continue
+        stub = False
+        out.append(word)
+    caption = ' '.join(out)
+    return re.sub(r'\s*\b(source|via)\s*:?\s*$', '', caption, flags=re.I).strip() if dropped else caption
+
+
 def strip_tags(html: str, limit=1000) -> str:
     """Feed summaries often contain HTML; keep text only."""
     p = _Text()

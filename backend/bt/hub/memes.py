@@ -19,6 +19,7 @@ from PIL import Image
 
 from ..access import hub_allowed
 from ..db import get_kv, save_setting, session
+from .extract import drop_links
 from .models import (CapturedAsset, ContentItem, Curator, CuratorDiscovery, CuratorSource, ItemState, MemeExample,
                      MemeFormat, MemeTrend, MemeTrendState, Source)
 
@@ -169,6 +170,28 @@ def backfill_languages(s: Session, limit: int = 200) -> int:
             changed += 1
     if rows:
         save_setting(_LANGUAGE_PASS, {'after': rows[-1][0].item_id}, s=s)  # commits with the rows
+    return changed
+
+
+_TITLE_PASS = 'watchcraft_meme_title_pass_v1'
+
+
+def backfill_titles(s: Session, limit: int = 500) -> int:
+    """Take links out of meme titles stored before captions were cleaned, a bounded slice per call."""
+    from .engine import index  # engine imports this module
+    after = int(get_kv(_TITLE_PASS, {}, s=s).get('after') or 0)
+    rows = s.exec(select(ContentItem).where(ContentItem.type == 'meme', ContentItem.id > after)
+                  .order_by(ContentItem.id).limit(limit)).all()
+    changed = 0
+    for item in rows:
+        title = drop_links(item.title or '')
+        if title and title != item.title:
+            item.title = title
+            s.add(item)
+            index(s, item)
+            changed += 1
+    if rows:
+        save_setting(_TITLE_PASS, {'after': rows[-1].id}, s=s)  # commits with the rows
     return changed
 
 
@@ -447,6 +470,7 @@ def sweep(throttled=True) -> dict:
     with LOCK, session() as s:
         analyzed = analyze_pending(s)
         backfill_languages(s)
+        backfill_titles(s)
         transitions = refresh_trends(s)
         formats = s.exec(select(func.count()).select_from(MemeFormat)).one()
     save_setting('watchcraft_meme_sweep', {'at': time.time(), 'analyzed': analyzed})

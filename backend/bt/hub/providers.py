@@ -19,7 +19,7 @@ import httpx
 from .. import curation
 from ..db import get_settings
 from . import watchers
-from .extract import CVE_RE, classify, clean, extract_page, safe_image, strip_tags, ts
+from .extract import CVE_RE, classify, clean, drop_links, extract_page, safe_image, strip_tags, ts
 
 TYPES = [
     ('video', 'Videos', '▶'), ('news', 'News', '📰'), ('article', 'Articles', '📄'), ('web', 'Web resources', '🌐'),
@@ -195,6 +195,9 @@ def _mastodon_tags(q: str) -> list[str]:
     return out[:3]
 
 
+_PLAIN_LINK = re.compile(r'<a\b(?![^>]*class="[^"]*(?:mention|hashtag))[^>]*>.*?</a>', re.I | re.S)
+
+
 def _mastodon_status(s: dict, instance: str) -> dict | None:
     """One public status → item dict. Replies and boosts are skipped; engagement counts are stored as observed."""
     if not isinstance(s, dict) or s.get('visibility') != 'public' or s.get('in_reply_to_id') or s.get('reblog'):
@@ -216,7 +219,10 @@ def _mastodon_status(s: dict, instance: str) -> dict | None:
     preview = safe_image(first.get('preview_url'))
     if first.get('type') == 'image':
         preview = preview or safe_image(first.get('url'))
-    title = clean((text.split('\n')[0] if text else (first.get('description') or '')) or f'{instance} post', 500)
+    # Mastodon splits a link into invisible and ellipsis spans, which come out as separate words:
+    # drop plain links (not mentions or hashtags) from the markup before taking the caption.
+    caption = strip_tags(_PLAIN_LINK.sub(' https://link ', s.get('content') or ''))
+    title = clean(drop_links(caption.split('\n')[0]) if caption else '', 500) or clean(first.get('description'), 500) or f'{instance} post'
     community = f'#{tags[0]}' if tags else str(account.get('acct') or account.get('username') or instance)
     return {
         'url': url, 'type': 'meme', 'provider': 'mastodon', 'publisher': urlsplit(url).hostname or instance,
@@ -387,8 +393,17 @@ def github_search(_url: str, q: str) -> list[dict]:
             for r in (data.get('items') or [])[:15] if r.get('html_url')]
 
 
+# A search for the words "latest news" finds the few stories titled that way, often days old.
+# A general news query means "what is on Hacker News now": the front page.
+GENERIC_NEWS = {'', 'news', 'latest', 'latest news', 'top news', 'top stories', 'breaking news', 'headlines', 'current events'}
+
+
 def hackernews(_url: str, q: str) -> list[dict]:
-    data = json.loads(curation.fetch('https://hn.algolia.com/api/v1/search_by_date?' + urlencode({'query': q, 'tags': 'story', 'hitsPerPage': 20})))
+    if q.strip().lower() in GENERIC_NEWS:
+        url = 'https://hn.algolia.com/api/v1/search?' + urlencode({'tags': 'front_page', 'hitsPerPage': 30})
+    else:
+        url = 'https://hn.algolia.com/api/v1/search_by_date?' + urlencode({'query': q, 'tags': 'story', 'hitsPerPage': 20})
+    data = json.loads(curation.fetch(url))
     out = []
     for h in data.get('hits') or []:
         discussion = f"https://news.ycombinator.com/item?id={h.get('objectID')}"

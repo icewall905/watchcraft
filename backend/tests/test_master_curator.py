@@ -161,10 +161,15 @@ def test_tiers_respect_daily_limits_sources_and_stories():
 def test_front_pages_and_hashtag_titles_stay_off_the_front_page():
     with session() as s:
         r = rules.ProfileRules()
-        front = [rules.check(item(s, type='web', title=t), None, r, NOW) for t in (
-            'Latest news from around the world | The Guardian',
-            'Latest News: Breaking Headlines and Video on Today\'s Top Stories | NBC News',
-            'The Local Denmark - News and practical guides in English')]
+        def web(title, url):
+            it = item(s, type='web', title=title)
+            it.url = url
+            return it
+        front = [rules.check(web(t, u), None, r, NOW) for t, u in (
+            ('Latest news from around the world | The Guardian', 'https://www.theguardian.com/world'),
+            ('Latest News: Breaking Headlines and Video on Today\'s Top Stories | NBC News',
+             'https://www.nbcnews.com/latest-stories'),
+            ('The Local Denmark - News and practical guides in English', 'https://www.thelocal.dk/'))]
         site = item(s, type='web', title='Home Assistant')
         site.url = 'https://www.home-assistant.io/'
         launch = item(s, title='Show HN: an open-source dashboard')
@@ -181,6 +186,16 @@ def test_front_pages_and_hashtag_titles_stay_off_the_front_page():
         nourl.url = ''
         wp = item(s, type='web', title='A post about bridges')
         wp.url = 'https://blog.example/?p=123'
+        article = item(s, type='web', title='Latest Windows update breaks printers')
+        article.url = 'https://example.com/tech/latest-windows-update-breaks-printers'
+        dated = item(s, type='web', title='Latest news on the bridge vote | City Paper')
+        dated.url = 'https://paper.example/2026/11/03/bridge-vote'
+        section = item(s, type='web', title='Latest News from Denmark')
+        section.url = 'https://www.thelocal.dk/category/denmark-news'
+        short = item(s, type='web', title='Latest Windows update breaks printers')
+        short.url = 'https://example.com/tech/latest-windows-update'
+        assert not any(rules.check(x, None, r, NOW).set_aside for x in (article, dated, short))
+        assert rules.check(section, None, r, NOW).set_aside
         ranked = meme(s, title='#1 vs #2 vs #3 vs #4 ranking')
         assert not any(rules.check(x, None, r, NOW).set_aside for x in stories + [nourl, wp])
         assert 'hashtag spam' not in rules.check(ranked, None, r, NOW).reasons

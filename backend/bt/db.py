@@ -92,7 +92,8 @@ def _deep_merge(base: dict, over: dict) -> dict:
 def get_settings(s: Session | None = None) -> dict:
     """All global settings merged over defaults."""
     def _load(sess):
-        rows = {r.key: r.value for r in sess.exec(select(Setting)).all()}
+        # Only the known keys: the table also caches thousands of per-video rows.
+        rows = {r.key: r.value for r in sess.exec(select(Setting).where(Setting.key.in_(list(DEFAULT_SETTINGS)))).all()}
         return {k: _deep_merge(v, rows.get(k, {})) if isinstance(v, dict) else rows.get(k, v)
                 for k, v in DEFAULT_SETTINGS.items()}
     if s is not None:

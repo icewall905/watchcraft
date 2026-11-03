@@ -78,12 +78,18 @@ def engagement(meta: dict) -> float | None:
 
 def _homepage(item: ContentItem) -> bool:
     """A web result that is a site's front page or section index. News and articles are
-    stories by construction, so only web results are judged by their title."""
+    stories by construction, so only web results are judged this way."""
     if item.type != 'web':
         return False
     u = urlsplit(item.url or '')
-    bare = bool(u.netloc) and not u.path.strip('/') and not u.query and not u.fragment
-    return bare or bool(HOMEPAGE_TITLE.search(item.title or ''))
+    path = u.path.strip('/')
+    if u.netloc and not path and not u.query and not u.fragment:
+        return True
+    # A front-page title only counts on a section address (/world, /category/denmark-news):
+    # an article lives at a dated or long slug even when its headline starts "Latest".
+    parts = path.split('/')
+    section = len(parts) <= 2 and not any(ch.isdigit() for ch in path) and all(p.count('-') < 2 for p in parts)
+    return section and bool(HOMEPAGE_TITLE.search(item.title or ''))
 
 
 def _placeholder_title(item: ContentItem) -> bool:
