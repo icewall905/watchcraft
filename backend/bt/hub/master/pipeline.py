@@ -76,7 +76,7 @@ def _run(s: Session, pid: int, now: float) -> dict:
     for c in cands:
         v = prior.get(c.item.id) or ItemVerdict(profile_id=pid, item_id=c.item.id)
         llm = v.judged_by == 'llm' and v.pass_version == PASS_VERSION
-        v.quality, v.relevance, v.final, v.tier = c.quality, c.relevance, c.final, c.tier
+        v.quality, v.relevance, v.final, v.tier, v.forced = c.quality, c.relevance, c.final, c.tier, c.forced
         v.reasons = list(dict.fromkeys(c.reasons))[:8]
         v.judged_by, v.pass_version, v.judged_at = ('llm' if llm else 'rules'), PASS_VERSION, now
         s.add(v)

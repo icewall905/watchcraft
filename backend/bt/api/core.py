@@ -996,6 +996,14 @@ def write_settings(key: str, value: dict, s: Session = Depends(get_session)):
                 raise ValueError()
         except (ValueError, TypeError, KeyError, AttributeError, ZoneInfoNotFoundError):
             raise HTTPException(400, "Use a valid HH:MM time, time zone, and core budget between 10000 and 100000 estimated tokens")
+    if key == "hub_master":
+        merged = {**cur, **value}
+        try:
+            hour, minute = map(int, merged["time"].split(":"))
+            if not 0 <= hour <= 23 or not 0 <= minute <= 59 or type(merged["enabled"]) is not bool:
+                raise ValueError()
+        except (ValueError, TypeError, KeyError, AttributeError):
+            raise HTTPException(400, "Use a valid HH:MM time and an on/off switch")
     if key == "llm" and value.get("api_key") == "********":
         if value.get("base_url", cur["base_url"]).strip().rstrip("/") != cur["base_url"].strip().rstrip("/"):
             raise HTTPException(400, "Enter the API key for the new server")

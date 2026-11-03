@@ -16,7 +16,7 @@ from ..access import hub_allowed, require_admin, require_hub
 from ..api.core import profile_id
 from ..config import DATA_DIR
 from ..db import get_settings, save_setting, session
-from ..models import AgentEvent, Download, Profile
+from ..models import AgentEvent, Download, Profile, Setting
 from . import activity, ai, engine, memes, polling, repair, scout, slots, watchers
 from .models import (Alert, Briefing, BriefingIssue, CaptureJob, CapturedAsset, CapturedPage, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
                      CuratorRun, CuratorSource, Edition, HubLesson, HubPreferenceCore, ItemState, ItemVerdict, MasterQueue, MemeExample, MemeFormat, MemeTrend, MemeTrendState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, ScoutReportConfig, ScoutReportIssue, SitemapEntry, Source, SourceCheck, Topic, TopicItem, WatcherRevision)
@@ -2296,3 +2296,4 @@ def delete_profile_data(s: Session, pid: int) -> None:
     for model in (CaptureJob, CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, PageRevision, SourceCheck, SitemapEntry, WatcherRevision, Source, Curator, ScoutRun, ScoutPlan, ScoutReportIssue, MemeTrendState,
                   ItemVerdict, Edition, HubLesson, HubPreferenceCore, MasterQueue):
         s.exec(delete(model).where(model.profile_id == pid))
+    s.exec(delete(Setting).where(Setting.key == f'watchcraft_master_nightly:{pid}'))

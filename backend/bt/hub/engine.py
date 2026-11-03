@@ -640,13 +640,27 @@ def dispatch_due() -> None:
         if slots.spawn(f'curator-{c.id}', 'curator', c.id, c.profile_id, c.name, run, c.id):
             free -= 1
     from .master import schedule as master
+    day = master.nightly_day(now)
+    for pid in master.nightly_due(now) if day else []:
+        if free <= 0:
+            return
+        claimed = master.claim_now(pid, now)
+        if claimed is None:
+            continue
+        if slots.spawn(f'master-{pid}', 'master', None, pid, 'Master curator', master.night_pass, pid, claimed, day):
+            free -= 1
+        else:
+            master.release(pid)
     for pid in master.due(now):
         if free <= 0:
             return
         claimed = master.claim(pid, now)
-        if claimed is not None and slots.spawn(f'master-{pid}', 'master', None, pid, 'Master curator',
-                                               master.light_pass, pid, claimed):
+        if claimed is None:
+            continue
+        if slots.spawn(f'master-{pid}', 'master', None, pid, 'Master curator', master.light_pass, pid, claimed):
             free -= 1
+        else:
+            master.release(pid)
     for b in briefs:
         if free <= 0:
             return

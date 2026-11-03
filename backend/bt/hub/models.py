@@ -433,6 +433,7 @@ class ItemVerdict(SQLModel, table=True):
     judged_by: str = 'rules'  # rules | llm
     pass_version: int = 0
     overruled: str = ''      # '' | promoted | demoted: the user's call, which later passes keep
+    forced: bool = False     # tier fixed by a rule or the user, not by score: a model has nothing to add
     judged_at: float = Field(default_factory=time.time)
 
 
@@ -463,6 +464,7 @@ class Edition(SQLModel, table=True):
     profile_id: int = Field(index=True)
     day: str = Field(index=True)  # YYYY-MM-DD in the profile's household timezone
     intro: str = T()
+    intro_refs: list = J()   # intro citation [n] = intro_refs[n-1]
     sections: list = J()     # [{"key": "stories", "title": ..., "story_ids": [...], "item_ids": [...]}]
     shown_item_ids: list = J()  # what the reader has already seen today; later passes never reshuffle these
     source_run_ids: list = J()

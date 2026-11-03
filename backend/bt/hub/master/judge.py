@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 
 BATCH = 15
 LIGHT_LIMIT = 30          # items a post-run pass may send to the model
+NIGHT_LIMIT = 150         # the nightly pass reads everything recent that a model has not
 FRESH = 48 * 3600.0       # only recent items are worth a model's time
 BAND = (score.KEEP_MIN - 10, score.FEATURE_MIN + 20)  # finals where rules alone are unsure
 VIDEO_THINKING = {'planning', 'judging', 'learning', 'transcript', 'comments'}
@@ -72,17 +73,15 @@ def reader(s: Session, pid: int) -> str:
     return '\n'.join(parts)[:3000] or 'No stated interests yet: judge general quality.'
 
 
-def candidates(s: Session, pid: int, now: float, limit: int) -> list[tuple[ItemVerdict, ContentItem]]:
-    """Unsure, unforced, recent verdicts the model has not read yet, most promising first."""
-    rows = s.exec(select(ItemVerdict, ContentItem).join(ContentItem, ContentItem.id == ItemVerdict.item_id)
-                  .where(ItemVerdict.profile_id == pid, ItemVerdict.judged_by == 'rules', ItemVerdict.overruled == '',
-                         ItemVerdict.tier.in_(['feature', 'keep', 'set_aside']),
-                         ItemVerdict.final >= BAND[0], ItemVerdict.final <= BAND[1],
-                         ContentItem.first_seen >= now - FRESH)
-                  .order_by(ItemVerdict.final.desc()).limit(limit * 3)).all()
-    # Rules that set an item aside for a fixed reason are not a question of taste.
-    fixed = {'stale', 'image not captured'}
-    return [(v, i) for v, i in rows if not fixed & set(v.reasons)][:limit]
+def candidates(s: Session, pid: int, now: float, limit: int, band: bool = True) -> list[tuple[ItemVerdict, ContentItem]]:
+    """Unforced, recent verdicts the model has not read yet, most promising first. The post-run
+    pass asks only about the unsure band; the nightly pass reads everything left."""
+    cond = [ItemVerdict.profile_id == pid, ItemVerdict.judged_by == 'rules', ItemVerdict.forced == False,  # noqa: E712
+            ContentItem.first_seen >= now - FRESH]
+    if band:
+        cond += [ItemVerdict.final >= BAND[0], ItemVerdict.final <= BAND[1]]
+    return list(s.exec(select(ItemVerdict, ContentItem).join(ContentItem, ContentItem.id == ItemVerdict.item_id)
+                       .where(*cond).order_by(ItemVerdict.final.desc()).limit(limit)).all())
 
 
 def _row(item: ContentItem) -> dict:
@@ -107,14 +106,14 @@ def _score(value) -> int | None:
         return None
 
 
-def judge(s: Session, pid: int, now: float | None = None, limit: int = LIGHT_LIMIT) -> dict:
+def judge(s: Session, pid: int, now: float | None = None, limit: int = LIGHT_LIMIT, band: bool = True) -> dict:
     """Send the uncertain band to the model in batches; stop early if the GPU is wanted. Commits per batch."""
     now = now or time.time()
     out = {'judged': 0, 'skipped': 0, 'stopped': ''}
     if not ai.enabled():
         out['stopped'] = 'no model'
         return out
-    todo = candidates(s, pid, now, limit)
+    todo = candidates(s, pid, now, limit, band)
     if not todo:
         return out
     interests = reader(s, pid)

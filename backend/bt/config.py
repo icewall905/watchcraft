@@ -93,6 +93,9 @@ DEFAULT_SETTINGS: dict = {
     "team": {"max_parallel": 1},
     "appearance": {"theme": "projector"},
     "memory": {"enabled": True, "time": "03:00", "timezone": "Europe/Copenhagen", "max_core_tokens": 15000},
+    # The hub's master curator re-reads the day's finds and builds each profile's morning edition.
+    # Uses the memory time zone; runs after the video memory pass so the two do not share the GPU.
+    "hub_master": {"enabled": True, "time": "04:30"},
     "player": {
         "max_height": 1080,
         "prefer_codec": "avc1",  # avc1 | vp9 | av01
