@@ -172,3 +172,56 @@ def test_a_saved_worker_key_is_not_sent_to_a_different_server(client):
     got = client.post('/api/agent/llm-test', json={'role': 'worker', 'base_url': 'http://other:9000/v1',
                                                    'api_key': '********'}, headers=H)
     assert got.status_code == 400
+
+
+def test_a_worker_on_its_own_server_uses_the_model_that_server_serves(monkeypatch):
+    _llm(model='judge-only-model', base_url='http://judge:8080/v1', api_key='judge-key',
+         worker_model='', worker_base_url='http://worker:8080/v1', worker_api_key='')
+    asked = []
+
+    class Models:
+        def raise_for_status(self): pass
+        def json(self): return {'data': [{'id': 'served-model'}, {'id': 'alias'}]}
+
+    llm._served.clear()
+    monkeypatch.setattr(llm.httpx, 'get', lambda url, **kw: asked.append(url) or Models())
+    assert llm._cfg('worker')['model'] == 'served-model'
+    assert llm._cfg('worker')['model'] == 'served-model' and asked == ['http://worker:8080/v1/models']  # cached
+    assert llm._cfg('judge')['model'] == 'judge-only-model'
+    _llm(worker_base_url='http://judge:8080/v1')
+    assert llm._cfg('worker')['model'] == 'judge-only-model'  # same server: the judge's model is served there
+
+    def down(url, **kw):
+        raise llm.httpx.ConnectError('down')
+    llm._served.clear()
+    monkeypatch.setattr(llm.httpx, 'get', down)
+    assert llm.served_model('http://worker:8080/v1') == ''
+    llm._served['http://worker:8080/v1'] = (llm.time.monotonic() - 31, '')
+    monkeypatch.setattr(llm.httpx, 'get', lambda url, **kw: Models())
+    assert llm.served_model('http://worker:8080/v1') == 'served-model'  # a failure is retried soon
+    llm._served.clear()
+
+
+def test_the_worker_test_names_the_model_the_server_rejected(client, monkeypatch):
+    import httpx
+    from bt.api import agent
+    _llm(model='judge-only-model', base_url='http://judge:8080/v1', worker_model='', worker_base_url='http://worker:8080/v1')
+    sent = []
+
+    async def models(_c, _base, _headers):
+        return ['served-model']
+
+    async def post(self, url, headers=None, json=None):
+        sent.append(json['model'])
+        if json['model'] != 'served-model':
+            return httpx.Response(404, json={'error': {'message': f"The model `{json['model']}` does not exist."}},
+                                  request=httpx.Request('POST', url))
+        return httpx.Response(200, json={'choices': [{'message': {'content': 'pong'}}]}, request=httpx.Request('POST', url))
+
+    monkeypatch.setattr(agent, '_list_llm_models', models)
+    monkeypatch.setattr(httpx.AsyncClient, 'post', post)
+    ok = client.post('/api/agent/llm-test', headers=H, json={'role': 'worker', 'base_url': 'http://worker:8080/v1'}).json()
+    assert ok['ok'] and ok['reply'] == 'pong' and sent == ['served-model']
+    bad = client.post('/api/agent/llm-test', headers=H,
+                      json={'role': 'worker', 'base_url': 'http://worker:8080/v1', 'model': 'nope'}).json()
+    assert not bad['ok'] and 'The model `nope` does not exist.' in bad['error']

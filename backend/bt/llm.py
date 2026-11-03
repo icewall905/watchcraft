@@ -115,10 +115,37 @@ def _cfg(role: str = "judge") -> dict:
     from .db import get_settings
     cfg = dict(get_settings()["llm"])
     if role == "worker":
-        cfg["model"] = (cfg.get("worker_model") or "").strip() or cfg["model"]
+        judge_base = cfg["base_url"].strip().rstrip("/")
         cfg["base_url"] = (cfg.get("worker_base_url") or "").strip() or cfg["base_url"]
         cfg["api_key"] = (cfg.get("worker_api_key") or "").strip() or cfg.get("api_key", "")
+        model = (cfg.get("worker_model") or "").strip()
+        if not model and cfg["base_url"].strip().rstrip("/") != judge_base:
+            # A worker on its own server does not serve the judge's model name: use what it serves.
+            model = served_model(cfg["base_url"], cfg["api_key"])
+        cfg["model"] = model or cfg["model"]
     return cfg
+
+
+_served: dict[str, tuple[float, str]] = {}
+
+
+def served_model(base_url: str, api_key: str = "", ttl: float = 600) -> str:
+    """The first model a server lists, cached for a while; '' when it cannot say."""
+    base = base_url.strip().rstrip("/")
+    hit = _served.get(base)
+    # A failed lookup is retried soon: the server may only be restarting.
+    if hit and time.monotonic() - hit[0] < (ttl if hit[1] else 30):
+        return hit[1]
+    model = ""
+    try:
+        r = httpx.get(f"{base}/models", headers={"Authorization": f"Bearer {api_key}"} if api_key else {}, timeout=10)
+        r.raise_for_status()
+        ids = [m["id"] for m in r.json().get("data") or [] if isinstance(m, dict) and isinstance(m.get("id"), str)]
+        model = ids[0] if ids else ""
+    except (httpx.HTTPError, ValueError, AttributeError):
+        pass
+    _served[base] = (time.monotonic(), model)
+    return model
 
 
 def _with_images(messages: list[dict], images: list[str] | None) -> list[dict]:

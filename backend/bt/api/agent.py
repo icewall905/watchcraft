@@ -277,6 +277,20 @@ async def _embed_test(base: str, headers: dict, model: str) -> dict:
         return {"ok": False, "error": str(e)}
 
 
+def _raise_with_detail(r: httpx.Response) -> None:
+    """Raise with the server's own explanation ("The model X does not exist...") when it gives one."""
+    if r.is_success:
+        return
+    try:
+        err = r.json().get("error")
+        detail = err.get("message") if isinstance(err, dict) else err if isinstance(err, str) else r.json().get("message")
+    except (ValueError, AttributeError):
+        detail = None
+    if detail:
+        raise ValueError(f"{r.status_code}: {str(detail)[:300]}")
+    r.raise_for_status()
+
+
 @router.post("/agent/llm-test", dependencies=[Depends(require_admin)])
 async def llm_test(body: LlmTest):
     cfg = (await run_in_threadpool(get_settings))["llm"]
@@ -287,7 +301,6 @@ async def llm_test(body: LlmTest):
     model = (body.model or "").strip()
     if not model and body.role != "judge":
         model = (cfg.get(f"{body.role}_model") or "").strip()
-    model = model or cfg["model"]
     try:
         async with httpx.AsyncClient(timeout=60) as c:
             # Some compatible servers do not expose a model listing; testing chat
@@ -296,6 +309,11 @@ async def llm_test(body: LlmTest):
                 models = await _list_llm_models(c, base, headers)
             except (httpx.HTTPError, ValueError):
                 models = []
+            # A worker on its own server cannot borrow the judge's model name; like the
+            # runtime, use a model that server lists.
+            if not model and body.role == "worker" and base != cfg["base_url"].strip().rstrip("/") and models:
+                model = models[0]
+            model = model or cfg["model"]
             from ..llm import prepare_chat_body
             payload = {"model": model, "max_tokens": 512,
                        "messages": [{"role": "user", "content": "Reply with just: pong"}]}
@@ -303,12 +321,12 @@ async def llm_test(body: LlmTest):
                 payload["chat_template_kwargs"] = {"enable_thinking": False}
             prepare_chat_body(base, payload)
             r = await c.post(f"{base}/chat/completions", headers=headers, json=payload)
-            r.raise_for_status()
+            _raise_with_detail(r)
             reply = r.json()["choices"][0]["message"].get("content") or ""
             if not reply.strip() and "chat_template_kwargs" not in payload and urlsplit(base).hostname not in {"api.openai.com", "api.anthropic.com"}:
                 payload["chat_template_kwargs"] = {"enable_thinking": False}
                 r = await c.post(f"{base}/chat/completions", headers=headers, json=payload)
-                r.raise_for_status()
+                _raise_with_detail(r)
                 reply = r.json()["choices"][0]["message"].get("content") or ""
         return {"ok": True, "models": models, "reply": reply}
     except Exception as e:
