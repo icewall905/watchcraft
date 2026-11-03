@@ -1,5 +1,27 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — Shorts description hidden until tapped (`98a0ba1`, 2026-11-03)
+
+- The Shorts player drew the description block (feed name, title, channel, score, summary) over every clip. It now
+  starts hidden and toggles on a tap, click, or Enter/Space, and resets to hidden when the feed advances.
+  `visibility: hidden` also stops the block from swallowing taps meant for the video.
+- Release checks: 692 backend tests passed, six skipped; frontend type check clean (three existing CSS warnings) and
+  build ok; 12 Shorts browser checks passed, including a new spec for hidden → shown → hidden → hidden on the next
+  clip, plus the Shorts feed settings, feed guard, TV and phone suites.
+- Backup: `/root/compose/watchcraft-backups/20261102-pre-shorts-meta-98a0ba1`, online and stopped-service databases
+  plus prior source/configuration; rollback image `watchcraft:rollback-20261102-shorts-meta-98a0ba1` retains `7af36bf`.
+- Isolated restore ran `watchcraft:98a0ba1` on `127.0.0.1:6697`: integrity `ok`, every original table count and the
+  profile/PIN checksum identical, started twice, `/`, `/shorts`, `/discover` and `/settings` 200, no tracebacks.
+- Rollout used rsync without `--delete` and preserved `.env` and `compose.host.yaml` (checksums verified before and
+  after). `DEPLOYED_COMMIT=98a0ba1`; API, worker and downloader run image
+  `sha256:913005e4289eccf81ae6e078902e0268ce4596a93ca2bd6a7c20985019d85642`, zero restarts.
+- Post-deploy: local `/api/health` OK and `https://wc.tdgs.org` plus `https://watchcraft.tdgs.org` return 200; `/`,
+  `/shorts`, `/discover`, `/settings`, `/memes` and `/tv` return 200; database integrity `ok`, profiles and PIN
+  checksum unchanged, configuration preserved; the deployed bundle contains the new hint string and the `.meta.show`
+  rule; saved media returned 206 and decoded two seconds.
+- Rollback: retag the retained rollback image as `watchcraft:latest` and run the existing three-file Compose
+  `up -d --no-build --force-recreate --no-deps --wait bt-api bt-worker bt-downloader`; restore the prior marker.
+
 ## Deployment record — durable Seen it saves (`7af36bf`, 2026-11-02)
 
 - Seen it now atomically upserts watched history and dismisses only this profile's candidates in one commit.
