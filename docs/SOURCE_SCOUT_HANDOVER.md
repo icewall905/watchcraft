@@ -1,5 +1,22 @@
 # Source Scout handover — 2026-10-30
 
+## Deployment record — fresh Hacker News, clean meme captions, faster settings (`3d00fb2`, 2026-11-03)
+
+- General news queries ("latest news") read the Hacker News front page instead of a word search that only found
+  days-old stories, so News and Today get current stories again. Links leave Mastodon meme captions; a bounded,
+  versioned sweep pass (`watchcraft_meme_title_pass_v1`) cleans stored titles and their search index. Front-page web
+  results need a section-like address. `get_settings` loads only known keys (the table holds thousands of cached
+  video rows): `/api/hub/today` went from about 1.5 s to 0.1 s on a production copy.
+- Release checks: 774 backend tests passed, six skipped; independent review approved after three rounds. Local
+  Paper/Dusk checks on a sanitized production copy at 375 px phone and 1920×1080 TV mode: no horizontal overflow,
+  Newsreader headings, TV arrow focus moves from the lead to Stories, Workshop opens on a Workshop page.
+- Backup `/root/compose/watchcraft-backups/20261103-pre-feeds-3d00fb2`; rollback image
+  `watchcraft:rollback-20261103-feeds-3d00fb2` retains `f3bbfca`. Isolated restore: integrity, counts and profile/PIN
+  checksum identical, started twice, routes 200, no tracebacks; QA container removed.
+- `DEPLOYED_COMMIT=3d00fb2`; image `sha256:e1dceb154bb73a3bc0da856673c2ee594415294e39e09055af639714910d17ad`, zero
+  restarts. Post-deploy: local and public health 200, routes 200, integrity ok, profiles/PINs and `.env`/
+  `compose.host.yaml` unchanged; live Hacker News front page returned 30 stories, `get_settings` 0.03 s.
+
 ## Deployment record — master curator and calm hub (`f3bbfca`, 2026-11-03)
 
 - Ships `9181a57..f3bbfca`: master curator (rules, meme dedup, stored stories, scoring, tiered quotas, worker-model
