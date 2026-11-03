@@ -52,7 +52,7 @@
 
 	const m = $derived(item?.meta ?? {});
 	const ai = $derived(item && typeof item.enrichment?.summary === 'string' ? (item.enrichment.summary as string) : '');
-	const HANDLED = new Set(['ingredients', 'references', 'releases', 'instructions', 'steps', 'affected', 'materials', 'tools', 'equipment', 'video_id', 'total_time', 'prep_time', 'cook_time', 'yield', 'servings', 'cuisine', 'category', 'diet', 'nutrition', 'difficulty', 'size', 'gauge', 'technique', 'yarn']);
+	const HANDLED = new Set(['post_body', 'ingredients', 'references', 'releases', 'instructions', 'steps', 'affected', 'materials', 'tools', 'equipment', 'video_id', 'total_time', 'prep_time', 'cook_time', 'yield', 'servings', 'cuisine', 'category', 'diet', 'nutrition', 'difficulty', 'size', 'gauge', 'technique', 'yarn']);
 	const structuredFacts = $derived([
 		['Total time', str(m, 'total_time')], ['Prep time', str(m, 'prep_time')], ['Cook time', str(m, 'cook_time')],
 		['Servings', str(m, 'servings') || str(m, 'yield')], ['Cuisine', str(m, 'cuisine')], ['Category', str(m, 'category')],
@@ -194,7 +194,7 @@
 				{#if ai}
 					<section class="aib"><h2>AI summary <span class="tag ai">AI-generated</span></h2><p class="prose">{ai}</p></section>
 				{/if}
-				{#if item.local_assets?.includes('image')}<LocalImage id={item.id} loading="eager" />{/if}
+				{#if item.local_assets?.includes('image')}<LocalImage id={item.id} alt={item.title} loading="eager" expandable />{/if}
 				{#if item.local_assets?.includes('document')}<button class="btn" use:focusable onclick={openDocument}>Open local PDF</button>{/if}
 
 				{#if item.summary}

@@ -3,10 +3,10 @@
 	import { session } from '$lib/stores/session.svelte';
 	import { focusable } from '$lib/nav';
 	import { hub } from '$lib/hub/api';
-	import { errMsg, safeUrl } from '$lib/hub/util';
+	import { errMsg } from '$lib/hub/util';
 	import type { Item } from '$lib/hub/types';
-	import { StoryCard, EmptyCalm } from '$lib/hub/calm';
-	import LocalImage from '$lib/hub/LocalImage.svelte';
+	import { EmptyCalm } from '$lib/hub/calm';
+	import ArchivedSource from '$lib/hub/ArchivedSource.svelte';
 	let title = $state('');
 	let items = $state<Item[]>([]);
 	let loading = $state(true);
@@ -32,13 +32,7 @@
 		<header><p class="kicker">A story from your sources</p><h1>{title}</h1><p class="meta">{items.length} source{items.length === 1 ? '' : 's'}</p></header>
 		<div class="sources">
 			{#each items as item (item.id)}
-				{#if item.local_image}
-					<StoryCard href={safeUrl(item.url) || `/item/${item.id}`} title={item.title} source={item.publisher || item.provider} summary={item.summary}>
-						{#snippet image()}<LocalImage id={item.id} alt={item.title} />{/snippet}
-					</StoryCard>
-				{:else}
-					<StoryCard href={safeUrl(item.url) || `/item/${item.id}`} title={item.title} source={item.publisher || item.provider} summary={item.summary} />
-				{/if}
+				<ArchivedSource source={item} />
 			{/each}
 		</div>
 	{/if}

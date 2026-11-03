@@ -11,7 +11,7 @@ from urllib.parse import quote, unquote, urlencode, urlsplit
 
 from .. import curation
 from . import social_fetch
-from .extract import clean, safe_image, strip_tags, ts
+from .extract import TEXT_LIMIT, clean, safe_image, strip_tags, ts
 
 
 def community_source(source: str) -> tuple[str, str]:
@@ -66,7 +66,7 @@ def _post(view: dict, instance: str, selected: str, item_type: str) -> dict | No
     title = clean(post.get('name'), 500)
     if not ap_id or not title:
         return None
-    body = strip_tags(post.get('body') or '', 4000)
+    body = strip_tags(post.get('body') or '', TEXT_LIMIT)
     article = safe_image(post.get('url') or '')
     counts = view.get('counts') if isinstance(view.get('counts'), dict) else {}
     community_id = safe_image(community.get('actor_id') or community.get('ap_id') or '')

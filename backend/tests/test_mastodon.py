@@ -28,6 +28,14 @@ def test_playable_media_and_poster_are_separate():
     assert _mastodon_status(no_poster, 'social.example')['image'] == ''
 
 
+def test_archives_full_mastodon_message_beyond_preview_limits():
+    text = 'Detailed message. ' * 400 + 'Essential final detail.'
+    item = _mastodon_status(status(content='<p>' + text + '</p>'), 'social.example')
+    assert item['body'] == text
+    assert item['body'].endswith('Essential final detail.')
+    assert len(item['summary']) <= 1000
+
+
 @pytest.mark.parametrize('visibility', ['unlisted', 'private', 'direct', None])
 def test_only_public_statuses(visibility):
     assert _mastodon_status(status(visibility=visibility), 'social.example') is None

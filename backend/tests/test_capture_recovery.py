@@ -39,6 +39,89 @@ def seed(image=''):
     return iid
 
 
+@pytest.mark.parametrize('unavailable', [False, True])
+def test_lemmy_linked_article_preserves_message_and_summarizes_article(monkeypatch, unavailable):
+    iid = seed()
+    article_url = 'https://example.org/full-report'
+    with session() as s:
+        item = s.get(ContentItem, iid)
+        item.type, item.provider, item.body = 'news', 'lemmy', 'User message context'
+        item.meta = {'social_post': True, 'article_url': article_url}
+        s.add(item); s.commit()
+    article = 'Full article evidence. ' * 600 + 'Essential article ending.'
+    calls, summarized = [], []
+
+    def fetch(url, **kwargs):
+        calls.append(url)
+        if unavailable: raise ValueError('Article unavailable')
+        return ('<article><p>' + article + '</p></article>').encode(), url, {'content_type': 'text/html'}
+
+    def summarize(title, body):
+        summarized.append(body)
+        return 'Article overview'
+
+    monkeypatch.setattr(capture.curation, 'fetch', fetch)
+    monkeypatch.setattr(capture.rescue, 'rescue', lambda *args: {'body': '', 'tool': ''})
+    monkeypatch.setattr(capture.ai, 'enabled', lambda: True)
+    monkeypatch.setattr(capture, 'full_summary', summarize)
+    capture.run(1, iid, 123)
+    with session() as s:
+        item, job = s.get(ContentItem, iid), s.get(CaptureJob, (1, iid))
+        assert 'User message context' in item.body
+        assert item.meta['post_body'] == 'User message context'
+        assert job.status == ('partial' if unavailable else 'complete')
+        if unavailable:
+            assert item.body == 'User message context'
+            assert 'Article unavailable' in job.error
+        else:
+            assert 'Linked article:' in item.body
+            assert item.body.endswith('Essential article ending.')
+            assert summarized[0] == item.body
+    assert calls == [article_url]
+    if not unavailable:
+        unavailable = True
+        archived = summarized[0]
+        capture.run(1, iid, 123)
+        with session() as s:
+            assert s.get(ContentItem, iid).body == archived
+            assert s.get(CaptureJob, (1, iid)).status == 'partial'
+            assert 'Article unavailable' in s.get(CaptureJob, (1, iid)).error
+        assert summarized[-1] == archived
+
+
+@pytest.mark.parametrize('existing_thumbnail', [False, True])
+def test_social_news_archives_original_image_and_upgrades_thumbnail(monkeypatch, existing_thumbnail):
+    preview, original = 'https://example.org/small.png', 'https://example.org/full.png'
+    iid = seed(image=preview)
+    image_data = b'\x89PNG\r\n\x1a\noriginal screenshot'
+    with session() as s:
+        item = s.get(ContentItem, iid)
+        item.type, item.provider, item.body = 'news', 'mastodon', 'Complete message text'
+        item.meta = {'social_post': True, 'media': {'type': 'image', 'url': original}}
+        s.add(item)
+        if existing_thumbnail:
+            s.add(CapturedAsset(item_id=iid, kind='image', mime='image/png',
+                                data=b'old thumbnail', size=13, source_url=preview))
+        s.commit()
+    calls = []
+
+    def fetch(url, **kwargs):
+        calls.append(url)
+        return image_data, url, {'content_type': 'image/png'}
+
+    monkeypatch.setattr(capture.curation, 'fetch', fetch)
+    capture.run(1, iid, 123)
+    with session() as s:
+        asset = s.get(CapturedAsset, (iid, 'image'))
+        assert asset.source_url == original
+        assert asset.data == image_data
+        assert s.get(ContentItem, iid).body == 'Complete message text'
+        assert s.get(CaptureJob, (1, iid)).status == 'complete'
+    assert calls == [original]
+    capture.run(1, iid, 123)
+    assert calls == [original]
+
+
 @pytest.mark.parametrize('text_failure', [False, True])
 @pytest.mark.parametrize('asset_failure', [False, True])
 def test_pdf_ocr_recovers_empty_or_broken_text_layer(monkeypatch, text_failure, asset_failure):

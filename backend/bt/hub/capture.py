@@ -147,14 +147,17 @@ def full_summary(title, body):
     for start in range(0, len(chunks), 5):
         group = chunks[start:start + 5]
         result = ai.summarize_items([{'title': title, 'body': chunk} for chunk in group])
-        if len(result) != len(group): raise ValueError('AI did not summarize every part of the item.')
-        summaries.extend(result[n] for n in range(len(group)))
+        if len(result) != len(group) or any(
+                not isinstance(result.get(n), str) or not result[n].strip() for n in range(len(group))):
+            raise ValueError('AI did not summarize every part of the item.')
+        summaries.extend(result[n].strip() for n in range(len(group)))
     while len(summaries) > 1:
         next_level = []
         for start in range(0, len(summaries), 5):
             result = ai.summarize_items([{'title': title, 'body': '\n'.join(summaries[start:start + 5])}])
-            if not result.get(0): raise ValueError('AI did not produce a final summary.')
-            next_level.append(result[0])
+            if not isinstance(result.get(0), str) or not result[0].strip():
+                raise ValueError('AI did not produce a final summary.')
+            next_level.append(result[0].strip())
         summaries = next_level
     return summaries[0]
 
@@ -167,8 +170,15 @@ def run(pid, iid, lease):
             return
         url, typ, title, image, body = item.url, item.type, item.title, item.image, item.body
         video_id = str(item.meta.get('video_id', ''))
-        meme_media = item.meta.get('media', {}) if typ == 'meme' else {}
         social_post = item.provider in ('mastodon', 'mastodon_trends', 'lemmy') and bool(item.meta.get('social_post', item.provider == 'mastodon'))
+        linked_url = item.meta.get('article_url', '') if item.provider == 'lemmy' and typ in ('news', 'article') else ''
+        linked_url = linked_url if isinstance(linked_url, str) and linked_url and linked_url != url else ''
+        post_body = item.meta.get('post_body', body) if linked_url else ''
+        archived_body = body
+        capture_url = linked_url or url
+        meme_media = item.meta.get('media', {}) if typ == 'meme' or social_post else {}
+        if isinstance(meme_media, dict) and meme_media.get('type') == 'image' and meme_media.get('url'):
+            image = meme_media['url']
         # The feed that found this item may carry the whole article even when the page will not.
         feed_url = s.exec(select(Source.url).join(CuratorDiscovery, CuratorDiscovery.source_id == Source.id)
                           .where(CuratorDiscovery.item_id == iid, Source.provider == 'rss')).first() or ''
@@ -181,7 +191,7 @@ def run(pid, iid, lease):
     truncated = False
     payload = b''
     try:
-        if social_post:
+        if social_post and not linked_url:
             pass  # The public API already supplied the post body and attachment metadata.
         elif typ == 'video' and VID_RE.fullmatch(video_id):
             with session() as s:
@@ -199,7 +209,7 @@ def run(pid, iid, lease):
         else:
             # A stored feed excerpt is not proof that this capture read the article.
             body = ''
-            data, final, meta = curation.fetch(url, kinds=curation.HTML_TYPES + DOCUMENT_TYPES,
+            data, final, meta = curation.fetch(capture_url, kinds=curation.HTML_TYPES + DOCUMENT_TYPES,
                                                 limit=20_000_000, with_metadata=True)
             payload = data
             if meta['content_type'] == 'application/pdf':
@@ -227,11 +237,11 @@ def run(pid, iid, lease):
     except Exception as e:  # noqa: BLE001
         primary_error = _safe_error(e)
         errors.append(primary_error)
-    if not body and typ not in ('video', 'meme') and not social_post \
+    if not body and typ not in ('video', 'meme') and (not social_post or linked_url) \
             and get_settings()['local_library'].get('rescue', True):
         # The plain fetch could not read it. Try the other ways before giving up on the item.
         try:
-            ctx = {'url': url, 'title': title, 'html': payload, 'data': payload, 'feed_url': feed_url}
+            ctx = {'url': capture_url, 'title': title, 'html': payload, 'data': payload, 'feed_url': feed_url}
             # A downloaded PDF needs local OCR, not article refetches or a browser.
             got = ({'body': rescue.tool_ocr(ctx), 'tool': 'ocr'} if is_pdf
                    else rescue.rescue(ctx, primary_error))
@@ -244,9 +254,16 @@ def run(pid, iid, lease):
                 log.info('capture %s recovered with %s', iid, got['tool'])
         except Exception as e:  # noqa: BLE001 — recovery is best effort
             errors.append('Rescue: ' + _safe_error(e))
+    if linked_url:
+        combined = (f'Post text:\n{post_body}\n\nLinked article:\n{body}' if body
+                    else archived_body or post_body)
+        truncated = truncated or len(combined) > TEXT_LIMIT
+        body = combined[:TEXT_LIMIT]
     if image:
         try:
-            with session() as s: exists = s.get(CapturedAsset, (iid, 'image')) is not None
+            with session() as s:
+                old = s.get(CapturedAsset, (iid, 'image'))
+                exists = old is not None and old.source_url == image
             if not exists:
                 data, final, meta = curation.fetch(image, kinds=IMAGE_TYPES, limit=5_000_000, with_metadata=True)
                 save_asset(pid, iid, 'image', final, data, meta['content_type'])
@@ -284,6 +301,7 @@ def run(pid, iid, lease):
             s.add(snapshot)
         if body:
             item.body = body
+            if linked_url: item.meta = {**item.meta, 'post_body': post_body}
             if summary: item.enrichment = {**item.enrichment, 'summary': summary}
             s.add(item); s.flush(); index(s, item)
         job.summary_status, job.updated_at = summary_status, time.time()

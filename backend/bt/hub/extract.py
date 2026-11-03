@@ -320,7 +320,18 @@ def extract_page(html: bytes, url: str) -> dict:
     }
     if (m.get('og:type') or '').lower() == 'article':
         item['type'] = 'article'
-    for node in _ld_nodes(p.ld):
+    nodes = list(_ld_nodes(p.ld))
+    # Some sites expose the complete article only as structured data while the
+    # visible HTML contains navigation or a JavaScript application shell.
+    for node in nodes:
+        if _types(node) & {'article', 'newsarticle', 'blogposting', 'techarticle', 'report'}:
+            body = node.get('articleBody')
+            if isinstance(body, str) and body.strip():
+                structured_body = strip_tags(body, TEXT_LIMIT)
+                if structured_body and len(structured_body) >= len(item['body']):
+                    item['body'] = structured_body
+                    break
+    for node in nodes:
         t = _types(node)
         if 'recipe' in t:
             item['type'] = 'recipe'

@@ -2,8 +2,8 @@
 	// An item's picture. Prefers the captured local copy; `remote` falls back to the publisher's
 	// image, fetched through the backend so the household's address never reaches them.
 	import { currentProfileId } from '$lib/api';
-	let { id, remote = false, alt = '', loading = 'lazy', onfail }: {
-		id: number; remote?: boolean; alt?: string; loading?: 'lazy' | 'eager'; onfail?: () => void;
+	let { id, remote = false, alt = '', loading = 'lazy', expandable = false, onfail }: {
+		id: number; expandable?: boolean; remote?: boolean; alt?: string; loading?: 'lazy' | 'eager'; onfail?: () => void;
 	} = $props();
 	let src = $state('');
 	$effect(() => {
@@ -23,4 +23,4 @@
 		return () => { controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); src = ''; };
 	});
 </script>
-{#if src}<img {src} {alt} {loading} />{/if}
+{#if src}{#if expandable}<a href={src} target="_blank" rel="noopener" aria-label="Open full-size archived image"><img {src} {alt} {loading} /></a>{:else}<img {src} {alt} {loading} />{/if}{/if}

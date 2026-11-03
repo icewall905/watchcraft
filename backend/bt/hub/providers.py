@@ -19,7 +19,7 @@ import httpx
 from .. import curation
 from ..db import get_settings
 from . import watchers
-from .extract import CVE_RE, classify, clean, drop_links, extract_page, safe_image, strip_tags, ts
+from .extract import CVE_RE, TEXT_LIMIT, classify, clean, drop_links, extract_page, safe_image, strip_tags, ts
 
 TYPES = [
     ('video', 'Videos', '▶'), ('news', 'News', '📰'), ('article', 'Articles', '📄'), ('web', 'Web resources', '🌐'),
@@ -207,7 +207,7 @@ def _mastodon_status(s: dict, instance: str) -> dict | None:
     if not isinstance(url, str) or not url.startswith('https://'):
         return None
     media = [m for m in (s.get('media_attachments') or []) if isinstance(m, dict)]
-    text = strip_tags(s.get('content') or '')
+    text = strip_tags(s.get('content') or '', TEXT_LIMIT)
     if not text and not media:
         return None
     account = s.get('account') if isinstance(s.get('account'), dict) else {}
@@ -227,7 +227,7 @@ def _mastodon_status(s: dict, instance: str) -> dict | None:
     return {
         'url': url, 'type': 'meme', 'provider': 'mastodon', 'publisher': urlsplit(url).hostname or instance,
         'author': clean(f"{account.get('display_name') or account.get('username') or ''} ({account.get('acct') or ''})", 200),
-        'title': title, 'summary': clean(text, 1000), 'body': text[:4000], 'image': preview,
+        'title': title, 'summary': clean(text, 1000), 'body': text, 'image': preview,
         'published_at': ts(s.get('created_at')), 'external_id': f"mstdn:{s.get('uri') or url}",
         'meta': {'platform': 'mastodon', 'social_post': True, 'origin_uri': s.get('uri') or url, 'display_url': display_url, 'instance': instance, 'community': community[:200], 'tags': tags[:8],
                  'language': str(s.get('language') or '')[:8], 'sensitive': bool(s.get('sensitive')),
