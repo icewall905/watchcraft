@@ -278,7 +278,7 @@ def run(pid, iid, lease):
                 save_asset(pid, iid, 'image', final, data, meta['content_type'])
         except Exception as e:  # noqa: BLE001
             errors.append('Image: ' + _safe_error(e))
-    if isinstance(meme_media, dict) and meme_media.get('type') in ('video', 'gifv') and meme_media.get('url'):
+    if not review_only and isinstance(meme_media, dict) and meme_media.get('type') in ('video', 'gifv') and meme_media.get('url'):
         try:
             with session() as s: exists = s.get(CapturedAsset, (iid, 'video')) is not None
             if not exists:

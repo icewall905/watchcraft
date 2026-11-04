@@ -320,3 +320,16 @@ def test_linked_article_fetch_failure_reuses_prior_successful_review(monkeypatch
     monkeypatch.setattr(capture.article_cleanup,'review',never)
     capture.run(1,iid,123)
     with session() as s:assert s.get(ContentItem,iid).body==original
+
+
+def test_legacy_social_article_review_skips_missing_remote_video(monkeypatch):
+    from bt.hub.models import ArticleText
+    iid=seed()
+    with session() as s:
+        item=s.get(ContentItem,iid);item.type='news';item.provider='mastodon';item.body='Existing source report.'
+        item.meta={'social_post':True,'media':{'type':'video','url':'https://example.org/clip.mp4'}};s.add(item)
+        s.add(ArticleText(item_id=iid,raw_body=item.body,backfill=True));s.commit()
+    def never(*a,**kw):raise AssertionError('Legacy cleanup must not download missing remote attachments')
+    monkeypatch.setattr(capture.curation,'fetch',never)
+    capture.run(1,iid,123)
+    with session() as s:assert s.get(CaptureJob,(1,iid)).status=='complete'
