@@ -1521,3 +1521,16 @@ in the local `todo.md` (which is intentionally ignored by Git).
 - API/worker/downloader image `sha256:c8e984e4e80f756bb2f1010866e23e4ed20812e952aac11088d40ebda39f0621`,
   revision `30e1369`, zero restarts at acceptance. Public health/Today/News, deployed button assets, database integrity,
   profile/PIN preservation and host configuration hashes passed. Manual refresh requested for the active Hub profile.
+
+## Deployment record — Feeds naming (`9b48d7e`, 2026-11-04)
+
+- Renamed the Shorts section to Feeds in navigation, document title, settings links, player/exit labels and accessibility
+  names. Extras describes the filtered content as short videos. Existing `/shorts` links and stored/API feed kinds remain
+  compatible; the missing-selection API error now says “Select a feed”.
+- Validation: nine focused backend tests, all 21 feed browser regressions, frontend check/build passed (three existing
+  CSS warnings). Isolated restored database preserved counts/profiles/PINs and the application started twice; deployed
+  Feeds assets and route checked before rollout.
+- Backup `/root/compose/watchcraft-backups/20261104-feeds-9b48d7e`; rollback image
+  `watchcraft:rollback-20261104-feeds` (previous `30e1369`). Configuration hashes retained and unchanged.
+- Post-rollout public health/routes, database integrity and exact profile/PIN preservation passed. Live browser confirmed
+  “Feeds · WatchCraft”, Feeds navigation, Leave Feeds and the main Feeds link. All services running with zero restarts.
