@@ -10,6 +10,7 @@
 	import StatsExplorer from '$lib/components/StatsExplorer.svelte';
 	import StatsDonut from '$lib/components/StatsDonut.svelte';
 	import StatsActivityChart from '$lib/components/StatsActivityChart.svelte';
+	import SubtitleStats from '$lib/components/SubtitleStats.svelte';
 	import ContextOverview from '$lib/components/ContextOverview.svelte';
 
 	let data = $state<StatsPageData | null>(null);
@@ -112,6 +113,8 @@
 			<button class="btn mini" disabled={loading} use:focusable={{ group: 'stats-ctl', id: 'refresh', onSelect: load }}>↻ Refresh</button>
 		</div>
 	</header>
+
+	<SubtitleStats />
 
 	{#if !ov}
 		<div class="skeleton" style="height:10rem"></div>

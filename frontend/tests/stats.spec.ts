@@ -187,3 +187,24 @@ for (const width of [1920, 1280, 1024, 768, 390]) {
         expect(first).toEqual(second);
     });
 }
+
+test('subtitle monitor shows coverage, active generation, safe failures and refresh errors', async ({ page, request }) => {
+ const profiles = await (await request.get('/api/profiles')).json();
+ await page.goto('/stats');
+ await page.evaluate(pid => localStorage.setItem('bt.profile', String(pid)), profiles[0].id);
+ let calls = 0;
+ await page.route('**/api/stats/subtitles', route => {
+  calls++;
+  if (calls > 1) return route.fulfill({status:503, body:'Unavailable'});
+  return route.fulfill({json:{scope:'household',eligible:10,coverage:{ready:4,pending:2,running:1,failed:1,missing:1,retry_waiting:1},other_jobs:{pending:3,running:0,failed:0,retry_waiting:0},active:[{video_id:'statvid00002',title:'Caption job example',progress:42,retry_at:0,updated_at:0,error:''}],recent_failures:[{video_id:'statvid00003',title:'Failed caption example',progress:0,retry_at:0,updated_at:0,error:'Subtitle generation failed. Open the video to retry.'}],service:{stt_enabled:true,heartbeat_age_s:10,heartbeat_fresh:true}}});
+ });
+ await page.reload();
+ const section = page.getByRole('region', {name:'Reel subtitles'});
+ await expect(section.getByText('4 / 10 captioned')).toBeVisible();
+ await expect(section.getByText('40%', {exact:true})).toBeVisible();
+ await expect(section.getByRole('link',{name:'Caption job example'})).toHaveAttribute('href','/watch/statvid00002');
+ await expect(section.getByText('42%', {exact:true})).toBeVisible();
+ await section.getByRole('button',{name:'Refresh subtitles'}).click();
+ await expect(section.getByRole('status')).toContainText('Showing the last update');
+ await expect(section.getByText('4 / 10 captioned')).toBeVisible();
+});

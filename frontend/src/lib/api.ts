@@ -261,6 +261,7 @@ export const api = {
 	importFeed: (body: { category_id?: number; playlist_name?: string; source: string; playlist_url?: string; limit: number }) =>
 		post<ImportFeedResult>('/ytimport/feed', body, { toast: false }),
 	stats: () => get<{ videos: number; candidates_24h: number; lessons: number }>('/stats', { toast: false }),
+	subtitleStats: () => get<import('./types').SubtitleStats>('/stats/subtitles', { toast: false }),
 	statsPage: (days = 30) => get<StatsPageData>(`/stats/page${q({ days })}`, { toast: false }),
 	memoryStatus: () => get<MemoryStatus>('/agent/memory', { toast: false }),
 	runMemory: () => post<{ queued: boolean }>('/agent/memory/run', {}),

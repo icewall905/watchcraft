@@ -567,3 +567,12 @@ export interface StatsExploreData {
 }
 
 export interface ShortsFeed extends Category { ready_count: number; pending_count: number; error_count: number; caption_ready_count?: number; caption_pending_count?: number; caption_error_count?: number }
+
+export interface SubtitleStats {
+ scope: 'household' | 'profile'; eligible: number;
+ coverage: Record<'ready' | 'pending' | 'running' | 'failed' | 'missing' | 'retry_waiting', number>;
+ other_jobs: Record<'pending' | 'running' | 'failed' | 'retry_waiting', number>;
+ active: {video_id: string; title: string; progress: number; retry_at: number; updated_at: number; error: string}[];
+ recent_failures: SubtitleStats['active'];
+ service: {heartbeat_age_s: number | null; heartbeat_fresh: boolean; stt_enabled: boolean};
+}

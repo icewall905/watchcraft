@@ -1131,6 +1131,13 @@ def stats(pid: int = Depends(profile_id), s: Session = Depends(get_session)):
     }
 
 
+@router.get("/stats/subtitles")
+def subtitle_statistics(response: Response, pid: int = Depends(profile_id), s: Session = Depends(get_session)):
+    from ..subtitle_stats import snapshot
+    response.headers["Cache-Control"] = "private, no-store"
+    return snapshot(s, pid)
+
+
 @router.get("/stats/page")
 def stats_page(days: int = 30, s: Session = Depends(get_session)):
     """Statistics across every profile, independent of the active profile."""
