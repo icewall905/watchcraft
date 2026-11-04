@@ -1618,3 +1618,21 @@ in the local `todo.md` (which is intentionally ignored by Git).
   exact profile/PIN preservation, host config hashes and saved-video decode passed. Without a viewer, the new daemon
   generated four local-only ready tracks and had one running at 53.7% plus three queued at initial acceptance.
   Existing missing-caption backlog continues; clips remain playback-gated until their captions are ready.
+
+## Deployment record — subtitle monitoring in Stats (`da6b9f4`, 2026-11-04)
+
+- Added Reel subtitles coverage, queued/running/missing/retry/failure counts, active progress and daemon heartbeat
+  to `/stats`. Visible pages refresh every ten seconds, coalescing overlapping requests. Admins see household
+  totals; other profiles see their own jobs. Responses are private/no-store; locking or switching clears old data.
+- Coverage counts distinct eligible unwatched local Reels, validates stored VTT and sanitizes failure messages.
+  Heartbeat time is measured after file inspection to avoid a concurrent daemon update appearing stale.
+- Validation: 45 focused backend checks, two final heartbeat regression tests, frontend check/build and eight
+  Stats browser checks passed. Independent privacy/scoping review approved. Exact final image passed isolated
+  restore/init/restart checks with media read-only and network disabled. Live Family Stats layout and fresh
+  heartbeat verified; household totals checked server-side without changing or entering production PINs.
+- API-only deployment: wc-api uses sha256:b914ec1ebfc1535d0b1fff46f493fc1acaf664aa69345eef9fe361fa9f32711c.
+  Existing worker/downloader/subtitle daemon retain the prior 2549876 image. Subtitle daemon start time was
+  unchanged throughout deployment. Public health/routes, database integrity, profiles/PINs, config hashes and
+  saved-media decode passed.
+- Backup `/root/compose/watchcraft-backups/20261104-stats-0891f9a`; rollback tag
+  `watchcraft:rollback-20261104-stats`. API rollback uses no-deps recreation; subtitle generation stays running.
