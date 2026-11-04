@@ -39,6 +39,13 @@ def test_coverage_distinct_valid_tracks_scope_and_heartbeat(tmp_path, monkeypatc
         assert len(result['recent_failures']) == 1
         assert snapshot(s, admin.id, beat, 150)['eligible'] == 7
         assert snapshot(s, admin.id, beat, 150)['service']['heartbeat_fresh']
+        # A heartbeat can advance while the coverage query is being evaluated.
+        os.utime(beat, (150, 150))
+        ticks = iter((100, 200))
+        monkeypatch.setattr('bt.subtitle_stats.time.time', lambda: next(ticks, 200))
+        later = snapshot(s, admin.id, beat)
+        assert later['service']['heartbeat_age_s'] == 50
+        assert later['service']['heartbeat_fresh']
 
 
 def test_unknown_profile_cannot_read_subtitle_stats():

@@ -74,7 +74,8 @@ def snapshot(s, pid, heartbeat_path=None, clock=None):
         if vid not in eligible and value in other: other[value] += 1
     path = heartbeat_path or subtitle_jobs.DATA_DIR / subtitle_jobs.HEARTBEAT_NAME
     try:
-        age = stamp - path.stat().st_mtime
+        modified = path.stat().st_mtime
+        age = (time.time() if clock is None else stamp) - modified
         age = round(age, 1) if age >= 0 else None
     except OSError:
         age = None
