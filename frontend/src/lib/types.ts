@@ -566,4 +566,4 @@ export interface StatsExploreData {
 	items: StatsExploreItem[]; total: number; offset: number; limit: number;
 }
 
-export interface ShortsFeed extends Category { ready_count: number; pending_count: number; error_count: number }
+export interface ShortsFeed extends Category { ready_count: number; pending_count: number; error_count: number; caption_ready_count?: number; caption_pending_count?: number; caption_error_count?: number }

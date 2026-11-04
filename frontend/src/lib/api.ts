@@ -198,7 +198,7 @@ export const api = {
 	fallbackUrl: (id: string) => `/api/video/${encodeURIComponent(id)}/fallback`,
 	captions: (id: string) => get<CaptionTrack[]>(`/video/${encodeURIComponent(id)}/captions`, { toast: false }),
 	subtitleStatus: (id: string) => get<SubtitleStatus>(`/video/${encodeURIComponent(id)}/subtitles`, { toast: false }),
-	generateSubtitles: (id: string) => post<SubtitleStatus>(`/video/${encodeURIComponent(id)}/subtitles`, {}, { toast: false }),
+	generateSubtitles: (id: string, localOnly = false, regenerate = false) => post<SubtitleStatus>(`/video/${encodeURIComponent(id)}/subtitles`, { local_only: localOnly, regenerate }, { toast: false }),
 	speechTest: (body: Settings['stt']) => post<{ ok: boolean; error?: string; model?: string }>('/speech/test', body, { toast: false }),
 	sponsorblock: (id: string) => get<SbSegment[]>(`/video/${encodeURIComponent(id)}/sponsorblock`, { toast: false }),
 	comments: (id: string, n = 40) => get<{ author: string; text: string; likes: number }[]>(`/video/${encodeURIComponent(id)}/comments${q({ n })}`, { toast: false }),

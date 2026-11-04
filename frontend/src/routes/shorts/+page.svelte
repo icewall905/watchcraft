@@ -5,7 +5,8 @@
 </script>
 <script lang="ts">
 	import { onMount, onDestroy, tick } from 'svelte';
-	import { api } from '$lib/api';
+	import { api, profileHeaders } from '$lib/api';
+	import { parseReelCaptions, type ReelCue } from '$lib/reelCaptions';
 	import { session } from '$lib/stores/session.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { focusable, nav } from '$lib/nav';
@@ -18,7 +19,11 @@
 	let switchingProfile = $state(false);
 	let items = $state<Short[]>([]), index = $state(0), loading = $state(true), error = $state(''), playbackError = $state('');
 	let nextOffset = $state<number | null>(null), videoEl = $state<HTMLVideoElement>(), needsTap = $state(false), progress = $state(0), busy = $state(false);
-	let showMeta = $state(false);
+	let showMeta = $state(false), muted = $state(true);
+ let captionState = $state<'waiting' | 'ready' | 'failed'>('waiting'), captionMessage = $state('Preparing subtitles…');
+ let captionText = $state(''), cues: ReelCue[] = [], captionAbort: AbortController | null = null;
+ let captionTimer: ReturnType<typeof setTimeout> | null = null;
+
 	let alive = true, generation = 0, navigation = 0, selectionEpoch = 0, activeId: string | null = null, fetching = false;
 	let feedRequest = 0, activeFeedRequest: number | null = null;
 	let feedsLoaded = false;
@@ -50,6 +55,9 @@
 		}
 	});
 	function stop() {
+  captionAbort?.abort(); captionAbort = null;
+  if (captionTimer) clearTimeout(captionTimer);
+  captionTimer = null; cues = []; captionText = ''; captionState = 'waiting';
 		generation++;
 		activeId = null;
 		if (videoEl) {
@@ -174,28 +182,63 @@
 		if (alive && epoch === selectionEpoch && selected?.id === feed.id && items.length)
 			void play(0);
 	}
-	async function play(i: number) {
-		stop();
-		const request = generation, item = items[i];
-		needsTap = false;
-		showMeta = false;
-		playbackError = '';
-		progress = 0;
-		await tick();
-		if (!alive || request !== generation || !item || !videoEl)
-			return;
-		const el = videoEl;
-		activeId = item.video.id;
-		el.src = api.fileUrl(item.video.id);
-		el.load();
-		try {
-			await el.play();
-		}
-		catch {
-			if (alive && request === generation)
-				needsTap = true;
-		}
-	}
+ async function play(i: number, retryCaptions = false) {
+  stop();
+  const request = generation, item = items[i], profile = session.version, profileId = session.profileId, epoch = selectionEpoch;
+  const valid = () => alive && request === generation && profile === session.version && profileId === session.profileId && epoch === selectionEpoch && current?.video.id === item?.video.id;
+  needsTap = false; showMeta = false; playbackError = ''; progress = 0; muted = true;
+  captionMessage = 'Preparing subtitles…';
+  await tick();
+  if (!valid() || !item || !videoEl) return;
+  const el = videoEl, controller = new AbortController(), headers = profileHeaders();
+  captionAbort = controller;
+  const started = Date.now();
+  let requested = false;
+  async function check() {
+   try {
+    if (!valid()) return;
+    let status = await api.subtitleStatus(item.video.id);
+    if (!valid()) return;
+    if ((status.status === 'idle' || status.status === 'queued' || (retryCaptions && (status.status === 'failed' || status.status === 'ready'))) && !requested && status.enabled) {
+     requested = true; status = await api.generateSubtitles(item.video.id, true, retryCaptions);
+     if (!valid()) return;
+    }
+    if (status.status === 'ready' && !status.track) throw new Error('The subtitle file is missing.');
+    if (status.status === 'ready' && status.track) {
+     captionMessage = 'Loading subtitles…';
+     const url = new URL(status.track.url, location.origin);
+     if (url.origin !== location.origin || url.pathname !== `/api/video/${encodeURIComponent(item.video.id)}/subtitles/generated.vtt`) throw new Error('The local caption link is invalid.');
+     const timeout = setTimeout(() => controller.abort(), 20000);
+     let parsed: ReelCue[];
+     try {
+      const response = await fetch(url, { headers, signal: controller.signal, cache: 'no-store' });
+      if (!response.ok) throw new Error('The subtitle file could not be loaded.');
+      parsed = parseReelCaptions(await response.text());
+     } finally { clearTimeout(timeout); }
+     if (!valid()) return;
+     cues = parsed; captionState = 'ready'; activeId = item.video.id;
+     el.muted = true; el.src = api.fileUrl(item.video.id); el.load();
+     updateCaption(0);
+     try { await el.play(); } catch { if (valid()) needsTap = true; }
+     return;
+    }
+    if (status.status === 'failed') throw new Error(status.error || 'Subtitle generation failed.');
+    if (!status.enabled) throw new Error('Enable speech recognition in Settings → Player to prepare subtitles.');
+    if (Date.now() - started > 300000) throw new Error('Subtitles are still being prepared. Retry to check again.');
+    captionMessage = status.status === 'running' ? `Generating subtitles: ${Math.round(status.progress)}%` : 'Subtitles queued…';
+    captionTimer = setTimeout(check, 2000);
+   } catch (e) {
+    if (!valid()) return;
+    el.pause(); el.removeAttribute('src'); el.load(); activeId = null;
+    captionState = 'failed'; captionMessage = errMsg(e);
+   }
+  }
+  void check();
+ }
+ function updateCaption(position: number) {
+  captionText = cues.filter(cue => position >= cue.start && position < cue.end).map(cue => cue.text).join('\n');
+ }
+
 	function record() {
 		const item = current;
 		if (!item || !videoEl || activeId !== item.video.id)
@@ -280,7 +323,7 @@
 	}
 	function onStageClick() {
 		showMeta = !showMeta;
-		if (videoEl?.paused)
+		if (captionState === 'ready' && activeId === current?.video.id && videoEl?.paused)
 			videoEl.play().catch(() => {
 			});
 	}
@@ -323,8 +366,10 @@
 			void go(dy < 0 ? 1 : -1);
 	}
 	function onTime() {
-		if (videoEl && activeId === current?.video.id)
+		if (videoEl && activeId === current?.video.id) {
+   updateCaption(videoEl.currentTime);
 			progress = videoEl.duration > 0 ? Math.min(1, videoEl.currentTime / videoEl.duration) : 0;
+  }
 	}
 	function onEnded() {
 		if (activeId === current?.video.id) {
@@ -358,6 +403,7 @@
 	<nav class="shorts-navigation" aria-label="Feeds navigation">
 		<a class="btn" href="/" use:focusable>← Back to WatchCraft</a>
 		{#if selected}<button class="btn" use:focusable onclick={picker}>← Feeds</button>{/if}
+  {#if current}<button class="btn" disabled={captionState !== 'ready'} use:focusable onclick={()=>{if(videoEl){muted=!muted;videoEl.muted=muted;}}}>{muted ? 'Unmute' : 'Mute'}</button>{/if}
 	</nav>
 	{#if !selected}
 		<div class="state picker"><h1>Choose a feed</h1><p class="muted">Only videos stored locally are played.</p>
@@ -367,7 +413,7 @@
 		</div>{/if}
 		{#if loading}<p>Loading feeds…</p>{:else}
 			{#if error}<p class="err" role="alert">{error}</p><button class="btn" onclick={()=>loadFeeds()} use:focusable>Try again</button>{/if}
-			{#each feeds as feed (feed.id)}<button class="feed-choice" use:focusable onclick={()=>choose(feed)}><span class="feed-top"><strong>{feed.emoji} {feed.name}</strong><span class="play-label">{!feedsProvisional && feed.ready_count ? '▶ Play' : 'View feed'}</span></span><span class="small muted">{#if feedsProvisional}Checking local availability…{:else}{feed.ready_count} ready locally · {feed.pending_count} waiting for local files{feed.error_count ? ` · ${feed.error_count} download errors` : ''}{!feed.enabled ? ' · Collection paused' : ''}{/if}</span></button>{/each}
+			{#each feeds as feed (feed.id)}<button class="feed-choice" use:focusable onclick={()=>choose(feed)}><span class="feed-top"><strong>{feed.emoji} {feed.name}</strong><span class="play-label">{!feedsProvisional && (feed.caption_ready_count ?? feed.ready_count) ? '▶ Play' : 'View feed'}</span></span><span class="small muted">{#if feedsProvisional}Checking local availability…{:else}{feed.ready_count} stored locally{feed.caption_ready_count !== undefined ? ` · ${feed.caption_ready_count} captioned` : ''} · {feed.pending_count} waiting for local files{feed.error_count ? ` · ${feed.error_count} download errors` : ''}{!feed.enabled ? ' · Collection paused' : ''}{/if}</span></button>{/each}
 			{#if !feeds.length && !error}<p>No feeds for {session.profile?.name ?? 'this profile'} yet.</p><p class="small muted">{session.profiles.length > 1 ? 'Choose another profile above to see its feeds, or create a feed for this profile.' : 'Give your curator a brief to start collecting local clips.'}</p>{/if}
 		{/if}
 		<button class="btn ghost" disabled={loading || switchingProfile} onclick={()=>loadFeeds()} use:focusable>Refresh feeds</button>
@@ -376,7 +422,9 @@
 		{#if loading}<div class="state"><p>Checking local videos…</p></div>
 		{:else if !current}<div class="state"><h1>{selected.name}</h1>{#if error}<p role="alert" class="err">{error}</p>{:else}<p>No local clips ready yet.</p>{#if !session.settings?.cache.enabled}<p class="muted">Enable Storage → Offline cache in Settings so accepted clips can download.</p>{/if}{#if !session.settings?.agent.enabled}<p class="muted">Enable the AI agent in Settings to collect new clips.</p>{/if}<p class="muted">{#if selectedProvisional}Refresh once local downloads finish.{:else}{selected.pending_count} waiting for local files{selected.error_count ? `; ${selected.error_count} download errors` : ''}. Refresh once downloads finish.{/if}</p>{/if}<button class="btn primary" use:focusable onclick={retry}>Refresh availability</button><a class="btn" href={`/settings?tab=feeds&edit=${selected.id}`} use:focusable>Edit feed</a></div>
 		{:else}
-		<video bind:this={videoEl} class="stage" playsinline preload="metadata" ontimeupdate={onTime} onended={onEnded} onerror={()=>{if(activeId===current?.video.id)playbackError='This local file is unavailable or cannot be played. Refresh availability to check stored clips.';}} onclick={onStageClick}></video>
+		<video bind:this={videoEl} class="stage" muted playsinline preload="metadata" ontimeupdate={onTime} onended={onEnded} onerror={()=>{if(activeId===current?.video.id)playbackError='This local file is unavailable or cannot be played. Refresh availability to check stored clips.';}} onclick={onStageClick}></video>
+  {#if captionState !== 'ready'}<div class="caption-status" role={captionState === 'failed' ? 'alert' : 'status'}><p>{captionMessage}</p>{#if captionState === 'failed'}<button class="btn primary" use:focusable onclick={()=>play(index, true)}>Retry captions</button><a class="btn" href="/settings?tab=player" use:focusable>Caption settings</a>{/if}<button class="btn" use:focusable onclick={()=>go(1)}>Skip to next clip</button></div>{/if}
+  {#if captionState === 'ready'}<div class="captions" class:details={showMeta} aria-label="Subtitles"><span>{captionText}</span></div>{/if}
 		{#if playbackError}<div class="playback-error" role="alert"><p>{playbackError}</p><button class="btn primary" use:focusable onclick={retry}>Refresh availability</button></div>
 		{:else if error}<div class="playback-error" role="alert"><p>{error}</p><button class="btn" use:focusable onclick={()=>go(1)}>Retry next short</button></div>
 		{:else if needsTap}<button class="tap" use:focusable onclick={()=>videoEl?.play().then(()=>needsTap=false).catch(()=>{})}>▶ Tap to play</button>{/if}
@@ -388,6 +436,13 @@
 	{/if}
 </div>
 <style>
+ .caption-status { position:absolute; z-index:3; padding:1.25rem; max-width: min(90%, 36rem); text-align:center; background:#161321; color:#fff; border-radius:1rem; }
+ .caption-status .btn { margin:.25rem; }
+ .captions { position:absolute; bottom:calc(14rem + env(safe-area-inset-bottom, 0px)); left:5%; right:5%; z-index:3; pointer-events:none; text-align:center; color:#fff; font-size:clamp(1.1rem, 3.5vw, 1.6rem); font-weight:650; line-height:1.45; white-space:pre-line; text-shadow:0 1px 3px #000; }
+ .captions.details { bottom:calc(35vh + 8rem + env(safe-area-inset-bottom, 0px)); }
+ .meta.show { max-height:35vh; overflow-y:auto; }
+ .captions span { background:rgba(0,0,0,.85); box-decoration-break:clone; -webkit-box-decoration-break:clone; padding:.12rem .4rem; }
+
 	.profile-choices { display:flex; flex-wrap:wrap; justify-content:center; gap:.5rem; }
 	.current-profile { border-color:var(--accent); background:rgba(124,92,255,.2); }
 	.feed-top { display:flex; align-items:center; justify-content:space-between; gap:1rem; }

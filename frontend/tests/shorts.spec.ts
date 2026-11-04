@@ -3,6 +3,8 @@ import { freshPage, resetBackend } from './helpers';
 const feeds = [{ id: 5, name: 'Science clips', emoji: '🔬', kind: 'shorts', enabled: true, ready_count: 2, pending_count: 3, error_count: 1 }, { id: 6, name: 'Cooking clips', emoji: '🍳', kind: 'shorts', enabled: false, ready_count: 1, pending_count: 0, error_count: 0 }];
 const item = (id: string, cat = 5) => ({ id: 1, category_id: cat, status: 'accepted', score: 90, summary: 'A local clip', video: { id, title: id, channel_name: 'Fixture', duration_s: 30, is_short: true, offline: true } });
 async function fixture(page: Page) {
+ await page.route('**/api/video/*/subtitles', r => r.fulfill({ json: { enabled: true, status: 'ready', progress: 100, error: '', track: { url: `/api/video/${r.request().url().split('/').at(-2)}/subtitles/generated.vtt` } } }));
+ await page.route('**/api/video/*/subtitles/generated.vtt', r => r.fulfill({ contentType: 'text/vtt', body: 'WEBVTT\n\n00:00:00.000 --> 00:00:30.000\nAlways readable subtitles\n' }));
 	await page.addInitScript(() => { HTMLMediaElement.prototype.play = async function () { }; HTMLMediaElement.prototype.load = function () { }; });
 	await page.route('**/api/shorts/feeds', r => r.fulfill({ json: feeds }));
 	await page.route(/\/api\/shorts\?/, r => { const url = new URL(r.request().url()); const cat = Number(url.searchParams.get('category_id')); return r.fulfill({ json: { items: cat === 5 ? [item('short000001'), item('short000002')] : [item('short000003', 6)], next_offset: null } }); });
@@ -19,7 +21,7 @@ test('empty profile can switch to its populated profile and start a feed with on
  await page.getByRole('group', { name: 'Choose Feeds profile' }).getByRole('button', { name: /Evening Shorts/ }).click();
  const play = page.getByRole('button', { name: /Science clips/ });
  await expect(play).toContainText('▶ Play');
- await expect(play).toContainText('2 ready locally');
+ await expect(play).toContainText('2 stored locally');
  await page.screenshot({ path: '/tmp/watchcraft-shorts-profile-picker.png', fullPage: true });
  await play.click();
  await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');
@@ -94,7 +96,7 @@ test('opens a feed picker, selects isolated local files and clears playback on r
 	await freshPage(page, '/shorts');
 	await expect(page.getByRole('heading', { name: 'Choose a feed' })).toBeVisible();
 	await expect(page.locator('video')).toHaveCount(0);
-	await expect(page.getByRole('button', { name: /Science clips/ })).toContainText('2 ready locally');
+	await expect(page.getByRole('button', { name: /Science clips/ })).toContainText('2 stored locally');
 	await page.getByRole('button', { name: /Science clips/ }).click();
 	await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');
 	await page.keyboard.press('ArrowDown');
@@ -241,7 +243,7 @@ test('repeat visits show cached feeds during a slow refresh and keep them on fai
 test('manual refresh retains feed choices until fresh counts arrive', async ({ page }) => {
  await fixture(page);
  await freshPage(page, '/shorts');
- await expect(page.getByRole('button', { name: /Science clips/ })).toContainText('2 ready locally');
+ await expect(page.getByRole('button', { name: /Science clips/ })).toContainText('2 stored locally');
  let release!: () => void;
  const gate = new Promise<void>(resolve => release = resolve);
  await page.route('**/api/shorts/feeds', async route => {
@@ -249,10 +251,10 @@ test('manual refresh retains feed choices until fresh counts arrive', async ({ p
   await route.fulfill({ json: [{ ...feeds[0], ready_count: 9 }] });
  });
  await page.getByRole('button', { name: 'Refresh feeds', exact: true }).click();
- await expect(page.getByRole('button', { name: /Science clips/ })).toContainText('2 ready locally');
+ await expect(page.getByRole('button', { name: /Science clips/ })).toContainText('2 stored locally');
  await expect(page.getByText('Loading feeds…', { exact: true })).toHaveCount(0);
  release();
- await expect(page.getByRole('button', { name: /Science clips/ })).toContainText('9 ready locally');
+ await expect(page.getByRole('button', { name: /Science clips/ })).toContainText('9 stored locally');
 });
 
 test('a cached populated profile is cleared while another profile loads', async ({ page, request }) => {
@@ -365,11 +367,11 @@ test('first visit shows profile-owned category choices before slow availability 
  await freshPage(page, '/shorts');
  const choice = page.getByRole('button', { name: /Science clips/ });
  await expect(choice).toContainText('Checking local availability…');
- await expect(choice).not.toContainText('0 ready locally');
+ await expect(choice).not.toContainText('0 stored locally');
  await expect(page.getByText('Loading feeds…', { exact: true })).toHaveCount(0);
  await expect(page.getByRole('button', { name: /Cooking clips/ })).toHaveCount(0);
  release();
- await expect(choice).toContainText('7 ready locally');
+ await expect(choice).toContainText('7 stored locally');
  await expect(choice).not.toContainText('Checking local availability…');
 });
 
@@ -390,4 +392,74 @@ test('provisional choices allow playback and authoritative empty feeds remove th
  await page.getByRole('button', { name: '← Feeds', exact: true }).click();
  await expect(page.getByText(/No feeds for/)).toBeVisible();
  await expect(page.getByRole('button', { name: /Science clips/ })).toHaveCount(0);
+});
+
+test('captions gate playback, remain visible and start muted', async ({ page }) => {
+ await page.setViewportSize({ width: 390, height: 844 });
+ await fixture(page);
+ let ready = false;
+ await page.route('**/api/video/*/subtitles', r => r.fulfill({ json: { enabled: true, status: ready ? 'ready' : 'running', progress: 40, error: '', track: ready ? { url: '/api/video/short000001/subtitles/generated.vtt' } : null } }));
+ await freshPage(page, '/shorts');
+ await page.getByRole('button', { name: /Science clips/ }).click();
+ await expect(page.getByText('Generating subtitles: 40%')).toBeVisible();
+ await expect(page.locator('video')).not.toHaveAttribute('src');
+ ready = true;
+ await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');
+ await expect(page.getByLabel('Subtitles')).toHaveText('Always readable subtitles');
+ expect(await page.locator('video').evaluate((v: HTMLVideoElement) => v.muted)).toBe(true);
+ await page.screenshot({ path: '/tmp/watchcraft-reel-captions.png' });
+ await page.getByRole('button', { name: 'Unmute', exact: true }).click();
+ expect(await page.locator('video').evaluate((v: HTMLVideoElement) => v.muted)).toBe(false);
+ await expect(page.getByLabel('Subtitles')).toHaveText('Always readable subtitles');
+ await page.getByRole('button', { name: 'Mute', exact: true }).click();
+ expect(await page.locator('video').evaluate((v: HTMLVideoElement) => v.muted)).toBe(true);
+});
+
+test('unreadable captions block video and retry can recover', async ({ page }) => {
+ await fixture(page);
+ let broken = true;
+ let retryBody: unknown;
+ await page.route('**/api/video/*/subtitles', r => {
+  if (r.request().method() === 'POST') retryBody = r.request().postDataJSON();
+  return r.fulfill({ json: { enabled: true, status: 'ready', progress: 100, error: '', track: { url: '/api/video/short000001/subtitles/generated.vtt' } } });
+ });
+ await page.route('**/api/video/*/subtitles/generated.vtt', r => r.fulfill({ contentType: 'text/vtt', body: broken ? 'WEBVTT\n\n' : 'WEBVTT\n\n00:00:00.000 --> 00:00:30.000\nRecovered subtitles\n' }));
+ await freshPage(page, '/shorts');
+ await page.getByRole('button', { name: /Science clips/ }).click();
+ await expect(page.getByRole('alert')).toContainText('no readable subtitles');
+ await expect(page.locator('video')).not.toHaveAttribute('src');
+ await expect(page.getByRole('link', { name: '← Back to WatchCraft' })).toBeVisible();
+ broken = false;
+ await page.getByRole('button', { name: 'Retry captions' }).click();
+ await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');
+ await expect(page.getByLabel('Subtitles')).toHaveText('Recovered subtitles');
+ expect(retryBody).toEqual({ local_only: true, regenerate: true });
+});
+
+test('late caption response cannot play a skipped clip or leak back into picker', async ({ page }) => {
+ await fixture(page);
+ let release!: () => void, started!: () => void;
+ const gate = new Promise<void>(r => release = r), pending = new Promise<void>(r => started = r);
+ await page.route('**/api/video/short000001/subtitles', async r => { started(); await gate; await r.fulfill({ json: { enabled: true, status: 'ready', track: { url: '/api/video/short000001/subtitles/generated.vtt' } } }); });
+ await freshPage(page, '/shorts');
+ await page.getByRole('button', { name: /Science clips/ }).click();
+ await pending;
+ await page.getByRole('button', { name: 'Skip to next clip' }).click();
+ await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
+ release();
+ await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
+ await page.getByRole('button', { name: '← Feeds' }).click();
+ await expect(page.locator('video')).toHaveCount(0);
+ await expect(page.getByLabel('Subtitles')).toHaveCount(0);
+});
+
+test('disabled transcription explains blocking and still permits skipping', async ({ page }) => {
+ await fixture(page);
+ await page.route('**/api/video/short000001/subtitles', r => r.fulfill({ json: { enabled: false, status: 'idle', progress: 0, error: '', track: null } }));
+ await freshPage(page, '/shorts');
+ await page.getByRole('button', { name: /Science clips/ }).click();
+ await expect(page.getByRole('alert')).toContainText('Enable speech recognition');
+ await expect(page.locator('video')).not.toHaveAttribute('src');
+ await page.getByRole('button', { name: 'Skip to next clip' }).click();
+ await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
 });
