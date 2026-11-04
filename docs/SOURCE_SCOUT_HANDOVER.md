@@ -1557,3 +1557,32 @@ in the local `todo.md` (which is intentionally ignored by Git).
   revision `171a6a5`, zero restarts. Public health/routes, sharing UI assets, unknown-token rejection with no-store headers,
   integrity/profile/PIN/configuration preservation and two-second saved-video decode passed. No production article was
   published automatically during validation; public sharing requires the reader's explicit per-article action.
+
+## Deployment record — cleaner article archives (`baa7605`, 2026-11-04)
+
+- HTML extraction prefers semantic publisher article bodies and removes structural newsletter/related/share/promotion
+  widgets. Generic pages retain a fallback; quotations, following paragraphs, lists and preformatted code remain.
+  The actual Guardian Hinton page extracts to 5,374 characters and retains the final Channel 4 airing paragraph.
+- News/article/web captures now receive a worker cleanup review before summarisation. Workers may only remove whole
+  indexed clutter paragraphs, never rewrite retained reporting. Strict result validation, a 40% removal guard and
+  atomic fallback retain original text on errors. ArticleText preserves original extracted source separately.
+- Existing readable archives enter bounded local-only review batches through normal durable capture jobs. Eligibility
+  is filtered before batch limits; already-successful cleanup is reused on retries so errors cannot cumulatively trim
+  text. New captures retain scheduling priority. Shared reading pages render separate escaped paragraphs.
+- Validation: broad backend suite 858 passed/six skipped, 50 final focused extraction/worker/capture/sharing checks,
+  four sharing/news browser checks. Independent review approved retry/backfill fixes. Real worker reviewed the old
+  public example: 39 clutter paragraphs removed, 7,525 to 5,643 characters; article ending retained. No production
+  content was changed by that probe. Restored image initialized with counts/profiles/PINs preserved, started twice,
+  verified real Guardian extraction and retained the existing shared URL.
+- Backup `/root/compose/watchcraft-backups/20261104-cleanup-baa7605`; rollback image
+  `watchcraft:rollback-20261104-cleanup` (previous `171a6a5`). ArticleText is an additive table ignored by older images;
+  original extracted text remains available for deliberate content restoration if reverting cleanup results.
+- Final local-only attachment safeguard deployed as `c210238` (range `baa7605..c210238`); 51 final focused checks passed.
+  Same isolated restore and twice-started checks passed for this exact image. Pre-follow-up data retained separately as
+  `before-c210238.sqlite3`; initial pre-cleanup backup remains intact. Final API/worker/downloader image:
+  `sha256:4ae32672adea96fb579688802e49097f0ee2011681f24d4efdee6b84253e6fd4`, zero restarts at acceptance.
+- Refreshed the reported shared Guardian archive through normal capture/worker/summary: complete, cleanup reviewed,
+  summary ready, reading text 5,314 characters, original 7,525 characters retained. Live browser inspection confirmed
+  clean paragraphs, stored image and summary with the final article paragraph intact and newsletter/topics/cards gone.
+  Initial backfill snapshot: three reviewed/47 queued. Remaining existing articles continue asynchronously.
+- Production health/routes, integrity/profile/PIN/configuration preservation and saved-video two-second decode passed.
