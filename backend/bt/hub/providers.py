@@ -176,6 +176,7 @@ def parse_feed(data: bytes, url: str) -> list[dict]:
             elif tag == 'enclosure' and (c.get('type') or '').startswith('image/'): f['image'] = safe_image(c.get('url', ''))
         if not f.get('title') or not f.get('url'):
             continue
+        f['published_at'] = f.get('published_at') or f['meta'].get('updated_at')
         f['url'] = urljoin(url, f['url'])
         f['type'] = 'video' if youtube or f['meta'].get('video_id') else 'news'
         out.append(f)

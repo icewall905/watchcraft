@@ -12,4 +12,4 @@ import threading
 LOCK = threading.RLock()
 
 # Bump when rules or scoring change, so stored verdicts are recomputed by the next pass.
-PASS_VERSION = 2
+PASS_VERSION = 3

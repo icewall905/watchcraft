@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onDestroy } from 'svelte';
+	import { onDestroy, onMount, untrack } from 'svelte';
 	import { hub } from '$lib/hub/api';
 	import type { EditionEntry, EditionSection, TodayEdition } from '$lib/hub/types';
 	import { session } from '$lib/stores/session.svelte';
@@ -23,29 +23,58 @@
 	let notice = $state('');
 	let controller: AbortController | null = null;
 	let loadToken = 0;
+	let editionVersion = -1;
+	let editionProfile: number | null = null;
+	let clock = $state(Date.now());
+	let lastRefresh = 0;
 
-	async function load() {
+	async function load(background = false) {
+		if (background && (document.visibilityState === 'hidden' || controller)) return;
 		const token = ++loadToken;
 		controller?.abort();
 		controller = new AbortController();
 		const signal = controller.signal;
 		const profileVersion = session.version;
-		edition = null;
-		loading = true;
+		const profileId = session.profileId;
+		if (editionVersion !== profileVersion || editionProfile !== profileId) edition = null;
+		loading = !edition;
 		error = '';
 		try {
 			const result = await hub.today(signal);
-			if (signal.aborted || token !== loadToken || profileVersion !== session.version) return;
+			if (signal.aborted || token !== loadToken || profileVersion !== session.version || profileId !== session.profileId) return;
 			edition = result;
+			editionVersion = profileVersion;
+			editionProfile = profileId;
 		} catch (e) {
-			if (signal.aborted || token !== loadToken || profileVersion !== session.version) return;
-			error = e instanceof Error ? e.message : 'Today could not be loaded.';
+			if (signal.aborted || token !== loadToken || profileVersion !== session.version || profileId !== session.profileId) return;
+			if (!edition) error = e instanceof Error ? e.message : 'Today could not be loaded.';
 		} finally {
-			if (!signal.aborted && token === loadToken && profileVersion === session.version) loading = false;
+			if (!signal.aborted && token === loadToken && profileVersion === session.version && profileId === session.profileId) {
+				loading = false;
+				controller = null;
+				lastRefresh = Date.now();
+			}
 		}
 	}
 
-	$effect(() => { session.version; revision; void load(); });
+	$effect(() => { session.profileId; session.version; revision; untrack(() => { void load(); }); });
+	onMount(() => {
+		const refresh = () => {
+			clock = Date.now();
+			if (document.visibilityState !== 'hidden') void load(true);
+		};
+		const timer = window.setInterval(() => {
+			clock = Date.now();
+			if (clock - lastRefresh >= 5 * 60_000) void load(true);
+		}, 60_000);
+		window.addEventListener('focus', refresh);
+		document.addEventListener('visibilitychange', refresh);
+		return () => {
+			window.clearInterval(timer);
+			window.removeEventListener('focus', refresh);
+			document.removeEventListener('visibilitychange', refresh);
+		};
+	});
 	onDestroy(() => controller?.abort());
 
 	const section = (key: string) => edition?.sections.find((s) => s.key === key);
@@ -57,13 +86,16 @@
 	const alerts = $derived(section('alerts'));
 	const hasContent = $derived(!!(entries('lead').length || entries('stories').length || entries('reads').length || entries('memes').length || (research && 'curators' in research && research.curators.length) || (alerts && 'count' in alerts && alerts.count)));
 	const greeting = $derived.by(() => {
-		const hour = new Date().getHours();
+		const hour = new Date(clock).getHours();
 		const name = session.profile?.name ? `, ${session.profile.name}` : '';
 		return `${hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'}${name}`;
 	});
-	const today = new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date());
+	const today = $derived(new Intl.DateTimeFormat(undefined, { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date(clock)));
 	const itemHref = (entry: EditionEntry) => `/item/${entry.item_id}`;
 	const hasLocalImage = (entry: EditionEntry) => entry.item.local_image;
+	const archivedSummary = (entry: EditionEntry) => typeof entry.item.enrichment?.summary === 'string' ? entry.item.enrichment.summary.trim() : '';
+	const cardSummary = (entry: EditionEntry) => entry.summary?.trim() || entry.item.summary?.trim() || archivedSummary(entry);
+	const summaryLabel = (entry: EditionEntry) => entry.summary?.trim() || (!entry.item.summary?.trim() && archivedSummary(entry)) ? 'AI summary' : undefined;
 	function sourceCount(entry: EditionEntry) { return Math.max(0, (entry.sources ?? 1) - 1); }
 </script>
 
@@ -89,7 +121,7 @@
 		{#if entries('lead').length}
 			{@const lead = entries('lead')[0]}
 			<section class="lead-section" aria-label="Today's lead" data-nav-row>
-				<StoryCard href={itemHref(lead)} title={lead.item.title} source={lead.item.publisher || lead.item.author || undefined} summary={lead.summary || lead.item.summary} more={sourceCount(lead)} mediaAvailable={hasLocalImage(lead)}>
+				<StoryCard href={itemHref(lead)} title={lead.item.title} source={lead.item.publisher || lead.item.author || undefined} summary={cardSummary(lead)} summaryLabel={summaryLabel(lead)} more={sourceCount(lead)} mediaAvailable={hasLocalImage(lead)}>
 					{#snippet image()}{#if hasLocalImage(lead)}<LocalImage id={lead.item_id} alt={lead.item.title} />{/if}{/snippet}
 					{#snippet why()}<WhyPopover reasons={lead.item.verdict?.reasons ?? []} /><EditionActions entry={lead} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} />{/snippet}
 				</StoryCard>
@@ -101,7 +133,7 @@
 				<SectionHeader title="Stories" action={{ href: '/news', label: 'All news' }} />
 					<div class="story-list" data-nav-row>
 					{#each entries('stories') as entry (entry.item_id)}
-						<StoryCard href={itemHref(entry)} title={entry.item.title} source={entry.item.publisher || entry.item.author || undefined} summary={entry.summary || entry.item.summary} more={sourceCount(entry)} mediaAvailable={hasLocalImage(entry)}>
+						<StoryCard href={itemHref(entry)} title={entry.item.title} source={entry.item.publisher || entry.item.author || undefined} summary={cardSummary(entry)} summaryLabel={summaryLabel(entry)} more={sourceCount(entry)} mediaAvailable={hasLocalImage(entry)}>
 							{#snippet image()}{#if hasLocalImage(entry)}<LocalImage id={entry.item_id} alt={entry.item.title} />{/if}{/snippet}
 							{#snippet why()}<WhyPopover reasons={entry.item.verdict?.reasons ?? []} /><EditionActions entry={entry} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} />{/snippet}
 						</StoryCard>
@@ -115,7 +147,7 @@
 				<SectionHeader title="Worth your time" action={{ href: '/discover', label: 'More discoveries' }} />
 				<div class="reads" data-nav-row>
 					{#each entries('reads') as entry (entry.item_id)}
-						<ReadCard href={itemHref(entry)} title={entry.item.title} source={entry.item.publisher || entry.item.author || undefined} summary={entry.item.summary} mediaAvailable={hasLocalImage(entry)}>
+						<ReadCard href={itemHref(entry)} title={entry.item.title} source={entry.item.publisher || entry.item.author || undefined} summary={cardSummary(entry)} summaryLabel={summaryLabel(entry)} mediaAvailable={hasLocalImage(entry)}>
 							{#snippet image()}{#if hasLocalImage(entry)}<LocalImage id={entry.item_id} alt={entry.item.title} />{/if}{/snippet}
 							{#snippet why()}<WhyPopover reasons={entry.item.verdict?.reasons ?? []} /><EditionActions entry={entry} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} />{/snippet}
 						</ReadCard>

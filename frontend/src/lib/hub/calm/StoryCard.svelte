@@ -2,8 +2,8 @@
 	import type { Snippet } from 'svelte';
 	// One story = a lead item plus folded duplicates from other sources ("+N more sources").
 	import { focusable } from '$lib/nav';
-	let { href, title, source, summary, imageSrc, imageAlt = '', image, mediaAvailable = true, more = 0, moreSources = [], why }: {
-		href: string; title: string; source?: string; summary?: string; imageSrc?: string; imageAlt?: string;
+	let { href, title, source, summary, summaryLabel, imageSrc, imageAlt = '', image, mediaAvailable = true, more = 0, moreSources = [], why }: {
+		href: string; title: string; source?: string; summary?: string; summaryLabel?: string; imageSrc?: string; imageAlt?: string;
 		image?: Snippet; mediaAvailable?: boolean; more?: number; moreSources?: string[]; why?: Snippet;
 	} = $props();
 </script>
@@ -14,7 +14,7 @@
 	{/if}
 	<div class="body">
 		<h3 class="title"><a {href} use:focusable>{title}</a></h3>
-		{#if summary}<p class="summary">{summary}</p>{/if}
+		{#if summary}<p class="summary">{#if summaryLabel}<span class="summary-label">{summaryLabel} · </span>{/if}{summary}</p>{/if}
 		<div class="meta">
 			{#if source}<span class="source">{source}</span>{/if}
 			{#if more > 0}<span class="more" title={moreSources.length ? moreSources.join(', ') : undefined}>+{more} {more === 1 ? 'source' : 'sources'}</span>{/if}

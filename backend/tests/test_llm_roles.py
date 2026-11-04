@@ -99,11 +99,11 @@ def test_screening_and_summaries_use_the_worker(monkeypatch):
     seen = _capture(monkeypatch)
     ai.summarize_items([{'title': 'A', 'body': 'Some captured text.'}])
     assert seen and seen[-1]['model'] == 'small-model'
-    # Ranking is a judgement, so it keeps the big model.
+    # Discovery screening uses the worker; the master editor escalates uncertain items.
     seen.clear()
     from bt.hub.models import Curator
     ai.rank(Curator(profile_id=1, name='c'), [{'title': 'A', 'summary': 'B', 'url': 'https://example.org/a'}])
-    assert seen and seen[-1]['model'] == 'big-model'
+    assert seen and seen[-1]['model'] == 'small-model'
 
 
 def test_the_worker_key_is_redacted_and_survives_a_save(client):

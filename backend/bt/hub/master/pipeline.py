@@ -4,7 +4,7 @@ import time
 from sqlmodel import Session, select
 
 from ..models import ContentItem, CuratorDiscovery, ItemState, ItemVerdict
-from . import LOCK, PASS_VERSION, cluster, prefs, rules, score
+from . import LOCK, PASS_VERSION, cluster, edition, prefs, rules, score
 
 WINDOW = 7 * 86400.0
 MAX_ITEMS = 2000
@@ -37,6 +37,7 @@ def _run(s: Session, pid: int, now: float) -> dict:
     scouts = score.discovery_scores(s, pid, ids)
     states = {st.item_id: st for st in s.exec(select(ItemState).where(ItemState.profile_id == pid, ItemState.item_id.in_(ids))).all()}
     prior = {v.item_id: v for v in s.exec(select(ItemVerdict).where(ItemVerdict.profile_id == pid, ItemVerdict.item_id.in_(ids))).all()}
+    delivered_before = edition._previously_shown(s, pid, now)
 
     cands: list[score.Candidate] = []
     for item in items:
@@ -64,6 +65,9 @@ def _run(s: Session, pid: int, now: float) -> dict:
             c.tier, c.forced = 'set_aside', True
             if item.id in uncaptured:
                 c.reasons.append('image not captured')
+        elif item.id in delivered_before:
+            c.tier, c.forced = 'keep', True
+            c.reasons.append('shown in an earlier edition')
         cands.append(c)
     score.tier(cands, now)
 

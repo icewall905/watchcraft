@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 
 from sqlmodel import Session, select
 
-from ...db import get_agent_control, get_agent_state
+from ...db import get_agent_control, get_agent_state, get_settings
 from .. import ai
 from ..models import ContentItem, Curator, HubPreferenceCore, ItemVerdict
 from . import PASS_VERSION, rules, score
@@ -17,7 +17,7 @@ from . import PASS_VERSION, rules, score
 log = logging.getLogger(__name__)
 
 BATCH = 15
-LIGHT_LIMIT = 30          # items a post-run pass may send to the model
+LIGHT_LIMIT = 60          # items a post-run pass may send to the model
 NIGHT_LIMIT = 150         # the nightly pass reads everything recent that a model has not
 FRESH = 48 * 3600.0       # only recent items are worth a model's time
 BAND = (score.KEEP_MIN - 10, score.FEATURE_MIN + 20)  # finals where rules alone are unsure
@@ -29,13 +29,13 @@ SCHEMA = {'type': 'object', 'properties': {'verdicts': {'type': 'array', 'items'
     'n': {'type': 'integer'},
     'quality': {'type': 'integer', 'minimum': 0, 'maximum': 100},
     'relevance': {'type': 'integer', 'minimum': 0, 'maximum': 100},
-    'reason': {'type': 'string'}},
+    'reason': {'type': 'string'}, 'uncertain': {'type': 'boolean'}},
     'required': ['n', 'quality', 'relevance', 'reason']}}}, 'required': ['verdicts']}
 
 SYSTEM = ('You are the editor of a calm personal magazine. For each item, rate QUALITY 0-100 (is it worth a '
           'thoughtful reader\'s time: substance, originality, craft; low for spam, rage bait, clickbait, reposts, '
           'low-effort memes, thin rewrites, ads) and RELEVANCE 0-100 to this reader\'s interests below. The reason is '
-          'one short, concrete sentence about the item itself. Be strict: most items should not score above 70.')
+          'one short, concrete sentence about the item itself. Set uncertain=true when evidence is insufficient or the decision needs an editor. Be strict: most items should not score above 70.')
 
 
 def video_busy(now: float | None = None) -> bool:
@@ -50,6 +50,16 @@ def video_busy(now: float | None = None) -> bool:
     except ValueError:
         return False
     return (now or time.time()) - at < STATE_FRESH
+
+
+def worker_busy(now: float | None = None) -> bool:
+    """An independent worker can screen while the video agent uses the judge."""
+    if get_agent_control().get('paused'):
+        return True
+    cfg = get_settings()['llm']
+    judge_base = (cfg.get('base_url') or '').strip().rstrip('/')
+    worker_base = (cfg.get('worker_base_url') or judge_base).strip().rstrip('/')
+    return worker_base == judge_base and video_busy(now)
 
 
 def available(now: float | None = None) -> bool:
@@ -96,7 +106,7 @@ def _row(item: ContentItem) -> dict:
     if pop is not None:
         extra.append(f'reactions seen: {int(pop)}')
     return {'type': item.type, 'title': item.title, 'publisher': item.publisher, 'url': item.url,
-            'summary': item.summary or (item.body or '')[:600], 'coverage': '; '.join(extra)}
+            'summary': item.summary or (item.body or '')[:600], 'body': (item.body or '')[:3000], 'coverage': '; '.join(extra)}
 
 
 def _score(value) -> int | None:
@@ -117,8 +127,9 @@ def judge(s: Session, pid: int, now: float | None = None, limit: int = LIGHT_LIM
     if not todo:
         return out
     interests = reader(s, pid)
+    escalations = 0
     for start in range(0, len(todo), BATCH):
-        if video_busy():
+        if worker_busy():
             out['stopped'] = 'video busy'
             out['skipped'] = len(todo) - start
             break
@@ -131,16 +142,59 @@ def judge(s: Session, pid: int, now: float | None = None, limit: int = LIGHT_LIM
             out['stopped'] = 'model error'
             out['skipped'] = len(todo) - start
             break
+        # Workers read everything; the stronger editor resolves only doubtful decisions.
+        doubtful = []
+        seen = set()
         for row in res.get('verdicts', []):
             n = row.get('n') if isinstance(row, dict) else None
-            if not isinstance(n, int) or not 1 <= n <= len(batch):
+            q, r = (_score(row.get('quality')), _score(row.get('relevance'))) if isinstance(row, dict) else (None, None)
+            if not isinstance(n, int) or n in seen or not 1 <= n <= len(batch) or q is None or r is None:
                 continue
+            seen.add(n)
+            final = score.final(q, r)
+            if (row.get('uncertain') is True or abs(q - r) >= 35
+                    or min(abs(final - score.KEEP_MIN), abs(final - score.FEATURE_MIN)) <= 5):
+                doubtful.append(n)
+        deferred = set(doubtful)
+        doubtful = doubtful[:max(0, 5 - escalations)]
+        escalations += len(doubtful)
+        authoritative = {}
+        editor_busy = video_busy()
+        if doubtful and editor_busy:
+            out['stopped'] = 'video busy'
+        if doubtful and not editor_busy:
+            try:
+                review = ai._call(SYSTEM + ' Resolve these uncertain worker decisions from the supplied source evidence.',
+                                  f'Reader interests:\n{ai._esc(interests)}\n\n' + ai._data([_row(batch[n - 1][1]) for n in doubtful]),
+                                  SCHEMA, max_tokens=1000, role='judge')
+                for reviewed in review.get('verdicts', []):
+                    number = reviewed.get('n') if isinstance(reviewed, dict) else None
+                    if isinstance(number, int) and 1 <= number <= len(doubtful):
+                        if _score(reviewed.get('quality')) is not None and _score(reviewed.get('relevance')) is not None:
+                            authoritative[doubtful[number - 1]] = reviewed
+            except Exception as e:  # keep uncertain items eligible while the judge is unavailable
+                log.info('master escalation failed: %s', e)
+                out['stopped'] = 'model error'
+            deferred.difference_update(authoritative)
+            if set(doubtful) - authoritative.keys() and not out['stopped']:
+                out['stopped'] = 'model error'
+        out['skipped'] += len(deferred)
+        seen = set()
+        for row in res.get('verdicts', []):
+            n = row.get('n') if isinstance(row, dict) else None
+            if not isinstance(n, int) or n in seen or not 1 <= n <= len(batch):
+                continue
+            seen.add(n)
+            if n in deferred:
+                continue  # keep the rules verdict eligible until its editor can review it
+            reviewed = n in authoritative
+            row = authoritative.get(n, row)
             q, r = _score(row.get('quality')), _score(row.get('relevance'))
             if q is None or r is None:
                 continue  # a malformed row leaves that item's rules verdict alone
             v, _ = batch[n - 1]
-            v.quality = round(MODEL_WEIGHT['quality'] * q + (1 - MODEL_WEIGHT['quality']) * v.quality, 1)
-            v.relevance = round(MODEL_WEIGHT['relevance'] * r + (1 - MODEL_WEIGHT['relevance']) * v.relevance, 1)
+            v.quality = q if reviewed else round(MODEL_WEIGHT['quality'] * q + (1 - MODEL_WEIGHT['quality']) * v.quality, 1)
+            v.relevance = r if reviewed else round(MODEL_WEIGHT['relevance'] * r + (1 - MODEL_WEIGHT['relevance']) * v.relevance, 1)
             v.final = score.final(v.quality, v.relevance)
             reason = str(row.get('reason') or '').strip()[:200]
             v.reasons = ([f'editor: {reason}'] if reason else []) + [x for x in v.reasons if not x.startswith('editor:')][:7]

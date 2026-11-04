@@ -85,7 +85,7 @@ def rank(c: Curator, items: list[dict]) -> list[tuple[float, str]]:
                     'short sentence citing concrete evidence from the item (title/summary), e.g. "Selected because it is a '
                     'beginner sweater pattern". If evidence is weak, say so and score low.',
                     f'Interest: {c.instructions or c.name}\nKeywords: {", ".join(c.keywords)}\nAvoid: {", ".join(c.exclusions)}\n\n{_data(batch)}',
-                    RANK_SCHEMA)
+                    RANK_SCHEMA, role='worker')
         for row in res.get('scores', []):
             n = row.get('n')
             if isinstance(n, int) and 1 <= n <= len(batch):

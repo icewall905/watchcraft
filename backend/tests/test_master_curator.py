@@ -296,3 +296,16 @@ def test_a_first_pass_over_many_distinct_headlines_stays_fast():
         start = time.perf_counter()
         cluster.assign_stories(s, items)
         assert time.perf_counter() - start < 8
+
+
+def test_delivered_stories_do_not_consume_new_days_feature_quota():
+    from bt.hub.master import edition
+    from bt.hub.models import Edition
+    with session() as s:
+        old = item(s, title='Earlier high quality model release', publisher='same publisher', scout=100)
+        new = item(s, title='Fresh distinct security tooling announcement', publisher='same publisher', scout=100)
+        s.add(Edition(profile_id=1, day=edition.today(NOW - 86400), shown_item_ids=[old.id]))
+        s.commit()
+        pipeline.run(s, 1, NOW)
+        assert s.get(ItemVerdict, (1, old.id)).tier == 'keep'
+        assert s.get(ItemVerdict, (1, new.id)).tier == 'feature'

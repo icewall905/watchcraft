@@ -2363,4 +2363,4 @@ def delete_profile_data(s: Session, pid: int) -> None:
     for model in (CaptureJob, CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, PageRevision, SourceCheck, SitemapEntry, WatcherRevision, Source, Curator, ScoutRun, ScoutPlan, ScoutReportIssue, MemeTrendState,
                   ItemVerdict, Edition, HubLesson, HubPreferenceCore, MasterQueue):
         s.exec(delete(model).where(model.profile_id == pid))
-    s.exec(delete(Setting).where(Setting.key == f'watchcraft_master_nightly:{pid}'))
+    s.exec(delete(Setting).where(Setting.key.in_([f'watchcraft_master_nightly:{pid}', f'watchcraft_master_catchup:{pid}'])))

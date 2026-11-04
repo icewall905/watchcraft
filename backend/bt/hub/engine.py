@@ -1,5 +1,6 @@
 """Curator execution: fetch sources, dedupe into canonical items, score, route to outputs."""
 import asyncio
+from collections import deque
 import hashlib
 import logging
 import re
@@ -374,6 +375,26 @@ def _sources(cid: int) -> list[Source]:
                       .where(CuratorSource.curator_id == cid, Source.enabled == True)).all()
 
 
+def fresh_candidates(scored, known: set[str], limit: int):
+    """Give every source a place in the screening batch, rather than letting the
+    first busy provider consume the entire run before article feeds are reached."""
+    groups = {}
+    for row in scored:
+        if canonical_url(row[2]['url']) in known:
+            continue
+        source = row[0]
+        key = (source.id, source.provider, source.url)
+        groups.setdefault(key, deque()).append(row)
+    queues = deque(groups.values())
+    out = []
+    while queues and len(out) < max(1, limit):
+        queue = queues.popleft()
+        out.append(queue.popleft())
+        if queue:
+            queues.append(queue)
+    return out
+
+
 def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
     cid = c.id
     sources = _sources(cid)
@@ -487,7 +508,7 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
     with session() as s:
         known = set(s.exec(select(ContentItem.url).join(CuratorDiscovery, CuratorDiscovery.item_id == ContentItem.id)
                                       .where(CuratorDiscovery.curator_id == cid)).all())
-    fresh = [x for x in scored if canonical_url(x[2]['url']) not in known][: max(1, c.max_per_run)]
+    fresh = fresh_candidates(scored, known, c.max_per_run)
     activity.emit(c, r.id, 'matched', narrate.say(c.tone, 'curator.matched', seed=str(r.id),
                                                   fresh=narrate.phrase(len(fresh), 'unseen matching item')))
     if c.ai_enabled and fresh and ai.enabled():
@@ -627,8 +648,37 @@ def dispatch_due() -> None:
     free = slots.free()
     if free <= 0:
         return
-    free -= scout.run_due(free)
     now = time.time()
+    from .master import schedule as master
+    master.catch_up(now)
+    day = master.nightly_day(now)
+    started_master = False
+    for pid in master.nightly_due(now) if day else []:
+        if free <= 0:
+            return
+        claimed = master.claim_now(pid, now)
+        if claimed is None:
+            continue
+        if slots.spawn(f'master-{pid}', 'master', None, pid, 'Master curator', master.night_pass, pid, claimed, day):
+            free -= 1
+            started_master = True
+            break
+        else:
+            master.release(pid)
+    master_enabled = get_settings()['hub_master'].get('enabled', True)
+    for pid in master.due(now) if master_enabled and not started_master else []:
+        if free <= 0:
+            return
+        claimed = master.claim(pid, now)
+        if claimed is None:
+            continue
+        if slots.spawn(f'master-{pid}', 'master', None, pid, 'Master curator', master.light_pass, pid, claimed):
+            free -= 1
+            started_master = True
+            break
+        else:
+            master.release(pid)
+    free -= scout.run_due(free)
     with session() as s:
         curators = s.exec(select(Curator).where(Curator.enabled == True, Curator.next_run <= now)
                           .order_by(Curator.next_run)).all()
@@ -639,28 +689,6 @@ def dispatch_due() -> None:
             return
         if slots.spawn(f'curator-{c.id}', 'curator', c.id, c.profile_id, c.name, run, c.id):
             free -= 1
-    from .master import schedule as master
-    day = master.nightly_day(now)
-    for pid in master.nightly_due(now) if day else []:
-        if free <= 0:
-            return
-        claimed = master.claim_now(pid, now)
-        if claimed is None:
-            continue
-        if slots.spawn(f'master-{pid}', 'master', None, pid, 'Master curator', master.night_pass, pid, claimed, day):
-            free -= 1
-        else:
-            master.release(pid)
-    for pid in master.due(now):
-        if free <= 0:
-            return
-        claimed = master.claim(pid, now)
-        if claimed is None:
-            continue
-        if slots.spawn(f'master-{pid}', 'master', None, pid, 'Master curator', master.light_pass, pid, claimed):
-            free -= 1
-        else:
-            master.release(pid)
     for b in briefs:
         if free <= 0:
             return

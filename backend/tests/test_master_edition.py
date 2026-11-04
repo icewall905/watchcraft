@@ -135,7 +135,7 @@ def test_the_nightly_window_follows_the_setting():
     day = time.mktime((2026, 11, 3, 0, 0, 0, 0, 0, 0)) - time.timezone  # midnight UTC
     assert schedule.nightly_day(day + 4 * 3600) is None
     assert schedule.nightly_day(day + 5 * 3600) == '2026-11-03'
-    assert schedule.nightly_day(day + 9 * 3600) is None
+    assert schedule.nightly_day(day + 9 * 3600) == '2026-11-03'  # catch up after a busy morning
     save_setting('hub_master', {'time': '04:30', 'enabled': False})
     assert schedule.nightly_day(day + 5 * 3600) is None
 
@@ -236,3 +236,81 @@ def test_the_nightly_tick_leaves_a_running_pass_alone():
     assert schedule.claim_now(1) is None
     with session() as s:
         assert s.get(MasterQueue, 1).gen == gen == claimed
+
+
+def test_new_day_rotates_delivered_items_but_keeps_unseen_candidates(monkeypatch):
+    now = time.time()
+    monkeypatch.setattr(edition, 'today', lambda timestamp=None: '2026-11-03' if (timestamp or now) < now + 86400 else '2026-11-04')
+    with session() as s:
+        delivered = featured(s, type='project', final=99)
+        unseen = featured(s, type='project', final=90)
+        yesterday = edition.patch(s, 1, now)
+        yesterday.shown_item_ids = [delivered]
+        s.add(yesterday); s.commit()
+        fresh = featured(s, type='project', final=95)
+        tomorrow = edition.patch(s, 1, now + 86400)
+        assert ids(tomorrow, 'reads') == [fresh, unseen]
+        # Another profile's viewing history must not consume this profile's finds.
+        s.add(Edition(profile_id=2, day='2026-11-03', shown_item_ids=[fresh]))
+        s.commit()
+        assert ids(edition.patch(s, 1, now + 86400), 'reads') == [fresh, unseen]
+
+
+@pytest.mark.parametrize('state', [{'read_at': 1}, {'dismissed': True}, {'archived': True}])
+def test_reader_actions_remove_even_pinned_entries(state):
+    from bt.hub.models import ItemState
+    with session() as s:
+        item = featured(s, type='project')
+        ed = edition.patch(s, 1)
+        ed.shown_item_ids = [item]
+        s.add(ed); s.commit()
+        s.add(ItemState(profile_id=1, item_id=item, **state)); s.commit()
+        assert ids(edition.patch(s, 1), 'reads') == []
+
+
+def test_freshness_breaks_historical_score_dominance_and_expires_stale_news():
+    now = time.time()
+    with session() as s:
+        old = featured(s, final=99, story=story(s))
+        fresh = featured(s, final=85, story=story(s))
+        expired = featured(s, final=100, story=story(s))
+        evergreen = featured(s, type='project', final=80)
+        for iid, age in [(old, 5), (expired, 8), (evergreen, 20)]:
+            item = s.get(ContentItem, iid)
+            item.published_at = now - age * 86400
+            s.add(item)
+        s.commit()
+        ed = edition.patch(s, 1, now)
+        assert ids(ed, 'lead') == [fresh]
+        assert ids(ed, 'stories') == [old]
+        assert ids(ed, 'reads') == [evergreen]
+
+
+def test_reader_promotion_can_restore_an_old_previously_delivered_item():
+    with session() as s:
+        item = featured(s, type='project')
+        row = s.get(ContentItem, item); row.published_at = time.time() - 100 * 86400
+        s.add(row)
+        s.add(Edition(profile_id=1, day='2000-01-01', shown_item_ids=[item]))
+        verdict = s.get(ItemVerdict, (1, item)); verdict.overruled = 'promoted'; s.add(verdict)
+        s.commit()
+        assert ids(edition.patch(s, 1), 'reads') == [item]
+
+
+@pytest.mark.parametrize('promoted', [False, True])
+def test_patch_repairs_already_pinned_previous_day_duplicates(promoted):
+    with session() as s:
+        old = featured(s, type='project', final=99)
+        unseen = featured(s, type='project', final=80)
+        current = edition.patch(s, 1)
+        current.shown_item_ids = [old]
+        current.intro, current.intro_refs = 'Yesterday again [1].', [old]
+        s.add(current)
+        s.add(Edition(profile_id=1, day='2000-01-01', shown_item_ids=[old],
+                      sections=[{'key': 'reads', 'entries': [{'item_id': old}, {'item_id': unseen}]}]))
+        if promoted:
+            verdict = s.get(ItemVerdict, (1, old)); verdict.overruled = 'promoted'; s.add(verdict)
+        s.commit()
+        patched = edition.patch(s, 1)
+        assert ids(patched, 'reads') == ([old, unseen] if promoted else [unseen])
+        assert patched.intro == ('Yesterday again [1].' if promoted else '')
