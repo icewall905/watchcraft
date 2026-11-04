@@ -1486,3 +1486,23 @@ in the local `todo.md` (which is intentionally ignored by Git).
   curator assignments or PINs were changed by deployment.
 - Rollback: tag `watchcraft:rollback-20261102-social` as `watchcraft:latest` and use the existing three-file Compose
   command with `up -d --no-build --wait`; source/configuration snapshots remain in the backup directory.
+
+## Deployment record — active curation and fresh editions (`43f647f`, 2026-11-04)
+
+- News/memes collect hourly, Home Assistant every two hours, security every three and AI research every six.
+  Master selection catches up every 15 minutes, resumes bounded batches and retries busy/failed model work.
+  Discovery uses the worker; uncertain editorial decisions escalate to the judge. Existing quality thresholds remain.
+- Editions exclude previous-day deliveries/read/archive/dismissed items and age stale candidates; same-day placements
+  remain stable. Today refreshes across midnight/focus with profile-safe requests. Intro citation validation remains strict.
+- Added Ars Technica, Home Assistant and Simon Willison RSS/Atom feeds; removed incompatible source assignments from
+  general news and irrelevant assignments from Home Assistant. Atom updated timestamps now preserve article age.
+- Validation: 816 backend tests passed, six skipped; 11 Today/News browser checks passed; frontend check/build passed
+  with three existing CSS warnings. Independent review approved. Isolated restored database initialized and started twice.
+- Backup `/root/compose/watchcraft-backups/20261104-curation`; rollback `watchcraft:rollback-20261104-curation`
+  (previous `eb9ae84`). Prior curator/source assignments are in protected `curation-config-before.json` in that backup;
+  application image rollback alone does not reverse cadence/feed configuration. Retained source/database/config backups.
+- API/worker/downloader use image `sha256:0c86a5c45b47295080bd2049ef34776718fcb61ea7353fe7d1768a0a47304526`,
+  revision `43f647f`, zero restarts at acceptance. Public health and SQLite quick_check passed; .env/host-overlay hashes
+  unchanged. All five live collection runs completed successfully, finding 98 items. Current edition gained a cited
+  introduction and removed yesterday's repeated entries. Thirty RSS articles discovered; two captured with ready AI
+  summaries at acceptance, 28 queued for normal background processing. This is initial-cycle acceptance, not queue completion.
