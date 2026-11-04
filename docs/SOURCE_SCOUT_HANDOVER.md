@@ -1586,3 +1586,35 @@ in the local `todo.md` (which is intentionally ignored by Git).
   clean paragraphs, stored image and summary with the final article paragraph intact and newsletter/topics/cards gone.
   Initial backfill snapshot: three reviewed/47 queued. Remaining existing articles continue asynchronously.
 - Production health/routes, integrity/profile/PIN/configuration preservation and saved-video two-second decode passed.
+
+## Deployment record — always-captioned Reels and subtitle daemon (`2549876`, 2026-11-04)
+
+- Added dedicated `bt-subtitles`/`wc-subtitles` service using the configured household STT endpoint. It runs without
+  viewers, automatically fills four queue slots from readable, accepted, enabled local short-video feeds and reserves
+  a fifth slot for viewing requests. Requested clips get priority. Stored valid VTT is reused; no automatic remote
+  audio fallback is permitted for Reel jobs, including explicit retries and job upgrades.
+- Daemon heartbeat remains responsive during transcription; Compose restarts it unless stopped. Interrupted jobs
+  preserve completed chunks. Temporary connection/timeout/5xx/429 failures retry after 1/5/15 minutes; permanent
+  no-speech/unreadable-audio/auth errors remain explicit failures. Additive local_only/retry_count/retry_at migration
+  retains existing tracks. API's embedded subtitle worker is disabled in Compose to keep one dedicated consumer.
+- Reels wait for a nonempty validated VTT before setting video source or playing. Captions render as an always-on,
+  plain-text overlay; clips start muted and have an explicit unmute control. Progress, bounded polling, regeneration,
+  retry and skip remain available with main navigation. Profile/clip races cannot start stale playback. Long phone
+  captions sit above feedback controls and scrollable details. Timing is approximate (six-second local audio chunks).
+- Validation: broad backend suite 881 passed/six skipped, final 52 subtitle/daemon/feed/provenance checks passed;
+  frontend check/build passed with three existing CSS warnings; 26 browser checks plus final caption and actual-video
+  layout checks passed. Independent review approved local-only, validation, daemon and durable-retry corrections.
+- Actual configured Qwen STT generated a cached track for a 47.23-second local Reel (four original chunks, 1,025-byte
+  VTT). Exact image on isolated restored DB preserved counts/profiles/PINs and API/daemon started twice. Real video
+  and STT captions were played through a temporary SSH-only connection, media mounted read-only and transcription
+  disabled on the disposable copy; browser confirmed muted=true, paused=false, advancing time and visible captions.
+- Backup `/root/compose/watchcraft-backups/20261104-reels-2549876`; rollback image
+  `watchcraft:rollback-20261104-reels` (previous `c210238`). Rollback script stops/removes the new daemon, retains a
+  fresh pre-rollback DB, pauses local-only pending jobs so the old worker cannot fetch remote audio, restores the old
+  Compose files and three-service topology, then starts the retained image. Schema additions are backward compatible.
+- Production API/worker/downloader/subtitle daemon all use
+  `sha256:e95971328d0de849b143d3c189f02bd216032f71e6e7ad4f95fc6634b6598038`, revision `2549876`, zero restarts.
+  wc-subtitles healthy, /media read-only; wc-api embedded worker disabled. Public health/routes, database integrity,
+  exact profile/PIN preservation, host config hashes and saved-video decode passed. Without a viewer, the new daemon
+  generated four local-only ready tracks and had one running at 53.7% plus three queued at initial acceptance.
+  Existing missing-caption backlog continues; clips remain playback-gated until their captions are ready.
