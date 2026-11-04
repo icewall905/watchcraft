@@ -34,7 +34,7 @@
 		{ key: 'appearance', label: 'Appearance', icon: '🎨', hint: 'Device mode, themes and colours' },
 		{ key: 'storage', label: 'Storage', icon: '💾', hint: 'Videos saved on the server' },
 		{ key: 'sponsorblock', label: 'SponsorBlock', icon: '⏭', hint: 'Skip sponsors and intros' },
-		{ key: 'extras', label: 'Extras', icon: '🧩', hint: 'Shorts, dislikes, titles' },
+		{ key: 'extras', label: 'Extras', icon: '🧩', hint: 'Short videos, dislikes, titles' },
 		{ key: 'cookies', label: 'YouTube cookies', icon: '🍪', hint: 'Optional sign-in' },
 		{ key: 'profiles', label: 'Profiles', icon: '👪', hint: 'Family members' },
 		{ key: 'screens', label: 'Screens', icon: '📺', hint: 'Play on receivers and pairing' },

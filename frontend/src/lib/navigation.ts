@@ -12,7 +12,7 @@ const entry = (href: string, label: string, icon: string, countKey?: CountKey, a
 export const TV: NavEntry = entry('/tv', 'TV', 'tv', undefined, (p) => p === '/' || p === '/tv' || p.startsWith('/category/') || p.startsWith('/channel/'));
 export const DISCOVER = entry('/discover', 'Discover', 'compass', 'discover_unread');
 export const LIBRARY = entry('/library', 'Library', 'library');
-export const SHORTS = entry('/shorts', 'Shorts', 'play');
+export const SHORTS = entry('/shorts', 'Feeds', 'play');
 export const ALERTS = entry('/alerts', 'Alerts', 'alert', 'alerts_new');
 export const SETTINGS = entry('/settings', 'Settings', 'settings');
 

@@ -353,25 +353,25 @@
 		offRaw?.();
 	});
 </script>
-<svelte:head><title>Shorts · WatchCraft</title></svelte:head>
-<div class="feed" role="region" aria-label="Shorts feed" ontouchstart={onTouchStart} ontouchend={onTouchEnd} ontouchcancel={()=>touchStart=null}>
-	<nav class="shorts-navigation" aria-label="Shorts navigation">
+<svelte:head><title>Feeds · WatchCraft</title></svelte:head>
+<div class="feed" role="region" aria-label="Video feed" ontouchstart={onTouchStart} ontouchend={onTouchEnd} ontouchcancel={()=>touchStart=null}>
+	<nav class="shorts-navigation" aria-label="Feeds navigation">
 		<a class="btn" href="/" use:focusable>← Back to WatchCraft</a>
 		{#if selected}<button class="btn" use:focusable onclick={picker}>← Feeds</button>{/if}
 	</nav>
 	{#if !selected}
 		<div class="state picker"><h1>Choose a feed</h1><p class="muted">Only videos stored locally are played.</p>
 		<p class="small muted">Feeds for <strong>{session.profile?.name ?? 'your profile'}</strong></p>
-		{#if session.profiles.length > 1}<div class="profile-choices" role="group" aria-label="Choose Shorts profile">
+		{#if session.profiles.length > 1}<div class="profile-choices" role="group" aria-label="Choose Feeds profile">
 			{#each session.profiles as profile (profile.id)}<button class="btn" class:current-profile={profile.id === session.profileId} aria-pressed={profile.id === session.profileId} disabled={switchingProfile} onclick={()=>switchProfile(profile.id)} use:focusable>{profile.emoji} {profile.name}{profile.pin_required ? ' 🔒' : ''}</button>{/each}
 		</div>{/if}
 		{#if loading}<p>Loading feeds…</p>{:else}
 			{#if error}<p class="err" role="alert">{error}</p><button class="btn" onclick={()=>loadFeeds()} use:focusable>Try again</button>{/if}
 			{#each feeds as feed (feed.id)}<button class="feed-choice" use:focusable onclick={()=>choose(feed)}><span class="feed-top"><strong>{feed.emoji} {feed.name}</strong><span class="play-label">{!feedsProvisional && feed.ready_count ? '▶ Play' : 'View feed'}</span></span><span class="small muted">{#if feedsProvisional}Checking local availability…{:else}{feed.ready_count} ready locally · {feed.pending_count} waiting for local files{feed.error_count ? ` · ${feed.error_count} download errors` : ''}{!feed.enabled ? ' · Collection paused' : ''}{/if}</span></button>{/each}
-			{#if !feeds.length && !error}<p>No Shorts feeds for {session.profile?.name ?? 'this profile'} yet.</p><p class="small muted">{session.profiles.length > 1 ? 'Choose another profile above to see its feeds, or create a feed for this profile.' : 'Give your curator a brief to start collecting local clips.'}</p>{/if}
+			{#if !feeds.length && !error}<p>No feeds for {session.profile?.name ?? 'this profile'} yet.</p><p class="small muted">{session.profiles.length > 1 ? 'Choose another profile above to see its feeds, or create a feed for this profile.' : 'Give your curator a brief to start collecting local clips.'}</p>{/if}
 		{/if}
 		<button class="btn ghost" disabled={loading || switchingProfile} onclick={()=>loadFeeds()} use:focusable>Refresh feeds</button>
-		<a class="btn primary" href="/settings?tab=feeds&new=1" use:focusable>New feed</a><a class="btn" href="/settings?tab=feeds" use:focusable>Manage feeds</a><a class="btn ghost" href="/" use:focusable>Leave Shorts</a></div>
+		<a class="btn primary" href="/settings?tab=feeds&new=1" use:focusable>New feed</a><a class="btn" href="/settings?tab=feeds" use:focusable>Manage feeds</a><a class="btn ghost" href="/" use:focusable>Leave Feeds</a></div>
 	{:else}
 		{#if loading}<div class="state"><p>Checking local videos…</p></div>
 		{:else if !current}<div class="state"><h1>{selected.name}</h1>{#if error}<p role="alert" class="err">{error}</p>{:else}<p>No local clips ready yet.</p>{#if !session.settings?.cache.enabled}<p class="muted">Enable Storage → Offline cache in Settings so accepted clips can download.</p>{/if}{#if !session.settings?.agent.enabled}<p class="muted">Enable the AI agent in Settings to collect new clips.</p>{/if}<p class="muted">{#if selectedProvisional}Refresh once local downloads finish.{:else}{selected.pending_count} waiting for local files{selected.error_count ? `; ${selected.error_count} download errors` : ''}. Refresh once downloads finish.{/if}</p>{/if}<button class="btn primary" use:focusable onclick={retry}>Refresh availability</button><a class="btn" href={`/settings?tab=feeds&edit=${selected.id}`} use:focusable>Edit feed</a></div>

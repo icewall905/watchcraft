@@ -15,8 +15,8 @@ test('empty profile can switch to its populated profile and start a feed with on
  await fixture(page);
  await page.route('**/api/shorts/feeds', r => r.fulfill({ json: r.request().headers()['x-profile-id'] === String(owner.id) ? feeds : [] }));
  await freshPage(page, '/shorts');
- await expect(page.getByText(`No Shorts feeds for ${first.name} yet.`)).toBeVisible();
- await page.getByRole('group', { name: 'Choose Shorts profile' }).getByRole('button', { name: /Evening Shorts/ }).click();
+ await expect(page.getByText(`No feeds for ${first.name} yet.`)).toBeVisible();
+ await page.getByRole('group', { name: 'Choose Feeds profile' }).getByRole('button', { name: /Evening Shorts/ }).click();
  const play = page.getByRole('button', { name: /Science clips/ });
  await expect(play).toContainText('▶ Play');
  await expect(play).toContainText('2 ready locally');
@@ -24,8 +24,8 @@ test('empty profile can switch to its populated profile and start a feed with on
  await play.click();
  await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');
  await page.getByRole('button', { name: '← Feeds' }).click();
- await page.getByRole('group', { name: 'Choose Shorts profile' }).getByRole('button', { name: first.name, exact: false }).click();
- await expect(page.getByText(`No Shorts feeds for ${first.name} yet.`)).toBeVisible();
+ await page.getByRole('group', { name: 'Choose Feeds profile' }).getByRole('button', { name: first.name, exact: false }).click();
+ await expect(page.getByText(`No feeds for ${first.name} yet.`)).toBeVisible();
  await expect(page.getByRole('button', { name: /Science clips/ })).toHaveCount(0);
 });
 
@@ -34,7 +34,7 @@ test('returning to the picker refreshes newly created feeds without navigation',
  let available = false;
  await page.route('**/api/shorts/feeds', r => r.fulfill({ json: available ? feeds : [] }));
  await freshPage(page, '/shorts');
- await expect(page.getByText(/No Shorts feeds for/)).toBeVisible();
+ await expect(page.getByText(/No feeds for/)).toBeVisible();
  available = true;
  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
  await expect(page.getByRole('button', { name: /Science clips/ })).toBeVisible();
@@ -74,12 +74,12 @@ test('locked profile feeds remain hidden until PIN unlock and cancel retains the
   return r.fulfill({ json: id === String(owner.id) ? feeds : [] });
  });
  await freshPage(page, '/shorts');
- await page.getByRole('group', { name: 'Choose Shorts profile' }).getByRole('button', { name: /Locked Shorts/ }).click();
+ await page.getByRole('group', { name: 'Choose Feeds profile' }).getByRole('button', { name: /Locked Shorts/ }).click();
  await expect(page.getByRole('dialog', { name: 'Unlock Locked Shorts', exact: true })).toBeVisible();
  expect(queried).not.toContain(String(owner.id));
  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
- await expect(page.getByText(`No Shorts feeds for ${first.name} yet.`)).toBeVisible();
- await page.getByRole('group', { name: 'Choose Shorts profile' }).getByRole('button', { name: /Locked Shorts/ }).click();
+ await expect(page.getByText(`No feeds for ${first.name} yet.`)).toBeVisible();
+ await page.getByRole('group', { name: 'Choose Feeds profile' }).getByRole('button', { name: /Locked Shorts/ }).click();
  await page.getByLabel('Profile PIN', { exact: true }).fill('2468');
  await page.getByRole('button', { name: 'Unlock profile', exact: true }).click();
  await expect(page.getByRole('button', { name: /Science clips/ })).toBeVisible();
@@ -223,14 +223,14 @@ test('repeat visits show cached feeds during a slow refresh and keep them on fai
  await fixture(page);
  await freshPage(page, '/shorts');
  await expect(page.getByRole('button', { name: /Science clips/ })).toBeVisible();
- await page.getByRole('link', { name: 'Leave Shorts', exact: true }).click();
+ await page.getByRole('link', { name: 'Leave Feeds', exact: true }).click();
  let release!: () => void;
  const gate = new Promise<void>(resolve => release = resolve);
  await page.route('**/api/shorts/feeds', async route => {
   await gate;
   await route.fulfill({ status: 503, json: { detail: 'Feeds temporarily unavailable' } });
  });
- await page.getByRole('link', { name: 'Shorts', exact: true }).first().click();
+ await page.getByRole('link', { name: 'Feeds', exact: true }).first().click();
  await expect(page.getByRole('button', { name: /Science clips/ })).toBeVisible();
  await expect(page.getByText('Loading feeds…', { exact: true })).toHaveCount(0);
  release();
@@ -270,12 +270,12 @@ test('a cached populated profile is cleared while another profile loads', async 
    await route.fulfill({ json: [] });
   } else await route.fulfill({ json: feeds });
  });
- await page.getByRole('group', { name: 'Choose Shorts profile' }).getByRole('button', { name: /Private feed isolation/ }).click();
+ await page.getByRole('group', { name: 'Choose Feeds profile' }).getByRole('button', { name: /Private feed isolation/ }).click();
  await pending;
  await expect(page.getByRole('button', { name: /Science clips/ })).toHaveCount(0);
  await expect(page.getByText('Loading feeds…', { exact: true })).toBeVisible();
  release();
- await expect(page.getByText('No Shorts feeds for Private feed isolation yet.', { exact: true })).toBeVisible();
+ await expect(page.getByText('No feeds for Private feed isolation yet.', { exact: true })).toBeVisible();
 });
 
 
@@ -335,7 +335,7 @@ test('phone navigation leaves empty availability and does not overlap the picker
  await fixture(page);
  await page.route(/\/api\/shorts\?/, route => route.fulfill({ json: { items: [], next_offset: null } }));
  await freshPage(page, '/shorts');
- const navigation = page.getByRole('navigation', { name: 'Shorts navigation', exact: true });
+ const navigation = page.getByRole('navigation', { name: 'Feeds navigation', exact: true });
  const heading = page.getByRole('heading', { name: 'Choose a feed', exact: true });
  await expect(heading).toBeVisible();
  const navBounds = await navigation.boundingBox(), headingBounds = await heading.boundingBox();
@@ -388,6 +388,6 @@ test('provisional choices allow playback and authoritative empty feeds remove th
  await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');
  release();
  await page.getByRole('button', { name: '← Feeds', exact: true }).click();
- await expect(page.getByText(/No Shorts feeds for/)).toBeVisible();
+ await expect(page.getByText(/No feeds for/)).toBeVisible();
  await expect(page.getByRole('button', { name: /Science clips/ })).toHaveCount(0);
 });

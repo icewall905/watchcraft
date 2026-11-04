@@ -522,7 +522,7 @@ def shorts_feed(limit: int = 10, offset: int = 0, category_id: Optional[int] = N
                 exclude_ids: str = Query(default="", max_length=120000)):
     """Only readable local copies from an explicitly selected, owned Shorts feed."""
     if category_id is None:
-        raise HTTPException(400, "Select a Shorts feed")
+        raise HTTPException(400, "Select a feed")
     cat = _own_category(s, pid, category_id)
     if cat.kind != "shorts":
         _404()
