@@ -1534,3 +1534,26 @@ in the local `todo.md` (which is intentionally ignored by Git).
   `watchcraft:rollback-20261104-feeds` (previous `30e1369`). Configuration hashes retained and unchanged.
 - Post-rollout public health/routes, database integrity and exact profile/PIN preservation passed. Live browser confirmed
   “Feeds · WatchCraft”, Feeds navigation, Leave Feeds and the main Feeds link. All services running with zero restarts.
+
+## Deployment record — public article sharing (`171a6a5`, 2026-11-04)
+
+- Article details and news-story source archives have an explicit Share article control. It creates a random 256-bit
+  public capability, shows a copyable URL and permits revocation. Existing links are stable until revoked; regenerated
+  links use a new token. Creation requires authenticated Hub access and ownership of the selected article.
+- Public pages are standalone read-only HTML, available without household login or profile PIN. Only source title,
+  publisher/author, original URL, archived text, stored raster image and AI summary are exposed. Notes, reading state,
+  curator details, collections and other enrichment fields are excluded. HTML is escaped; restrictive CSP, no-referrer,
+  no-store and noindex headers apply. Images require the same capability; active SVG content is excluded.
+- Revocation immediately disables page and image. Profile removal or lost Hub/source visibility disables public delivery;
+  a profile owner can still manage an existing token after discovery removal. Responses and UI requests are profile scoped.
+- Validation: 829 backend tests passed/six skipped, final six focused sharing security checks passed, frontend check/build
+  passed with three existing CSS warnings, four sharing/news browser checks passed. Desktop/phone layout inspected and
+  independent review approved. Restored-copy initialization preserved counts/profiles/PINs; isolated image verified
+  anonymous text/image/summary delivery behind a household password, restart persistence and page/image revocation.
+- Backup `/root/compose/watchcraft-backups/20261104-sharing-171a6a5`; rollback image
+  `watchcraft:rollback-20261104-sharing` (previous `9b48d7e`). Additive ArticleShare table is ignored by older images;
+  an image rollback removes the public route and controls, retaining stored tokens for a subsequent compatible release.
+- Production API/worker/downloader image `sha256:d0a5e1e308addd659ae01bdc9db5c1338d936f38a571db41156525269141aea3`,
+  revision `171a6a5`, zero restarts. Public health/routes, sharing UI assets, unknown-token rejection with no-store headers,
+  integrity/profile/PIN/configuration preservation and two-second saved-video decode passed. No production article was
+  published automatically during validation; public sharing requires the reader's explicit per-article action.
