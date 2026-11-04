@@ -1506,3 +1506,18 @@ in the local `todo.md` (which is intentionally ignored by Git).
   unchanged. All five live collection runs completed successfully, finding 98 items. Current edition gained a cited
   introduction and removed yesterday's repeated entries. Thirty RSS articles discovered; two captured with ready AI
   summaries at acceptance, 28 queued for normal background processing. This is initial-cycle acceptance, not queue completion.
+
+## Deployment record — manual master rerun (`30e1369`, 2026-11-04)
+
+- Today has a profile-owned “Rerun master curator” control with durable pending/completed state, coalesced requests,
+  ten-second visible progress polling and profile-safe responses. Explicit reruns release same-day seen-position locks
+  and regenerate selection/introduction after successful review, preserving delivery history and quality thresholds.
+  Both nightly and normal dispatch consume manual requests; model errors, busy models and empty responses retry durably.
+- Validation: 823 backend tests passed, six skipped; frontend check/build passed (three existing CSS warnings), all 11
+  Today browser checks passed. Phone screenshot inspected and independent review approved lifecycle fixes.
+- Backup `/root/compose/watchcraft-backups/20261104-manual-30e1369`; rollback image
+  `watchcraft:rollback-20261104-manual` (previous `43f647f`). Online and final stopped-service backups retained.
+  Restored copy preserved counts/profiles/PINs, initialized successfully and started twice with isolated networking.
+- API/worker/downloader image `sha256:c8e984e4e80f756bb2f1010866e23e4ed20812e952aac11088d40ebda39f0621`,
+  revision `30e1369`, zero restarts at acceptance. Public health/Today/News, deployed button assets, database integrity,
+  profile/PIN preservation and host configuration hashes passed. Manual refresh requested for the active Hub profile.
