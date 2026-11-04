@@ -18,6 +18,8 @@ services:
     <<: *bt
     build: .
     container_name: bt-api
+    environment:
+      BT_SUBTITLE_WORKER: "0"
     ports:
       - "${BT_PORT:-6645}:6645"
     healthcheck:
@@ -38,6 +40,21 @@ services:
     container_name: bt-downloader
     command: ["python", "-m", "bt.downloader"]
     stop_grace_period: 30s
+
+  bt-subtitles:
+    <<: *bt
+    container_name: bt-subtitles
+    command: ["python", "-m", "bt.subtitle_jobs"]
+    stop_grace_period: 30s
+    volumes: !override
+      - ${BT_DATA_HOST_DIR:-./data}:/data
+      - ${BT_MEDIA_HOST_DIR:-./media}:/media:ro
+    healthcheck:
+      test: ["CMD", "python", "-m", "bt.subtitle_jobs", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
   pot:
     image: brainicism/bgutil-ytdlp-pot-provider:2.0.2-deno

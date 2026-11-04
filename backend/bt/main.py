@@ -1,6 +1,7 @@
 """FastAPI app: API under /api, SPA (static build) everywhere else."""
 from contextlib import asynccontextmanager, suppress
 import asyncio
+import os
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -25,13 +26,17 @@ from .db import init_db
 async def lifespan(_app):
     init_db()
     task = asyncio.create_task(hub_engine.scheduler())
-    subs = asyncio.create_task(subtitle_jobs.worker())
+    subs = (asyncio.create_task(subtitle_jobs.worker())
+            if os.environ.get('BT_SUBTITLE_WORKER', '1').lower() in ('1', 'true', 'yes') else None)
     try:
         yield
     finally:
         task.cancel()
-        subs.cancel()
+        if subs:
+            subs.cancel()
         for running in (task, subs):
+            if running is None:
+                continue
             with suppress(asyncio.CancelledError):
                 await running
 

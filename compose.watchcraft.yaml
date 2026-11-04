@@ -15,5 +15,11 @@ services:
   bt-downloader:
     image: watchcraft:latest
     container_name: wc-downloader
+  bt-subtitles:
+    image: watchcraft:latest
+    container_name: wc-subtitles
+    environment:
+      WC_STT_BASE_URL: ${WC_STT_BASE_URL:-http://10.0.10.73:8011/v1}
+      WC_STT_MODEL: ${WC_STT_MODEL:-Qwen/Qwen3-ASR-1.7B}
   pot:
     container_name: wc-pot

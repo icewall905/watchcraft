@@ -12,14 +12,14 @@ from sqlalchemy import update
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import load_only
 
-from .. import profile_pins
+from .. import profile_pins, subtitle_jobs
 from ..access import profile_id, require_admin, validate_household
 from ..config import COOKIES_PATH, DEFAULT_SETTINGS
 from ..db import emit, get_session, get_settings, save_setting, session, yt_request_counts
 from ..downloader.service import abs_path, drop_unwanted
 from ..playlist import order_playlist
 from ..models import (AgentEvent, Candidate, Category, Channel, Download, Feedback, Lesson, LessonEvidenceState, LessonRevision, PlaybackTarget, Profile, ProfileChannel, ReencodeJob, ReencodeResult, Video,
-                      WatchHistory, YtRequest, now)
+                      GeneratedSubtitles, WatchHistory, YtRequest, now)
 
 router = APIRouter()
 
@@ -496,16 +496,19 @@ def shorts_feeds(pid: int = Depends(profile_id), s: Session = Depends(get_sessio
             .where(Candidate.category_id.in_(ids), Candidate.dismissed == False)
             .group_by(Candidate.category_id, Candidate.status)).all():  # noqa: E712
         stats[cid][status] = count
-    counts = {cid: {'ready_count': 0, 'pending_count': 0, 'error_count': 0} for cid in ids}
+    counts = {cid: {'ready_count': 0, 'pending_count': 0, 'error_count': 0,
+                    'caption_ready_count': 0, 'caption_pending_count': 0, 'caption_error_count': 0} for cid in ids}
     # Counts do not need transcripts, comments or any other video payload. Read
     # only the availability columns, once across all of this profile's feeds.
-    rows = s.exec(select(Candidate.category_id, Candidate.video_id, Download.status, Download.path)
+    rows = s.exec(select(Candidate.category_id, Candidate.video_id, Download.status, Download.path,
+                         GeneratedSubtitles.status, GeneratedSubtitles.vtt)
         .join(Video, Video.id == Candidate.video_id)
         .outerjoin(Download, Download.video_id == Candidate.video_id)
+        .outerjoin(GeneratedSubtitles, GeneratedSubtitles.video_id == Candidate.video_id)
         .where(Candidate.category_id.in_(ids), Candidate.status == "accepted",
                Candidate.dismissed == False, Video.is_short == True)).all()  # noqa: E712
     readable = {}
-    for cid, vid, status, path in rows:
+    for cid, vid, status, path, substatus, vtt in rows:
         if vid in watched:
             continue
         if status == 'done' and path not in readable:
@@ -513,6 +516,10 @@ def shorts_feeds(pid: int = Depends(profile_id), s: Session = Depends(get_sessio
         key = ('error_count' if status == 'error' else
                'ready_count' if status == 'done' and readable[path] else 'pending_count')
         counts[cid][key] += 1
+        if key == 'ready_count':
+            caption_key = ('caption_ready_count' if substatus == 'ready' and subtitle_jobs.usable_vtt(vtt) else
+                           'caption_error_count' if substatus in ('failed', 'ready') else 'caption_pending_count')
+            counts[cid][caption_key] += 1
     return [{**c.model_dump(), 'stats': stats[c.id], **counts[c.id]} for c in categories]
 
 
@@ -533,10 +540,15 @@ def shorts_feed(limit: int = 10, offset: int = 0, category_id: Optional[int] = N
     rows = [(c, v) for c, v in _local_short_rows(s, pid, category_id) if v.id not in excluded]
     total = len(rows)
     items = []
-    for c, v in rows[offset:offset + limit]:
+    page = rows[offset:offset + limit]
+    tracks = {row.video_id: row for row in s.exec(select(GeneratedSubtitles).where(
+        GeneratedSubtitles.video_id.in_([v.id for _, v in page]))).all()} if page else {}
+    configured = subtitle_jobs.enabled()
+    for c, v in page:
         d = candidate_out(c, None)
         d["video"] = {**video_out(v, offline=True, download_status="done"),
-                      "file_url": f"/api/video/{v.id}/file"}
+                      "file_url": f"/api/video/{v.id}/file",
+                      "subtitles": subtitle_jobs.status_out(v.id, tracks.get(v.id), configured)}
         items.append(d)
     return {"items": items, "total": total, "next_offset": offset + limit if total > offset + limit else None}
 

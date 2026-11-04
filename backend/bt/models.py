@@ -272,6 +272,9 @@ class GeneratedSubtitles(SQLModel, table=True):
     video_id: str = Field(primary_key=True)
     status: str = 'queued'
     requested_by: int = 0
+    local_only: bool = False  # automatic feed jobs never fetch remote media
+    retry_count: int = 0
+    retry_at: float = 0
     progress: float = 0
     error: str = ''
     language: str = ''

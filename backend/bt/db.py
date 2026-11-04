@@ -36,6 +36,13 @@ def init_db() -> None:
             connection.exec_driver_sql("ALTER TABLE category ADD COLUMN kind VARCHAR NOT NULL DEFAULT 'playlist'")
         if 'shorts_verified' not in {c['name'] for c in inspect(connection).get_columns('video')}:
             connection.exec_driver_sql("ALTER TABLE video ADD COLUMN shorts_verified BOOLEAN NOT NULL DEFAULT 0")
+        if 'local_only' not in {c['name'] for c in inspect(connection).get_columns('generatedsubtitles')}:
+            connection.exec_driver_sql("ALTER TABLE generatedsubtitles ADD COLUMN local_only BOOLEAN NOT NULL DEFAULT 0")
+        have_subtitles = {c['name'] for c in inspect(connection).get_columns('generatedsubtitles')}
+        for name, definition in (('retry_count', 'INTEGER NOT NULL DEFAULT 0'),
+                                 ('retry_at', 'FLOAT NOT NULL DEFAULT 0')):
+            if name not in have_subtitles:
+                connection.exec_driver_sql(f'ALTER TABLE generatedsubtitles ADD COLUMN {name} {definition}')
         # Additive household-access migration, before querying the updated Profile model.
         # Existing households retain one administrator: their first profile.
         if 'role' not in {c['name'] for c in inspect(connection).get_columns('profile')}:
