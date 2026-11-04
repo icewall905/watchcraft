@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 
 from ..access import require_hub
 from ..api.core import profile_id
-from ..db import session
+from ..db import session, get_kv, save_setting
 from .api import can_see, item_query, serialize
 from .master import edition, schedule, views
 from .models import ContentItem, Curator, Edition, HubLesson, HubPreferenceCore, ItemVerdict, StoryItem, Topic
@@ -86,7 +86,30 @@ def today(pid: int = Depends(profile_id)):
             s.commit()
         return {'day': ed.day, 'built_at': ed.built_at, 'updated_at': ed.updated_at,
                 'intro': ed.intro, 'intro_refs': _refs(found, ed.intro_refs), 'sections': sections,
+                'rerun': get_kv(f'watchcraft_master_manual:{pid}', {}, s=s),
                 'set_aside': _set_aside_count(s, pid, now), 'curated': views.has_verdicts(s, pid)}
+
+
+@router.post('/today/rerun')
+def rerun(pid: int = Depends(profile_id)):
+    """Durably request a fresh selection, without interrupting an active editorial pass."""
+    from ..db import get_settings
+    from sqlalchemy.dialects.sqlite import insert
+    from .models import MasterQueue
+    if not get_settings()['hub_master'].get('enabled', True):
+        raise HTTPException(409, 'Enable the master curator in settings first.')
+    now = time.time()
+    with session() as s:
+        key = f'watchcraft_master_manual:{pid}'
+        state = get_kv(key, {}, s=s)
+        if state.get('requested_at', 0) > state.get('completed_at', 0):
+            return state
+        state = {'requested_at': now, 'completed_at': state.get('completed_at', 0)}
+        save_setting(key, state, s=s)
+        s.exec(insert(MasterQueue).values(profile_id=pid, first_at=now, due_at=now, lease_until=0, gen=1, attempts=0)
+               .on_conflict_do_update(index_elements=['profile_id'], set_={'due_at': now, 'gen': MasterQueue.gen + 1, 'attempts': 0}))
+        s.commit()
+    return state
 
 
 @router.get('/today/set-aside')

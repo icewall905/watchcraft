@@ -100,6 +100,29 @@ def claim_now(pid: int, now: float | None = None) -> int | None:
     return claim(pid, now, NIGHT_LEASE)
 
 
+def _manual_pending(pid: int) -> bool:
+    state = get_kv(f'watchcraft_master_manual:{pid}', {})
+    return state.get('requested_at', 0) > state.get('completed_at', 0)
+
+
+def _manual_rebuild(s, pid: int, out: dict, band: bool = True) -> None:
+    """Release seen placements only after review succeeds; retries retain the request."""
+    key = f'watchcraft_master_manual:{pid}'
+    state = get_kv(key, {}, s=s)
+    if state.get('requested_at', 0) <= state.get('completed_at', 0):
+        return
+    if out.get('model', {}).get('stopped') in {'video busy', 'model error'}:
+        return
+    if judge.ai.enabled() and judge.candidates(s, pid, time.time(), 1, band=band):
+        return
+    ed = s.exec(select(edition.Edition).where(edition.Edition.profile_id == pid, edition.Edition.day == edition.today())).first()
+    if ed:
+        ed.sections, ed.intro, ed.intro_refs = [], '', []
+        s.add(ed)
+        s.flush()
+    save_setting(key, {**state, 'completed_at': time.time()}, s=s)
+
+
 def light_pass(pid: int, claimed: int) -> dict:
     """Rules for everything new, the model for the uncertain few, then tiers again with its scores."""
     if not get_settings()['hub_master'].get('enabled', True):
@@ -126,16 +149,17 @@ def light_pass(pid: int, claimed: int) -> dict:
             with session() as s:
                 out['rules'] = pipeline.run(s, pid)
         with session() as s:
+            _manual_rebuild(s, pid, out)
             ed = edition.patch(s, pid)
             out['prose'] = edition.write(s, pid, ed, busy=judge.video_busy)
     except Exception:  # noqa: BLE001 — retried a few times, then left to the nightly pass
         log.exception('master curator pass for profile %s failed', pid)
-        _finish(pid, claimed, retry=True)
+        _finish(pid, claimed, retry=True, persistent=_manual_pending(pid))
         return {**out, 'failed': True}
     with session() as s:
         remaining = bool(judge.candidates(s, pid, time.time(), 1)) if judge.ai.enabled() else False
-    _finish(pid, claimed, retry=out['model']['stopped'] in {'video busy', 'model error'},
-            more=remaining and bool(out['model']['judged']))
+    _finish(pid, claimed, retry=out['model']['stopped'] in {'video busy', 'model error'} or (_manual_pending(pid) and remaining and not out['model']['judged']),
+            more=remaining and bool(out['model']['judged']), persistent=_manual_pending(pid))
     log.info('master curator pass for profile %s: %s', pid, out)
     return out
 
@@ -223,6 +247,7 @@ def night_pass(pid: int, claimed: int, day: str) -> dict:
         with session() as s:
             out['rules'] = pipeline.run(s, pid)
         with session() as s:
+            _manual_rebuild(s, pid, out, band=False)
             ed = edition.patch(s, pid)
             out['prose'] = edition.write(s, pid, ed, busy=judge.video_busy)
     except Exception:  # noqa: BLE001 — tomorrow's pass and the post-run passes carry on

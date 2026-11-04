@@ -232,3 +232,16 @@ test('Today displays labeled archived AI summaries when source excerpts are abse
 		await expect(page.locator('.summary').filter({ hasText: `Archived overview for ${key}.` })).toContainText('AI summary');
 	}
 });
+
+test('manual curator rerun stays pending and refreshes after completion', async ({ page }) => {
+	let state = { requested_at: 0, completed_at: 0 };
+	await page.route('**/api/hub/today', route => route.fulfill({ json: { ...edition(), rerun: state } }));
+	await page.route('**/api/hub/today/rerun', route => { state = { requested_at: 10, completed_at: 0 }; return route.fulfill({ json: state }); });
+	await freshPage(page, '/today');
+	await page.getByRole('button', { name: 'Rerun master curator' }).click();
+	await expect(page.getByRole('button', { name: 'Curating…' })).toBeDisabled();
+	state = { requested_at: 10, completed_at: 11 };
+	await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+	await expect(page.getByRole('button', { name: 'Rerun master curator' })).toBeEnabled();
+	await expect(page.getByRole('status').filter({ hasText: 'Master curator finished' })).toBeVisible();
+});

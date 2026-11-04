@@ -257,3 +257,26 @@ def test_a_racing_first_request_of_the_day_does_not_fail(client, monkeypatch):
         raise IntegrityError('insert', {}, Exception('UNIQUE constraint failed'))
     monkeypatch.setattr(master_api.edition, 'patch', racing)
     assert client.get('/api/hub/today').status_code == 200
+
+
+def test_manual_rerun_is_profile_scoped_durable_and_idempotent(client):
+    from bt.hub.models import MasterQueue
+    first = client.post('/api/hub/today/rerun')
+    assert first.status_code == 200
+    state = first.json()
+    assert state['requested_at'] > state['completed_at']
+    assert client.post('/api/hub/today/rerun').json() == state
+    with session() as s:
+        queue = s.get(MasterQueue, 1)
+        assert queue and queue.due_at <= time.time()
+        assert queue.gen == 1
+    assert client.get('/api/hub/today').json()['rerun'] == state
+    _, headers = other_profile(client)
+    assert client.get('/api/hub/today', headers=headers).json()['rerun'] == {}
+
+
+def test_manual_rerun_respects_disabled_master(client):
+    from bt.db import get_settings, save_setting
+    settings = get_settings()['hub_master']
+    save_setting('hub_master', {**settings, 'enabled': False})
+    assert client.post('/api/hub/today/rerun').status_code == 409

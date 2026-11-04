@@ -25,6 +25,7 @@ export type EditionSection =
 	| { key: 'research'; title: string; curator_ids: number[]; curators: { id: number; name: string; subject: string; report_at: number | null }[] }
 	| { key: 'alerts'; title: string; count: number };
 export type TodayEdition = {
+	rerun?: { requested_at: number; completed_at: number };
 	day: string; built_at: number; updated_at: number; intro: string; intro_refs: CitationRef[];
 	sections: EditionSection[]; set_aside: number; curated: boolean;
 };

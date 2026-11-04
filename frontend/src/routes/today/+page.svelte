@@ -27,6 +27,16 @@
 	let editionProfile: number | null = null;
 	let clock = $state(Date.now());
 	let lastRefresh = 0;
+	let rerunning = $state(false);
+	async function rerun() {
+		const pid = session.profileId, version = session.version;
+		rerunning = true;
+		try {
+			await hub.rerunToday();
+			if (pid === session.profileId && version === session.version) { notice = 'Master curator queued. The selection will refresh when the review finishes.'; await load(); }
+		} catch (e) { if (pid === session.profileId && version === session.version) notice = e instanceof Error ? e.message : 'Could not start the curator.'; }
+		finally { rerunning = false; }
+	}
 
 	async function load(background = false) {
 		if (background && (document.visibilityState === 'hidden' || controller)) return;
@@ -42,6 +52,7 @@
 		try {
 			const result = await hub.today(signal);
 			if (signal.aborted || token !== loadToken || profileVersion !== session.version || profileId !== session.profileId) return;
+			if (edition?.rerun && edition.rerun.requested_at > edition.rerun.completed_at && result.rerun && result.rerun.completed_at >= result.rerun.requested_at) notice = 'Master curator finished. Your selection is up to date.';
 			edition = result;
 			editionVersion = profileVersion;
 			editionProfile = profileId;
@@ -65,8 +76,8 @@
 		};
 		const timer = window.setInterval(() => {
 			clock = Date.now();
-			if (clock - lastRefresh >= 5 * 60_000) void load(true);
-		}, 60_000);
+			if (clock - lastRefresh >= (edition?.rerun && edition.rerun.requested_at > edition.rerun.completed_at ? 10_000 : 5 * 60_000)) void load(true);
+		}, 10_000);
 		window.addEventListener('focus', refresh);
 		document.addEventListener('visibilitychange', refresh);
 		return () => {
@@ -105,6 +116,7 @@
 	<header class="masthead">
 		<p class="date">{today}</p>
 		<h1>{greeting}</h1>
+		<button class="btn" use:focusable disabled={rerunning || !!(edition?.rerun && edition.rerun.requested_at > edition.rerun.completed_at)} onclick={rerun}>{rerunning ? 'Queuing…' : edition?.rerun && edition.rerun.requested_at > edition.rerun.completed_at ? 'Curating…' : 'Rerun master curator'}</button>
 		{#if edition?.intro}
 			<Cited text={edition.intro} itemIds={edition.intro_refs.map((r) => r.item_id)} />
 		{:else}

@@ -406,3 +406,55 @@ def test_partial_nightly_reading_continues_without_losing_full_review_scope(monk
     assert schedule.nightly_due() == [1]
     schedule.night_pass(1, schedule.claim_now(1), '2026-11-04')
     assert queue_row() is None and schedule.nightly_due() == []
+
+
+@pytest.mark.parametrize('night', [False, True])
+def test_manual_rebuild_releases_seen_placements_in_both_passes(monkeypatch, night):
+    from bt.hub.models import Edition
+    save_setting('watchcraft_master_manual:1', {'requested_at': 1, 'completed_at': 0})
+    with session() as s:
+        s.add(Edition(profile_id=1, day=schedule.edition.today(), sections=[{'key': 'lead', 'entries': [{'item_id': 999}]}], shown_item_ids=[999], intro='Old introduction'))
+        s.commit()
+    schedule.mark(1)
+    claimed = schedule.claim(1, queue_row().due_at)
+    if night:
+        schedule.night_pass(1, claimed, schedule.edition.today())
+    else:
+        schedule.light_pass(1, claimed)
+    assert not schedule._manual_pending(1)
+    with session() as s:
+        ed = s.exec(select(Edition)).first()
+        assert ed.shown_item_ids == [999]  # delivery history survives rebuilding
+        assert ed.intro != 'Old introduction'
+
+
+def test_manual_model_error_keeps_request_pending(monkeypatch):
+    save_setting('watchcraft_master_manual:1', {'requested_at': 1, 'completed_at': 0})
+    monkeypatch.setattr(judge, 'judge', lambda *a, **kw: {'judged': 0, 'stopped': 'model error'})
+    schedule.mark(1)
+    run_pass()
+    assert schedule._manual_pending(1)
+    assert queue_row() is not None
+
+
+def test_manual_exceptions_retry_after_normal_attempt_limit(monkeypatch):
+    save_setting('watchcraft_master_manual:1', {'requested_at': 1, 'completed_at': 0})
+    def fail(*a, **kw):
+        raise RuntimeError('temporary failure')
+    monkeypatch.setattr(judge, 'judge', fail)
+    schedule.mark(1)
+    for _ in range(schedule.MAX_ATTEMPTS + 1):
+        run_pass()
+    assert schedule._manual_pending(1)
+    assert queue_row() is not None
+
+
+def test_manual_empty_model_response_retains_durable_request(monkeypatch):
+    save_setting('watchcraft_master_manual:1', {'requested_at': 1, 'completed_at': 0})
+    monkeypatch.setattr(ai, 'enabled', lambda: True)
+    monkeypatch.setattr(judge, 'judge', lambda *a, **kw: {'judged': 0, 'stopped': ''})
+    monkeypatch.setattr(judge, 'candidates', lambda *a, **kw: [object()])
+    schedule.mark(1)
+    run_pass()
+    assert schedule._manual_pending(1)
+    assert queue_row() is not None

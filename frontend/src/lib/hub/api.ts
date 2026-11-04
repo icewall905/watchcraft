@@ -130,6 +130,7 @@ export const hub = {
 		send<{ hidden_languages: string[] }>('POST', `/memes/languages/${encodeURIComponent(code)}/hide`, { hidden }),
 
 	// Master curator: the daily edition and what it left out.
+	rerunToday: () => send<{requested_at: number; completed_at: number}>('POST', '/today/rerun'),
 	today: (signal?: AbortSignal) => get<TodayEdition>('/today', signal),
 	setAside: (params: Params) => get<Page<Item>>('/today/set-aside' + qs(params)),
 	overrule: (id: number, action: 'promote' | 'demote' | 'clear') => send<Verdict | null>('POST', `/items/${id}/overrule`, { action }),
