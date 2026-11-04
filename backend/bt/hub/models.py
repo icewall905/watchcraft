@@ -514,3 +514,14 @@ class ArticleShare(SQLModel, table=True):
     item_id: int = Field(primary_key=True)
     token: str = Field(unique=True, index=True)
     created_at: float = Field(default_factory=time.time)
+
+
+class ArticleText(SQLModel, table=True):
+    """Retain the original extracted source beside a conservative worker-cleaned reading copy."""
+    item_id: int = Field(primary_key=True)
+    raw_body: str = T()
+    status: str = 'queued'
+    version: int = 0
+    removed: int = 0
+    reviewed_at: float = 0
+    backfill: bool = False

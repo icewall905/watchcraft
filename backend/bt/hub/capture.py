@@ -4,7 +4,7 @@ import logging
 import subprocess
 import time
 
-from sqlalchemy import func, text, update
+from sqlalchemy import func, text, update, or_
 from sqlmodel import select
 
 from .. import curation
@@ -12,9 +12,9 @@ from ..access import hub_allowed
 from ..db import get_settings, session
 from ..downloader.service import VID_RE
 from ..models import Download, Profile, Video
-from . import ai, rescue, slots
+from . import ai, rescue, slots, article_cleanup
 from .extract import TEXT_LIMIT, extract_page, page_links
-from .models import CaptureJob, CapturedAsset, CapturedPage, ContentItem, CuratorDiscovery, ItemState, Source
+from .models import ArticleText, CaptureJob, CapturedAsset, CapturedPage, ContentItem, CuratorDiscovery, ItemState, Source
 
 log = logging.getLogger(__name__)
 LEASE = 3600
@@ -55,8 +55,13 @@ def validate_video(data, mime):
 
 
 
-def enqueue(s, pid, iid, retry=False):
+def enqueue(s, pid, iid, retry=False, cleanup_only=False):
     job = s.get(CaptureJob, (pid, iid))
+    if retry and not cleanup_only and (not job or job.status != 'running'):
+        review = s.get(ArticleText, iid)
+        if review:
+            review.backfill = False
+            s.add(review)
     if not job:
         job = CaptureJob(profile_id=pid, item_id=iid)
         s.add(job)
@@ -175,6 +180,8 @@ def run(pid, iid, lease):
         linked_url = linked_url if isinstance(linked_url, str) and linked_url and linked_url != url else ''
         post_body = item.meta.get('post_body', body) if linked_url else ''
         archived_body = body
+        prior_review = s.get(ArticleText, iid)
+        review_only = bool(prior_review and prior_review.backfill and body)
         capture_url = linked_url or url
         meme_media = item.meta.get('media', {}) if typ == 'meme' or social_post else {}
         if isinstance(meme_media, dict) and meme_media.get('type') == 'image' and meme_media.get('url'):
@@ -191,7 +198,9 @@ def run(pid, iid, lease):
     truncated = False
     payload = b''
     try:
-        if social_post and not linked_url:
+        if review_only:
+            pass  # Existing archives are reviewed locally; do not refetch their publishers.
+        elif social_post and not linked_url:
             pass  # The public API already supplied the post body and attachment metadata.
         elif typ == 'video' and VID_RE.fullmatch(video_id):
             with session() as s:
@@ -254,12 +263,12 @@ def run(pid, iid, lease):
                 log.info('capture %s recovered with %s', iid, got['tool'])
         except Exception as e:  # noqa: BLE001 — recovery is best effort
             errors.append('Rescue: ' + _safe_error(e))
-    if linked_url:
+    if linked_url and not review_only:
         combined = (f'Post text:\n{post_body}\n\nLinked article:\n{body}' if body
                     else archived_body or post_body)
         truncated = truncated or len(combined) > TEXT_LIMIT
         body = combined[:TEXT_LIMIT]
-    if image:
+    if image and not review_only:
         try:
             with session() as s:
                 old = s.get(CapturedAsset, (iid, 'image'))
@@ -278,6 +287,15 @@ def run(pid, iid, lease):
                 save_asset(pid, iid, 'video', final, data, meta['content_type'])
         except Exception as e:  # noqa: BLE001 — poster and original remain available on failure
             errors.append('Video: ' + _safe_error(e))
+    raw_body = body
+    cleanup = None
+    if body and typ in ('news', 'article', 'web'):
+        cleanup = ({'body': body, 'status': prior_review.status, 'removed': prior_review.removed}
+                   if prior_review and body == archived_body and prior_review.status == 'reviewed' and prior_review.version == article_cleanup.VERSION
+                   else article_cleanup.review(title, body))
+        body = cleanup['body']
+        if cleanup['status'] == 'failed':
+            errors.append('Cleanup: worker review failed; original text retained.')
     summary = ''
     with session() as s:
         if not hub_allowed(s, pid) or not visible(s, pid, iid): return
@@ -299,6 +317,11 @@ def run(pid, iid, lease):
             snapshot.links, snapshot.captured_at = links, time.time()
             snapshot.truncated = truncated
             s.add(snapshot)
+        if cleanup:
+            review = s.get(ArticleText, iid) or ArticleText(item_id=iid, raw_body=max((archived_body, raw_body), key=len))
+            review.status, review.version = cleanup['status'], article_cleanup.VERSION
+            review.removed, review.reviewed_at = cleanup['removed'], time.time()
+            s.add(review)
         if body:
             item.body = body
             if linked_url: item.meta = {**item.meta, 'post_body': post_body}
@@ -320,6 +343,22 @@ def dispatch():
     now = time.time()
     if ai.enabled():
         with session() as s:
+            allowed = [p.id for p in s.exec(select(Profile).where(Profile.role.in_(('adult', 'admin')))).all()
+                       if hub_allowed(s, p.id)]
+            legacy = s.exec(select(CaptureJob, ContentItem).join(ContentItem, ContentItem.id == CaptureJob.item_id)
+                            .where(CaptureJob.profile_id.in_(allowed), or_(
+                                   select(CuratorDiscovery.id).where(CuratorDiscovery.profile_id == CaptureJob.profile_id, CuratorDiscovery.item_id == ContentItem.id).exists(),
+                                   select(ItemState.item_id).where(ItemState.profile_id == CaptureJob.profile_id, ItemState.item_id == ContentItem.id).exists()),
+                                   CaptureJob.status.in_(('complete', 'partial')), ContentItem.type.in_(('news', 'article', 'web')),
+                                   ContentItem.body != '', ~select(ArticleText.item_id).where(ArticleText.item_id == ContentItem.id).exists())
+                            .order_by(ContentItem.id.desc()).limit(10)).all()
+            for pending, item in legacy:
+                if hub_allowed(s, pending.profile_id) and visible(s, pending.profile_id, item.id) and not s.get(ArticleText, item.id):
+                    s.add(ArticleText(item_id=item.id, raw_body=item.body, backfill=True))
+                    enqueue(s, pending.profile_id, item.id, retry=True, cleanup_only=True)
+                    pending.next_run = now
+                    s.add(pending)
+                    s.flush()
             jobs = s.exec(select(CaptureJob).join(ContentItem, ContentItem.id == CaptureJob.item_id)
                           .where(CaptureJob.status == 'complete', CaptureJob.summary_status == 'unavailable',
                                  ContentItem.body != '').limit(50)).all()

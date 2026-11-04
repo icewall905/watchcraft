@@ -298,6 +298,103 @@ def _nutrition(value) -> str:
     return clean(value, 300)
 
 
+# Match structural publisher widgets, never prose keywords. The delimiter boundary
+# also handles BEM classes such as article-body__newsletter without matching a
+# real paragraph that happens to discuss newsletters or recommendations.
+_CLUTTER = re.compile(
+    r'(?:^|[-_\s])(?:newsletter|related|recommended|recommendations|most-popular|'
+    r'read-more|readmore|rich-link|sharing|share-tools|social-share|advertisement|ad-slot|'
+    r'promo|promotional|subscription|submeta|consent|outbrain|taboola)(?:$|[-_\s])', re.I)
+_BODY_SELECTORS = (
+    '[itemprop="articleBody"]', '.article-body-viewer-selector', '[data-gu-name="body"]', '.article-body',
+    '.article__body', '.article-content', '.article__content', '.entry-content',
+    '.post-content', '.story-body', '.story-content', '#article-body',
+)
+
+
+def _readable_body(html: str) -> tuple[str, bool]:
+    """Prefer publisher body boundaries; conservatively remove embedded widgets.
+
+    Plain generic pages still use their document body. No text is classified by
+    its words, and an inline widget never cuts off the paragraphs following it.
+    """
+    from bs4 import BeautifulSoup, NavigableString, Tag
+    soup = BeautifulSoup(html, 'html.parser')
+    for el in list(soup.select('script, style, noscript, template, svg, nav, footer, form, iframe, aside')):
+        el.decompose()
+    candidates = []
+    for selector in _BODY_SELECTORS:
+        candidates = soup.select(selector)
+        if candidates:
+            break
+    semantic = bool(candidates)
+    if not candidates:
+        candidates = soup.find_all('article')
+        semantic = bool(candidates)
+    root = max(candidates, key=lambda el: len(el.get_text(' ', strip=True))) if candidates else (soup.body or soup)
+    if not semantic:
+        for el in list(root.find_all('header')):
+            el.decompose()
+    for el in list(root.find_all(True)):
+        if el.attrs is None:
+            continue
+        identity = ' '.join([str(el.get('id', '')), ' '.join(el.get('class', [])),
+                             str(el.get('data-component', '')), str(el.get('data-gu-name', ''))])
+        if (el.get('hidden') is not None or el.get('aria-hidden') == 'true'
+                or _CLUTTER.search(identity) or el.get('role') in {'navigation', 'complementary'}):
+            el.decompose()
+    # Publisher event advertisements sometimes use ordinary list markup inside
+    # the body. Require both an event-sales destination and a ticket CTA; a
+    # normal story paragraph mentioning events must remain intact.
+    for el in list(root.find_all('li')):
+        links = el.find_all('a', href=True)
+        if (links and all('/guardian-live-events/' in a['href'] for a in links)
+                and re.search(r'\bbook tickets\b', el.get_text(' ', strip=True), re.I)):
+            el.decompose()
+    parts = []
+    blocks = {'p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'li', 'blockquote', 'pre', 'div', 'section', 'figure', 'figcaption'}
+
+    def visit(node):
+        if isinstance(node, NavigableString):
+            parts.append(str(node))
+        elif isinstance(node, Tag):
+            if node.name == 'pre':
+                # Keep code as a separate text segment so prose normalization
+                # cannot remove indentation, tabs, or internal blank lines.
+                parts.append((node.get_text()[:TEXT_LIMIT],))
+                return
+            if node.name in blocks or node.name == 'br':
+                parts.append('\n')
+            for child in node.children:
+                visit(child)
+            if node.name in blocks:
+                parts.append('\n')
+    visit(root)
+    lines, prose = [], []
+
+    def flush_prose():
+        lines.extend(line for raw in ''.join(prose).split('\n')
+                     if (line := clean(raw, TEXT_LIMIT)))
+        prose.clear()
+
+    for part in parts:
+        if isinstance(part, tuple):
+            flush_prose()
+            if part[0]:
+                lines.append(part[0])
+        else:
+            prose.append(part)
+    flush_prose()
+    return '\n\n'.join(lines)[:TEXT_LIMIT], semantic
+
+
+def _structured_body(value: str) -> str:
+    # Preserve both plain-text paragraph breaks and block markup in JSON-LD.
+    if re.search(r'<[a-zA-Z][^>]*>', value):
+        return _readable_body(value)[0]
+    return '\n\n'.join(clean(line, TEXT_LIMIT) for line in value.splitlines() if line.strip())[:TEXT_LIMIT]
+
+
 def extract_page(html: bytes, url: str) -> dict:
     """Return ContentItem fields for a fetched HTML page."""
     p = _Page()
@@ -305,6 +402,7 @@ def extract_page(html: bytes, url: str) -> dict:
         p.feed(html.decode('utf-8', 'replace'))
     except Exception:
         pass
+    body, semantic_body = _readable_body(html.decode('utf-8', 'replace'))
     m = p.meta
     item = {
         'url': url,
@@ -314,7 +412,7 @@ def extract_page(html: bytes, url: str) -> dict:
         'publisher': clean(m.get('og:site_name'), 200),
         'author': clean(m.get('author') or m.get('article:author'), 200),
         'published_at': ts(m.get('article:published_time') or m.get('date') or m.get('dc.date')),
-        'body': '\n\n'.join(line for raw in ' '.join(p.parts).split('\n') if (line := clean(raw, TEXT_LIMIT)))[:TEXT_LIMIT],
+        'body': body,
         'meta': {},
         'type': 'web',
     }
@@ -327,8 +425,11 @@ def extract_page(html: bytes, url: str) -> dict:
         if _types(node) & {'article', 'newsarticle', 'blogposting', 'techarticle', 'report'}:
             body = node.get('articleBody')
             if isinstance(body, str) and body.strip():
-                structured_body = strip_tags(body, TEXT_LIMIT)
-                if structured_body and len(structured_body) >= len(item['body']):
+                structured_body = _structured_body(body)
+                # Trust a substantive schema body over whole-page chrome, but
+                # never replace an identified full article with a tiny excerpt.
+                if structured_body and (len(structured_body) >= len(item['body'])
+                        or (not semantic_body and len(structured_body) >= 100)):
                     item['body'] = structured_body
                     break
     for node in nodes:

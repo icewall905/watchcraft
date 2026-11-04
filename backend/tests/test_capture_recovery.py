@@ -21,6 +21,7 @@ def database(monkeypatch):
     SQLModel.metadata.drop_all(db.engine)
     init_db()
     monkeypatch.setattr(capture.ai, 'enabled', lambda: False)
+    monkeypatch.setattr(capture.article_cleanup, 'review', lambda title, body: {'body': body, 'status': 'reviewed', 'removed': 0})
     yield
     SQLModel.metadata.drop_all(db.engine)
     init_db()
@@ -232,3 +233,90 @@ def test_nvd_challenge_recovers_authoritative_description(monkeypatch):
         job = s.get(CaptureJob, (1, iid))
         assert job.status == 'complete' and not job.error
     assert len(calls) == 2
+
+
+def test_article_review_precedes_summary_and_retains_uncleaned_source(monkeypatch):
+    from bt.hub.models import ArticleText
+    iid = seed()
+    with session() as s:
+        item = s.get(ContentItem, iid);item.type='article';item.url='https://example.org/article';s.add(item);s.commit()
+    original = 'Full original article. ' * 30 + '\n\nSubscribe to the newsletter.'
+    clean = 'Full original article. ' * 30
+    monkeypatch.setattr(capture.curation, 'fetch', lambda url, **kw: (b'<html/>',url,{'content_type':'text/html'}))
+    monkeypatch.setattr(capture, 'extract_page', lambda *a: {'body':original})
+    calls=[]
+    def review(title, body):
+        calls.append(body)
+        return {'body':clean,'status':'reviewed','removed':1}
+    monkeypatch.setattr(capture.article_cleanup, 'review', review)
+    monkeypatch.setattr(capture.ai,'enabled',lambda:True)
+    monkeypatch.setattr(capture,'full_summary',lambda title,body: calls.append(body) or 'Clean summary')
+    capture.run(1,iid,123)
+    with session() as s:
+        item=s.get(ContentItem,iid);raw=s.get(ArticleText,iid)
+        assert item.body==clean and raw.raw_body==original and raw.status=='reviewed'
+        assert item.enrichment['summary']=='Clean summary'
+    assert calls==[original,clean]
+
+
+def test_legacy_review_does_not_refetch_or_duplicate_post_context(monkeypatch):
+    from bt.hub.models import ArticleText
+    iid=seed()
+    original='Post text:\nUser context\n\nLinked article:\nOriginal archived report.'
+    with session() as s:
+        item=s.get(ContentItem,iid);item.type='news';item.provider='lemmy';item.body=original;item.meta={'article_url':'https://example.org/news','post_body':'User context'}
+        s.add(item);s.add(ArticleText(item_id=iid,raw_body=original,backfill=True));s.commit()
+    def never(*a,**kw): raise AssertionError('Legacy text review must not refetch publishers')
+    monkeypatch.setattr(capture.curation,'fetch',never)
+    capture.run(1,iid,123)
+    with session() as s:
+        assert s.get(ContentItem,iid).body==original
+        assert s.get(ArticleText,iid).raw_body==original
+        assert s.get(CaptureJob,(1,iid)).status=='complete'
+
+
+def test_successful_legacy_cleanup_is_not_repeated_on_summary_retry(monkeypatch):
+    from bt.hub.models import ArticleText
+    iid=seed()
+    with session() as s:
+        item=s.get(ContentItem,iid);item.type='article';item.body='Already cleaned source text.';s.add(item)
+        s.add(ArticleText(item_id=iid,raw_body='Original with removed clutter.',backfill=True,status='reviewed',version=capture.article_cleanup.VERSION,removed=1));s.commit()
+    def never(*a,**kw):raise AssertionError('Successful cleanup must not run again on summary retry')
+    monkeypatch.setattr(capture.article_cleanup,'review',never)
+    monkeypatch.setattr(capture.curation,'fetch',never)
+    capture.run(1,iid,123)
+    with session() as s:assert s.get(ContentItem,iid).body=='Already cleaned source text.'
+
+
+def test_inaccessible_newer_archives_do_not_starve_backfill(monkeypatch):
+    from bt.hub.models import ArticleText
+    with session() as s:
+        for n in range(12):
+            item=ContentItem(url=f'https://example.org/{n}',title=str(n),type='article',body='Article source text.')
+            s.add(item);s.flush();s.add(CaptureJob(profile_id=1,item_id=item.id,status='complete',summary_status='ready'))
+            if n==0:
+                valid=item.id;s.add(ItemState(profile_id=1,item_id=item.id))
+        s.commit()
+    monkeypatch.setattr(capture.ai,'enabled',lambda:True)
+    monkeypatch.setattr(capture.slots,'spawn_lane',lambda *a,**kw:False)
+    capture.dispatch()
+    with session() as s:
+        assert s.get(ArticleText,valid).backfill
+        assert s.get(CaptureJob,(1,valid)).status=='queued'
+
+
+def test_linked_article_fetch_failure_reuses_prior_successful_review(monkeypatch):
+    from bt.hub.models import ArticleText
+    iid=seed()
+    original='Post text:\nContext\n\nLinked article:\nPreviously cleaned reporting.'
+    with session() as s:
+        item=s.get(ContentItem,iid);item.type='news';item.provider='lemmy';item.body=original
+        item.meta={'article_url':'https://example.org/news','post_body':'Context'};s.add(item)
+        s.add(ArticleText(item_id=iid,raw_body='Raw original article',status='reviewed',version=capture.article_cleanup.VERSION,backfill=False));s.commit()
+    def fail(*a,**kw):raise ValueError('Publisher unavailable')
+    def never(*a,**kw):raise AssertionError('Do not delete further source on retry')
+    monkeypatch.setattr(capture.curation,'fetch',fail)
+    monkeypatch.setattr(capture.rescue,'rescue',lambda *a,**kw:{'body':'','tool':''})
+    monkeypatch.setattr(capture.article_cleanup,'review',never)
+    capture.run(1,iid,123)
+    with session() as s:assert s.get(ContentItem,iid).body==original

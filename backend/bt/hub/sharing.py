@@ -97,14 +97,16 @@ def read(token: str):
         summary = summary if isinstance(summary, str) else ''
         original = item.url if urlsplit(item.url).scheme in {'https', 'http'} else ''
         content = f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="noindex,nofollow,noarchive"><title>{_text(item.title)} · WatchCraft</title>
-<style>body{{margin:0;background:#f7f5ef;color:#242622;font:18px/1.65 system-ui,sans-serif}}main{{max-width:780px;margin:auto;padding:2rem 1.25rem}}h1{{font:600 2.4rem/1.15 Georgia,serif;overflow-wrap:anywhere}}h2{{font-size:1.2rem}}.prose{{white-space:pre-wrap;overflow-wrap:anywhere}}img{{display:block;max-width:100%;height:auto}}a{{color:#315c50}}.meta{{color:#62665e}}section{{margin-block:2rem}}</style></head><body><main><p class="meta">Shared article · WatchCraft</p><h1>{_text(item.title)}</h1><p class="meta">{_text(item.publisher)}{(' · ' + _text(item.author)) if item.author else ''}</p>'''
+<style>body{{margin:0;background:#f7f5ef;color:#242622;font:18px/1.65 system-ui,sans-serif}}main{{max-width:780px;margin:auto;padding:2rem 1.25rem}}h1{{font:600 2.4rem/1.15 Georgia,serif;overflow-wrap:anywhere}}h2{{font-size:1.2rem}}.article-text{{font:1.1rem/1.8 Georgia,serif}}.article-text p{{margin:0 0 1.25em;white-space:pre-wrap;overflow-wrap:anywhere}}.prose{{white-space:pre-wrap;overflow-wrap:anywhere}}img{{display:block;max-width:100%;height:auto}}a{{color:#315c50}}.meta{{color:#62665e}}section{{margin-block:2rem}}</style></head><body><main><p class="meta">Shared article · WatchCraft</p><h1>{_text(item.title)}</h1><p class="meta">{_text(item.publisher)}{(' · ' + _text(item.author)) if item.author else ''}</p>'''
         if original:
             content += f'<p><a href="{_text(original)}" rel="noreferrer noopener">Open original ↗</a></p>'
         if summary:
             content += f'<section><h2>AI summary</h2><p class="meta">AI-generated overview</p><p class="prose">{_text(summary)}</p></section>'
         if has_image:
             content += f'<img src="/share/{token}/image" alt="Archived article image">'
-        content += f'<section><h2>Archived text</h2><p class="prose">{_text(item.body or item.summary) or "Readable text is not available locally yet."}</p></section></main></body></html>'
+        paragraphs = re.split(r'\n\s*\n', item.body or item.summary or 'Readable text is not available locally yet.')
+        reading = ''.join(f'<p>{_text(paragraph)}</p>' for paragraph in paragraphs if paragraph.strip())
+        content += f'<section><h2>Archived text</h2><div class="article-text">{reading}</div></section></main></body></html>'
         return HTMLResponse(content, headers=HEADERS)
 
 
