@@ -506,3 +506,11 @@ class MasterQueue(SQLModel, table=True):
     lease_until: float = 0
     gen: int = 0       # bumped by every change; a pass only clears the row if nothing changed since its claim
     attempts: int = 0  # passes that skipped model judging (GPU busy) or failed; bounded retries
+
+
+class ArticleShare(SQLModel, table=True):
+    """Explicit public access to one archive; revoking deletes the opaque capability."""
+    profile_id: int = Field(primary_key=True)
+    item_id: int = Field(primary_key=True)
+    token: str = Field(unique=True, index=True)
+    created_at: float = Field(default_factory=time.time)

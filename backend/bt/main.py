@@ -7,7 +7,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import auth
-from .hub import api as hub_api, engine as hub_engine, master_api as hub_master_api
+from .hub import api as hub_api, engine as hub_engine, master_api as hub_master_api, sharing as hub_sharing
 from .api import agent as agent_api
 from .api import core
 from .api import proxy as proxy_api
@@ -42,6 +42,8 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(core.router, prefix="/api")
 app.include_router(hub_api.router, prefix="/api")
 app.include_router(hub_master_api.router, prefix="/api")
+app.include_router(hub_sharing.router, prefix="/api")
+app.include_router(hub_sharing.public_router)
 app.include_router(proxy_api.router, prefix="/api")
 app.include_router(ytimport.router, prefix="/api")
 app.include_router(video.router, prefix="/api")

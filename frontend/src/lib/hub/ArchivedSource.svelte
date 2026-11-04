@@ -4,6 +4,7 @@
 	import { safeUrl, errMsg } from './util';
 	import { focusable } from '$lib/nav';
 	import LocalImage from './LocalImage.svelte';
+	import ShareArticle from './ShareArticle.svelte';
 	let { source }: { source: Item } = $props();
 	let detail = $state<ItemDetail | null>(null);
 	let error = $state('');
@@ -38,6 +39,7 @@
 		{:else}<p class="muted">Readable text is not available locally yet.</p>{/if}
 	</section>
 	{#if detail?.capture}<p class="small muted">Local capture: {detail.capture.status} · Summary: {detail.capture.summary_status}{detail.capture_truncated ? ' · Text is partial' : ''}{detail.capture.error ? ` · ${detail.capture.error}` : ''}</p>{/if}
+	<ShareArticle itemId={source.id} />
 	<div class="hstack">
 		<a class="btn" href={`/item/${source.id}`} use:focusable>Archive details</a>
 		{#if safeUrl(source.url)}<a class="btn" href={safeUrl(source.url)} target="_blank" rel="noopener noreferrer" use:focusable>Open original ↗</a>{/if}

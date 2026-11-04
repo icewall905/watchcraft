@@ -2349,6 +2349,8 @@ def meme_sweep():
 
 def delete_profile_data(s: Session, pid: int) -> None:
     """Called when a profile is deleted. Shared ContentItems stay (other profiles may reference them)."""
+    from .models import ArticleShare
+    s.exec(delete(ArticleShare).where(ArticleShare.profile_id == pid))
     cids = list(s.exec(select(Curator.id).where(Curator.profile_id == pid)).all())
     bids = list(s.exec(select(Briefing.id).where(Briefing.profile_id == pid)).all())
     colls = list(s.exec(select(Collection.id).where(Collection.profile_id == pid)).all())
