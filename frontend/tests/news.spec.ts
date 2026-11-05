@@ -71,5 +71,6 @@ test('news is a finite weekly edition with 20 stories per page and local source 
 	await expect(page.getByText('Page 1 of 5').first()).toBeVisible();
 	await page.setViewportSize({ width: 390, height: 844 });
 	await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+	await page.evaluate(() => window.scrollTo(0, 0));
 	await page.screenshot({ path: '/tmp/watchcraft-news-week-390.png' });
 });

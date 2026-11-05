@@ -258,6 +258,13 @@
 	.source-link { color: var(--ink-soft); font-size: var(--fs-sm); padding: .35rem 0; }
 	.sk { height: 9rem; }
 	.err { color: var(--bad); font-size: .85rem; }
-	@media (max-width: 760px) { .tabs { overflow-x: auto; } .follow { min-width: 0; max-width: none; } .more { padding-left: .6rem; } .pages { align-items: flex-start; flex-direction: column; } }
+	@media (max-width: 760px) {
+		.tabs { overflow-x: auto; }
+		.topics form { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
+		.follow { grid-column: 1 / -1; width: 100%; min-width: 0; max-width: none; }
+		.pub { grid-column: 1 / -1; width: 100%; }
+		.more { padding-left: .6rem; }
+		.pages { align-items: flex-start; flex-direction: column; }
+	}
 	@media (max-width: 480px) { .edition-count { align-items: flex-start; flex-direction: column; gap: .2rem; } .page-actions { width: 100%; justify-content: space-between; } }
 </style>
