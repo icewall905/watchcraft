@@ -60,16 +60,92 @@ def test_an_edition_puts_the_best_story_first_and_sorts_the_rest():
         same_story = featured(s, final=79, story=stories[1])
         read = featured(s, type='project', final=75)
         meme = featured(s, type='meme', final=72)
-        featured(s, final=99, tier='keep')
+        keeper = featured(s, final=65, tier='keep')
         s.add(Alert(profile_id=1, item_id=read, title='x'))
         s.commit()
         ed = edition.patch(s, 1)
         assert ids(ed, 'lead') == [lead]
-        assert ids(ed, 'stories') == [second]  # one entry per story
+        assert ids(ed, 'stories') == [second, keeper]  # one entry per story; keep fills after features
         assert ids(ed, 'reads') == [read] and ids(ed, 'memes') == [meme]
         assert section(ed, 'alerts')['count'] == 1
         assert same_story not in [e for sec in ed.sections for e in ids(ed, sec['key'])]
         assert ed.day == edition.today()
+
+
+def test_today_fills_a_larger_edition_from_featured_then_keeper_pool():
+    with session() as s:
+        # Candidates comfortably exceed the old 20-entry total and each section's
+        # featured subset is smaller than its new capacity.
+        stories = [story(s) for _ in range(36)]
+        story_ids = [featured(s, story=st, final=90 + i if i < 20 else 60 + i, tier='feature' if i < 20 else 'keep')
+                     for i, st in enumerate(stories)]
+        read_ids = [featured(s, type='project', final=90 + i if i < 12 else 60 + i, tier='feature' if i < 12 else 'keep')
+                    for i in range(28)]
+        meme_ids = [featured(s, type='meme', final=90 + i if i < 8 else 60 + i, tier='feature' if i < 8 else 'keep')
+                    for i in range(15)]
+        s.commit()
+
+        ed = edition.patch(s, 1)
+        assert len(ids(ed, 'lead')) == 1
+        assert len(ids(ed, 'stories')) == 29
+        assert len(ids(ed, 'reads')) == 20
+        assert len(ids(ed, 'memes')) == 10
+        selected = [*ids(ed, 'lead'), *ids(ed, 'stories')]
+        assert set(selected[:20]) == set(story_ids[:20])
+        assert len(set(selected)) == 30
+        assert set(ids(ed, 'reads')[:12]) == set(read_ids[:12])
+        assert set(ids(ed, 'memes')[:8]) == set(meme_ids[:8])
+
+
+def test_existing_today_edition_expands_on_patch_without_moving_seen_items():
+    with session() as s:
+        featured_memes = [featured(s, type='meme', final=80 - i) for i in range(3)]
+        ed = edition.patch(s, 1)
+        ed.shown_item_ids = [featured_memes[1]]
+        s.add(ed)
+        for i in range(10):
+            featured(s, type='meme', final=99 - i, tier='keep')
+        s.commit()
+
+        patched = edition.patch(s, 1)
+        selected = ids(patched, 'memes')
+        assert len(selected) == 10
+        assert selected[0] == featured_memes[1]
+
+
+def test_patch_refreshes_delivery_state_loaded_by_an_older_session():
+    with session() as stale:
+        item = featured(stale, type='meme')
+        ed = edition.patch(stale, 1)
+        with session() as current:
+            latest = current.exec(select(Edition).where(Edition.profile_id == 1)).one()
+            latest.shown_item_ids = [item]
+            current.add(latest)
+            current.commit()
+
+        patched = edition.patch(stale, 1)
+        assert patched.shown_item_ids == [item]
+
+
+def test_a_fresh_keeper_can_outrank_a_stale_feature():
+    now = time.time()
+    with session() as s:
+        old = featured(s, type='project', final=90, tier='feature')
+        fresh = featured(s, type='project', final=85, tier='keep')
+        item = s.get(ContentItem, old)
+        item.published_at = now - 5 * 86400
+        s.add(item)
+        s.commit()
+
+        assert ids(edition.patch(s, 1, now), 'reads')[0] == fresh
+
+
+def test_unclustered_news_is_still_presented_as_a_story():
+    with session() as s:
+        item = featured(s, type='article', tier='keep')
+        ed = edition.patch(s, 1)
+        assert ids(ed, 'lead') == [item]
+        assert item not in ids(ed, 'reads')
 
 
 def test_what_the_reader_saw_stays_put_and_the_rest_can_change():
@@ -81,7 +157,7 @@ def test_what_the_reader_saw_stays_put_and_the_rest_can_change():
         s.add(ed); s.commit()
         better = featured(s, type='meme', final=99)
         ed = edition.patch(s, 1)
-        assert ids(ed, 'memes') == memes[:3] + [better] + memes[3:7]
+        assert ids(ed, 'memes') == memes[:3] + [better] + memes[3:]
         # Dismissing something already seen still takes it off the page.
         v = s.get(ItemVerdict, (1, memes[1])); v.tier = 'reject'; s.add(v); s.commit()
         ed = edition.patch(s, 1)
@@ -203,6 +279,59 @@ def test_prose_and_source_counts_are_really_saved(monkeypatch):
     with session() as s:
         entry = section(s.exec(select(Edition)).one(), 'lead')['entries'][0]
         assert entry['sources'] == 3 and entry['summary_refs'][0] == lead
+
+
+def test_patching_drops_a_summary_when_one_of_its_sources_is_no_longer_visible(monkeypatch):
+    monkeypatch.setattr(ai, 'enabled', lambda: True)
+    monkeypatch.setattr(ai, '_cited', lambda items, instruction, words: 'Grounded summary [1].')
+    with session() as s:
+        st = story(s)
+        lead = featured(s, final=90, story=st, publisher='A')
+        member = featured(s, final=60, story=st, publisher='B', tier='keep')
+        edition.write(s, 1, edition.patch(s, 1))
+        entry = section(s.exec(select(Edition)).one(), 'lead')['entries'][0]
+        assert entry['summary_refs'] == [lead, member]
+
+        verdict = s.get(ItemVerdict, (1, member))
+        verdict.tier = 'set_aside'
+        s.add(verdict)
+        s.commit()
+
+        entry = section(edition.patch(s, 1), 'lead')['entries'][0]
+        assert 'summary' not in entry and 'summary_refs' not in entry
+
+
+def test_slow_prose_write_preserves_a_concurrently_expanded_delivered_edition(monkeypatch):
+    monkeypatch.setattr(ai, 'enabled', lambda: True)
+    with session() as s:
+        st = story(s)
+        lead = featured(s, final=90, story=st, publisher='A')
+        featured(s, final=60, story=st, publisher='B', tier='keep')
+        original = edition.patch(s, 1)
+        generated = False
+
+        def cited(items, instruction, words):
+            nonlocal generated
+            if not generated:
+                generated = True
+                with session() as concurrent:
+                    new_story = story(concurrent)
+                    new_item = featured(concurrent, final=99, story=new_story)
+                    current = concurrent.exec(select(Edition).where(Edition.profile_id == 1)).one()
+                    current.shown_item_ids = [lead]
+                    concurrent.add(current)
+                    concurrent.commit()
+                    edition.patch(concurrent, 1)
+                    assert new_item in [item for sec in concurrent.get(Edition, current.id).sections
+                                        for item in [entry['item_id'] for entry in sec.get('entries', [])]]
+            return 'Cited summary [1].'
+
+        monkeypatch.setattr(ai, '_cited', cited)
+        edition.write(s, 1, original)
+        latest = s.exec(select(Edition).where(Edition.profile_id == 1)).one()
+        assert latest.shown_item_ids == [lead]
+        assert any(entry['item_id'] != lead for sec in latest.sections
+                   for entry in sec.get('entries', []))
 
 
 def test_a_story_keeps_its_summary_when_it_moves_up_to_lead():

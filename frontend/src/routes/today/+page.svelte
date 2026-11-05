@@ -28,18 +28,38 @@
 	let clock = $state(Date.now());
 	let lastRefresh = 0;
 	let rerunning = $state(false);
+	let expandedStories = $state(false);
+	let expandedReads = $state(false);
+	let expandedMemes = $state(false);
+	const storyLimit = 8;
+	const readLimit = 6;
+	const memeLimit = 4;
+	const sectionLimit: Record<string, number> = { stories: 29, reads: 20, memes: 10 };
+	const accessAllowed = () => session.ready && !session.needsLogin && !session.choosing && !session.profile?.pin_locked;
+	function clearEdition() {
+		edition = null;
+		expandedStories = expandedReads = expandedMemes = false;
+	}
 	async function rerun() {
 		const pid = session.profileId, version = session.version;
 		rerunning = true;
 		try {
 			await hub.rerunToday();
-			if (pid === session.profileId && version === session.version) { notice = 'Master curator queued. The selection will refresh when the review finishes.'; await load(); }
-		} catch (e) { if (pid === session.profileId && version === session.version) notice = e instanceof Error ? e.message : 'Could not start the curator.'; }
+			if (pid === session.profileId && version === session.version && accessAllowed()) { notice = 'Master curator queued. The selection will refresh when the review finishes.'; await load(); }
+		} catch (e) { if (pid === session.profileId && version === session.version && accessAllowed()) notice = e instanceof Error ? e.message : 'Could not start the curator.'; }
 		finally { rerunning = false; }
 	}
 
 	async function load(background = false) {
 		if (background && (document.visibilityState === 'hidden' || controller)) return;
+		if (!accessAllowed()) {
+			loadToken++;
+			controller?.abort();
+			controller = null;
+			clearEdition();
+			loading = false;
+			return;
+		}
 		const token = ++loadToken;
 		controller?.abort();
 		controller = new AbortController();
@@ -50,17 +70,21 @@
 		loading = !edition;
 		error = '';
 		try {
-			const result = await hub.today(signal);
-			if (signal.aborted || token !== loadToken || profileVersion !== session.version || profileId !== session.profileId) return;
+			const result = await hub.today(signal, {
+				stories: expandedStories ? sectionLimit.stories : storyLimit,
+				reads: expandedReads ? sectionLimit.reads : readLimit,
+				memes: expandedMemes ? sectionLimit.memes : memeLimit
+			});
+			if (signal.aborted || token !== loadToken || profileVersion !== session.version || profileId !== session.profileId || !accessAllowed()) return;
 			if (edition?.rerun && edition.rerun.requested_at > edition.rerun.completed_at && result.rerun && result.rerun.completed_at >= result.rerun.requested_at) notice = 'Master curator finished. Your selection is up to date.';
 			edition = result;
 			editionVersion = profileVersion;
 			editionProfile = profileId;
 		} catch (e) {
-			if (signal.aborted || token !== loadToken || profileVersion !== session.version || profileId !== session.profileId) return;
+			if (signal.aborted || token !== loadToken || profileVersion !== session.version || profileId !== session.profileId || !accessAllowed()) return;
 			if (!edition) error = e instanceof Error ? e.message : 'Today could not be loaded.';
 		} finally {
-			if (!signal.aborted && token === loadToken && profileVersion === session.version && profileId === session.profileId) {
+			if (!signal.aborted && token === loadToken && profileVersion === session.version && profileId === session.profileId && accessAllowed()) {
 				loading = false;
 				controller = null;
 				lastRefresh = Date.now();
@@ -68,7 +92,16 @@
 		}
 	}
 
-	$effect(() => { session.profileId; session.version; revision; untrack(() => { void load(); }); });
+	$effect(() => {
+		const access = accessAllowed();
+		const identity = `${session.profileId}:${session.version}:${session.profile?.pin_locked}:${session.needsLogin}:${session.choosing}`;
+		if (!access || identity !== editionIdentity) {
+			editionIdentity = identity;
+			clearEdition();
+		}
+		revision;
+		untrack(() => { void load(); });
+	});
 	onMount(() => {
 		const refresh = () => {
 			clock = Date.now();
@@ -91,8 +124,12 @@
 	const section = (key: string) => edition?.sections.find((s) => s.key === key);
 	const entries = (key: string): EditionEntry[] => {
 		const found = section(key);
-		return found && 'entries' in found ? found.entries : [];
+		return found && 'entries' in found ? found.entries.slice(0, sectionLimit[key] ?? found.entries.length) : [];
 	};
+	let editionIdentity = '';
+	const shownStories = $derived(entries('stories').slice(0, expandedStories ? sectionLimit.stories : storyLimit));
+	const shownReads = $derived(entries('reads').slice(0, expandedReads ? sectionLimit.reads : readLimit));
+	const shownMemes = $derived(entries('memes').slice(0, expandedMemes ? sectionLimit.memes : memeLimit));
 	const research = $derived(section('research'));
 	const alerts = $derived(section('alerts'));
 	const hasContent = $derived(!!(entries('lead').length || entries('stories').length || entries('reads').length || entries('memes').length || (research && 'curators' in research && research.curators.length) || (alerts && 'count' in alerts && alerts.count)));
@@ -105,9 +142,15 @@
 	const itemHref = (entry: EditionEntry) => `/item/${entry.item_id}`;
 	const hasLocalImage = (entry: EditionEntry) => entry.item.local_image;
 	const archivedSummary = (entry: EditionEntry) => typeof entry.item.enrichment?.summary === 'string' ? entry.item.enrichment.summary.trim() : '';
-	const cardSummary = (entry: EditionEntry) => entry.summary?.trim() || entry.item.summary?.trim() || archivedSummary(entry);
-	const summaryLabel = (entry: EditionEntry) => entry.summary?.trim() || (!entry.item.summary?.trim() && archivedSummary(entry)) ? 'AI summary' : undefined;
+	const cardSummary = (entry: EditionEntry) => entry.summary?.trim() || archivedSummary(entry) || entry.item.summary?.trim();
+	const summaryLabel = (entry: EditionEntry) => entry.summary?.trim() || archivedSummary(entry) ? 'AI summary' : undefined;
 	function sourceCount(entry: EditionEntry) { return Math.max(0, (entry.sources ?? 1) - 1); }
+	function toggleSection(which: 'stories' | 'reads' | 'memes') {
+		if (which === 'stories') expandedStories = !expandedStories;
+		if (which === 'reads') expandedReads = !expandedReads;
+		if (which === 'memes') expandedMemes = !expandedMemes;
+		void load();
+	}
 </script>
 
 <svelte:head><title>Today · WatchCraft</title><meta name="description" content="A quiet, curated overview of what matters today." /></svelte:head>
@@ -142,43 +185,46 @@
 
 		{#if entries('stories').length}
 			<section class="section" aria-label="Stories">
-				<SectionHeader title="Stories" action={{ href: '/news', label: 'All news' }} />
+				<SectionHeader title={`Stories · ${entries('stories').length}`} action={{ href: '/news', label: 'Explore news' }} />
 					<div class="story-list" data-nav-row>
-					{#each entries('stories') as entry (entry.item_id)}
+					{#each shownStories as entry (entry.item_id)}
 						<StoryCard href={itemHref(entry)} title={entry.item.title} source={entry.item.publisher || entry.item.author || undefined} summary={cardSummary(entry)} summaryLabel={summaryLabel(entry)} more={sourceCount(entry)} mediaAvailable={hasLocalImage(entry)}>
 							{#snippet image()}{#if hasLocalImage(entry)}<LocalImage id={entry.item_id} alt={entry.item.title} />{/if}{/snippet}
 							{#snippet why()}<WhyPopover reasons={entry.item.verdict?.reasons ?? []} /><EditionActions entry={entry} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} />{/snippet}
 						</StoryCard>
 					{/each}
 				</div>
+				{#if entries('stories').length > storyLimit}<button class="expand" use:focusable onclick={() => toggleSection('stories')} aria-expanded={expandedStories}>{expandedStories ? 'Show fewer stories' : `Show all ${entries('stories').length} stories`}</button>{/if}
 			</section>
 		{/if}
 
 		{#if entries('reads').length}
 			<section class="section">
-				<SectionHeader title="Worth your time" action={{ href: '/discover', label: 'More discoveries' }} />
+				<SectionHeader title={`Worth your time · ${entries('reads').length}`} action={{ href: '/discover', label: 'More discoveries' }} />
 				<div class="reads" data-nav-row>
-					{#each entries('reads') as entry (entry.item_id)}
+					{#each shownReads as entry (entry.item_id)}
 						<ReadCard href={itemHref(entry)} title={entry.item.title} source={entry.item.publisher || entry.item.author || undefined} summary={cardSummary(entry)} summaryLabel={summaryLabel(entry)} mediaAvailable={hasLocalImage(entry)}>
 							{#snippet image()}{#if hasLocalImage(entry)}<LocalImage id={entry.item_id} alt={entry.item.title} />{/if}{/snippet}
 							{#snippet why()}<WhyPopover reasons={entry.item.verdict?.reasons ?? []} /><EditionActions entry={entry} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} />{/snippet}
 						</ReadCard>
 					{/each}
 				</div>
+				{#if entries('reads').length > readLimit}<button class="expand" use:focusable onclick={() => toggleSection('reads')} aria-expanded={expandedReads}>{expandedReads ? 'Show fewer reads' : `Show all ${entries('reads').length} reads`}</button>{/if}
 			</section>
 		{/if}
 
 		{#if entries('memes').length}
 			<section class="section meme-section">
-				<SectionHeader title="A lighter moment" action={{ href: '/memes', label: 'Meme Radar' }} />
+				<SectionHeader title={`A lighter moment · ${entries('memes').length}`} action={{ href: '/memes', label: 'Meme Radar' }} />
 				<div class="memes" data-nav-row>
-					{#each entries('memes') as entry (entry.item_id)}
+					{#each shownMemes as entry (entry.item_id)}
 						<MemeTile href={itemHref(entry)} caption={entry.item.meme?.spoiler || entry.item.title} meta={entry.item.publisher || entry.item.meme?.community || undefined} mediaAvailable={hasLocalImage(entry)} sensitive={!!entry.item.meme?.sensitive} video={!!entry.item.local_video}>
 							{#snippet media()}{#if hasLocalImage(entry)}<LocalImage id={entry.item_id} alt={entry.item.meme?.spoiler || entry.item.title} />{/if}{/snippet}
 							{#snippet why()}<WhyPopover reasons={entry.item.verdict?.reasons ?? []} /><EditionActions entry={entry} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} />{/snippet}
 						</MemeTile>
 					{/each}
 				</div>
+				{#if entries('memes').length > memeLimit}<button class="expand" use:focusable onclick={() => toggleSection('memes')} aria-expanded={expandedMemes}>{expandedMemes ? 'Show fewer moments' : `Show all ${entries('memes').length} moments`}</button>{/if}
 			</section>
 		{/if}
 
@@ -215,6 +261,8 @@
 	.status { color: var(--ink-soft); padding: 2rem 0; }
 	.load-error { padding: 1.5rem; border-left: 2px solid var(--warn); background: var(--bg-2); }
 	.notice { padding: .5rem 0; color: var(--ink-soft); font-size: var(--fs-sm); }
+	.expand { display: block; margin: 1rem auto 0; padding: .7rem 1rem; border: 1px solid var(--rule); border-radius: 999px; color: var(--ink-soft); background: var(--bg-2); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
+	.expand:hover, .expand:focus-visible { border-color: var(--accent); color: var(--ink); }
 	@media (max-width: 760px) { .story-list { grid-template-columns: 1fr; } .reads { grid-template-columns: repeat(2, minmax(0, 1fr)); } .memes { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 	@media (max-width: 440px) { .reads { grid-template-columns: 1fr; } .memes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

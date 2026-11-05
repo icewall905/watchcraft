@@ -6,6 +6,7 @@ summaries are written from the items this profile can see, never from other prof
 """
 import copy
 import logging
+import threading
 import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -19,11 +20,14 @@ from ..models import Alert, ContentItem, Curator, Edition, ItemState, ItemVerdic
 from . import views
 
 log = logging.getLogger(__name__)
+EDITION_LOCK = threading.RLock()
 
 STORY_TYPES = ('news', 'article')
-# Section order and size. Small on purpose: the page should be read in one sitting.
-SECTIONS = [('lead', 'Today\'s story', 1), ('stories', 'Stories', 5), ('reads', 'Worth reading', 6),
-            ('memes', 'Something light', 8)]
+# Today is a substantial daily edition, while the curator's separate feature limits
+# continue to control what gets the strongest verdict. Approved "keep" items
+# provide depth after the featured pool.
+SECTIONS = [('lead', 'Today\'s story', 1), ('stories', 'Stories', 29), ('reads', 'Worth reading', 20),
+            ('memes', 'Something light', 10)]
 INTRO_WORDS = 60
 STORY_SUMMARIES = 4  # model-written story summaries per morning
 
@@ -34,11 +38,13 @@ def today(now: float | None = None) -> str:
     return datetime.fromtimestamp(now or time.time(), tz).date().isoformat()
 
 
-def _featured(s: Session, pid: int) -> list[tuple[ItemVerdict, ContentItem, int | None]]:
+def _candidates(s: Session, pid: int) -> list[tuple[ItemVerdict, ContentItem, int | None]]:
+    """Visible featured and keeper items; the edition can be broad without changing feature quotas."""
     rows = s.exec(select(ItemVerdict, ContentItem, StoryItem.story_id)
                   .join(ContentItem, ContentItem.id == ItemVerdict.item_id)
                   .outerjoin(StoryItem, StoryItem.item_id == ItemVerdict.item_id)
-                  .where(ItemVerdict.profile_id == pid, ItemVerdict.tier == 'feature', views.visible(pid, ItemVerdict.item_id))
+                  .where(ItemVerdict.profile_id == pid, ItemVerdict.tier.in_(('feature', 'keep')),
+                         views.visible(pid, ItemVerdict.item_id))
                   .order_by(ItemVerdict.final.desc())).all()
     return list(rows)
 
@@ -50,7 +56,8 @@ def _sources(s: Session, pid: int, story_ids: list[int]) -> dict[int, int]:
     rows = s.exec(select(StoryItem.story_id, func.count(func.distinct(ContentItem.publisher)))
                   .join(ContentItem, ContentItem.id == StoryItem.item_id)
                   .join(ItemVerdict, (ItemVerdict.item_id == StoryItem.item_id) & (ItemVerdict.profile_id == pid))
-                  .where(StoryItem.story_id.in_(story_ids), ItemVerdict.tier != 'reject')
+                  .where(StoryItem.story_id.in_(story_ids), ItemVerdict.tier.in_(('feature', 'keep')),
+                         views.visible(pid, ContentItem.id))
                   .group_by(StoryItem.story_id)).all()
     return dict(rows)
 
@@ -60,6 +67,16 @@ def _unavailable(s: Session, pid: int) -> set[int]:
     return set(s.exec(select(ItemState.item_id).where(
         ItemState.profile_id == pid,
         (ItemState.read_at.is_not(None)) | ItemState.dismissed | ItemState.archived,
+    )).all())
+
+
+def _eligible_ids(s: Session, pid: int, ids: set[int]) -> set[int]:
+    """Visible items with a usable curator verdict, including for retained citations."""
+    if not ids:
+        return set()
+    return set(s.exec(select(ItemVerdict.item_id).where(
+        ItemVerdict.profile_id == pid, ItemVerdict.item_id.in_(ids),
+        ItemVerdict.tier.in_(('feature', 'keep')), views.visible(pid, ItemVerdict.item_id)
     )).all())
 
 
@@ -76,7 +93,7 @@ def desired(s: Session, pid: int, now: float | None = None) -> dict[str, list[di
     unavailable_ids = _unavailable(s, pid)
     previously_shown = _previously_shown(s, pid, now)
     rows = []
-    for v, item, story in _featured(s, pid):
+    for v, item, story in _candidates(s, pid):
         if item.id in unavailable_ids or v.overruled == 'demoted' or (item.id in previously_shown and v.overruled != 'promoted'):
             continue
         stamp = item.published_at if item.published_at is not None else item.first_seen
@@ -86,14 +103,17 @@ def desired(s: Session, pid: int, now: float | None = None) -> dict[str, list[di
             continue
         # Relevance still matters, while yesterday's high score cannot crowd out
         # comparably good fresh reporting indefinitely. Tie breaks are stable.
-        rows.append((v.final - age * 4, stamp, item.id, v, item, story))
-    rows.sort(key=lambda row: row[:3], reverse=True)
+        # Features get a modest relevance bonus; freshness can still let a good
+        # new keeper pass a stale or weaker feature instead of being buried by tier.
+        feature_bonus = 10 if v.tier == 'feature' or v.overruled == 'promoted' else 0
+        rows.append((v.final - age * 4 + feature_bonus, stamp, item.id, v, item, story))
+    rows.sort(key=lambda row: row[:4], reverse=True)
     out: dict[str, list[dict]] = {key: [] for key, _, _ in SECTIONS}
     for _, _, _, v, item, story in rows:
         entry = {'item_id': item.id, **({'story_id': story} if story else {})}
         if item.type == 'meme':
             out['memes'].append(entry)
-        elif item.type in STORY_TYPES and story:
+        elif item.type in STORY_TYPES:
             (out['lead'] if not out['lead'] else out['stories']).append(entry)
         else:
             out['reads'].append(entry)
@@ -108,7 +128,7 @@ def _alive(s: Session, pid: int, ids: list[int], now: float) -> set[int]:
     promoted = set(s.exec(select(ItemVerdict.item_id).where(ItemVerdict.profile_id == pid, ItemVerdict.item_id.in_(ids),
                                                           ItemVerdict.overruled == 'promoted')).all())
     return set(s.exec(select(ItemVerdict.item_id).where(ItemVerdict.profile_id == pid, ItemVerdict.item_id.in_(ids),
-                                                        ItemVerdict.tier != 'reject', ItemVerdict.overruled != 'demoted',
+                                                        ItemVerdict.tier.in_(('feature', 'keep')), ItemVerdict.overruled != 'demoted',
                                                         views.visible(pid, ItemVerdict.item_id))).all()) - _unavailable(s, pid) - (previously_shown - promoted)
 
 
@@ -156,9 +176,20 @@ def _extras(s: Session, pid: int, now: float) -> list[dict]:
 
 def patch(s: Session, pid: int, now: float | None = None, run_id: str = '') -> Edition:
     """Bring today's edition up to date without moving anything already seen. No model calls. Commits."""
+    with EDITION_LOCK:
+        return _patch_locked(s, pid, now, run_id)
+
+
+def _patch_locked(s: Session, pid: int, now: float | None, run_id: str) -> Edition:
     now = now or time.time()
     day = today(now)
-    ed = s.exec(select(Edition).where(Edition.profile_id == pid, Edition.day == day)).first() or Edition(profile_id=pid, day=day)
+    ed = s.exec(select(Edition).where(Edition.profile_id == pid, Edition.day == day)).first()
+    if ed is None:
+        ed = Edition(profile_id=pid, day=day)
+    else:
+        # Sessions may have loaded this row before another request acquired the
+        # lock and recorded delivery, so always merge from the committed version.
+        s.refresh(ed)
     # Work on a copy: the JSON column only saves a new value, never edits made in place.
     old = [sec for sec in copy.deepcopy(ed.sections) if sec.get('key') in {k for k, _, _ in SECTIONS}]
     placed = [e['item_id'] for sec in old for e in sec.get('entries', [])]
@@ -169,6 +200,14 @@ def patch(s: Session, pid: int, now: float | None = None, run_id: str = '') -> E
         for e in sec['entries']:
             if e.get('story_id'):
                 e['sources'] = counts.get(e['story_id'], 1)
+    summary_refs = {ref for sec in sections for e in sec['entries'] for ref in e.get('summary_refs', [])}
+    usable_refs = _eligible_ids(s, pid, summary_refs)
+    for sec in sections:
+        for entry in sec['entries']:
+            refs = entry.get('summary_refs', [])
+            if entry.get('summary') and not set(refs).issubset(usable_refs):
+                entry.pop('summary', None)
+                entry.pop('summary_refs', None)
     current_ids = {entry['item_id'] for sec in sections for entry in sec['entries']}
     if set(ed.intro_refs) - current_ids:
         ed.intro, ed.intro_refs = '', []
@@ -195,17 +234,19 @@ def write(s: Session, pid: int, ed: Edition, busy=lambda: False) -> dict:
     if not ai.enabled():
         return out
     top = _entry_items(s, ed, ('lead', 'stories', 'reads'))[:8]
+    generated_intro = ''
+    intro_refs: list[int] = []
     if top and not ed.intro and not busy():
         try:
-            ed.intro = ai._cited(top, 'Write the opening overview of these sources and why they matter. No greeting or uncited opening/closing. '
-                                      'Every sentence must end with source citations before its final punctuation, '
-                                      'for example: A source reports a new release [1].', INTRO_WORDS)
-            ed.intro_refs = [i.id for i in top]
-            out['intro'] = True
+            generated_intro = ai._cited(top, 'Write the opening overview of these sources and why they matter. No greeting or uncited opening/closing. '
+                                            'Every sentence must end with source citations before its final punctuation, '
+                                            'for example: A source reports a new release [1].', INTRO_WORDS)
+            intro_refs = [i.id for i in top]
         except Exception as e:  # noqa: BLE001 — the page has a plain greeting instead
             log.info('edition intro failed: %s', e)
     written = 0
     sections = copy.deepcopy(ed.sections)
+    generated_summaries: dict[int, tuple[int, str, list[int]]] = {}
     for sec in sections:
         if sec.get('key') not in ('lead', 'stories'):
             continue
@@ -216,17 +257,44 @@ def write(s: Session, pid: int, ed: Edition, busy=lambda: False) -> dict:
                 continue
             members = list(s.exec(select(ContentItem).join(StoryItem, StoryItem.item_id == ContentItem.id)
                                   .join(ItemVerdict, (ItemVerdict.item_id == ContentItem.id) & (ItemVerdict.profile_id == pid))
-                                  .where(StoryItem.story_id == entry['story_id'], ItemVerdict.tier != 'reject')
+                                  .where(StoryItem.story_id == entry['story_id'],
+                                         ItemVerdict.tier.in_(('feature', 'keep')),
+                                         views.visible(pid, ContentItem.id))
                                   .order_by(ItemVerdict.final.desc()).limit(6)).all())
             try:
-                entry['summary'] = ai._cited(members, 'Summarise what these reports say about one event, noting where '
-                                                      'they agree or differ.', 70)
-                entry['summary_refs'] = [i.id for i in members]
+                summary = ai._cited(members, 'Summarise what these reports say about one event, noting where '
+                                                   'they agree or differ.', 70)
+                refs = [i.id for i in members]
+                generated_summaries[entry['item_id']] = (entry['story_id'], summary, refs)
                 written += 1
             except Exception as e:  # noqa: BLE001 — the lead headline stands alone
                 log.info('story summary failed: %s', e)
-    out['summaries'] = written
-    ed.sections = sections  # a new value, so the JSON column is saved
-    s.add(ed)
-    s.commit()
+    # AI work can take long enough for an API request to expand the edition or
+    # record what the reader saw. Refresh and apply only prose whose entries are
+    # still present, leaving the current sections and delivery history intact.
+    with EDITION_LOCK:
+        s.refresh(ed)
+        current_sections = copy.deepcopy(ed.sections)
+        members_by_item = {
+            entry['item_id']: entry
+            for sec in current_sections
+            for entry in sec.get('entries', [])
+            if sec.get('key') in ('lead', 'stories')
+        }
+        all_refs = {ref for _, _, item_refs in generated_summaries.values() for ref in item_refs}
+        all_refs.update(intro_refs)
+        visible_refs = _eligible_ids(s, pid, all_refs)
+        for item_id, (story_id, summary, refs) in generated_summaries.items():
+            current = members_by_item.get(item_id)
+            if current and current.get('story_id') == story_id and not current.get('summary') and set(refs) <= visible_refs:
+                current['summary'] = summary
+                current['summary_refs'] = refs
+                out['summaries'] += 1
+        current_ids = {entry['item_id'] for sec in current_sections for entry in sec.get('entries', [])}
+        if generated_intro and not ed.intro and set(intro_refs).issubset(current_ids & visible_refs):
+            ed.intro, ed.intro_refs = generated_intro, intro_refs
+            out['intro'] = True
+        ed.sections = current_sections
+        s.add(ed)
+        s.commit()
     return out

@@ -74,7 +74,10 @@ def test_citations_resolve_only_to_items_the_profile_can_see(client):
         ed.intro, ed.intro_refs = 'Quiet day [1]. Elsewhere [2].', [mine, theirs]
         s.add(ed); s.commit()
     refs = client.get('/api/hub/today').json()['intro_refs']
-    assert refs[0]['item_id'] == mine and refs[0]['title'] and refs[1] == {'n': 2, 'item_id': None}
+    # Every GET now reconciles the edition, dropping prose whose sources no longer belong.
+    assert refs == []
+    from bt.hub.master_api import _refs
+    assert _refs({mine: {'title': 'Mine', 'url': 'https://example.org/mine'}}, [mine, theirs])[1] == {'n': 2, 'item_id': None}
 
 
 # ---------- set aside and overrules
@@ -300,3 +303,29 @@ def test_news_week_supports_large_curated_collection_without_leaking_hidden_item
     assert response['story_count'] == 135
     assert response['target_articles'] == 100
     assert older not in {i['id'] for g in client.get('/api/hub/news?days=1').json()['groups'] for i in g['items']}
+
+
+def test_today_expands_existing_edition_from_kept_articles_without_losing_delivered_lead(client):
+    lead = add(story=new_story(), final=90)
+    first = client.get('/api/hub/today').json()
+    assert entries(first, 'lead') == [lead]
+    kept = {add(story=new_story(), tier='keep', title=f'Kept report {n}') for n in range(35)}
+    expanded = client.get('/api/hub/today').json()
+    assert entries(expanded, 'lead') == [lead]
+    assert len(entries(expanded, 'stories')) == 29
+    assert set(entries(expanded, 'stories')).issubset(kept)
+    again = client.get('/api/hub/today').json()
+    assert entries(again, 'stories') == entries(expanded, 'stories')
+
+
+def test_today_preview_does_not_consume_hidden_entries_until_expanded(client):
+    for n in range(35):
+        add(story=new_story(), tier='keep', title=f'Preview story {n}')
+    result = client.get('/api/hub/today?preview=true').json()
+    assert len(entries(result, 'stories')) == 29
+    initial = set(entries(result, 'lead') + entries(result, 'stories')[:8])
+    with session() as s:
+        assert set(s.exec(select(Edition)).one().shown_item_ids) == initial
+    expanded = client.get('/api/hub/today?preview=true&stories=29').json()
+    with session() as s:
+        assert set(s.exec(select(Edition)).one().shown_item_ids) == set(entries(expanded, 'lead') + entries(expanded, 'stories'))

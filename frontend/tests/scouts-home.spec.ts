@@ -34,7 +34,7 @@ test('a queued master curator links to Today, not a curator page', async ({ page
 
 test('Today preview respects the profile video-row position', async ({ page, request }) => {
  const profile = (await (await request.get('/api/profiles')).json())[0];
- await page.route('**/api/hub/today', route => route.fulfill({ json: { day: '2026-11-03', curated: true, sections: [], intro: '', intro_refs: [], set_aside: 0 } }));
+ await page.route(/\/api\/hub\/today(?:\?.*)?$/, route => route.fulfill({ json: { day: '2026-11-03', curated: true, sections: [], intro: '', intro_refs: [], set_aside: 0 } }));
  await page.route('**/api/feed/home**', route => route.fulfill({ json: [{ kind: 'category', category_id: 777, title: 'Placement video row', emoji: '▶', color: '#aaa', items: [] }] }));
  try {
   for (const position of ['top', 'bottom']) {

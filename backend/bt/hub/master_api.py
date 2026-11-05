@@ -50,18 +50,20 @@ def _set_aside_count(s: Session, pid: int, now: float) -> int:
 
 
 @router.get('/today')
-def today(pid: int = Depends(profile_id)):
-    """Today's edition, ready to render. What it returns counts as seen, so it stays put today."""
+def today(preview: bool = False, stories: int = 8, reads: int = 6, memes: int = 4,
+          pid: int = Depends(profile_id)):
+    """Today's edition; preview clients record only the section entries they render."""
     now = time.time()
-    with session() as s:
+    with edition.EDITION_LOCK, session() as s:
         day = edition.today(now)
-        ed = s.exec(select(Edition).where(Edition.profile_id == pid, Edition.day == day)).first()
-        if ed is None:
-            try:
-                ed = edition.patch(s, pid, now)  # a new day before the nightly pass: build from current verdicts
-            except IntegrityError:  # another request built it first
-                s.rollback()
-                ed = s.exec(select(Edition).where(Edition.profile_id == pid, Edition.day == day)).first()
+        try:
+            # Fill the expanded edition immediately, retaining entries already delivered today.
+            ed = edition.patch(s, pid, now)
+        except IntegrityError:  # another process built it first
+            s.rollback()
+            ed = s.exec(select(Edition).where(Edition.profile_id == pid, Edition.day == day)).first()
+            if ed is None:
+                raise
         entry_ids = [e['item_id'] for sec in ed.sections for e in sec.get('entries', [])]
         refs = [*ed.intro_refs, *(r for sec in ed.sections for e in sec.get('entries', []) for r in e.get('summary_refs', []))]
         visible = views.visible_set(s, pid, set(entry_ids) | set(refs))
@@ -79,7 +81,13 @@ def today(pid: int = Depends(profile_id)):
                                    for c in s.exec(select(Curator).where(Curator.id.in_(sec.get('curator_ids', [])),
                                                                          Curator.profile_id == pid)).all()]
             sections.append(out)
-        shown = [i for i in entry_ids if i in found]
+        delivered = entry_ids
+        if preview:
+            limits = {'lead': 1, 'stories': max(0, min(stories, 29)),
+                      'reads': max(0, min(reads, 20)), 'memes': max(0, min(memes, 10))}
+            delivered = [e['item_id'] for sec in ed.sections
+                         for e in sec.get('entries', [])[:limits.get(sec['key'], 0)]]
+        shown = [i for i in delivered if i in found]
         if set(shown) - set(ed.shown_item_ids):
             ed.shown_item_ids = list(dict.fromkeys([*ed.shown_item_ids, *shown]))
             s.add(ed)

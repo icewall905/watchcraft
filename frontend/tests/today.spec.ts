@@ -24,7 +24,7 @@ const edition = () => ({
 test('Today assembles the edition, citations, reasons and curator actions', async ({ page }) => {
 	const data = edition();
 	await page.route('**/api/hub/items/1/overrule', route => route.fulfill({ json: { tier: 'feature', reasons: ['you promoted it'] } }));
-	await page.route('**/api/hub/today', (route) => route.fulfill({ json: data }));
+	await page.route(/\/api\/hub\/today(?:\?.*)?$/, (route) => route.fulfill({ json: data }));
 	await freshPage(page, '/today');
 	await expect(page.getByText('A measured overview')).toBeVisible();
 	await expect(page.getByRole('link', { name: 'Source [1]' })).toHaveAttribute('href', '/item/1');
@@ -40,22 +40,61 @@ test('Today assembles the edition, citations, reasons and curator actions', asyn
 	await expect(page.getByRole('status').filter({ hasText: /^Kept in your edition\.$/ })).toBeVisible();
 });
 
+test('Today keeps a generous edition readable with bounded show all controls', async ({ page }) => {
+	const data = edition();
+	const editionRequests: URL[] = [];
+	const makeEntry = (id: number, title: string, type = 'news') => ({ item_id: id, item: item(id, title, type), sources: 1, summary: `A brief overview of ${title}.` });
+	data.sections.find(s => s.key === 'stories')!.entries = Array.from({ length: 29 }, (_, i) => makeEntry(100 + i, `Story ${i + 1}`));
+	data.sections.find(s => s.key === 'reads')!.entries = Array.from({ length: 20 }, (_, i) => makeEntry(200 + i, `Read ${i + 1}`, 'article'));
+	data.sections.find(s => s.key === 'memes')!.entries = Array.from({ length: 10 }, (_, i) => ({ ...makeEntry(300 + i, `Moment ${i + 1}`, 'meme'), item: { ...item(300 + i, `Moment ${i + 1}`, 'meme'), meme: { spoiler: `Moment ${i + 1}`, sensitive: false, community: 'quiet-humor' } } }));
+	await page.route(/\/api\/hub\/today(?:\?.*)?$/, route => { editionRequests.push(new URL(route.request().url())); return route.fulfill({ json: data }); });
+	await page.setViewportSize({ width: 390, height: 844 });
+	await freshPage(page, '/today');
+	await expect.poll(() => editionRequests.length).toBeGreaterThan(0);
+	expect(editionRequests.at(-1)?.searchParams.get('preview')).toBe('true');
+	expect(editionRequests.at(-1)?.searchParams.get('stories')).toBe('8');
+	expect(editionRequests.at(-1)?.searchParams.get('reads')).toBe('6');
+	expect(editionRequests.at(-1)?.searchParams.get('memes')).toBe('4');
+	await expect(page.getByRole('heading', { name: 'Stories · 29' })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Story 8' })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Story 9' })).toHaveCount(0);
+	await page.getByRole('button', { name: 'Show all 29 stories' }).click();
+	await expect(page.getByRole('link', { name: 'Story 29' })).toBeVisible();
+	await expect.poll(() => editionRequests.at(-1)?.searchParams.get('stories')).toBe('29');
+	await expect(page.getByRole('link', { name: 'Explore news' })).toHaveAttribute('href', '/news');
+	await expect(page.getByRole('heading', { name: 'Worth your time · 20' })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Read 7' })).toHaveCount(0);
+	await page.getByRole('button', { name: 'Show all 20 reads' }).click();
+	await expect(page.getByRole('link', { name: 'Read 20' })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Moment 5' })).toHaveCount(0);
+	await page.getByRole('button', { name: 'Show all 10 moments' }).click();
+	await expect(page.getByRole('link', { name: 'Moment 10' })).toBeVisible();
+	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+	await page.setViewportSize({ width: 1440, height: 1000 });
+	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+	await page.screenshot({ path: '/tmp/watchcraft-today-expanded-1440.png', fullPage: true });
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.screenshot({ path: '/tmp/watchcraft-today-expanded-390.png', fullPage: true });
+	await page.getByRole('button', { name: 'Show fewer stories' }).click();
+	await expect(page.getByRole('link', { name: 'Story 29' })).toHaveCount(0);
+});
+
 test('Today degrades calmly when no introduction or sections are ready', async ({ page }) => {
-	await page.route('**/api/hub/today', (route) => route.fulfill({ json: { ...edition(), intro: '', intro_refs: [], sections: [], set_aside: 0, curated: false } }));
+	await page.route(/\/api\/hub\/today(?:\?.*)?$/, (route) => route.fulfill({ json: { ...edition(), intro: '', intro_refs: [], sections: [], set_aside: 0, curated: false } }));
 	await freshPage(page, '/today');
 	await expect(page.getByText('A little of what you follow, gathered in one place.')).toBeVisible();
 	await expect(page.getByRole('status').filter({ hasText: 'Your first edition is taking shape' })).toBeVisible();
 });
 
 test('Today gives a retry path when the edition request fails', async ({ page }) => {
-	await page.route('**/api/hub/today', (route) => route.fulfill({ status: 503, json: { detail: 'Edition unavailable' } }));
+	await page.route(/\/api\/hub\/today(?:\?.*)?$/, (route) => route.fulfill({ status: 503, json: { detail: 'Edition unavailable' } }));
 	await freshPage(page, '/today');
 	await expect(page.getByRole('alert')).toContainText('Today could not be loaded');
 	await expect(page.getByRole('button', { name: 'Try again' })).toBeVisible();
 });
 
 test('Paper and Dusk editions fit desktop and phone reading widths', async ({ page, request }) => {
-	await page.route('**/api/hub/today', (route) => route.fulfill({ json: edition() }));
+	await page.route(/\/api\/hub\/today(?:\?.*)?$/, (route) => route.fulfill({ json: edition() }));
 	try {
 		for (const theme of ['paper', 'dusk']) {
 			await request.put('/api/settings/appearance', { data: { theme } });
@@ -74,7 +113,7 @@ test('Paper and Dusk editions fit desktop and phone reading widths', async ({ pa
 
 test('unavailable introduction sources preserve citation numbering', async ({ page }) => {
 	const data = { ...edition(), intro: 'A missing source [1]. A visible source [2].', intro_refs: [{ n: 1, item_id: null }, { n: 2, item_id: 2 }] };
-	await page.route('**/api/hub/today', route => route.fulfill({ json: data }));
+	await page.route(/\/api\/hub\/today(?:\?.*)?$/, route => route.fulfill({ json: data }));
 	await freshPage(page, '/today');
 	await expect(page.getByRole('link', { name: 'Source [1]' })).toHaveCount(0);
 	await expect(page.getByRole('link', { name: 'Source [2]' })).toHaveAttribute('href', '/item/2');
@@ -86,7 +125,7 @@ test('Today refreshes an overnight edition on focus and keeps content on refresh
 	let nextDay = false;
 	let fail = false;
 	let requests = 0;
-	await page.route('**/api/hub/today', route => {
+	await page.route(/\/api\/hub\/today(?:\?.*)?$/, route => {
 		requests++;
 		if (fail) return route.fulfill({ status: 503, json: { detail: 'Temporary failure' } });
 		const data = edition();
@@ -119,7 +158,7 @@ test('Today refreshes at bounded intervals only while visible and coalesces focu
 	let requests = 0;
 	let release: (() => void) | undefined;
 	let block = false;
-	await page.route('**/api/hub/today', async route => {
+	await page.route(/\/api\/hub\/today(?:\?.*)?$/, async route => {
 		requests++;
 		if (block) await new Promise<void>(resolve => { release = resolve; });
 		await route.fulfill({ json: edition() });
@@ -147,7 +186,7 @@ test('a delayed background response cannot replace the newly selected profile ed
 	let block = false;
 	let release: (() => void) | undefined;
 	let held = false;
-	await page.route('**/api/hub/today', async route => {
+	await page.route(/\/api\/hub\/today(?:\?.*)?$/, async route => {
 		const isOther = route.request().headers()['x-profile-id'] === String(other.id);
 		const data = edition();
 		data.sections[0].entries![0].item.title = isOther ? 'Other profile edition' : 'Original profile edition';
@@ -186,7 +225,7 @@ test('profile identity clears the old edition before delayed session initializat
 		}
 		await route.continue();
 	});
-	await page.route('**/api/hub/today', async route => {
+	await page.route(/\/api\/hub\/today(?:\?.*)?$/, async route => {
 		const isOther = route.request().headers()['x-profile-id'] === String(other.id);
 		const data = edition();
 		data.sections[0].entries![0].item.title = isOther ? 'New identity edition' : 'Private original edition';
@@ -226,7 +265,7 @@ test('Today displays labeled archived AI summaries when source excerpts are abse
 		entry.item.summary = '';
 		entry.item.enrichment = { summary: `Archived overview for ${section.key}.` };
 	}
-	await page.route('**/api/hub/today', route => route.fulfill({ json: data }));
+	await page.route(/\/api\/hub\/today(?:\?.*)?$/, route => route.fulfill({ json: data }));
 	await freshPage(page, '/today');
 	for (const key of ['lead', 'stories', 'reads']) {
 		await expect(page.locator('.summary').filter({ hasText: `Archived overview for ${key}.` })).toContainText('AI summary');
@@ -235,7 +274,7 @@ test('Today displays labeled archived AI summaries when source excerpts are abse
 
 test('manual curator rerun stays pending and refreshes after completion', async ({ page }) => {
 	let state = { requested_at: 0, completed_at: 0 };
-	await page.route('**/api/hub/today', route => route.fulfill({ json: { ...edition(), rerun: state } }));
+	await page.route(/\/api\/hub\/today(?:\?.*)?$/, route => route.fulfill({ json: { ...edition(), rerun: state } }));
 	await page.route('**/api/hub/today/rerun', route => { state = { requested_at: 10, completed_at: 0 }; return route.fulfill({ json: state }); });
 	await freshPage(page, '/today');
 	await page.getByRole('button', { name: 'Rerun master curator' }).click();

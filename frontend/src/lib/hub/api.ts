@@ -134,7 +134,8 @@ export const hub = {
 
 	// Master curator: the daily edition and what it left out.
 	rerunToday: () => send<{requested_at: number; completed_at: number}>('POST', '/today/rerun'),
-	today: (signal?: AbortSignal) => get<TodayEdition>('/today', signal),
+	today: (signal?: AbortSignal, preview?: { stories: number; reads: number; memes: number }) =>
+		get<TodayEdition>('/today' + (preview ? qs({ preview: true, ...preview }) : ''), signal),
 	setAside: (params: Params) => get<Page<Item>>('/today/set-aside' + qs(params)),
 	overrule: (id: number, action: 'promote' | 'demote' | 'clear') => send<Verdict | null>('POST', `/items/${id}/overrule`, { action }),
 	why: (id: number) => get<{ verdict: Verdict | null; story: { id: number; sources: number } | null }>(`/items/${id}/why`),
