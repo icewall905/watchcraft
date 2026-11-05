@@ -1636,3 +1636,29 @@ in the local `todo.md` (which is intentionally ignored by Git).
   saved-media decode passed.
 - Backup `/root/compose/watchcraft-backups/20261104-stats-0891f9a`; rollback tag
   `watchcraft:rollback-20261104-stats`. API rollback uses no-deps recreation; subtitle generation stays running.
+
+## Deployment record — expanded weekly News (`28fae21`, 2026-11-05)
+
+- News defaults to a seven-day collection, up to 300 story groups from 1,200 visible candidates. Shared serialization
+  replaces per-story queries. The UI displays 20 stories per finite page, counts articles separately from stories,
+  preserves collection-wide filters, prefers AI archive summaries and links related coverage to local archives.
+  Narrow layouts give topic and publisher controls full-width rows. Profile/PIN changes clear stale content.
+- A profile-scoped target measures at least 100 distinct keep/feature news/articles over seven days, respecting
+  dismissal and Unicode muted-topic matching. Successful scheduled watch curators explicitly configured for
+  news/articles revisit existing sources hourly during a shortfall; configured intervals, run budgets and quality
+  gates stay intact. Manual, disabled, research, failed/partial and unrestricted-type curators retain their cadence.
+  The target depends on suitable source material; it does not promote rejected content or enlarge Today.
+- Validation: 148 focused backend checks passed before the final Unicode fix; final supply/scheduler/API subset
+  passed 29 checks. Frontend check/build passed (three existing CSS warnings); both News browser checks passed,
+  including a 100-story five-page collection, filter reset and phone overflow. Desktop and 390px layout inspected.
+  Independent implementation review and mobile follow-up approved.
+- Exact final image initialized an isolated restored DB with networking disabled and media read-only, preserving
+  counts/profiles/PINs, then started twice. Restored and live collection each returned 215 approved articles across
+  192 stories, with 213 AI summaries. Live browser confirmed the existing child-profile Hub access restriction;
+  adult collection counts were verified server-side without entering or changing real PINs.
+- Backup `/root/compose/watchcraft-backups/20261105-news-ec3e674`; rollback image
+  `watchcraft:rollback-20261105-news` retains prior API `da6b9f4`. API-only rollout deployed `28fae21`, image
+  `sha256:1ad0da7c95d87700c1a51a75aac5d83e2c9948055e0e578c92538c5a4f466c32`, zero API restarts.
+  Other services retain the prior 2549876 image. Subtitle daemon start time unchanged, healthy, zero restarts.
+  Downloader was running with one recorded restart. Integrity/profiles/PINs/config hashes, public health/routes
+  and saved-media decode passed.
