@@ -1662,3 +1662,33 @@ in the local `todo.md` (which is intentionally ignored by Git).
   Other services retain the prior 2549876 image. Subtitle daemon start time unchanged, healthy, zero restarts.
   Downloader was running with one recorded restart. Integrity/profiles/PINs/config hashes, public health/routes
   and saved-media decode passed.
+
+## Deployment record — fuller Today edition (`9bc37cf`, 2026-11-05)
+
+- Today now draws from visible quality-approved keep and feature verdicts: one lead, 29 further stories,
+  20 reads and ten lighter items. Feature quotas stay intact. Freshness, story deduplication, dismissal,
+  demotion and previous-day delivery gates still apply. Unclustered articles also enter Stories.
+- Each section has a bounded preview (8/6/4) and explicit Show all/Show fewer controls, section totals,
+  archive AI-summary preference and News exploration. Preview requests record only rendered section
+  prefixes as delivered; collapsed candidates remain available for later editions. Legacy non-preview
+  requests retain their existing delivery semantics. Profile/PIN/chooser changes reject stale responses.
+- Each GET patches the edition immediately, retaining eligible delivered selections. A dedicated short
+  edition lock and refreshing existing ORM state prevent stale sessions overwriting delivery history. AI
+  prose runs outside that lock and merges into current sections only when its sources remain visible
+  and approved. Retained per-story prose is cleared when supporting sources become ineligible.
+- Validation: 97 focused backend checks passed, including preview delivery, same-day expansion, fresh
+  keepers, stale-session delivery and concurrent prose updates. Frontend check/build passed (three
+  existing CSS warnings); all 15 Today/Scouts browser checks passed. Expanded desktop/390px layouts
+  inspected. Independent review approved the implementation and final state-refresh correction.
+- Exact image on an isolated restored database preserved initialization counts/profiles/PINs and started
+  twice with networking disabled and media read-only. Replay produced all 60 entries; preview delivery
+  retained historical IDs without consuming hidden entries. Preview API measured 0.077s in that check.
+- API-only production rollout expanded profile H from 13 to 60 entries (1/29/20/10). Ten still-eligible
+  delivered selections were retained; three old delivered entries were already unavailable. Rebuilding
+  the live edition took 0.089s and did not mark newly placed hidden entries delivered.
+- Backup `/root/compose/watchcraft-backups/20261105-today-9bc37cf`; rollback
+  `watchcraft:rollback-20261105-today` retains previous API `28fae21`. API image
+  `sha256:8b0637f466489ab209934fe19502596f07fd5224b7f265a58618ed36acc2c761`, healthy, zero restarts.
+  Other services retain 2549876; subtitle daemon stayed healthy with unchanged start time/zero restarts.
+  Integrity, exact profile/PIN preservation, configuration hashes, public health/routes and saved-video
+  decode passed. Downloader remained running with one recorded restart.
