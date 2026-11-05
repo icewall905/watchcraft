@@ -124,3 +124,15 @@ def test_preparation_backlog_does_not_bypass_discovery_cooldown(client,monkeypat
     monkeypatch.setattr(data,'category_needs',lambda *args:[data.Need(cat,0,1,{'found':1})])
     monkeypatch.setattr(planner,'discover',lambda *args: (_ for _ in ()).throw(AssertionError('cooldown bypassed')))
     assert w.iterate() is False
+
+
+def test_video_inventory_checks_metadata_without_reading_media_bytes(monkeypatch):
+    from types import SimpleNamespace
+    import stat
+    from bt.agent import shelf as video_shelf
+    class MetadataOnly:
+        def stat(self):return SimpleNamespace(st_mode=stat.S_IFREG,st_size=100)
+        def open(self,*args):raise AssertionError('inventory must not read video payload')
+    monkeypatch.setattr(video_shelf,'abs_path',lambda path:MetadataOnly())
+    monkeypatch.setattr(video_shelf.os,'access',lambda *args:True)
+    assert video_shelf._local_file('saved.mp4') is True

@@ -6,7 +6,7 @@ const shelf = () => ({
 	articles: { ready: 74, target: 100, fresh_24h: 12, publishers: 31, stories: 52, needs_refill: true, reason: 'Some interests could use more recent coverage.', interests: [
 		{ id: 1, name: 'Climate and energy', ready: 18, target: 25, fresh_24h: 4, publishers: 9, needs_refill: true, last_success: 1793862000, next_run: 1793869200 }
 	] },
-	videos: { ready: 46, target: 60, fresh_7d: 8, creators: 17, needs_refill: true, reason: 'A few more videos would keep your shelf varied.', categories: [
+	videos: { ready: 46, target: 60, pending: 2, failed: 1, fresh_7d: 8, creators: 17, needs_refill: true, reason: 'A few more videos would keep your shelf varied.', categories: [
 		{ id: 2, name: 'Woodworking', emoji: '🪵', kind: 'watch', ready: 11, target: 15, fresh_7d: 3, creators: 6, pending: 2, needs_refill: true }
 	] },
 	maintenance: { last_checked_at: 1793865000, next_check_at: 1793869200, collectors_queued: [1], status: 'working' }
@@ -28,6 +28,8 @@ test('Today shows article and video shelf freshness with links and detail', asyn
 	await expect(panel.getByText('46', { exact: true })).toBeVisible();
 	await expect(panel.getByText('8 published or found this week · 17 creators')).toBeVisible();
 	await expect(panel.getByText('Refilling')).toBeVisible();
+	await expect(panel.getByText('1 saved files or captions need attention.')).toBeVisible();
+	await expect(panel.getByText('2 videos awaiting preparation.')).toBeVisible();
 	await expect(panel.getByRole('link', { name: 'Browse' }).first()).toHaveAttribute('href', '/news');
 	await expect(panel.getByRole('link', { name: 'Home videos' })).toHaveAttribute('href', '/');
 	await panel.getByText('See interests and variety').click();

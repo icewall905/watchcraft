@@ -7,6 +7,8 @@ collection demand.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import os
+import stat
 from typing import Optional
 
 from sqlalchemy import func
@@ -36,10 +38,10 @@ def _instant(value: Optional[datetime | float]) -> Optional[datetime]:
 def _local_file(relative: str) -> bool:
     path = abs_path(relative) if relative else None
     try:
-        if not path or not path.is_file() or path.stat().st_size <= 0:
+        if not path:
             return False
-        with path.open("rb") as stream:
-            return bool(stream.read(1))
+        metadata = path.stat()
+        return stat.S_ISREG(metadata.st_mode) and metadata.st_size > 0 and os.access(path, os.R_OK)
     except OSError:
         return False
 

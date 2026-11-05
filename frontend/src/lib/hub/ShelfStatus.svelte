@@ -88,6 +88,8 @@
 					<div class="measure-head"><span class="icon" aria-hidden="true">▶</span><strong>Videos</strong><a href="/shorts" use:focusable>Browse <span aria-hidden="true">↗</span></a></div>
 					<p class="counts"><strong>{snapshot.videos.ready}</strong><span>ready to watch</span></p>
 					<p class="detail">{snapshot.videos.fresh_7d} published or found this week <span>·</span> {snapshot.videos.creators} creators</p>
+					{#if snapshot.videos.failed}<p class="note">{snapshot.videos.failed} saved files or captions need attention. <a href="/stats" use:focusable>View Stats</a></p>{/if}
+					{#if snapshot.videos.pending}<p class="detail">{snapshot.videos.pending} videos awaiting preparation.</p>{/if}
 					{#if videosGap}<p class="note">Some categories still need {videosGap} ready videos.</p>{:else if snapshot.videos.needs_refill}<p class="note">More variety would help keep this shelf fresh.</p>{/if}
 				</article>
 			</div>
