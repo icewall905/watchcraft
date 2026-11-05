@@ -6,6 +6,15 @@ import type {
 	MemeExplain, MemeFormat, MemeTrend, TodayEdition, Verdict, HubLesson
 } from './types';
 
+export type ShelfInterest = { id: number; name: string; ready: number; target: number; fresh_24h: number; publishers: number; needs_refill: boolean; last_success: number | null; next_run: number };
+export type ShelfCategory = { id: number; name: string; emoji: string; kind: string; ready: number; target: number; fresh_7d: number; creators: number; pending: number; needs_refill: boolean };
+export type ShelfStatus = {
+	as_of: number;
+	articles: { ready: number; target: 100; fresh_24h: number; publishers: number; stories: number; needs_refill: boolean; reason: string; interests: ShelfInterest[] };
+	videos: { ready: number; target: number; fresh_7d: number; creators: number; needs_refill: boolean; reason: string; categories: ShelfCategory[] };
+	maintenance: { last_checked_at: number | null; next_check_at: number | null; collectors_queued: number[]; status: string };
+};
+
 type Params = Record<string, string | number | boolean | undefined | null>;
 export const qs = (o: Params) => {
 	const s = new URLSearchParams();
@@ -19,6 +28,7 @@ const send = <T>(method: string, p: string, body?: unknown) => request<T>(H + p,
 
 export const hub = {
 	registry: () => get<Registry>('/registry'),
+	shelf: (signal?: AbortSignal) => request<ShelfStatus>(H + '/shelf', { signal, toast: false }),
 	counts: () => request<Counts>(H + '/counts', { toast: false }),
 
 	items: (params: Params, signal?: AbortSignal) => get<Page<Item>>('/items' + qs(params), signal),

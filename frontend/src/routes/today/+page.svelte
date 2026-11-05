@@ -16,6 +16,7 @@
 	import EditionActions from '$lib/hub/calm/EditionActions.svelte';
 	import EmptyCalm from '$lib/hub/calm/EmptyCalm.svelte';
 	import ArticleFeedback from '$lib/hub/ArticleFeedback.svelte';
+	import ShelfStatus from '$lib/hub/ShelfStatus.svelte';
 
 	let edition = $state<TodayEdition | null>(null);
 	let loading = $state(true);
@@ -169,6 +170,7 @@
 			<p class="plain-greeting">A little of what you follow, gathered in one place.</p>
 		{/if}
 	</header>
+	<ShelfStatus />
 
 	{#if error}
 		<div class="load-error" role="alert"><p>Today could not be loaded. {error}</p><button class="btn" use:focusable onclick={() => (revision++)}>Try again</button></div>

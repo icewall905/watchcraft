@@ -30,6 +30,20 @@ router = APIRouter(prefix='/hub', tags=['WatchCraft Hub'], dependencies=[Depends
 MAX_CURATORS = 50
 
 
+@router.get('/shelf')
+def shelf_status(response: Response, pid: int = Depends(profile_id)):
+    """Actual local inventory for this profile; reading never schedules work."""
+    from .shelf import snapshot
+    from .shelf_maintenance import status
+    from ..agent.shelf import snapshot as video_snapshot
+    response.headers['Cache-Control'] = 'private, no-store'
+    with session() as s:
+        inventory = snapshot(s, pid)
+        inventory['videos'] = video_snapshot(s, pid, inventory['as_of'])
+        inventory['maintenance'] = status(s, pid)
+        return inventory
+
+
 # ---------- helpers
 
 def owned(s: Session, model, oid: int, pid: int):

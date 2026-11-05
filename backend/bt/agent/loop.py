@@ -77,7 +77,7 @@ class Worker:
                 needs = data.category_needs(s, rt.focus_category_id)
             for need in needs:
                 pend = need.counts.get("found", 0) + need.counts.get("enriched", 0)
-                if pend < data.LOW_WATER:
+                if (need.deficit > 0 or rt.focus_category_id == need.cat.id) and pend < data.LOW_WATER:
                     cat = need.cat
                     with timing.span("discovery", trace_id=trace_id, category_id=cat.id, profile_id=cat.profile_id):
                         res = planner.discover(rt, self.rl, cat)

@@ -9,7 +9,10 @@ from urllib.parse import unquote, urlsplit
 from sqlalchemy import or_
 from sqlmodel import Session, col, func, select
 
-from ..models import Candidate, Category, Channel, Feedback, Lesson, ProfileChannel, Video, WatchHistory, now
+from ..models import (Candidate, Category, Channel, Download, Feedback, GeneratedSubtitles, Lesson,
+                      ProfileChannel, Video, WatchHistory, now)
+from ..downloader.service import abs_path
+from .. import subtitle_jobs
 from .runtime import aware, parse_ts
 
 BLOCK_TRUST = -0.8
@@ -160,12 +163,151 @@ def status_counts(s: Session, cat_id: int) -> dict:
     return {st: n for st, n in rows}
 
 
-def accepted_unwatched(s: Session, cat: Category) -> int:
-    watched = set(s.exec(select(WatchHistory.video_id).where(WatchHistory.profile_id == cat.profile_id,
-                                                             WatchHistory.finished == True)).all())  # noqa: E712
-    vids = s.exec(select(Candidate.video_id).where(Candidate.category_id == cat.id, Candidate.status == "accepted",
-                                                   Candidate.dismissed == False)).all()  # noqa: E712
-    return sum(1 for v in vids if v not in watched)
+def accepted_unwatched(s: Session, cat: Category, at=None) -> int:
+    """Accepted, non-dismissed, unwatched inventory eligible for refill.
+
+    Local download completion is deliberately not part of this count: the downloader
+    can still be working through accepted inventory. A category with an age limit,
+    however, must not look full because it contains old videos.
+    """
+    watched = select(WatchHistory.video_id).where(WatchHistory.profile_id == cat.profile_id,
+                                                  WatchHistory.finished == True)  # noqa: E712
+    q = select(func.count()).select_from(Candidate).join(Video, Video.id == Candidate.video_id).where(
+        Candidate.category_id == cat.id, Candidate.status == "accepted",
+        Candidate.dismissed == False, col(Candidate.video_id).not_in(watched))  # noqa: E712
+    if cat.max_age_days:
+        instant = aware(at) if at is not None else now()
+        if instant is None:
+            instant = now()
+        cutoff = instant - timedelta(days=cat.max_age_days)
+        # Unknown publication dates remain eligible. Discovery time is not a proxy
+        # for publication age and must not make old timeless inventory disappear.
+        q = q.where(or_(Video.published_at.is_(None), Video.published_at >= cutoff))
+    return int(s.exec(q).one() or 0)
+
+
+def accepted_variety(s: Session, cat: Category, at=None) -> tuple[int, int]:
+    """Fresh and creator counts among age-eligible, accepted, unfinished videos."""
+    instant = aware(at) if at is not None else now()
+    if instant is None:
+        instant = now()
+    watched = select(WatchHistory.video_id).where(WatchHistory.profile_id == cat.profile_id,
+                                                  WatchHistory.finished == True)  # noqa: E712
+    columns = [Candidate.video_id, Candidate.created_at, Video.published_at,
+               Video.channel_id, Video.channel_name, Download.status, Download.path,
+               Download.attempts]
+    q = select(*columns).join(Video, Video.id == Candidate.video_id)\
+        .outerjoin(Download, Download.video_id == Candidate.video_id).where(
+        Candidate.category_id == cat.id, Candidate.status == "accepted",
+        Candidate.dismissed == False, col(Candidate.video_id).not_in(watched))  # noqa: E712
+    if cat.kind == "shorts":
+        q = q.add_columns(GeneratedSubtitles.status, GeneratedSubtitles.vtt)\
+            .outerjoin(GeneratedSubtitles, GeneratedSubtitles.video_id == Candidate.video_id)
+    if cat.max_age_days:
+        q = q.where(or_(Video.published_at.is_(None),
+                        Video.published_at >= instant - timedelta(days=cat.max_age_days)))
+    rows = s.exec(q.order_by(col(Candidate.judged_at).desc().nullslast(), Candidate.id.desc())
+                  .limit(2000)).all()
+    fresh_cutoff = instant - timedelta(days=7)
+    fresh, creators = set(), set()
+    for row in rows:
+        vid, created_at, published_at, channel_id, channel_name, download_status, download_path, attempts = row[:8]
+        caption_status, vtt = row[8:10] if cat.kind == "shorts" else (None, None)
+        if download_status == "evicted" or (download_status == "error" and (attempts or 0) >= 3):
+            continue
+        if cat.kind == "shorts" and (caption_status == "failed" or
+                                      (caption_status == "ready" and not subtitle_jobs.usable_vtt(vtt))):
+            continue
+        if download_status == "done":
+            resolved = abs_path(download_path) if download_path else None
+            try:
+                if not resolved or not resolved.is_file() or resolved.stat().st_size <= 0:
+                    continue
+            except OSError:
+                continue
+        published = aware(published_at) if published_at else None
+        discovered = aware(created_at) if created_at else None
+        if (published is not None and published >= fresh_cutoff) or (
+                published is None and discovered is not None and discovered >= fresh_cutoff):
+            fresh.add(vid)
+        creator = (channel_id or "").strip() or (channel_name or "").strip()
+        if creator:
+            creators.add(creator.casefold())
+    return len(fresh), len(creators)
+
+
+def terminal_failures(s: Session, cat: Category, at=None) -> int:
+    """Count bounded accepted inventory that cannot become locally ready as-is."""
+    instant = aware(at) if at is not None else now()
+    if instant is None:
+        instant = now()
+    watched = select(WatchHistory.video_id).where(WatchHistory.profile_id == cat.profile_id,
+                                                  WatchHistory.finished == True)  # noqa: E712
+    q = select(Video.id, Download.status, Download.path, Download.attempts)\
+        .join(Candidate, Candidate.video_id == Video.id)\
+        .outerjoin(Download, Download.video_id == Video.id)\
+        .where(Candidate.category_id == cat.id, Candidate.status == "accepted",
+               Candidate.dismissed == False, col(Video.id).not_in(watched))  # noqa: E712
+    if cat.kind == "shorts":
+        q = q.add_columns(GeneratedSubtitles.status, GeneratedSubtitles.vtt)\
+            .outerjoin(GeneratedSubtitles, GeneratedSubtitles.video_id == Video.id)
+    if cat.max_age_days:
+        q = q.where(or_(Video.published_at.is_(None),
+                        Video.published_at >= instant - timedelta(days=cat.max_age_days)))
+    rows = s.exec(q.limit(2000)).all()
+    failed = set()
+    file_cache = {}
+    for row in rows:
+        vid, download_status, path, attempts = row[:4]
+        subtitle_status, vtt = row[4:6] if cat.kind == "shorts" else (None, None)
+        is_failed = download_status == "evicted" or (
+            download_status == "error" and (attempts or 0) >= 3)
+        if download_status == "done":
+            if path not in file_cache:
+                resolved = abs_path(path) if path else None
+                try:
+                    file_cache[path] = bool(resolved and resolved.is_file() and resolved.stat().st_size > 0)
+                except OSError:
+                    file_cache[path] = False
+            is_failed = not file_cache[path]
+        if cat.kind == "shorts" and (subtitle_status == "failed" or
+                                      (subtitle_status == "ready" and not subtitle_jobs.usable_vtt(vtt))):
+            is_failed = True
+        if is_failed:
+            failed.add(vid)
+    return len(failed)
+
+
+def category_refill_deficit(s: Session, cat: Category, at=None,
+                            pending: Optional[int] = None) -> int:
+    """Base target deficit plus a small, cooled-down freshness/diversity top-up."""
+    target = max(0, cat.target_queue or 0)
+    accepted = accepted_unwatched(s, cat, at)
+    if target == 0:
+        return 0
+    instant = aware(at) if at is not None else now()
+    if instant is None:
+        instant = now()
+    failed = terminal_failures(s, cat, instant)
+    deficit = max(0, target - max(0, accepted - failed))
+    headroom = max(3, min(10, target // 2))
+    ceiling = target + headroom
+    if accepted < target or target < 5:
+        # Terminal media failures create replacement demand, but cap the total
+        # accepted inventory so a broken source cannot grow the queue forever.
+        return min(deficit, max(0, ceiling - accepted))
+    counts = status_counts(s, cat.id)
+    backlog = counts.get("found", 0) + counts.get("enriched", 0) if pending is None else pending
+    if backlog >= LOW_WATER:
+        return 0
+    last = aware(cat.last_worked_at)
+    if last is not None and (instant - last).total_seconds() < 3600:
+        return 0
+    fresh, creators = accepted_variety(s, cat, instant)
+    gap = max(deficit, max(3 - fresh, 3 - creators, 0))
+    available = max(0, ceiling - accepted)
+    # Account for work already in the candidate pipeline before adding more.
+    return min(gap, available, max(0, LOW_WATER - backlog))
 
 
 @dataclass
@@ -183,15 +325,17 @@ def category_needs(s: Session, focus_id: Optional[int] = None) -> list[Need]:
     out = []
     t = now()
     for cat in s.exec(select(Category).where(Category.enabled == True)).all():  # noqa: E712
-        deficit = (cat.target_queue or 0) - accepted_unwatched(s, cat)
-        if deficit <= 0 and cat.id != focus_id:
+        counts = status_counts(s, cat.id)
+        pending = counts.get("found", 0) + counts.get("enriched", 0)
+        deficit = category_refill_deficit(s, cat, t, pending)
+        if deficit <= 0 and cat.id != focus_id and pending == 0:
             continue
         last = aware(cat.last_worked_at)
         idle_h = 24.0 if last is None else min(24.0, (t - last).total_seconds() / 3600)
         weight = max(1, cat.priority or 1) * max(deficit, 1) * (1 + idle_h)
         if cat.id == focus_id:
             weight = float("inf")
-        out.append(Need(cat, deficit, weight, status_counts(s, cat.id)))
+        out.append(Need(cat, deficit, weight, counts))
     out.sort(key=lambda n: (-n.weight, aware(n.cat.last_worked_at) or t - timedelta(days=3650)))
     return out
 

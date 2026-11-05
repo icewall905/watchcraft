@@ -5,6 +5,8 @@ what the reader has already seen (`Edition.shown_item_ids`); it only fills free 
 summaries are written from the items this profile can see, never from other profiles' finds.
 """
 import copy
+import heapq
+from collections import deque
 import logging
 import threading
 import time
@@ -85,6 +87,37 @@ def _previously_shown(s: Session, pid: int, now: float) -> set[int]:
     return {iid for ed in previous for iid in ed.shown_item_ids}
 
 
+def _lifetime(item: ContentItem) -> int:
+    return 7 if item.type in ('news', 'article', 'meme') else 30
+
+
+def _varied(rows: list) -> list:
+    """Soft publisher rotation among comparably good items; never discard coverage."""
+    buckets = {}
+    for row in rows:
+        item = row[4]
+        group = 'stories' if item.type in STORY_TYPES else 'memes' if item.type == 'meme' else 'reads'
+        key = (group, (item.publisher or '').strip().casefold() or f'item:{item.id}')
+        buckets.setdefault(key, deque()).append(row)
+    heap = []
+    counts = {}
+    def offer(key):
+        if not buckets[key]:
+            return
+        row = buckets[key][0]
+        penalty = min(12, max(0, counts.get(key, 0) - 1) * 4) if row[4].publisher else 0
+        heapq.heappush(heap, (-(row[0] - penalty), -row[1], -row[2], key))
+    for key in buckets:
+        offer(key)
+    ordered = []
+    while heap:
+        _, _, _, key = heapq.heappop(heap)
+        ordered.append(buckets[key].popleft())
+        counts[key] = counts.get(key, 0) + 1
+        offer(key)
+    return ordered
+
+
 def desired(s: Session, pid: int, now: float | None = None) -> dict[str, list[dict]]:
     """What the edition would hold if built from scratch now, best first."""
     now = now if now is not None else time.time()
@@ -98,7 +131,7 @@ def desired(s: Session, pid: int, now: float | None = None) -> dict[str, list[di
             continue
         stamp = item.published_at if item.published_at is not None else item.first_seen
         age = max(0, now - stamp) / 86400
-        lifetime = 7 if item.type in ('news', 'meme') else 30
+        lifetime = _lifetime(item)
         if age > lifetime and v.overruled != 'promoted':
             continue
         # Relevance still matters, while yesterday's high score cannot crowd out
@@ -109,7 +142,7 @@ def desired(s: Session, pid: int, now: float | None = None) -> dict[str, list[di
         rows.append((v.final - age * 4 + feature_bonus, stamp, item.id, v, item, story))
     rows.sort(key=lambda row: row[:4], reverse=True)
     out: dict[str, list[dict]] = {key: [] for key, _, _ in SECTIONS}
-    for _, _, _, v, item, story in rows:
+    for _, _, _, v, item, story in _varied(rows):
         entry = {'item_id': item.id, **({'story_id': story} if story else {})}
         if item.type == 'meme':
             out['memes'].append(entry)
@@ -127,9 +160,15 @@ def _alive(s: Session, pid: int, ids: list[int], now: float) -> set[int]:
     previously_shown = _previously_shown(s, pid, now)
     promoted = set(s.exec(select(ItemVerdict.item_id).where(ItemVerdict.profile_id == pid, ItemVerdict.item_id.in_(ids),
                                                           ItemVerdict.overruled == 'promoted')).all())
-    return set(s.exec(select(ItemVerdict.item_id).where(ItemVerdict.profile_id == pid, ItemVerdict.item_id.in_(ids),
-                                                        ItemVerdict.tier.in_(('feature', 'keep')), ItemVerdict.overruled != 'demoted',
-                                                        views.visible(pid, ItemVerdict.item_id))).all()) - _unavailable(s, pid) - (previously_shown - promoted)
+    rows = s.exec(select(ItemVerdict.item_id, ContentItem.type, ContentItem.published_at, ContentItem.first_seen)
+                  .join(ContentItem, ContentItem.id == ItemVerdict.item_id)
+                  .where(ItemVerdict.profile_id == pid, ItemVerdict.item_id.in_(ids),
+                         ItemVerdict.tier.in_(('feature', 'keep')), ItemVerdict.overruled != 'demoted',
+                         views.visible(pid, ItemVerdict.item_id))).all()
+    fresh = {iid for iid, kind, published, found in rows
+             if iid in promoted or now - (published if published is not None else found)
+             <= (7 if kind in ('news', 'article', 'meme') else 30) * 86400}
+    return fresh - _unavailable(s, pid) - (previously_shown - promoted)
 
 
 def merge(old: list[dict], new: dict[str, list[dict]], shown: set[int], alive: set[int]) -> list[dict]:

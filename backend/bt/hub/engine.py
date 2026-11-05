@@ -699,6 +699,8 @@ def dispatch_due() -> None:
         capture.dispatch()
     except Exception:  # noqa: BLE001 — a capture failure never stops the scheduler
         log.exception('local capture dispatch failed')
+    from . import shelf_maintenance
+    shelf_maintenance.tick()
     free = slots.free()
     if free <= 0:
         return
