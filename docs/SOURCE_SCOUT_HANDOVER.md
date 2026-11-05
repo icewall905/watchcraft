@@ -1692,3 +1692,43 @@ in the local `todo.md` (which is intentionally ignored by Git).
   Other services retain 2549876; subtitle daemon stayed healthy with unchanged start time/zero restarts.
   Integrity, exact profile/PIN preservation, configuration hashes, public health/routes and saved-video
   decode passed. Downloader remained running with one recorded restart.
+
+## Deployment record — larger article supply and shared feedback learning (`0f465c9`, 2026-11-05)
+
+- Article controls now offer thumbs up/down, undo and optional reasons on News, Today, discovery/library cards
+  and local article readers. They persist typed Feedback and ItemState together through the existing shared
+  feedback API. Settings → Memory separates Articles and Videos, including feedback, editable explicit rules
+  and compacted memory. Profile/item/access changes discard stale client responses.
+- Article feedback uses the same learner, evidence review, explicit-rule protections and compaction as videos.
+  Type-scoped rules, cores, publisher taste and model batches keep article preferences out of video/channel
+  trust and other Hub genres. Latest-per-article evidence prevents repeated clicks or undo from manufacturing
+  independent support. Collector and master judge consume both learned article rules and recent corrections.
+- The seven-day stock target now requires 100 unread, unarchived approved articles with nonempty local text,
+  retained original text, current worker cleanup and a saved AI summary. A 300-approved-candidate buffer
+  supports refill. Scheduled article-capable watch collectors revisit hourly during either deficit, screening
+  up to 100 candidates (hard limit 200), interleaving publishers and preserving configured nonarticle budgets.
+  Master judging expands to 120 light/300 nightly items over seven days; rejection/quality gates remain intact.
+- Validation: final full backend 936 passed/six skipped; frontend check/build passed with three existing CSS
+  warnings; all 25 targeted browser checks passed, including vote/undo/reasons, scoped Memory, video Memory,
+  News and Today. Phone layout inspected. Independent review approved the integrated implementation.
+- Exact image on a private network-disabled restored database preserved all original shared-learning/profile/
+  settings/channel fields and table counts across repeated initialization. New columns defaulted existing
+  records to video. Disposable HTTP article voting/undo and memory checks passed; API and worker each started
+  twice with media read-only. No test feedback was written to production.
+- API and learning worker deployed together, image
+  `sha256:a7f824fa1efe7b29d3fd5c40c5779a93fe36627d438e9eb9fe6571bdcb316335`, zero restarts at acceptance.
+  Subtitle daemon remained healthy with unchanged start time/zero restarts; downloader remained running with
+  unchanged start time/one historical restart. Integrity, exact profiles/PIN records, host configuration hashes,
+  public health and News route passed. Live profile H had **200 ready articles and 233 approved candidates**
+  at acceptance; four article-capable collectors and the master curator were queued to grow the buffer.
+- Backup `/root/compose/watchcraft-backups/20261105-articles` contains the initial and final pre-rollout SQLite
+  snapshots, source, private configuration, exact build, validation logs and guarded `rollback.sh`. Separate
+  retained images: `watchcraft:rollback-20261105-articles-api` (9bc37cf) and
+  `watchcraft:rollback-20261105-articles-worker` (2549876). Downloader/subtitle services are not recreated.
+- Rollback MUST stop both API and worker, retain a new database backup, then run the saved
+  `article_rollback.py` quarantine before starting pre-article images. Old workers do not understand types:
+  quarantine sets article feedback processed/rating neutral, deactivates article lessons and invalidates article
+  memory prefixes, while saving reversible field values privately in `quarantine.json`. Individual video rules
+  remain the safe fallback if the latest old-style prefix is invalid. To return to typed code, keep both services
+  stopped while restoring the saved fields, then start the typed images. Never restore this snapshot over a
+  running learner. The additive schema itself needs no destructive downgrade.
