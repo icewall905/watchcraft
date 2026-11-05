@@ -548,7 +548,7 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         if status != 'failed':
             c.last_success = time.time()
         c.error = '' if status == 'ok' else '; '.join(f"{e['source']}: {e['message']}" for e in errors)[:500]
-        c.next_run = time.time() + c.interval_hours * 3600 if c.interval_hours else 1e12
+        c.next_run = next_run_after(s, c, time.time())
         s.add(r); s.add(c); s.commit(); s.refresh(r)
     activity.emit(c, r.id, 'completed', narrate.say(c.tone, 'curator.completed', seed=str(r.id),
                         new=narrate.phrase(new, 'new item'), seen=narrate.phrase(len(candidates), 'source item'),
@@ -724,6 +724,23 @@ slots.after_release = dispatch_due
 
 def schedule_after(interval_hours: int) -> float:
     return time.time() + interval_hours * 3600 if interval_hours else 1e12
+
+
+def next_run_after(s, curator: Curator, now: float) -> float:
+    """Temporarily revisit existing news curators hourly while the quality shelf is short.
+
+    The configured interval and per-run item budget stay untouched. Normal scheduler
+    slots and curator leases still bound work; once the target is met, the configured
+    interval resumes after the next run.
+    """
+    interval = curator.interval_hours
+    scheduled = now + interval * 3600 if interval else 1e12
+    if (curator.enabled and curator.kind == 'watch' and curator.last_status == 'ok' and interval > 1
+            and set(curator.content_types or []).intersection({'news', 'article'})):
+        from .news_supply import snapshot
+        if not snapshot(s, curator.profile_id, now)['met']:
+            scheduled = min(scheduled, now + 3600)
+    return scheduled
 
 
 def settings_ai() -> bool:

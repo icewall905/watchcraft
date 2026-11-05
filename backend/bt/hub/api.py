@@ -612,7 +612,7 @@ def import_url(body: UrlIn, pid: int = Depends(profile_id)):
 
 
 @router.get('/news')
-def news(days: int = 1, topic: int | None = None, curation: str = 'curated',
+def news(days: int = 7, topic: int | None = None, curation: str = 'curated',
          pid: int = Depends(profile_id)):
     """Recent articles grouped by the curator's stored stories, with title fallback."""
     since = time.time() - max(1, min(days, 90)) * 86400
@@ -624,7 +624,7 @@ def news(days: int = 1, topic: int | None = None, curation: str = 'curated',
         if curation != 'all':
             stmt = stmt.where(curation_views.curated(pid, ContentItem.id))
         when = func.coalesce(ContentItem.published_at, ContentItem.first_seen)
-        stmt = stmt.where(when >= since).order_by(when.desc()).limit(400)
+        stmt = stmt.where(when >= since).order_by(when.desc(), ContentItem.id.desc()).limit(1200)
         rows = list(s.exec(stmt).all())
         muted = [k.lower() for t in topics if t.muted for k in (t.keywords or [t.name])]
         follow = next((t for t in topics if t.id == topic), None)
@@ -658,14 +658,21 @@ def news(days: int = 1, topic: int | None = None, curation: str = 'curated',
                     g['_items'].append(i); g['_keys'].append(key); break
             else:
                 groups.append({'_keys': [key], '_items': [i], '_story_id': None})
+        # Serialize the collection in one pass rather than issuing four queries per story.
+        serialized = {i['id']: i for i in serialize(s, pid, rows)}
         out = []
         for g in groups:
             its = sorted(g['_items'], key=lambda x: -(x.published_at or x.first_seen))
             out.append({'key': f"story:{g['_story_id']}" if g['_story_id'] is not None else f"item:{min(i.id for i in its)}",
-                        'story_id': g['_story_id'], 'title': its[0].title, 'items': serialize(s, pid, its),
+                        'story_id': g['_story_id'], 'title': its[0].title, 'items': [serialized[i.id] for i in its],
                         'latest': its[0].published_at or its[0].first_seen})
-        out.sort(key=lambda g: (-len(g['items']) if days > 1 else 0, -g['latest']))
-        return {'groups': out[:120], 'topics': [topic_dict(s, t) for t in topics]}
+        # Recent stories lead; duplicate coverage must not bury newer independent reporting.
+        out.sort(key=lambda g: (-g['latest'], g['key']))
+        selected = out[:300]
+        from .news_supply import snapshot as news_supply
+        return {'groups': selected, 'topics': [topic_dict(s, t) for t in topics],
+                'target_articles': 100, 'article_count': sum(len(g['items']) for g in selected),
+                'story_count': len(selected), 'supply': news_supply(s, pid)}
 
 
 # ---------- collections

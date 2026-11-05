@@ -280,3 +280,23 @@ def test_manual_rerun_respects_disabled_master(client):
     settings = get_settings()['hub_master']
     save_setting('hub_master', {**settings, 'enabled': False})
     assert client.post('/api/hub/today/rerun').status_code == 409
+
+
+def test_news_week_supports_large_curated_collection_without_leaking_hidden_items(client):
+    ids = {add(story=new_story(), tier='keep', title=f'Report on subject {n}') for n in range(135)}
+    older = next(iter(ids))
+    with session() as s:
+        item = s.get(ContentItem, older)
+        item.published_at = time.time() - 4 * 86400
+        s.add(item); s.commit()
+    hidden = add(tier='reject')
+    aside = add(tier='set_aside')
+    other = add(pid=999)
+    response = client.get('/api/hub/news').json()
+    shown = {i['id'] for g in response['groups'] for i in g['items']}
+    assert shown == ids
+    assert not shown & {hidden, aside, other}
+    assert response['article_count'] == 135
+    assert response['story_count'] == 135
+    assert response['target_articles'] == 100
+    assert older not in {i['id'] for g in client.get('/api/hub/news?days=1').json()['groups'] for i in g['items']}

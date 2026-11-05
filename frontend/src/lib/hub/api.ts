@@ -34,7 +34,7 @@ export const hub = {
 			`${H}/items/${id}/curator-feedback`,
 			{ method: 'POST', body: { curator_id, verdict, ...(terms?.length ? { terms } : {}) }, toast: false }),
 	importUrl: (url: string) => send<Item>('POST', '/items/import', { url }),
-	news: (params: Params) => get<{ groups: NewsGroup[]; topics: Topic[] }>('/news' + qs(params)),
+	news: (params: Params, signal?: AbortSignal) => get<{ groups: NewsGroup[]; topics: Topic[]; article_count?: number; story_count?: number; supply?: { target: number; window_days: number; available: number; shortfall: number; met: boolean; pending_review: number; as_of: number } }>('/news' + qs(params), signal),
 
 	captureStatus: () => get<{ counts: Record<string, number>; asset_bytes: number; asset_limit: number; enabled: boolean; asset_max_mb: number; rescue: boolean }>('/capture/status'),
 	setCaptureSettings: (enabled: boolean, asset_max_mb: number, rescue: boolean) =>
