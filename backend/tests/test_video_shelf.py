@@ -224,3 +224,21 @@ def test_terminal_failures_allow_only_bounded_replacement(monkeypatch, tmp_path)
             s.add(Download(video_id=video_id, status="error", attempts=3))
         s.commit()
         assert data.category_refill_deficit(s, category, t) == 0
+
+
+def test_overlapping_categories_do_not_duplicate_ready_pending_or_failure_totals(monkeypatch,tmp_path):
+    monkeypatch.setattr(downloader,'MEDIA_DIR',tmp_path)
+    pid=_profile_id()
+    with session() as s:
+        first=Category(profile_id=pid,name='First',target_queue=3)
+        second=Category(profile_id=pid,name='Second',target_queue=3)
+        s.add_all([first,second]);s.flush()
+        _add_item(s,first,'overlap-ready',path=_file(tmp_path,'overlap-ready'))
+        _add_item(s,first,'overlap-failed',path='missing.mp4')
+        _add_item(s,first,'overlap-pending')
+        for vid in ['overlap-ready','overlap-failed','overlap-pending']:
+            s.add(Candidate(category_id=second.id,video_id=vid,status='accepted'))
+        s.commit()
+        result=shelf.snapshot(s,pid)
+        assert result['ready']==result['failed']==result['pending']==1
+        assert all(c['ready']==c['failed']==c['pending']==1 for c in result['categories'])

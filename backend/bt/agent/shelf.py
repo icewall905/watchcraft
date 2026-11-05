@@ -83,6 +83,8 @@ def snapshot(s: Session, pid: int, now: Optional[datetime | float] = None) -> di
 
     details = []
     total_ready_ids: set[str] = set()
+    total_pending_ids: set[str] = set()
+    total_failed_ids: set[str] = set()
     total_fresh_ids: set[str] = set()
     total_creators: set[str] = set()
     total_first_seen_ids: set[str] = set()
@@ -163,6 +165,8 @@ def snapshot(s: Session, pid: int, now: Optional[datetime | float] = None) -> di
             "needs_refill": refill_deficit > 0,
         })
         total_ready_ids.update(ready_ids)
+        total_pending_ids.update(pending_ids)
+        total_failed_ids.update(failed_ids)
         total_fresh_ids.update(fresh_ids)
         total_creators.update(creator_ids)
         total_first_seen_ids.update(first_seen_ids)
@@ -170,8 +174,8 @@ def snapshot(s: Session, pid: int, now: Optional[datetime | float] = None) -> di
 
     total_target = sum(max(0, int(category.target_queue or 0)) for category in categories)
     total_accepted = sum(accepted_unwatched(s, category, instant) for category in categories)
-    total_pending = sum(row["pending"] for row in details)
-    total_failed = sum(row["failed"] for row in details)
+    total_pending = len(total_pending_ids)
+    total_failed = len(total_failed_ids)
     needs_refill = any(row["needs_refill"] for row in details)
     reason = ("Some saved videos or captions need attention."
               if total_failed else "Accepted videos are awaiting local files or captions."
