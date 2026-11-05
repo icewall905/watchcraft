@@ -5,7 +5,10 @@
 	import { focusable } from '$lib/nav';
 	import LocalImage from './LocalImage.svelte';
 	import ShareArticle from './ShareArticle.svelte';
+	import ArticleFeedback from './ArticleFeedback.svelte';
 	let { source }: { source: Item } = $props();
+	let currentRating = $state(0);
+	$effect(() => { currentRating = source.state.rating; });
 	let detail = $state<ItemDetail | null>(null);
 	let error = $state('');
 	$effect(() => {
@@ -30,6 +33,7 @@
 <article>
 	<h2><a href={`/item/${source.id}`} use:focusable>{source.title}</a></h2>
 	<p class="muted small">{source.publisher || source.provider}</p>
+	{#if ['news', 'article', 'web'].includes(source.type)}<ArticleFeedback itemId={source.id} title={source.title} rating={currentRating} onchanged={(state) => { source.state = state; currentRating = state.rating; }} />{/if}
 	{#if summary}<section><h3>AI summary <span class="tag ai">AI-generated</span></h3><p class="prose">{summary}</p></section>{/if}
 	{#if detail?.local_assets?.includes('image')}<LocalImage id={source.id} alt={source.title} loading="eager" expandable />{/if}
 	<section><h3>Archived text</h3>

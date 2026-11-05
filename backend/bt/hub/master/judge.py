@@ -17,9 +17,9 @@ from . import PASS_VERSION, rules, score
 log = logging.getLogger(__name__)
 
 BATCH = 15
-LIGHT_LIMIT = 60          # items a post-run pass may send to the model
-NIGHT_LIMIT = 150         # the nightly pass reads everything recent that a model has not
-FRESH = 48 * 3600.0       # only recent items are worth a model's time
+LIGHT_LIMIT = 120         # items a post-run pass may send to the model
+NIGHT_LIMIT = 300         # the nightly pass reads everything recent that a model has not
+FRESH = 7 * 86400.0       # only recent items are worth a model's time
 BAND = (score.KEEP_MIN - 10, score.FEATURE_MIN + 20)  # finals where rules alone are unsure
 VIDEO_THINKING = {'planning', 'judging', 'learning', 'transcript', 'comments'}
 STATE_FRESH = 600.0       # an agent state older than this is not evidence it is still busy
@@ -66,7 +66,7 @@ def available(now: float | None = None) -> bool:
     return ai.enabled() and not video_busy(now)
 
 
-def reader(s: Session, pid: int) -> str:
+def reader(s: Session, pid: int, include_articles: bool = True) -> str:
     """What this profile cares about, in words: learned taste first, then its curators' briefs."""
     core = s.get(HubPreferenceCore, pid)
     parts = [core.text.strip()] if core and core.text.strip() else []
@@ -80,7 +80,10 @@ def reader(s: Session, pid: int) -> str:
         parts.append('Often keeps items about: ' + ', '.join(taste.liked[:10]))
     if taste.disliked:
         parts.append('Often dismisses items about: ' + ', '.join(taste.disliked[:10]))
-    return '\n'.join(parts)[:3000] or 'No stated interests yet: judge general quality.'
+    base = '\n'.join(parts)[:3000] or 'No stated interests yet: judge general quality.'
+    from ..article_preferences import context
+    article_memory = context(s, pid) if include_articles else ''
+    return base + ('\n\n' + article_memory if article_memory else '')
 
 
 def candidates(s: Session, pid: int, now: float, limit: int, band: bool = True) -> list[tuple[ItemVerdict, ContentItem]]:
@@ -126,22 +129,31 @@ def judge(s: Session, pid: int, now: float | None = None, limit: int = LIGHT_LIM
     todo = candidates(s, pid, now, limit, band)
     if not todo:
         return out
-    interests = reader(s, pid)
+    from ..article_preferences import ARTICLE_TYPES
+    ordinary_interests = reader(s, pid, include_articles=False)
+    article_interests = reader(s, pid, include_articles=True) if any(item.type in ARTICLE_TYPES for _, item in todo) else ordinary_interests
+    groups = {kind: [pair for pair in todo if (pair[1].type in ARTICLE_TYPES) == kind] for kind in (True, False)}
+    order = [(todo[0][1].type in ARTICLE_TYPES), not (todo[0][1].type in ARTICLE_TYPES)]
+    batches = [(groups[kind][start:start + BATCH], kind)
+               for start in range(0, max(map(len, groups.values())), BATCH)
+               for kind in order if groups[kind][start:start + BATCH]]
     escalations = 0
-    for start in range(0, len(todo), BATCH):
+    completed = 0
+    for batch, article_group in batches:
         if worker_busy():
             out['stopped'] = 'video busy'
-            out['skipped'] = len(todo) - start
+            out['skipped'] += len(todo) - completed
             break
-        batch = todo[start:start + BATCH]
+        interests = article_interests if article_group else ordinary_interests
         try:
             res = ai._call(SYSTEM, f'Reader interests:\n{ai._esc(interests)}\n\n{ai._data([_row(i) for _, i in batch])}',
                            SCHEMA, max_tokens=1800, role='worker')
         except Exception as e:  # noqa: BLE001 — the rules verdict stands
             log.info('master judge failed: %s', e)
             out['stopped'] = 'model error'
-            out['skipped'] = len(todo) - start
+            out['skipped'] += len(todo) - completed
             break
+        completed += len(batch)
         # Workers read everything; the stronger editor resolves only doubtful decisions.
         doubtful = []
         seen = set()

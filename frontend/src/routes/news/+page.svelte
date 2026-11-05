@@ -10,6 +10,7 @@
 	import LocalImage from '$lib/hub/LocalImage.svelte';
 	import LiveFilter from '$lib/hub/LiveFilter.svelte';
 	import { session } from '$lib/stores/session.svelte';
+	import ArticleFeedback from '$lib/hub/ArticleFeedback.svelte';
 
 	const ranges = [[1, 'Today'], [7, 'This week'], [30, 'Month']] as const;
 	let days = $state<1 | 7 | 30>(7);
@@ -25,7 +26,7 @@
 	let topicError = $state('');
 	let pageNumber = $state(1);
 	const pageSize = 20;
-	let weeklyProgress = $state<{ target: number; available: number; shortfall: number; met: boolean; pending_review: number } | null>(null);
+	let weeklyProgress = $state<Awaited<ReturnType<typeof hub.news>>['supply'] | null>(null);
 	let seq = 0;
 	let controller: AbortController | null = null;
 	let loadedProfileId: number | null = null;
@@ -135,9 +136,12 @@
 		<div class="edition-count" aria-live="polite">
 			<p><strong>{visibleArticleCount}</strong> articles across <strong>{visible.length}</strong> stories</p>
 			<span>{days === 7 && weeklyProgress
-				? `${weeklyProgress.available} approved this week · ${weeklyProgress.met ? `${weeklyProgress.target}+ goal met` : `goal: ${weeklyProgress.target}`}${weeklyProgress.pending_review ? ` · ${weeklyProgress.pending_review} in review` : ''}`
+				? `${weeklyProgress.available} approved this week · ${weeklyProgress.available >= weeklyProgress.target ? `${weeklyProgress.target}+ goal met` : `goal: ${weeklyProgress.target}`}${weeklyProgress.pending_review ? ` · ${weeklyProgress.pending_review} in review` : ''}`
 				: days === 7 ? 'Weekly curation goal: at least 100 articles' : days === 1 ? 'Today’s coverage' : 'Monthly coverage'}</span>
 		</div>
+		{#if days === 7 && weeklyProgress?.ready_count !== undefined}
+			<p class="small muted" aria-label="Article supply">{weeklyProgress.ready_count} / {weeklyProgress.ready_target ?? 100} ready to read · Cleaned local text and AI summary · {weeklyProgress.candidate_count ?? weeklyProgress.available} / {weeklyProgress.candidate_target ?? 300} approved candidates for refills.</p>
+		{/if}
 	{/if}
 
 	<section class="topics" aria-label="Followed topics">
@@ -196,10 +200,13 @@
 						<StoryCard {href} title={g.title} source={lead.publisher || lead.provider} {summary}
 							more={rest} moreSources={selectedItems.slice(1).map((i) => i.publisher || i.provider).filter(Boolean)}>
 							{#snippet image()}<LocalImage id={lead.id} alt={lead.title} />{/snippet}
+							{#snippet why()}{#if ['news', 'article', 'web'].includes(lead.type)}<ArticleFeedback itemId={lead.id} title={lead.title} rating={lead.state.rating} onchanged={(state) => { lead.state = state; }} />{/if}{/snippet}
 						</StoryCard>
 					{:else}
 						<StoryCard {href} title={g.title} source={lead.publisher || lead.provider} {summary}
-							more={rest} moreSources={selectedItems.slice(1).map((i) => i.publisher || i.provider).filter(Boolean)} />
+							more={rest} moreSources={selectedItems.slice(1).map((i) => i.publisher || i.provider).filter(Boolean)}>
+							{#snippet why()}{#if ['news', 'article', 'web'].includes(lead.type)}<ArticleFeedback itemId={lead.id} title={lead.title} rating={lead.state.rating} onchanged={(state) => { lead.state = state; }} />{/if}{/snippet}
+						</StoryCard>
 					{/if}
 					<p class="story-meta">{selectedItems.length} source{selectedItems.length === 1 ? '' : 's'} · Updated {ago(g.latest)}</p>
 					{#if rest > 0}

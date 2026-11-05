@@ -10,6 +10,7 @@
 	import ContentCard from '$lib/hub/ContentCard.svelte';
 	import LocalImage from '$lib/hub/LocalImage.svelte';
 	import ShareArticle from '$lib/hub/ShareArticle.svelte';
+	import ArticleFeedback from '$lib/hub/ArticleFeedback.svelte';
 	import { currentProfileId } from '$lib/api';
 
 	let item = $state<ItemDetail | null>(null);
@@ -179,6 +180,9 @@
 					<button class="btn" aria-pressed={item.state.favorite} use:focusable onclick={() => patch({ favorite: !item!.state.favorite })}>{item.state.favorite ? '★ Favorite' : '☆ Favorite'}</button>
 					<button class="btn" aria-pressed={item.state.read_later} use:focusable onclick={() => patch({ read_later: !item!.state.read_later })}>{item.state.read_later ? 'Queued' : 'Read later'}</button>
 				</div>
+				{#if ['news', 'article', 'web'].includes(item.type)}
+					<ArticleFeedback itemId={item.id} title={item.title} rating={item.state.rating} onchanged={(state) => { if (item) item = { ...item, state }; }} />
+				{/if}
 				<ShareArticle itemId={item.id} />
 				{#if msg}<p class="err small" role="alert">{msg}</p>{/if}
 				{#if verdict}

@@ -43,9 +43,16 @@ def _feedback_marker(curator_id: int, direction: str, term: str) -> int:
 def _evidence(s: Session, pid: int) -> list[dict]:
     """Collect a bounded snapshot. Every row is anchored to content visible to this profile."""
     rows: list[dict] = []
+    from ...models import Feedback
+    # New article votes have one evidence-reviewed learner; retain legacy Hub evidence
+    # only for actions that predate or do not use that durable feedback pipeline.
+    shared_articles = set(s.exec(select(Feedback.item_id).where(Feedback.profile_id == pid,
+                              Feedback.content_type == 'article', Feedback.item_id.is_not(None))).all())
     states = s.exec(select(ItemState, ContentItem).join(ContentItem, ContentItem.id == ItemState.item_id)
                     .where(ItemState.profile_id == pid).order_by(ItemState.item_id.desc()).limit(400)).all()
     for st, item in states:
+        if item.id in shared_articles:
+            continue
         signals = []
         if st.saved or st.favorite or st.rating == 1: signals.append('positive')
         if st.dismissed or st.rating == -1: signals.append('negative')
@@ -61,6 +68,8 @@ def _evidence(s: Session, pid: int) -> list[dict]:
                              views.visible(pid, ItemVerdict.item_id))
                       .order_by(ItemVerdict.judged_at.desc()).limit(200)).all()
     for v, item in verdicts:
+        if item.id in shared_articles:
+            continue
         rows.append({'id': item.id, 'type': item.type, 'title': (item.title or '')[:240],
                      'summary': (item.summary or '')[:280], 'signals': ['positive' if v.overruled == 'promoted' else 'negative', 'explicit overrule'],
                      'at': v.overruled_at if v.overruled_at is not None else item.first_seen})

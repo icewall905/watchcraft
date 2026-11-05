@@ -8,6 +8,7 @@
 	import { hub, ago, host } from './api';
 	import { str, num, list, bool, duration, sevClass, safeUrl } from './util';
 	import type { Item } from './types';
+	import ArticleFeedback from './ArticleFeedback.svelte';
 
 	let { item = $bindable(), layout = 'card', onchange, extra, ontag }: {
 		item: Item; layout?: 'card' | 'row' | 'compact'; onchange?: (item: Item) => void; extra?: Snippet<[Item]>;
@@ -37,7 +38,7 @@
 	const m = $derived(item.meta ?? {});
 	const videoId = $derived(str(m, 'video_id'));
 	const href = $derived(`/item/${item.id}`);
-	const isNews = $derived(item.type === 'news' || item.type === 'article');
+	const isNews = $derived(item.type === 'news' || item.type === 'article' || item.type === 'web');
 	const entity = $derived(['person', 'organization', 'domain'].includes(item.type));
 	const cvss = $derived(num(m, 'cvss_score'));
 	const sev = $derived(str(m, 'severity'));
@@ -106,6 +107,7 @@
 		{/if}
 
 		<div class="actions">
+			{#if isNews}<ArticleFeedback itemId={item.id} title={item.title} rating={item.state.rating} onchanged={(state) => { item = { ...item, state }; onchange?.(item); }} />{/if}
 			<button class="btn ghost" aria-pressed={item.state.saved} disabled={busy} use:focusable onclick={() => toggle('saved')}>{item.state.saved ? '✓ Saved' : 'Save'}</button>
 			<button class="btn ghost" aria-pressed={item.state.favorite} disabled={busy} use:focusable onclick={() => toggle('favorite')} aria-label={item.state.favorite ? 'Remove favorite' : 'Favorite'}>{item.state.favorite ? '★' : '☆'}<span class="lbl"> Favorite</span></button>
 			<button class="btn ghost" aria-pressed={item.state.read_later} disabled={busy} use:focusable onclick={() => toggle('read_later')}>{item.state.read_later ? 'Queued' : 'Read later'}</button>

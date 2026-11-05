@@ -21,6 +21,8 @@ from .research import identity_names, person_match
 
 log = logging.getLogger(__name__)
 LEASE_S = 900
+NEWS_RUN_FLOOR = 100
+NEWS_RUN_CAP = 200
 SEVERITY = ['info', 'low', 'medium', 'high', 'critical']
 TYPE_BLOCKED = 'Content type not selected'
 TRACKING = re.compile(r'^(utm_[a-z]+|fbclid|gclid|mc_cid|mc_eid|ref|ref_src)$', re.I)
@@ -229,23 +231,28 @@ TASTE_MIN = 3      # saved or dismissed items a word needs before it counts
 TASTE_NUDGE = 5.0  # points added or removed; small enough never to override a keyword gate
 
 
-def taste(s, pid: int) -> tuple[list[str], list[str]]:
+def taste(s, pid: int, article: bool = False) -> tuple[list[str], list[str]]:
     """Words this profile keeps versus dismisses, learned from saved, liked and dismissed items.
 
     Explicit "more/less like this" tunes one curator. This is the profile-wide signal, so a
     new curator starts from what the household already keeps.
     """
     from collections import Counter
+    from ..models import Feedback
+    shared_articles = select(Feedback.item_id).where(Feedback.profile_id == pid, Feedback.content_type == "article", Feedback.item_id.is_not(None))
+    scope = ContentItem.type.in_(("news", "article", "web")) if article else ContentItem.id.not_in(shared_articles)
     rows = s.exec(select(ItemState.saved, ItemState.favorite, ItemState.dismissed, ItemState.rating,
                          ContentItem.title)
                   .join(ContentItem, ContentItem.id == ItemState.item_id)
-                  .where(ItemState.profile_id == pid)).all()
+                  .where(ItemState.profile_id == pid, scope)).all()
     up, down = Counter(), Counter()
     for saved, favorite, dismissed, rating, title in rows:
         words = {w for w in re.split(r'[^a-z0-9]+', (title or '').lower()) if len(w) >= 4}
-        if saved or favorite or rating == 1:
+        if rating == -1:
+            down.update(words)
+        elif rating == 1 or saved or favorite:
             up.update(words)
-        elif dismissed or rating == -1:
+        elif dismissed:
             down.update(words)
     liked = sorted(w for w, n in up.items() if n >= TASTE_MIN and n > 2 * down.get(w, 0))[:20]
     disliked = sorted(w for w, n in down.items() if n >= TASTE_MIN and n > 2 * up.get(w, 0))[:20]
@@ -375,24 +382,68 @@ def _sources(cid: int) -> list[Source]:
                       .where(CuratorSource.curator_id == cid, Source.enabled == True)).all()
 
 
-def fresh_candidates(scored, known: set[str], limit: int):
-    """Give every source a place in the screening batch, rather than letting the
-    first busy provider consume the entire run before article feeds are reached."""
+def fresh_candidates(scored, known: set[str], limit: int, nonarticle_limit: int | None = None):
+    """Interleave publishers (or source fallback) so one feed cannot crowd out others."""
     groups = {}
     for row in scored:
         if canonical_url(row[2]['url']) in known:
             continue
         source = row[0]
-        key = (source.id, source.provider, source.url)
+        publisher = str(row[2].get('publisher') or '').strip().casefold()
+        is_article = row[2].get('type') in {'news', 'article'}
+        identity = ('publisher', publisher) if publisher else ('source', source.id, source.provider, source.url)
+        key = (is_article, identity)
         groups.setdefault(key, deque()).append(row)
-    queues = deque(groups.values())
     out = []
-    while queues and len(out) < max(1, limit):
+    if nonarticle_limit is None:
+        queues, _ = deque(groups.values()), 0
+        while queues and len(out) < max(1, limit):
+            queue = queues.popleft()
+            out.append(queue.popleft())
+            if queue:
+                queues.append(queue)
+        return out
+
+    article_queues = deque(queue for (is_article, _), queue in groups.items() if is_article)
+    other_queues = deque(queue for (is_article, _), queue in groups.items() if not is_article)
+    nonarticles, choose_article = 0, True
+    while len(out) < max(1, limit):
+        if article_queues and (choose_article or not other_queues or nonarticles >= nonarticle_limit):
+            queues, is_article = article_queues, True
+        elif other_queues and nonarticles < nonarticle_limit:
+            queues, is_article = other_queues, False
+        elif article_queues:
+            queues, is_article = article_queues, True
+        else:
+            break
         queue = queues.popleft()
         out.append(queue.popleft())
+        if not is_article:
+            nonarticles += 1
         if queue:
             queues.append(queue)
+        choose_article = not is_article
     return out
+
+
+def news_run_budget(s: Session, curator: Curator, trigger: str = 'schedule', now: float | None = None) -> tuple[int, int | None]:
+    """Raise scheduled article collectors to a bounded batch while short.
+
+    Mixed-content scouts can use the extra slots for articles; other content stays
+    within the curator's configured budget. Manual runs, disabled curators, and
+    configurations already above the floor retain their requested limit (capped
+    at the public API's 200-item maximum).
+    """
+    configured = max(1, min(NEWS_RUN_CAP, int(curator.max_per_run or 1)))
+    types = set(curator.content_types or [])
+    if (trigger != 'schedule' or not curator.enabled or curator.kind != 'watch'
+            or not types.intersection({'news', 'article'})):
+        return configured, None
+    from .news_supply import snapshot
+    supply = snapshot(s, curator.profile_id, now)
+    if supply['met']:
+        return configured, None
+    return max(configured, NEWS_RUN_FLOOR), configured
 
 
 def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
@@ -478,6 +529,7 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
                                                    got=narrate.phrase(len(candidates), 'source item')))
     with session() as s:
         liked, disliked = taste(s, c.profile_id)
+        article_liked, article_disliked = taste(s, c.profile_id, article=True)
     scored, type_blocked = [], 0
     seen_urls = set()
     for src, q, d in candidates:
@@ -495,8 +547,9 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
             type_blocked += reason == TYPE_BLOCKED
             continue
         # Only nudge items that already passed the keyword gate, so taste never resurrects a miss.
-        if score > 0 and (liked or disliked):
-            score, reason = _taste_nudge(d, score, reason, liked, disliked)
+        up_words, down_words = (article_liked, article_disliked) if d.get("type") in {"news", "article", "web"} else (liked, disliked)
+        if score > 0 and (up_words or down_words):
+            score, reason = _taste_nudge(d, score, reason, up_words, down_words)
         # Feeds are unfiltered firehoses: with keywords set, keep matches only. Query results already match a query.
         if score == 0 and (PROVIDERS[src.provider].mode != 'query' or _feed_needs_keywords(src.provider)):
             continue
@@ -508,7 +561,8 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
     with session() as s:
         known = set(s.exec(select(ContentItem.url).join(CuratorDiscovery, CuratorDiscovery.item_id == ContentItem.id)
                                       .where(CuratorDiscovery.curator_id == cid)).all())
-    fresh = fresh_candidates(scored, known, c.max_per_run)
+        run_limit, nonarticle_limit = news_run_budget(s, c, r.trigger)
+    fresh = fresh_candidates(scored, known, run_limit, nonarticle_limit)
     activity.emit(c, r.id, 'matched', narrate.say(c.tone, 'curator.matched', seed=str(r.id),
                                                   fresh=narrate.phrase(len(fresh), 'unseen matching item')))
     if c.ai_enabled and fresh and ai.enabled():
@@ -727,11 +781,13 @@ def schedule_after(interval_hours: int) -> float:
 
 
 def next_run_after(s, curator: Curator, now: float) -> float:
-    """Temporarily revisit existing news curators hourly while the quality shelf is short.
+    """Revisit existing news curators hourly while article supply is below target.
 
-    The configured interval and per-run item budget stay untouched. Normal scheduler
-    slots and curator leases still bound work; once the target is met, the configured
-    interval resumes after the next run.
+    The configured interval stays untouched. Normal scheduler slots and curator leases
+    still bound work; scheduled news-only runs get a bounded screening batch while
+    supply is short. Supply requires both 100 locally ready articles and a 300-item
+    quality-approved candidate buffer; after both are full, the configured interval
+    resumes after the next successful run.
     """
     interval = curator.interval_hours
     scheduled = now + interval * 3600 if interval else 1e12

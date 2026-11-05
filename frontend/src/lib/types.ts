@@ -161,6 +161,8 @@ export interface ChannelInfo {
 
 export interface Feedback {
 	id: number;
+	content_type?: 'video' | 'article';
+	item_id?: number | null;
 	video_id: string;
 	category_id: number | null;
 	rating: number;
@@ -169,9 +171,11 @@ export interface Feedback {
 	processed: boolean;
 	created_at: string;
 	video?: Video | { id: string };
+	item?: { id: number; title: string };
 }
 
 export interface Lesson {
+	content_type?: 'video' | 'article';
 	evidence?: { kind: string; support: number; opposition: number };
 	id: number;
 	profile_id: number;
@@ -543,6 +547,7 @@ export interface LlmContextStats extends ContextSummary {
 }
 
 export interface MemoryStatus {
+	content_type?: 'video' | 'article';
 	run: { state: string; started_at?: string; finished_at?: string; error?: string;
 		profiles?: { profile_id: number; profile?: string; status: string; lessons?: number; before_chars?: number; core_chars?: number }[] };
 	core: string; core_valid: boolean; core_updated_at: string | null;

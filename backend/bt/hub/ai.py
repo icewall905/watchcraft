@@ -79,17 +79,28 @@ RANK_SCHEMA = {'type': 'object', 'properties': {'scores': {'type': 'array', 'ite
 def rank(c: Curator, items: list[dict]) -> list[tuple[float, str]]:
     """Score items 0-100 against the curator goal. Returns one (score, reason) per item."""
     out = [(50.0, '')] * len(items)
-    for start in range(0, len(items), 15):
-        batch = items[start:start + 15]
-        res = _call('You rate how well each item matches a user\'s stated interest. Score 0-100. The reason must be one '
-                    'short sentence citing concrete evidence from the item (title/summary), e.g. "Selected because it is a '
-                    'beginner sweater pattern". If evidence is weak, say so and score low.',
-                    f'Interest: {c.instructions or c.name}\nKeywords: {", ".join(c.keywords)}\nAvoid: {", ".join(c.exclusions)}\n\n{_data(batch)}',
-                    RANK_SCHEMA, role='worker')
-        for row in res.get('scores', []):
-            n = row.get('n')
-            if isinstance(n, int) and 1 <= n <= len(batch):
-                out[start + n - 1] = (float(max(0, min(100, int(row.get('score', 0))))), str(row.get('reason', ''))[:300])
+    from .article_preferences import ARTICLE_TYPES, context
+    article_indices = [n for n, item in enumerate(items) if item.get('type') in ARTICLE_TYPES]
+    other_indices = [n for n, item in enumerate(items) if item.get('type') not in ARTICLE_TYPES]
+    article_memory = ''
+    if article_indices:
+        with session() as s:
+            article_memory = context(s, c.profile_id)
+    for indices in (article_indices, other_indices):
+        for start in range(0, len(indices), 15):
+            positions = indices[start:start + 15]
+            batch = [items[n] for n in positions]
+            memory_text = ('\nShared article memory:\n' + _esc(article_memory)) if indices is article_indices and article_memory else ''
+            res = _call('You rate how well each item matches a user\'s stated interest. Score 0-100. The reason must be one '
+                        'short sentence citing concrete evidence from the item (title/summary). '
+                        'Follow explicit scoped preferences; inferred lessons retain their evidence strength. '
+                        'If evidence is weak, say so and score low.',
+                        f'Interest: {c.instructions or c.name}\nKeywords: {", ".join(c.keywords)}\nAvoid: {", ".join(c.exclusions)}'
+                        + memory_text + f'\n\n{_data(batch)}', RANK_SCHEMA, role='worker')
+            for row in res.get('scores', []):
+                n = row.get('n')
+                if isinstance(n, int) and 1 <= n <= len(batch):
+                    out[positions[n - 1]] = (float(max(0, min(100, int(row.get('score', 0))))), str(row.get('reason', ''))[:300])
     return out
 
 

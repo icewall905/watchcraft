@@ -30,6 +30,7 @@ def _run(s: Session, pid: int, now: float) -> dict:
     ids = [i.id for i in items]
     profile_rules = rules.load(s, pid)
     taste = score.load_taste(s, pid)
+    article_taste = score.load_taste(s, pid, article=True)
     lessons = prefs.nudges(s, pid, now)
     examples, waiting, uncaptured = cluster.analyze_memes(s, items, now)
     stories = cluster.assign_stories(s, items)
@@ -45,7 +46,7 @@ def _run(s: Session, pid: int, now: float) -> dict:
             continue
         old = prior.get(item.id)
         verdict = rules.check(item, examples.get(item.id), profile_rules, now)
-        rel, why = score.relevance(item, scouts.get(item.id), taste)
+        rel, why = score.relevance(item, scouts.get(item.id), article_taste if item.type in ("news", "article", "web") else taste)
         rel, why = score.apply_lessons(s, pid, item, rel, why, now, lessons)
         quality = verdict.quality
         editor = []

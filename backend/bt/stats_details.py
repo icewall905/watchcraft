@@ -50,7 +50,7 @@ def explore(s: Session, metric: str, category_id: int | None = None, day: date |
         query = select(Candidate, Video).join(Category, Category.id == Candidate.category_id).join(
             Video, Video.id == Candidate.video_id, isouter=True)
         family = exists(select(Feedback.id).where(Feedback.video_id == Candidate.video_id,
-                                                  Feedback.category_id == Candidate.category_id, Feedback.rating < 0))
+                                                  Feedback.category_id == Candidate.category_id, Feedback.content_type == "video", Feedback.rating < 0))
         watched = exists(select(WatchHistory.id).where(WatchHistory.video_id == Candidate.video_id,
                          WatchHistory.profile_id == Category.profile_id, WatchHistory.finished == True))  # noqa: E712
         if metric == "dismissed":
@@ -94,6 +94,8 @@ def explore(s: Session, metric: str, category_id: int | None = None, day: date |
     elif metric in ("watched", "feedback"):
         model = WatchHistory if metric == "watched" else Feedback
         query = select(model, Video).join(Video, Video.id == model.video_id, isouter=True)
+        if metric == "feedback":
+            query = query.where(Feedback.content_type == "video")
         if metric == "watched":
             query = query.where(WatchHistory.finished == True)  # noqa: E712
         if category_id is not None:
@@ -120,7 +122,7 @@ def explore(s: Session, metric: str, category_id: int | None = None, day: date |
         model = Lesson if metric == "lessons" else YtRequest
         query = select(model)
         if metric == "lessons":
-            query = query.where(Lesson.active == True)  # noqa: E712
+            query = query.where(Lesson.active == True, Lesson.content_type == "video")  # noqa: E712
         else:
             day = day or now().date()
         timestamp, order = (Lesson.created_at if metric == "lessons" else YtRequest.ts), col(model.id).desc()

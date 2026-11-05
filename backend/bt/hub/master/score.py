@@ -32,17 +32,22 @@ class Taste:
     publishers: dict[str, float] = field(default_factory=dict)  # -1..1 kept vs dismissed
 
 
-def load_taste(s: Session, pid: int) -> Taste:
-    liked, disliked = engine.taste(s, pid)
+def load_taste(s: Session, pid: int, article: bool = False) -> Taste:
+    liked, disliked = engine.taste(s, pid, article=article)
+    from ...models import Feedback
+    shared = select(Feedback.item_id).where(Feedback.profile_id == pid, Feedback.content_type == "article", Feedback.item_id.is_not(None))
+    scope = ContentItem.type.in_(("news", "article", "web")) if article else ContentItem.id.not_in(shared)
     kept, dropped = Counter(), Counter()
     rows = s.exec(select(ContentItem.publisher, ItemState.saved, ItemState.favorite, ItemState.rating, ItemState.dismissed)
-                  .join(ContentItem, ContentItem.id == ItemState.item_id).where(ItemState.profile_id == pid)).all()
+                  .join(ContentItem, ContentItem.id == ItemState.item_id).where(ItemState.profile_id == pid, scope)).all()
     for publisher, saved, favorite, rating, dismissed in rows:
         if not publisher:
             continue
-        if saved or favorite or rating == 1:
+        if rating == -1:
+            dropped[publisher] += 1
+        elif rating == 1 or saved or favorite:
             kept[publisher] += 1
-        elif dismissed or rating == -1:
+        elif dismissed:
             dropped[publisher] += 1
     # Three neutral pseudo-votes keep one save or one dismissal from swinging a source.
     publishers = {p: (kept[p] - dropped[p]) / (kept[p] + dropped[p] + 3) for p in set(kept) | set(dropped)}

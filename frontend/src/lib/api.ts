@@ -217,9 +217,9 @@ export const api = {
 
 	// feedback & lessons
 	feedback: (body: { video_id: string; category_id?: number | null; rating: number; chips?: string[]; text?: string }) => post<Feedback>('/feedback', body),
-	feedbackList: (limit = 100) => get<Feedback[]>(`/feedback${q({ limit })}`),
+	feedbackList: (limit = 100, contentType: 'video' | 'article' = 'video') => get<Feedback[]>(`/feedback${q({ limit, content_type: contentType === 'article' ? 'article' : undefined })}`),
 	deleteFeedback: (id: number) => del<{ ok: boolean }>(`/feedback/${id}`),
-	lessons: () => get<Lesson[]>('/lessons'),
+	lessons: (contentType: 'video' | 'article' = 'video') => get<Lesson[]>(`/lessons${q({ content_type: contentType === 'article' ? 'article' : undefined })}`),
 	createLesson: (l: Partial<Lesson> & { text: string }) => post<Lesson>('/lessons', l),
 	updateLesson: (id: number, l: Partial<Lesson>) => patch<Lesson>(`/lessons/${id}`, l),
 	deleteLesson: (id: number) => del<{ ok: boolean }>(`/lessons/${id}`),
@@ -263,7 +263,7 @@ export const api = {
 	stats: () => get<{ videos: number; candidates_24h: number; lessons: number }>('/stats', { toast: false }),
 	subtitleStats: () => get<import('./types').SubtitleStats>('/stats/subtitles', { toast: false }),
 	statsPage: (days = 30) => get<StatsPageData>(`/stats/page${q({ days })}`, { toast: false }),
-	memoryStatus: () => get<MemoryStatus>('/agent/memory', { toast: false }),
+	memoryStatus: (contentType: 'video' | 'article' = 'video') => get<MemoryStatus>(`/agent/memory${q({ content_type: contentType === 'article' ? 'article' : undefined })}`, { toast: false }),
 	runMemory: () => post<{ queued: boolean }>('/agent/memory/run', {}),
 	statsExplore: (filter: StatsExploreFilter, offset = 0) => get<StatsExploreData>(`/stats/explore${q({ ...filter, offset })}`),
 

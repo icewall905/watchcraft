@@ -417,16 +417,31 @@ guide future video picking according to their evidence strength.
 Output ONLY the JSON object."""
 
 
-def learn_messages(profile_name: str, categories: list, lessons: list, items: list[dict], core: str = "") -> list[dict]:
+def learn_messages(profile_name: str, categories: list, lessons: list, items: list[dict], core: str = "",
+                  content_type: str = "video") -> list[dict]:
     cats = "\n".join(f"- id {c.id}: {c.name} — {_clip(c.brief, 200)}" for c in categories) or "(none)"
     from ..db import session
     from .knowledge import describe
     with session() as s:
         strengths = {le.id: describe(s, le) for le in lessons}
-    existing = "\n".join(f"- id {le.id} (category {le.category_id}, channel {le.channel_id}; {strengths[le.id]}): {le.text}"
+    existing = "\n".join(f"- id {le.id} ({content_type}; category {le.category_id}, channel {le.channel_id}; {strengths[le.id]}): {le.text}"
                          for le in lessons) or "(none)"
     fb = json.dumps(items, ensure_ascii=False, indent=1, default=str)
-    user = (f"PROFILE: {profile_name}\n\nCATEGORIES:\n{cats}\n\n"
+    if content_type == "article":
+        system = LEARN_SYSTEM.replace("feedback on videos into at most 3 short, reusable LESSONS that will\nguide future video picking",
+            "feedback on news and article reading into at most 3 short, reusable LESSONS that will\nguide future article curation")
+        system = system.replace("transcript/comments/metadata", "article title, publisher, summary and text")
+        system = system.replace("video-specific inference", "article-specific inference")
+        system = system.replace("video-specific dislike", "article-specific dislike")
+        system = system.replace("video's details", "article's details")
+        system = system.replace("two positive ferret videos may defeat a rule inferred from one boring ferret video. Preserve that earlier video's dislike without inventing its cause.",
+                                "independent positive article examples may narrow a weak rule inferred from one disliked article. Preserve the earlier feedback without inventing its cause.")
+        system += "\n- All article lessons apply only to news and article curation. Set category_id and channel_id to null. Use item_id, article_title, publisher, summary and article_excerpt as evidence; never infer a publisher ban from one article."
+        system += "\n- All article lessons apply only to news and article curation. Set category_id and channel_id to null. Use item_id, article_title, publisher, summary and article_excerpt as evidence; never infer a publisher ban from one article. A rating of 0 with no text or chips clears an earlier vote and must be treated as neutral."
+        categories_text = "(not applicable to articles)"
+    else:
+        system, categories_text = LEARN_SYSTEM, cats
+    user = (f"PROFILE: {profile_name}\n\nCATEGORIES:\n{categories_text}\n\n"
             f"NEW FEEDBACK (rating: -1 dislike, 0 note, 1 like, 2 love):\n{fb}")
     from .memory import apply
-    return apply([{"role": "system", "content": LEARN_SYSTEM}, {"role": "user", "content": user}], core, "EXISTING LESSONS:\n" + existing)
+    return apply([{"role": "system", "content": system}, {"role": "user", "content": user}], core, "EXISTING LESSONS:\n" + existing)

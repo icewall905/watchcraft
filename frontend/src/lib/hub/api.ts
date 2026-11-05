@@ -27,6 +27,9 @@ export const hub = {
 	shareArticle: (id: number) => send<{ path: string | null }>('POST', `/items/${id}/share`),
 	revokeArticleShare: (id: number) => send<{ path: string | null }>('DELETE', `/items/${id}/share`),
 	setState: (id: number, patch: Partial<ItemState> & { read?: boolean }) => send<ItemState>('POST', `/items/${id}/state`, patch),
+	articleFeedback: (id: number, body: { rating: -1 | 0 | 1 | 2; chips?: string[]; text?: string }) =>
+		request<{ state: ItemState; feedback: { rating: number; chips: string[]; text: string } }>(
+			`${H}/items/${id}/feedback`, { method: 'POST', body, toast: false }),
 	// The caller owns the message: a 422 here means "nothing to learn from", which the
 	// meme tracker answers with a question rather than an error toast.
 	curatorFeedback: (id: number, curator_id: number, verdict: 'more' | 'less', terms?: string[]) =>
@@ -34,7 +37,7 @@ export const hub = {
 			`${H}/items/${id}/curator-feedback`,
 			{ method: 'POST', body: { curator_id, verdict, ...(terms?.length ? { terms } : {}) }, toast: false }),
 	importUrl: (url: string) => send<Item>('POST', '/items/import', { url }),
-	news: (params: Params, signal?: AbortSignal) => get<{ groups: NewsGroup[]; topics: Topic[]; article_count?: number; story_count?: number; supply?: { target: number; window_days: number; available: number; shortfall: number; met: boolean; pending_review: number; as_of: number } }>('/news' + qs(params), signal),
+	news: (params: Params, signal?: AbortSignal) => get<{ groups: NewsGroup[]; topics: Topic[]; article_count?: number; story_count?: number; supply?: { target: number; window_days: number; available: number; shortfall: number; met: boolean; pending_review: number; as_of: number; ready_count?: number; ready_target?: number; ready_shortfall?: number; candidate_count?: number; candidate_target?: number } }>('/news' + qs(params), signal),
 
 	captureStatus: () => get<{ counts: Record<string, number>; asset_bytes: number; asset_limit: number; enabled: boolean; asset_max_mb: number; rescue: boolean }>('/capture/status'),
 	setCaptureSettings: (enabled: boolean, asset_max_mb: number, rescue: boolean) =>

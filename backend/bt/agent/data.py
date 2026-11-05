@@ -17,8 +17,10 @@ FOUND_CAP = 12  # max `found` backlog per category
 LOW_WATER = 4  # discover more when pending (found+enriched) drops below this
 
 
-def lessons_for(s: Session, cat: Category, channel_id: Optional[str] = None) -> list[Lesson]:
-    q = select(Lesson).where(Lesson.profile_id == cat.profile_id, Lesson.active == True,  # noqa: E712
+def lessons_for(s: Session, cat: Category, channel_id: Optional[str] = None,
+                content_type: str = "video") -> list[Lesson]:
+    q = select(Lesson).where(Lesson.profile_id == cat.profile_id, Lesson.content_type == content_type,
+                             Lesson.active == True,  # noqa: E712
                              or_(col(Lesson.category_id).is_(None), Lesson.category_id == cat.id))
     out = []
     for le in s.exec(q.order_by(col(Lesson.weight).desc(), Lesson.id)).all():
@@ -48,6 +50,7 @@ def profile_ctx(s: Session, profile_id: int) -> ProfileCtx:
         watched=set(s.exec(select(WatchHistory.video_id).where(WatchHistory.profile_id == profile_id,
                                                                WatchHistory.finished == True)).all()),  # noqa: E712
         disliked=set(s.exec(select(Feedback.video_id).where(Feedback.profile_id == profile_id,
+                                                            Feedback.content_type == "video",
                                                             Feedback.rating < 0)).all()),
     )
 
@@ -212,7 +215,7 @@ def rejections_for(s: Session, cat_id: int, profile_id: int, n: int = 8) -> list
                   .where(Candidate.category_id == cat_id, Candidate.status == "rejected")
                   .order_by(col(Candidate.judged_at).desc()).limit(n * 4)).all()
     disliked = {f.video_id: f for f in s.exec(
-        select(Feedback).where(Feedback.profile_id == profile_id, Feedback.rating < 0)
+        select(Feedback).where(Feedback.profile_id == profile_id, Feedback.content_type == "video", Feedback.rating < 0)
         .order_by(col(Feedback.created_at))).all()}  # last dislike per video wins
     out = []
     for c, v in rows:
@@ -278,7 +281,7 @@ def _duration_label(seconds: Optional[int]) -> str:
 
 def recent_dislikes(s: Session, profile_id: int, n: int = 8) -> list[str]:
     rows = s.exec(select(Feedback, Video).join(Video, Video.id == Feedback.video_id, isouter=True)
-                  .where(Feedback.profile_id == profile_id, Feedback.rating < 0)
+                  .where(Feedback.profile_id == profile_id, Feedback.content_type == "video", Feedback.rating < 0)
                   .order_by(col(Feedback.created_at).desc()).limit(n)).all()
     out = []
     for f, v in rows:

@@ -15,6 +15,7 @@
 	import WhyPopover from '$lib/hub/calm/WhyPopover.svelte';
 	import EditionActions from '$lib/hub/calm/EditionActions.svelte';
 	import EmptyCalm from '$lib/hub/calm/EmptyCalm.svelte';
+	import ArticleFeedback from '$lib/hub/ArticleFeedback.svelte';
 
 	let edition = $state<TodayEdition | null>(null);
 	let loading = $state(true);
@@ -145,6 +146,8 @@
 	const cardSummary = (entry: EditionEntry) => entry.summary?.trim() || archivedSummary(entry) || entry.item.summary?.trim();
 	const summaryLabel = (entry: EditionEntry) => entry.summary?.trim() || archivedSummary(entry) ? 'AI summary' : undefined;
 	function sourceCount(entry: EditionEntry) { return Math.max(0, (entry.sources ?? 1) - 1); }
+	function articleRated(entry: EditionEntry, state: import('$lib/hub/types').ItemState) { entry.item.state = state; }
+	function supportsArticleFeedback(entry: EditionEntry) { return ['news', 'article', 'web'].includes(entry.item.type); }
 	function toggleSection(which: 'stories' | 'reads' | 'memes') {
 		if (which === 'stories') expandedStories = !expandedStories;
 		if (which === 'reads') expandedReads = !expandedReads;
@@ -178,7 +181,7 @@
 			<section class="lead-section" aria-label="Today's lead" data-nav-row>
 				<StoryCard href={itemHref(lead)} title={lead.item.title} source={lead.item.publisher || lead.item.author || undefined} summary={cardSummary(lead)} summaryLabel={summaryLabel(lead)} more={sourceCount(lead)} mediaAvailable={hasLocalImage(lead)}>
 					{#snippet image()}{#if hasLocalImage(lead)}<LocalImage id={lead.item_id} alt={lead.item.title} />{/if}{/snippet}
-					{#snippet why()}<WhyPopover reasons={lead.item.verdict?.reasons ?? []} /><EditionActions entry={lead} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} />{/snippet}
+					{#snippet why()}<WhyPopover reasons={lead.item.verdict?.reasons ?? []} /><EditionActions entry={lead} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} />{#if supportsArticleFeedback(lead)}<ArticleFeedback itemId={lead.item_id} title={lead.item.title} rating={lead.item.state.rating} onchanged={(state) => articleRated(lead, state)} />{/if}{/snippet}
 				</StoryCard>
 			</section>
 		{/if}
@@ -190,7 +193,7 @@
 					{#each shownStories as entry (entry.item_id)}
 						<StoryCard href={itemHref(entry)} title={entry.item.title} source={entry.item.publisher || entry.item.author || undefined} summary={cardSummary(entry)} summaryLabel={summaryLabel(entry)} more={sourceCount(entry)} mediaAvailable={hasLocalImage(entry)}>
 							{#snippet image()}{#if hasLocalImage(entry)}<LocalImage id={entry.item_id} alt={entry.item.title} />{/if}{/snippet}
-							{#snippet why()}<WhyPopover reasons={entry.item.verdict?.reasons ?? []} /><EditionActions entry={entry} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} />{/snippet}
+							{#snippet why()}<WhyPopover reasons={entry.item.verdict?.reasons ?? []} /><EditionActions entry={entry} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} />{#if supportsArticleFeedback(entry)}<ArticleFeedback itemId={entry.item_id} title={entry.item.title} rating={entry.item.state.rating} onchanged={(state) => articleRated(entry, state)} />{/if}{/snippet}
 						</StoryCard>
 					{/each}
 				</div>
@@ -205,7 +208,7 @@
 					{#each shownReads as entry (entry.item_id)}
 						<ReadCard href={itemHref(entry)} title={entry.item.title} source={entry.item.publisher || entry.item.author || undefined} summary={cardSummary(entry)} summaryLabel={summaryLabel(entry)} mediaAvailable={hasLocalImage(entry)}>
 							{#snippet image()}{#if hasLocalImage(entry)}<LocalImage id={entry.item_id} alt={entry.item.title} />{/if}{/snippet}
-							{#snippet why()}<WhyPopover reasons={entry.item.verdict?.reasons ?? []} /><EditionActions entry={entry} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} />{/snippet}
+							{#snippet why()}<WhyPopover reasons={entry.item.verdict?.reasons ?? []} /><EditionActions entry={entry} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} />{#if supportsArticleFeedback(entry)}<ArticleFeedback itemId={entry.item_id} title={entry.item.title} rating={entry.item.state.rating} onchanged={(state) => articleRated(entry, state)} />{/if}{/snippet}
 						</ReadCard>
 					{/each}
 				</div>

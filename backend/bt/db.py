@@ -14,6 +14,22 @@ from .models import AgentEvent, PlaybackTarget, Profile, Setting, YtRequest, now
 engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False, "timeout": 30})
 
 
+def _migrate_shared_learning_columns(connection) -> None:
+    """Add content scoping without rebuilding or rewriting legacy video records."""
+    for table, columns in (
+        ("feedback", (("content_type", "VARCHAR NOT NULL DEFAULT 'video'"), ("item_id", "INTEGER"))),
+        ("lesson", (("content_type", "VARCHAR NOT NULL DEFAULT 'video'"),)),
+        ("memorycore", (("content_type", "VARCHAR NOT NULL DEFAULT 'video'"),)),
+    ):
+        have = {c["name"] for c in inspect(connection).get_columns(table)}
+        for name, definition in columns:
+            if name not in have:
+                connection.exec_driver_sql(f'ALTER TABLE {table} ADD COLUMN "{name}" {definition}')
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_feedback_profile_type_processed ON feedback (profile_id, content_type, processed)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_lesson_profile_type_active ON lesson (profile_id, content_type, active)")
+    connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_memorycore_profile_type_id ON memorycore (profile_id, content_type, id)")
+
+
 @event.listens_for(engine, "connect")
 def _pragmas(conn, _):
     cur = conn.cursor()
@@ -32,6 +48,9 @@ def init_db() -> None:
         from . import curation  # noqa: F401  (registers v1 + hub tables)
         from .hub import migrate, models as _hub_models  # noqa: F401
         SQLModel.metadata.create_all(connection)
+        # Additive shared-learning type columns. Existing rows are videos by default;
+        # keep the legacy video_id column unchanged for old feedback and callers.
+        _migrate_shared_learning_columns(connection)
         if 'kind' not in {c['name'] for c in inspect(connection).get_columns('category')}:
             connection.exec_driver_sql("ALTER TABLE category ADD COLUMN kind VARCHAR NOT NULL DEFAULT 'playlist'")
         if 'shorts_verified' not in {c['name'] for c in inspect(connection).get_columns('video')}:

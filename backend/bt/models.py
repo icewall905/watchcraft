@@ -119,7 +119,9 @@ class Candidate(SQLModel, table=True):
 class Feedback(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     profile_id: int = Field(foreign_key="profile.id", index=True)
-    video_id: str = Field(index=True)
+    video_id: str = Field(default="", index=True)  # retained for video compatibility; empty for hub articles
+    content_type: str = Field(default="video")  # video | article
+    item_id: Optional[int] = Field(default=None)  # ContentItem id when content_type=article
     category_id: Optional[int] = None
     rating: int = 0  # -1 dislike, 0 neutral/note, 1 like, 2 love
     chips: list = J()
@@ -131,6 +133,7 @@ class Feedback(SQLModel, table=True):
 class Lesson(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     profile_id: int = Field(foreign_key="profile.id", index=True)
+    content_type: str = Field(default="video")  # video | article
     category_id: Optional[int] = None  # None = applies to all of profile's categories
     channel_id: Optional[str] = None
     text: str = Field(sa_column=Column(Text))
@@ -165,6 +168,7 @@ class LessonRevision(SQLModel, table=True):
 class MemoryCore(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     profile_id: int = Field(index=True)
+    content_type: str = Field(default="video")  # video | article
     text: str = Field(sa_column=Column(Text))
     sources: dict = J({})
     budget_tokens: int = 15000

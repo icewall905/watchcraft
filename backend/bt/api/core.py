@@ -740,7 +740,9 @@ def block_channel(channel_id: str, body: Optional[ChannelPut] = None,
 # ---------- feedback & lessons
 
 class FeedbackIn(BaseModel):
-    video_id: str
+    video_id: str = ""
+    content_type: Literal["video", "article"] = "video"
+    item_id: Optional[int] = None
     category_id: Optional[int] = None
     rating: int = 0
     chips: list[str] = []
@@ -749,6 +751,37 @@ class FeedbackIn(BaseModel):
 
 @router.post("/feedback")
 def add_feedback(body: FeedbackIn, pid: int = Depends(profile_id), s: Session = Depends(get_session)):
+    if body.content_type == "article":
+        from ..access import hub_allowed
+        from ..hub.api import can_see
+        from ..hub.models import ContentItem, ItemState
+        article = s.get(ContentItem, body.item_id) if body.item_id is not None else None
+        if not article or article.type not in {"news", "article", "web"} or not can_see(s, pid, article.id):
+            _404()
+        if not hub_allowed(s, pid):
+            raise HTTPException(403, "Hub access is disabled for this profile")
+        if body.rating not in {-1, 0, 1, 2}:
+            raise HTTPException(422, "Article rating must be -1, 0, 1, or 2")
+        if len(body.chips) > 20 or any(len(str(chip)) > 80 for chip in body.chips) or len(body.text) > 1000:
+            raise HTTPException(422, "Article feedback is too long")
+        f = Feedback(profile_id=pid, content_type="article", item_id=article.id, video_id="",
+                     category_id=None, rating=body.rating, chips=body.chips, text=body.text)
+        s.add(f)
+        st = s.get(ItemState, (pid, article.id)) or ItemState(profile_id=pid, item_id=article.id)
+        previous_rating = st.rating
+        st.rating = 1 if body.rating > 0 else -1 if body.rating < 0 else 0
+        if body.rating < 0:
+            st.dismissed = True
+        elif body.rating >= 0 and st.dismissed and previous_rating < 0:
+            st.dismissed = False
+        s.add(st)
+        s.commit()
+        s.refresh(f)
+        return f
+    if not body.video_id:
+        raise HTTPException(422, "video_id is required for video feedback")
+    if body.item_id is not None:
+        raise HTTPException(422, "item_id is only valid for article feedback")
     if body.category_id is not None:
         _own_category(s, pid, body.category_id)
     f = Feedback(**body.model_dump(), profile_id=pid)
@@ -784,9 +817,17 @@ def add_feedback(body: FeedbackIn, pid: int = Depends(profile_id), s: Session = 
 
 
 @router.get("/feedback")
-def list_feedback(limit: int = 100, pid: int = Depends(profile_id), s: Session = Depends(get_session)):
+def list_feedback(limit: int = 100, content_type: Literal["video", "article"] = "video",
+                  pid: int = Depends(profile_id), s: Session = Depends(get_session)):
+    if content_type == "article":
+        from ..hub.models import ContentItem
+        rows = s.exec(select(Feedback).where(Feedback.profile_id == pid, Feedback.content_type == "article")
+                      .order_by(col(Feedback.created_at).desc()).limit(max(1, min(limit, 500)))).all()
+        return [{**f.model_dump(), "item": (lambda it: {"id": it.id, "title": it.title, "publisher": it.publisher,
+                    "url": it.url} if it else {"id": f.item_id})(s.get(ContentItem, f.item_id))} for f in rows]
     rows = s.exec(select(Feedback, Video).join(Video, Video.id == Feedback.video_id, isouter=True)
-                  .where(Feedback.profile_id == pid).order_by(col(Feedback.created_at).desc()).limit(limit)).all()
+                  .where(Feedback.profile_id == pid, Feedback.content_type == "video")
+                  .order_by(col(Feedback.created_at).desc()).limit(limit)).all()
     st = _download_statuses([f.video_id for f, _ in rows], s)
     return [{**f.model_dump(), "video": video_out(v, offline=st.get(v.id) == "done", download_status=st.get(v.id))
              if v else {"id": f.video_id}}
@@ -798,13 +839,46 @@ def delete_feedback(fid: int, pid: int = Depends(profile_id), s: Session = Depen
     f = s.get(Feedback, fid)
     if not f or f.profile_id != pid:
         _404()
+    article_id = f.item_id if f.content_type == "article" else None
+    latest = (s.exec(select(func.max(Feedback.id)).where(Feedback.profile_id == pid,
+                                                       Feedback.content_type == "article",
+                                                       Feedback.item_id == article_id)).one()
+              if article_id is not None else None)
+    state = None
+    was_negative = False
+    if article_id is not None and latest == fid:
+        from ..hub.models import ItemState
+        state = s.get(ItemState, (pid, article_id))
+        was_negative = bool(state and state.rating < 0)
     s.delete(f)
+    if state is not None:
+        remaining = s.exec(select(Feedback).where(Feedback.profile_id == pid,
+                                                  Feedback.content_type == "article",
+                                                  Feedback.item_id == article_id)
+                           .order_by(col(Feedback.id).desc())).first()
+        state.rating = (1 if remaining.rating > 0 else -1 if remaining.rating < 0 else 0) if remaining else 0
+        if state.rating < 0:
+            state.dismissed = True
+        elif was_negative:
+            state.dismissed = False
+        s.add(state)
     s.commit()
+    if article_id is not None:
+        _article_preferences_changed(pid)
     return {"ok": True}
+
+
+def _article_preferences_changed(pid: int) -> None:
+    try:
+        from ..hub.article_preferences import changed
+        changed(pid)
+    except Exception:  # noqa: BLE001 — saved rules/feedback remain durable if rejudging cannot be queued
+        logging.getLogger(__name__).exception("could not queue article rejudging for profile %s", pid)
 
 
 class LessonIn(BaseModel):
     text: str
+    content_type: Literal["video", "article"] = "video"
     category_id: Optional[int] = None
     channel_id: Optional[str] = None
     weight: float = 1.0
@@ -812,14 +886,17 @@ class LessonIn(BaseModel):
 
 
 @router.get("/lessons")
-def list_lessons(pid: int = Depends(profile_id), s: Session = Depends(get_session)):
+def list_lessons(content_type: Literal["video", "article"] = "video", pid: int = Depends(profile_id), s: Session = Depends(get_session)):
     from ..agent.knowledge import describe
-    lessons = s.exec(select(Lesson).where(Lesson.profile_id == pid).order_by(col(Lesson.updated_at).desc())).all()
+    lessons = s.exec(select(Lesson).where(Lesson.profile_id == pid, Lesson.content_type == content_type)
+                     .order_by(col(Lesson.updated_at).desc())).all()
     return [{**le.model_dump(), "evidence": describe(s, le)} for le in lessons]
 
 
 @router.post("/lessons")
 def create_lesson(body: LessonIn, pid: int = Depends(profile_id), s: Session = Depends(get_session)):
+    if body.content_type == "article" and (body.category_id is not None or body.channel_id is not None):
+        raise HTTPException(422, "Article lessons cannot be scoped to a video category or channel")
     lesson = Lesson(**body.model_dump(), profile_id=pid)
     s.add(lesson)
     s.flush()
@@ -827,6 +904,8 @@ def create_lesson(body: LessonIn, pid: int = Depends(profile_id), s: Session = D
     register(s, lesson, explicit=True)
     s.commit()
     s.refresh(lesson)
+    if lesson.content_type == "article":
+        _article_preferences_changed(pid)
     return lesson
 
 
@@ -835,12 +914,18 @@ def patch_lesson(lid: int, body: dict, pid: int = Depends(profile_id), s: Sessio
     lesson = s.get(Lesson, lid)
     if not lesson or lesson.profile_id != pid:
         _404()
+    if "content_type" in body and body["content_type"] != lesson.content_type:
+        raise HTTPException(422, "A lesson cannot move between video and article learning scopes")
+    if lesson.content_type == "article" and (body.get("category_id") is not None or body.get("channel_id") is not None):
+        raise HTTPException(422, "Article lessons cannot be scoped to a video category or channel")
     _apply(lesson, {k: v for k, v in body.items() if k in LessonIn.model_fields})
     lesson.updated_at = now()
     s.add(lesson)
     from ..agent.knowledge import register
     register(s, lesson, explicit=True)
     s.commit()
+    if lesson.content_type == "article":
+        _article_preferences_changed(pid)
     return lesson
 
 
@@ -849,10 +934,13 @@ def delete_lesson(lid: int, pid: int = Depends(profile_id), s: Session = Depends
     lesson = s.get(Lesson, lid)
     if not lesson or lesson.profile_id != pid:
         _404()
+    content_type = lesson.content_type
     s.exec(delete(LessonEvidenceState).where(LessonEvidenceState.lesson_id == lid))
     s.exec(delete(LessonRevision).where(LessonRevision.lesson_id == lid, LessonRevision.profile_id == pid))
     s.delete(lesson)
     s.commit()
+    if content_type == "article":
+        _article_preferences_changed(pid)
     return {"ok": True}
 
 
@@ -1151,7 +1239,7 @@ def stats_page(days: int = 30, s: Session = Depends(get_session)):
 
     # (video, category) pairs the family disliked: those rejections are the family's, not the AI's
     fam_pairs = {(v, c) for v, c in s.exec(select(Feedback.video_id, Feedback.category_id)
-                                          .where(Feedback.rating < 0)).all()}
+                                          .where(Feedback.content_type == "video", Feedback.rating < 0)).all()}
 
     # ---------- per-category rows
     per_cat = {c.id: {
@@ -1199,7 +1287,7 @@ def stats_page(days: int = 30, s: Session = Depends(get_session)):
 
     # ---------- overview totals
     fb = {int(r): n for r, n in s.exec(select(Feedback.rating, func.count())
-                                       .group_by(Feedback.rating)).all()}
+                                       .where(Feedback.content_type == "video").group_by(Feedback.rating)).all()}
     dl = {}
     storage = 0
     for st, n, size in s.exec(select(Download.status, func.count(), func.sum(Download.size_bytes))
@@ -1247,9 +1335,9 @@ def stats_page(days: int = 30, s: Session = Depends(get_session)):
         "feedback": {"love": fb.get(2, 0), "like": fb.get(1, 0), "note": fb.get(0, 0), "dislike": fb.get(-1, 0)},
         "lessons": {
             "active": s.exec(select(func.count()).select_from(Lesson)
-                             .where(Lesson.active == True)).one(),  # noqa: E712
+                             .where(Lesson.content_type == "video", Lesson.active == True)).one(),  # noqa: E712
             "inactive": s.exec(select(func.count()).select_from(Lesson)
-                               .where(Lesson.active == False)).one(),  # noqa: E712
+                               .where(Lesson.content_type == "video", Lesson.active == False)).one(),  # noqa: E712
         },
         "watched": s.exec(select(func.count()).select_from(WatchHistory)
                          .where(WatchHistory.finished == True)).one(),  # noqa: E712
@@ -1277,7 +1365,7 @@ def stats_page(days: int = 30, s: Session = Depends(get_session)):
             daily[d]["accepted"] = n
     f_expr = func.date(Feedback.created_at)
     for d, n in s.exec(select(f_expr, func.count())
-                       .where(f_expr >= since).group_by(f_expr)).all():
+                       .where(Feedback.content_type == "video", f_expr >= since).group_by(f_expr)).all():
         if d in daily:
             daily[d]["feedback"] = n
     w_expr = func.date(WatchHistory.updated_at)

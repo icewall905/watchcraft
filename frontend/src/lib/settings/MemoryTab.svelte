@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import { session } from '$lib/stores/session.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
@@ -17,18 +17,32 @@
 	import type { MemoryStatus } from '$lib/types';
 	import { agent } from '$lib/stores/agent.svelte';
 	const config = new SettingsDraft('memory');
+	let scope = $state<'video' | 'article'>('video');
 	let memory = $state<MemoryStatus | null>(null);
 	let running = $state(false);
+	let dataRequest = 0;
+	let memoryRequest = 0;
+	let requestedIdentity = '';
+	const identity = () => `${scope}:${session.profileId}:${session.version}:${session.profile?.pin_locked}:${session.needsLogin}:${session.choosing}`;
+	const canRead = () => session.ready && !!session.profile && !session.profile.pin_locked && !session.needsLogin && !session.choosing;
+	const current = (token: number, expected: string) => token === dataRequest && expected === identity() && canRead();
 	async function loadMemory() {
-		try { memory = await api.memoryStatus(); } catch { /* keep the last snapshot */ }
+		const token = ++memoryRequest, expected = identity();
+		if (!canRead()) { memory = null; return; }
+		try {
+			const result = await api.memoryStatus(scope);
+			if (token === memoryRequest && expected === identity() && canRead()) memory = result;
+		} catch { /* keep the last snapshot for the same scope and profile */ }
 	}
 	async function runNow() {
+		const expected = identity();
 		running = true;
 		try {
 			const result = await api.runMemory();
+			if (expected !== identity() || !canRead()) return;
 			toast.success(result.queued ? 'Memory consolidation queued for all profiles' : 'Memory consolidation is already running');
 			await loadMemory();
-		} finally { running = false; }
+		} finally { if (expected === identity()) running = false; }
 	}
 
 	let lessons = $state<Lesson[] | null>(null);
@@ -39,43 +53,67 @@
 	let editText = $state('');
 
 	async function load() {
-		[lessons, feedback] = await Promise.all([api.lessons().catch(() => []), api.feedbackList(100).catch(() => [])]);
+		const token = ++dataRequest, expected = identity();
+		if (!canRead()) { lessons = null; feedback = null; memory = null; return; }
+		lessons = null; feedback = null;
+		const [newLessons, newFeedback] = await Promise.all([
+			api.lessons(scope).catch(() => []), api.feedbackList(100, scope).catch(() => [])
+		]);
+		if (current(token, expected)) { lessons = newLessons; feedback = newFeedback; }
 	}
 	onMount(() => {
-		load(); loadMemory();
 		const timer = setInterval(loadMemory, 5000);
 		return () => clearInterval(timer);
+	});
+	$effect(() => {
+		const next = identity();
+		if (next !== requestedIdentity) {
+			requestedIdentity = next;
+			dataRequest++; memoryRequest++;
+			lessons = null; feedback = null; memory = null; editing = null; draft = ''; editText = '';
+			untrack(() => { void load(); void loadMemory(); });
+		}
 	});
 
 	const catOptions = $derived([{ value: 0, label: 'All my playlists and feeds' }, ...session.categories.map((c) => ({ value: c.id, label: `${c.emoji} ${c.name}` }))]);
 	const catLabel = (id: number | null) => {
 		const c = session.categoryById(id);
-		return c ? `${c.emoji} ${c.name}` : 'All playlists';
+		return c ? `${c.emoji} ${c.name}` : scope === 'article' ? 'All articles' : 'All playlists';
 	};
 
 	async function add() {
-		if (!draft.trim()) return;
-		await api.createLesson({ text: draft.trim(), category_id: draftCat || null });
+		if (!draft.trim() || !canRead()) return;
+		const expected = identity();
+		await api.createLesson({ text: draft.trim(), ...(scope === 'article' ? { content_type: 'article' as const, category_id: null, channel_id: null } : { category_id: draftCat || null }) });
+		if (expected !== identity() || !canRead()) return;
 		draft = '';
-		toast.success('Rule added. The AI follows it from the next video on.');
+		toast.success(scope === 'article' ? 'Rule added. The AI will use it when curating future articles.' : 'Rule added. The AI follows it from the next video on.');
 		load();
 	}
 	async function toggle(l: Lesson) {
+		const expected = identity();
 		await api.updateLesson(l.id, { active: !l.active });
+		if (expected !== identity() || !canRead()) return;
 		l.active = !l.active;
 	}
 	async function saveEdit(l: Lesson) {
+		const expected = identity();
 		await api.updateLesson(l.id, { text: editText.trim() });
+		if (expected !== identity() || !canRead()) return;
 		l.text = editText.trim();
 		editing = null;
 		toast.success('Rule updated');
 	}
 	async function del(l: Lesson) {
+		const expected = identity();
 		await api.deleteLesson(l.id);
+		if (expected !== identity() || !canRead()) return;
 		lessons = (lessons ?? []).filter((x) => x.id !== l.id);
 	}
 	async function delFb(f: Feedback) {
+		const expected = identity();
 		await api.deleteFeedback(f.id);
+		if (expected !== identity() || !canRead()) return;
 		feedback = (feedback ?? []).filter((x) => x.id !== f.id);
 	}
 	const RATING: Record<number, string> = { [-1]: '👎', 0: '📝', 1: '👍', 2: '❤️' };
@@ -102,7 +140,7 @@
 </Section>
 
 <div style="height:2rem"></div>
-<Section title="Core identity, knowledge and rules" intro="For {session.profile?.name ?? 'this profile'}. This stable text goes first, followed by recent corrections, then task instructions and the current video or search.">
+<Section title="Core identity, knowledge and rules" intro="For {session.profile?.name ?? 'this profile'}. This stable text goes first, followed by recent corrections, then task instructions and the current {scope === 'article' ? 'article' : 'video or search'}.">
 	{#if memory}
 		<p class="small muted">{memory.versions} saved versions · {memory.active_rules} active source rules · {memory.corrections} recent corrections or evidence reviews{memory.core ? ` · approximately ${Math.ceil(memory.core.length / 4).toLocaleString()} core tokens` : ''}{memory.core_updated_at ? ` · updated ${timeAgo(memory.core_updated_at)}` : ''}</p>
 		{#if memory.core}
@@ -119,11 +157,15 @@
 </Section>
 
 <div style="height:2rem"></div>
-<Section title="AI memory" intro="Rules learned from feedback, plus any you add yourself. Inferences can be refined after at least two independent opposing videos outweigh their support. Rules you add or edit stay protected. Revisions appear in Agent activity; earlier wording and evidence are retained.">
+<Section title="AI memory" intro="Rules learned from feedback, plus any you add yourself. Inferences can be refined after at least two independent opposing {scope === 'article' ? 'articles' : 'videos'} outweigh their support. Rules you add or edit stay protected. Revisions appear in Agent activity; earlier wording and evidence are retained.">
+	<div class="scope-picker" role="group" aria-label="Memory content type">
+		<button class="scope" class:chosen={scope === 'video'} aria-pressed={scope === 'video'} use:focusable onclick={() => (scope = 'video')}>Videos</button>
+		<button class="scope" class:chosen={scope === 'article'} aria-pressed={scope === 'article'} use:focusable onclick={() => (scope = 'article')}>Articles</button>
+	</div>
 	<div class="add panel">
-		<TextField label="Teach the AI a rule" bind:value={draft} placeholder="e.g. Avoid videos where people shout at each other" onsubmit={add} group="lesson-add" />
+		<TextField label="Teach the AI a rule" bind:value={draft} placeholder={scope === 'article' ? 'e.g. Prefer clear reporting that explains the local impact' : 'e.g. Avoid videos where people shout at each other'} onsubmit={add} group="lesson-add" />
 		<div class="row">
-			<div class="grow"><Select label="Applies to" bind:value={draftCat} options={catOptions} group="lesson-add2" /></div>
+			{#if scope === 'video'}<div class="grow"><Select label="Applies to" bind:value={draftCat} options={catOptions} group="lesson-add2" /></div>{/if}
 			<button class="btn primary" use:focusable={{ group: 'lesson-add2', onSelect: add }}>Add rule</button>
 		</div>
 	</div>
@@ -131,7 +173,7 @@
 	{#if lessons === null}
 		<div class="skeleton" style="height:8rem"></div>
 	{:else if lessons.length === 0}
-		<p class="muted">No rules yet. Rate a few videos (👍 👎 📝 in the player) and the AI will distil them into rules here.</p>
+		<p class="muted">{scope === 'article' ? 'No article rules yet. Rate articles with 👍 or 👎 and the AI will distil that feedback into rules here.' : 'No rules yet. Rate a few videos (👍 👎 📝 in the player) and the AI will distil them into rules here.'}</p>
 	{:else}
 		<div class="lessons">
 			{#each lessons as l (l.id)}
@@ -143,7 +185,7 @@
 					{:else}
 						<div class="grow">
 							<p class="lt">{l.text}</p>
-							<p class="small muted">{l.evidence?.kind ?? 'Unreviewed'}{l.evidence && l.evidence.kind !== 'explicit' ? ` · ${l.evidence.support} supporting / ${l.evidence.opposition} opposing videos` : ' · changes only when you edit it'}</p>
+							<p class="small muted">{l.evidence?.kind ?? 'Unreviewed'}{l.evidence && l.evidence.kind !== 'explicit' ? ` · ${l.evidence.support} supporting / ${l.evidence.opposition} opposing ${scope === 'article' ? 'articles' : 'videos'}` : ' · changes only when you edit it'}</p>
 							<p class="small faint">{catLabel(l.category_id)}{l.channel_id ? ', one channel' : ''}. Weight {l.weight.toFixed(1)}. Updated {timeAgo(l.updated_at)}.</p>
 						</div>
 						<button class="btn mini" use:focusable={{ group: `l-${l.id}`, onSelect: () => toggle(l) }}>{l.active ? 'Active' : 'Paused'}</button>
@@ -158,7 +200,7 @@
 
 <div style="height:2rem"></div>
 
-<Section title="Feedback history" intro="What you told the AI. Deleting feedback does not delete rules it already learned.">
+<Section title="Feedback history" intro="{scope === 'article' ? 'Article feedback' : 'Video feedback'} you gave the AI. Deleting feedback does not delete rules it already learned.">
 	{#if feedback === null}
 		<div class="skeleton" style="height:6rem"></div>
 	{:else if feedback.length === 0}
@@ -169,11 +211,12 @@
 				<div class="lesson">
 					<span class="r">{RATING[f.rating] ?? '•'}</span>
 					<div class="grow">
-						<p class="lt">{isVideo(f.video) ? f.video.title : f.video_id}</p>
+						{#if scope === 'article' && f.item_id}<p class="lt"><a href={`/item/${f.item_id}`} use:focusable>{f.item?.title ?? 'Open archived article'}</a></p>
+						{:else}<p class="lt">{isVideo(f.video) ? f.video.title : f.video_id}</p>{/if}
 						<p class="small muted">
 							{[...(f.chips ?? []), f.text].filter(Boolean).join('. ') || 'No comment'}
 						</p>
-						<p class="tiny faint">{catLabel(f.category_id)}, {timeAgo(f.created_at)}{f.processed ? ', learned' : ', waiting for the AI'}</p>
+						<p class="tiny faint">{scope === 'article' ? 'All articles' : catLabel(f.category_id)}, {timeAgo(f.created_at)}{f.processed ? ', learned' : ', waiting for the AI'}</p>
 					</div>
 					<button class="btn mini danger" use:focusable={{ group: `fb-${f.id}`, onSelect: () => delFb(f) }}>Delete</button>
 				</div>
@@ -226,4 +269,7 @@
 		padding: 0.2rem 0.85rem;
 		font-size: 0.85rem;
 	}
+	.scope-picker { display: inline-flex; justify-self: start; gap: .2rem; padding: .25rem; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--bg-2); }
+	.scope { min-height: 2.5rem; padding: .4rem 1rem; border: 0; border-radius: var(--r-pill); color: var(--muted); background: transparent; cursor: pointer; }
+	.scope.chosen { color: var(--text); background: var(--surface-2); box-shadow: 0 1px 3px rgba(0,0,0,.2); }
 </style>

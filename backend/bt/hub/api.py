@@ -584,6 +584,32 @@ def set_state(iid: int, body: StateIn, pid: int = Depends(profile_id)):
         return state_dict(st)
 
 
+class ArticleFeedbackIn(BaseModel):
+    rating: Literal[-1, 0, 1, 2] = 0
+    chips: list[str] = Input(default_factory=list, max_length=20)
+    text: str = Input(default='', max_length=1000)
+
+
+@router.post('/items/{iid}/feedback')
+def article_feedback(iid: int, body: ArticleFeedbackIn, pid: int = Depends(profile_id)):
+    """Article-facing adapter to the same durable feedback and learner used by videos."""
+    from ..api.core import FeedbackIn as SharedFeedbackIn, add_feedback
+    with session() as s:
+        feedback = add_feedback(SharedFeedbackIn(content_type='article', item_id=iid,
+                               rating=body.rating, chips=_clip_list(body.chips, 20, 80),
+                               text=body.text.strip()), pid=pid, s=s)
+        result = {'state': state_dict(s.get(ItemState, (pid, iid))),
+                  'feedback': feedback.model_dump(mode='json')}
+    try:
+        from .article_preferences import changed
+        changed(pid)
+    except Exception:
+        # Durable feedback succeeded; a later learner/scheduler pass can refresh ranking.
+        import logging
+        logging.getLogger(__name__).exception('Article feedback refresh deferred')
+    return result
+
+
 class UrlIn(BaseModel):
     url: str = Input(max_length=2000)
 
