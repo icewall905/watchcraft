@@ -1732,3 +1732,47 @@ in the local `todo.md` (which is intentionally ignored by Git).
   remain the safe fallback if the latest old-style prefix is invalid. To return to typed code, keep both services
   stopped while restoring the saved fields, then start the typed images. Never restore this snapshot over a
   running learner. The additive schema itself needs no destructive downgrade.
+
+## Deployment record — automatic shelf upkeep and Today inventory (`0c7023a..09bc970`, 2026-11-05)
+
+- Today now shows actual article/video readiness, recent coverage, publisher/creator variety, interest/category
+  gaps, pending preparation and unavailable media/captions. Shared videos count once in aggregate readiness,
+  pending and failed totals; category targets remain category slots. Details link to collection activity and Stats.
+  The independent request refreshes every minute while visible, coalesces requests and clears on profile/PIN/
+  session changes. Failure does not block the edition. No cached cross-profile response is allowed.
+- Every 15 minutes, a durable compare-and-swap check examines existing scheduled article watch interests. Low
+  ready stock, fewer than three fresh stories or insufficient publisher variety can bring at most three collectors
+  per profile forward, no more often than hourly. Disabled/manual/research agents, active leases, error/partial
+  backoff and concurrent user control changes win. The normal slot limit and quality gates still own execution.
+- Video refill now excludes age-ineligible and finished inventory, considers a small freshness/creator top-up,
+  distinguishes pending preparation from terminal media problems and caps extra accepted stock at target plus
+  3–10 items. Hourly cooldown and candidate-pipeline backpressure bound top-ups. Cached research can finish
+  during cooldown without starting more discovery; explicit focused runs retain their override. Ready Shorts
+  require valid cached captions. Missing file checks use safe path resolution, file metadata and read permission.
+- Today rotates comparable publisher choices with a bounded score penalty rather than removing coverage.
+  Delivered news/articles/memes expire after seven days unless explicitly promoted; seen eligible selections and
+  user actions remain stable. Other evergreen types keep their existing 30-day window.
+- Validation: broad backend suite 957 passed/six skipped; subsequent final focused checks passed, including
+  19 video/upkeep cases after the aggregate-overlap correction. Frontend check/build passed with three existing
+  CSS warnings; 17 Today/News/shelf browser checks passed, followed by all three final shelf checks. Mobile
+  screenshot inspected. Independent review approved initial implementation and both final narrow corrections.
+- Exact final image on a private restored database preserved all checked learning/profile/settings/channel
+  fields and table counts across repeated initialization; API and worker each started twice with network disabled
+  and media read-only. Initial inventory timing exposed media payload reads (34 seconds on the first scan).
+  Removing those reads produced fresh-process checks of 0.616/0.263/0.260 seconds and category-needs 0.368s.
+  Live final inventory measured 0.685s. No host cache flushing or production test votes were used.
+- Rendered desktop inventory and surrounding Today content were inspected on an isolated, SSH-only clone,
+  with collection paused and media read-only. Dependency overrides applied only to that disposable process;
+  no real PINs were entered or changed. Temporary container, internal network and tunnel were removed.
+- Final API/worker revision `09bc970`, image
+  `sha256:15e6f8e960079f955da4c39f6bf4c3a59dbaae635f5c0840bde0fd5d0c8dd6e7`, healthy/running, zero restarts.
+  Subtitle daemon retained its original healthy start time/zero restarts; downloader retained start time/one
+  historical restart. Integrity, exact profiles/PINs, configuration hashes, public health/Today and saved-video
+  decode passed. Final profile H snapshot: 216 ready articles, 94 fresh stories, 114 publishers; 662 playable
+  videos, 14 recently published videos, 285 creators. Existing unavailable media/captions are reported honestly.
+- Backup `/root/compose/watchcraft-backups/20261105-shelf` retains original and final pre-rollout databases,
+  source/configuration, builds and validation logs. `rollback.sh` stops API/worker, retains a new DB backup and
+  starts separate `watchcraft:rollback-20261105-shelf-api` / `watchcraft:rollback-20261105-shelf-worker` tags,
+  both from prior `0f465c9`. Previous images already understand article learning; no quarantine is required for
+  this rollback. Downstream services stay running. Conditional interrupted-job recovery found no owned active
+  jobs needing recovery at the final rollout. The new maintenance state is additive Setting data.
