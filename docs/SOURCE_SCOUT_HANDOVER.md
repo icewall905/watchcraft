@@ -1,6 +1,22 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — one throttle turn per researched video (`833232b..39024ac`, 2026-11-06)
+
+- Research waited a full 10–45 s jittered turn before metadata, captions and comments. The first request for a video
+  still takes a full turn; captions and comments for the same video follow after 1–4 s (capped by the configured
+  delays). Backoff, quiet hours, playback holds and hourly/daily caps apply to every request. An interrupted short
+  gap cannot carry over into the next full turn. Backend suite 972 passed/6 skipped.
+- Backup `/root/compose/watchcraft-backups/20261106-research-39024ac` (online DB integrity ok, source, config
+  hashes); rollback image `watchcraft:rollback-20261106-research-2f34962`. rsync changed only `enrich.py`,
+  `ratelimit.py` and one test; config hashes unchanged. Recreated `bt-api`/`bt-worker`; health 200.
+- Measured on prod: research median 61.6 s → 15.8 s; 28 videos researched in 50 min before vs 42 in 27 min after
+  (~2.8× per hour). Throttle waits 24.1 s → 3.3 s median. 113 worker requests in 27 min, 0 failed, no bot checks.
+  The configured `max_per_hour` (200) is now reached and becomes the limit; judging (~20 s) is close behind.
+- Rollback: tag `watchcraft:rollback-20261106-research-2f34962` as `watchcraft:latest`, restore `source.tar.gz`,
+  run the three-file Compose `up -d --no-build --force-recreate --no-deps --wait bt-api bt-worker`, restore
+  `DEPLOYED_COMMIT`. No schema or data change.
+
 ## Deployment record — discovery stops re-fetching exhausted windows (`2f34962`, 2026-11-06)
 
 - Problem (prod, 48h to 2026-11-06): 3,598 discovery runs, 3,389 added nothing (0.15 added/run, down from ~8 before
