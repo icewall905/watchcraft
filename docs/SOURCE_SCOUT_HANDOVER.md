@@ -1,5 +1,27 @@
 # Source Scout handover — 2026-10-30
 
+
+## Deployment record — discovery stops re-fetching exhausted windows (`2f34962`, 2026-11-06)
+
+- Problem (prod, 48h to 2026-11-06): 3,598 discovery runs, 3,389 added nothing (0.15 added/run, down from ~8 before
+  Shorts categories existed); 128,676 "not a short" and 25,963 "already a candidate" skips. Plain `ytsearch` returns
+  no Shorts because yt-dlp drops YouTube's `gridShelfViewModel` Shorts shelf, and every source re-fetched its same
+  top results. YouTube ignored `sp` sort/upload-date parameters in live probes, so date sorting was not shipped.
+- Change: Shorts categories search with the Shorts filter through yt-dlp's InnerTube client (our own shelf parser);
+  per-source yield memory pages a dry source deeper, then rests it 1h..48h (feeds ≤3h, top-only re-checks after a
+  rest); replanning no longer reuses tried queries. Backend suite 968 passed/6 skipped; independent review fixes applied.
+- Backup `/root/compose/watchcraft-backups/20261106-discovery-2f34962` (online DB, integrity ok, source, config
+  hashes). Rollback image `watchcraft:rollback-20261106-discovery-09bc970`. rsync without `--delete` changed only
+  `ytdl.py`, `planner.py`, two tests and this document; `.env`/`compose.host.yaml` hashes unchanged. Built via
+  `bt-api`, recreated `bt-api`/`bt-worker` only (downloader/subtitles keep the prior image). Health 200.
+- First 32 minutes: 14 discovery runs, 147 added (10.5/run), zero dry query runs, no "not a short" skips; the
+  backlog cap (235 "backlog full") now limits discovery instead of exhaustion. Researched videos 17 vs ~9.5 in an
+  average 32 minutes before; 87 worker YouTube requests. No bot checks. Research (≈57s median, mostly throttle wait)
+  is now the bottleneck.
+- Rollback: tag `watchcraft:rollback-20261106-discovery-09bc970` as `watchcraft:latest`, restore `source.tar.gz`,
+  run the three-file Compose `up -d --no-build --force-recreate --no-deps --wait bt-api bt-worker`, restore
+  `DEPLOYED_COMMIT`. No schema change; plan `yield` state is additive Setting data the old image ignores.
+
 ## Deployment record — immediate Shorts picker and visible exit (`eb9ae84`, 2026-11-03)
 
 - Ships `84408b5` + `eb9ae84`: a five-minute memory-only feed cache scoped to profile/session; first visits seed profile-owned feed names from loaded categories while local availability is checked; counts remain explicitly unknown until refreshed. Background polling no longer supersedes slow pending requests. Batched scalar availability/stats queries avoid loading video transcripts/comments; playback still validates local files. Back to WatchCraft stays visible in picker/loading/playback/error states, with Feeds during playback.
