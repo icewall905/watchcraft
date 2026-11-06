@@ -42,6 +42,7 @@ def entry(vid, title, dur=600, ch="UCgood", **kw):
 
 class FakeYt:
     YtError, YtBlocked, YtUnavailable = YtError, YtBlocked, YtUnavailable
+    SEARCH_DEPTH_MAX = 150
 
     def __init__(self, results=None):
         self.calls = []
@@ -60,11 +61,11 @@ class FakeYt:
             raise YtBlocked("Sign in to confirm you're not a bot")
         log_yt_request(kind, "worker", True, "fake")
 
-    def search(self, query, n=15, origin="worker"):
+    def search(self, query, n=15, origin="worker", **kw):
         self._log("search")
         return [dict(e) for e in self.results]
 
-    def channel_videos(self, ref, n=30, origin="worker"):
+    def channel_videos(self, ref, n=30, origin="worker", **kw):
         self._log("channel")
         return {"id": "UCchan", "name": "Chan"}, [dict(e) for e in self.results]
 
@@ -1206,7 +1207,7 @@ def test_discovery_channel_selects_feed_tab(kind):
     w.rt.yt.channel_videos = channel
     planner.save_plan(cat.id, {'queries': [], 'channels': [], 'cursor': 0, 'planned_at': now().isoformat()})
     planner.discover(w.rt, w.rl, cat)
-    assert calls == [('@Tasty', {'n': 30, 'origin': 'worker', **({'tab': 'shorts'} if kind == 'shorts' else {})})]
+    assert calls == [('@Tasty', {'n': 30, 'origin': 'worker', 'tab': 'shorts' if kind == 'shorts' else None, 'start': 0})]
 
 
 @pytest.mark.parametrize('kind', ['playlist', 'shorts'])
@@ -1229,7 +1230,9 @@ def test_rss_unavailable_falls_back_to_public_channel(kind):
     planner.save_plan(cat.id, {'queries': [], 'channels': [], 'subscriptions': ['UCmissing'], 'cursor': 0, 'planned_at': now().isoformat()})
     result = planner.discover(w.rt, w.rl, cat)
     assert result['found'] == 0
-    assert calls == [('UCmissing', {'n': 30, 'origin': 'worker', **({'tab': 'shorts'} if kind == 'shorts' else {})})]
+    # Shorts subscriptions browse the public Shorts tab directly (with paging); playlists fall back from RSS.
+    expected = {'n': 30, 'origin': 'worker', 'tab': 'shorts', 'start': 0} if kind == 'shorts' else {'n': 30, 'origin': 'worker'}
+    assert calls == [('UCmissing', expected)]
     assert not events('error')
 
 
@@ -1588,3 +1591,115 @@ def test_discovery_skips_future_dated_seeds_and_tells_the_planner_the_date():
     prompt = prompts.planner_messages(cat, [], [], [], [], [])[-1]["content"]
     assert f"Today is {now():%Y-%m-%d}." in prompt
     assert "best AI homelab December 2026" not in prompt
+
+
+# ------------------------------------------------------------------ source exhaustion (B-050)
+
+def test_record_yield_pages_deeper_then_rests_with_backoff_and_resets_on_new():
+    from bt.agent import planner
+    plan = {}
+    st = planner.record_yield(plan, "query", "Linux news", 0, 50, 150)
+    assert (st["depth"], st["until"]) == (50, None)
+    planner.record_yield(plan, "query", "Linux news", 0, 50, 150)
+    st = planner.record_yield(plan, "query", "linux NEWS ", 0, 50, 150)
+    assert (st["depth"], st["until"]) == (150, None)
+    st = planner.record_yield(plan, "query", "Linux news", 0, 50, 150)
+    first = parse_ts(st["until"])
+    assert st["depth"] == 0 and timedelta(minutes=59) < first - now() <= timedelta(hours=1)
+    assert planner.resting(plan, "query", "Linux news")
+    st = planner.record_yield(plan, "query", "Linux news", 0, 50, 150)  # after a rest: top only, longer rest
+    assert st["depth"] == 0
+    assert timedelta(hours=1, minutes=59) < parse_ts(st["until"]) - now() <= timedelta(hours=2)
+    st = planner.record_yield(plan, "query", "Linux news", 2, 50, 150)
+    assert (st["until"], st["rests"], st["dry"]) == (None, 0, 0)
+    assert not planner.resting(plan, "query", "Linux news")
+    for _ in range(6):  # no paging: rests at once, capped low for subscription feeds
+        rss = planner.record_yield(plan, "rss", "UCx", 0, 0, 0, planner.RSS_REST_MAX_S)
+    assert rss["depth"] == 0 and parse_ts(rss["until"]) - now() <= timedelta(hours=3)
+    for i in range(planner.YIELD_KEEP + 5):
+        planner.record_yield(plan, "query", f"q{i}", 1, 50, 150)
+    assert len(plan["yield"]) == planner.YIELD_KEEP
+
+
+def test_dry_search_pages_deeper_then_rests_and_leaves_rotation():
+    from bt.agent import planner
+    cat = make_category(kind="shorts")
+    cat.seed_queries = ["Linux news"]
+    w = make_worker()
+    calls = []
+
+    def search(q, **kw):
+        calls.append((q, kw["start"], kw["shorts"], kw["n"]))
+        return [entry("vidKNOWN001", "Known", dur=30, is_short=True)]
+    w.rt.yt.search = search
+    with session() as s:
+        s.add(Candidate(category_id=cat.id, video_id="vidKNOWN001", status="rejected"))
+        s.commit()
+    planner.save_plan(cat.id, {"queries": [], "channels": [], "cursor": 0, "planned_at": now().isoformat()})
+    for _ in range(4):
+        res = planner.discover(w.rt, w.rl, cat)
+        assert res["added"] == 0
+    assert calls == [("Linux news", start, True, 15) for start in (0, 15, 30, 45)]
+    assert res["start"] == 45 and res["next_start"] == 60
+    plan = planner.load_plan(cat.id)
+    plan["yield"][planner.source_key("query", "Linux news")]["depth"] = 150
+    planner.save_plan(cat.id, plan)
+    res = planner.discover(w.rt, w.rl, cat)
+    assert res["resting_until"] and res["next_start"] == 0
+    assert planner.sources(cat, planner.load_plan(cat.id), []) == []
+    # Every source rests: no YouTube request, one calm note instead of a warning per pass.
+    assert planner.discover(w.rt, w.rl, cat) is None
+    assert planner.discover(w.rt, w.rl, cat) is None
+    assert len(calls) == 5
+    notes = [e for e in events("plan") if "exhausted" in e.message]
+    assert len(notes) == 1 and notes[0].level == "info"
+
+
+def test_new_results_keep_a_search_at_its_depth():
+    from bt.agent import planner
+    cat = make_category()
+    cat.seed_queries = ["marble runs"]
+    w = make_worker()
+    planner.save_plan(cat.id, {"queries": [], "channels": [], "cursor": 0, "planned_at": now().isoformat()})
+    res = planner.discover(w.rt, w.rl, cat)
+    assert res["added"] > 0 and (res["start"], res["next_start"], res["resting_until"]) == (0, 0, None)
+
+
+def test_replanning_does_not_fall_back_to_resting_tried_queries():
+    from bt.agent import planner
+    cat = make_category()
+    w = make_worker()
+    plan = {"queries": [], "channels": [], "tried": ["old a", "old b"], "cursor": 0, "planned_at": None}
+    for _ in range(4):
+        planner.record_yield(plan, "query", "old a", 0, 50, 150)
+    w.rt.llm.chat_json = lambda *a, **k: {"queries": ["old a", "old b"], "channels": [], "subscriptions": []}
+    assert planner.make_plan(w.rt, cat, plan)
+    assert plan["queries"] == ["old b"]
+
+
+def test_resting_source_does_not_skip_its_neighbour_in_rotation():
+    from bt.agent import planner
+    cat = make_category()
+    cat.seed_queries = ["a", "b", "c"]
+    w = make_worker()
+    calls = []
+    w.rt.yt.search = lambda q, **kw: calls.append(q) or []
+    plan = {"queries": [], "channels": [], "cursor": 0, "planned_at": now().isoformat()}
+    plan["yield"] = {planner.source_key("query", "a"): {"dry": 3, "rests": 0, "depth": 150, "until": None}}
+    planner.save_plan(cat.id, plan)
+    planner.discover(w.rt, w.rl, cat)  # "a" is dry at max depth and starts resting
+    planner.discover(w.rt, w.rl, cat)
+    assert calls == ["a", "b"]
+
+
+def test_stale_rest_does_not_hide_a_real_no_sources_warning():
+    from bt.agent import planner
+    cat = make_category()
+    cat.seed_queries = []
+    w = make_worker()
+    w.rt.llm.fail = True
+    plan = {"queries": [], "channels": [], "cursor": 0, "planned_at": now().isoformat()}
+    planner.record_yield(plan, "query", "gone from the plan", 0, 0, 0)
+    planner.save_plan(cat.id, plan)
+    assert planner.discover(w.rt, w.rl, cat) is None
+    assert any("No usable sources" in e.message for e in events("plan"))

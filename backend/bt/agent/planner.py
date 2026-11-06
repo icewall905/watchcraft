@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timedelta
 from typing import Optional
 
 from sqlmodel import select
@@ -16,6 +17,51 @@ REPLAN_MIN_S = 1800  # never re-plan a category more often than this
 PLAN_MAX_AGE_S = 12 * 3600  # re-plan when the cached plan is older than this
 TRIED_KEEP = 40
 PLAN_VERSION = 2  # subscription sources now require a playlist-specific selection
+CHANNEL_N = 30
+CHANNEL_DEPTH_MAX = 90  # newest-first channel tab: how far back a dry channel source pages
+REST_BASE_S = 3600  # a source that found nothing new at every depth rests 1h, 2h, 4h ... 48h
+REST_MAX_S = 48 * 3600
+RSS_REST_MAX_S = 3 * 3600  # subscription feeds are cheap and freshness matters most there
+YIELD_KEEP = 300
+
+
+def source_key(kind: str, ref: str) -> str:
+    return f"{kind}:{(ref or '').strip().lower()}"
+
+
+def source_state(plan: dict, kind: str, ref: str) -> dict:
+    return (plan.get("yield") or {}).get(source_key(kind, ref)) or {}
+
+
+def resting(plan: dict, kind: str, ref: str, at: Optional[datetime] = None) -> Optional[datetime]:
+    """When a source keeps returning only already-known results, it rests instead of being re-fetched."""
+    until = parse_ts(source_state(plan, kind, ref).get("until"))
+    return until if until and until > (at or now()) else None
+
+
+def record_yield(plan: dict, kind: str, ref: str, new: int, step: int, max_depth: int,
+                 max_rest_s: int = REST_MAX_S) -> dict:
+    """YouTube always returns the same top results, so a dry source pages deeper on its next turn;
+    past `max_depth` it goes back to the top and rests with exponential backoff. After a rest only the
+    top is re-checked (deep pages cost one request per page). New results reset it."""
+    stats = plan.setdefault("yield", {})
+    key = source_key(kind, ref)
+    st = stats.pop(key, None) or {"dry": 0, "rests": 0, "depth": 0, "until": None}
+    if new > 0:
+        st.update(dry=0, rests=0, until=None)
+    else:
+        st["dry"] += 1
+        if step and not st["rests"] and st["depth"] + step <= max_depth:
+            st["depth"] += step
+        else:
+            st["depth"] = 0
+            st["until"] = iso(now() + timedelta(seconds=min(max_rest_s, REST_BASE_S * 2 ** st["rests"])))
+            st["rests"] += 1
+    st["at"] = iso(now())
+    stats[key] = st  # most recently used last; trim the oldest
+    for old in list(stats)[:-YIELD_KEEP]:
+        del stats[old]
+    return st
 
 
 def plan_key(cat_id: int) -> str:
@@ -56,14 +102,14 @@ def save_plan(cat_id: int, plan: dict) -> None:
     save_setting(plan_key(cat_id), plan)
 
 
-def sources(cat: Category, plan: dict, subs: list[str]) -> list[tuple[str, str]]:
+def sources(cat: Category, plan: dict, subs: list[str], *, include_resting: bool = False) -> list[tuple[str, str]]:
     """Ordered rotation of discovery sources: (kind, ref) with kind in query|channel|rss."""
     out, seen = [], set()
 
     def add(kind, ref):
         ref = (ref or "").strip()
         key = (kind, ref.lower())
-        if ref and key not in seen:
+        if ref and key not in seen and (include_resting or not resting(plan, kind, ref)):
             seen.add(key)
             out.append((kind, ref))
 
@@ -113,7 +159,8 @@ def make_plan(rt: Runtime, cat: Category, plan: dict) -> bool:
         return False
     tried = {t.lower() for t in plan.get("tried", [])}
     queries = [q.strip() for q in out.get("queries") or [] if isinstance(q, str) and q.strip()]
-    fresh = [q for q in queries if q.lower() not in tried] or queries
+    # Re-running a tried query only helps once it has rested (it then restarts at the top).
+    fresh = [q for q in queries if q.lower() not in tried] or [q for q in queries if not resting(plan, "query", q)]
     channels = [c.strip() for c in out.get("channels") or [] if isinstance(c, str) and c.strip()]
     suppressed = [ref for ref in channels if not channel_sources.available(cat, plan, ref)
                   or channel_sources.key(cat, ref) is None]
@@ -214,6 +261,16 @@ def discover(rt: Runtime, rl, cat: Category) -> Optional[dict]:
             srcs = sources(cat, plan, subs)
         save_plan(cat.id, plan)
     if not srcs:
+        rests = [u for kind, ref in sources(cat, plan, subs, include_resting=True) if (u := resting(plan, kind, ref))]
+        if rests:
+            # Every source returned only known results at every depth; wait for new uploads.
+            until = iso(min(rests))
+            if plan.get("rest_noted") != until:
+                plan["rest_noted"] = until
+                save_plan(cat.id, plan)
+                rt.event("plan", f"😴 Every source for {cat.name} is exhausted for now; checking again after {until}",
+                         "info", cat, payload={"until": until})
+            return None
         detail = ("channel sources are temporarily unavailable; add a search query or another channel"
                   if channel_sources.active(plan) else "add seed queries or check the LLM")
         rt.event("plan", f"🤷 No usable sources for {cat.name} yet ({detail})", "warn", cat)
@@ -226,6 +283,8 @@ def discover(rt: Runtime, rl, cat: Category) -> Optional[dict]:
     with session() as s:
         data.touch_category(s, cat.id)
     yt = rt.yt
+    start = int(source_state(plan, kind, ref).get("depth") or 0)
+    step, max_depth = 0, 0
     if kind == "query":
         rl.wait_turn("search", cat)
         rt.state("searching", f'Searching "{ref}"', cat, query=ref)
@@ -233,18 +292,20 @@ def discover(rt: Runtime, rl, cat: Category) -> Optional[dict]:
         if ref not in plan["tried"]:
             plan["tried"] = (plan["tried"] + [ref])[-TRIED_KEEP:]
         save_plan(cat.id, plan)
-        entries = _call(rt, rl, lambda: yt.search(ref, n=int(th.get("search_results") or 15), origin="worker"))
+        n = int(th.get("search_results") or 15)
+        shorts = cat.kind == "shorts"
+        entries = _call(rt, rl, lambda: yt.search(ref, n=n, origin="worker", start=start, shorts=shorts))
+        step, max_depth = n, yt.SEARCH_DEPTH_MAX
         source = f"search: {ref}"
     elif kind == "channel":
         rl.wait_turn("channel", cat)
         rt.state("searching", f"Browsing channel {ref}", cat, query=ref)
         rt.event("search", f"📺 Browsing channel {ref} for {cat.name}", "info", cat, payload={"channel": ref})
         save_plan(cat.id, plan)
+        tab = "shorts" if cat.kind == "shorts" else None
+        step, max_depth = CHANNEL_N, CHANNEL_DEPTH_MAX
         try:
-            if cat.kind == "shorts":
-                res = _call(rt, rl, lambda: yt.channel_videos(ref, n=30, origin="worker", tab="shorts"))
-            else:
-                res = _call(rt, rl, lambda: yt.channel_videos(ref, n=30, origin="worker"))
+            res = _call(rt, rl, lambda: yt.channel_videos(ref, n=CHANNEL_N, origin="worker", tab=tab, start=start))
         except _Skip as e:
             if isinstance(e.__cause__, yt.YtUnavailable):
                 _channel_unavailable(rt, cat, plan, ref)
@@ -299,7 +360,13 @@ def discover(rt: Runtime, rl, cat: Category) -> Optional[dict]:
                 s.commit()
         source = f"rss: {ref}"
     counts = _insert(rt, cat, list(entries or []), source)
-    counts.update(source=source)
+    # Unseen results, including ones the screen rejected or the full backlog postponed.
+    new = counts["added"] + counts["screened"] + counts["skip_reasons"].get("backlog full", 0)
+    st = record_yield(plan, kind, ref, new, step, max_depth, RSS_REST_MAX_S if kind == "rss" else REST_MAX_S)
+    if st["until"]:
+        plan["cursor"] = i  # this source leaves the rotation; the next one moves into its slot
+    save_plan(cat.id, plan)
+    counts.update(source=source, start=start, next_start=st["depth"], resting_until=st["until"])
     rt.event("search", f"➕ {counts['added']} new of {counts['found']} results for {cat.name}"
              + (f" ({counts['skipped']} filtered)" if counts["skipped"] else "")
              + (f" ({counts['screened']} off-topic)" if counts["screened"] else ""),

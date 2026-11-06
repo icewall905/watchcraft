@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import yt_dlp
+from yt_dlp.utils import parse_count, traverse_obj
 
 from .config import COOKIES_PATH, POT_URL
 from .db import drop_kv, drop_kv_prefix, get_kv, get_settings, log_yt_request, save_setting
@@ -307,13 +308,107 @@ def _entry(e: dict, channel: dict | None = None) -> dict | None:
 
 # ---------------------------------------------------------------- public API
 
-def search(query: str, n: int = 15, origin: str = "worker") -> list[dict]:
+SEARCH_DEPTH_MAX = 150  # deepest result offset discovery pages to before a source rests
+SHORTS_SEARCH_PARAMS = "EgIQCQ=="  # YouTube's "Type: Shorts" search filter
+SHORTS_SEARCH_PAGES_MAX = 10
+
+
+def search(query: str, n: int = 15, origin: str = "worker", *, start: int = 0, shorts: bool = False) -> list[dict]:
+    """Results `start+1 .. start+n` for `query`. `shorts` uses YouTube's Shorts filter."""
     n = max(1, min(int(n), 50))
+    start = max(0, min(int(start), SEARCH_DEPTH_MAX))
+    if shorts:
+        return search_shorts(query, n, origin, start=start)
     # approximate_date fills published_at from YouTube's relative text, so discovery can apply
     # max_age_days before paying for a full extraction.
-    info = _extract(f"ytsearch{n}:{query}", "search", origin, f"search {query!r}", extract_flat="in_playlist",
-                    extractor_args={"youtubetab": {"approximate_date": ["1"]}})
+    info = _extract(f"ytsearch{start + n}:{query}", "search", origin,
+                    f"search {query!r}" + (f" from {start + 1}" if start else ""), extract_flat="in_playlist",
+                    playliststart=start + 1, extractor_args={"youtubetab": {"approximate_date": ["1"]}})
     return [x for x in (_entry(e) for e in info.get("entries") or [] if e) if x]
+
+
+def _shorts_lockups(o: Any, out: list[dict]) -> list[dict]:
+    """Shorts view models in document order. YouTube nests Shorts search results in grid
+    shelves (`gridShelfViewModel`) that yt-dlp's search parser does not read."""
+    if isinstance(o, dict):
+        vm = o.get("shortsLockupViewModel")
+        if isinstance(vm, dict):
+            out.append(vm)
+        for k, v in o.items():
+            if k != "shortsLockupViewModel":
+                _shorts_lockups(v, out)
+    elif isinstance(o, list):
+        for v in o:
+            _shorts_lockups(v, out)
+    return out
+
+
+def _shorts_entry(vm: dict) -> dict | None:
+    vid = traverse_obj(vm, ("onTap", "innertubeCommand", "reelWatchEndpoint", "videoId", {str}))
+    if not vid:
+        return None
+    meta = vm.get("overlayMetadata") or {}
+    title = traverse_obj(meta, ("primaryText", "content", {str})) or ""
+    if not title:
+        m = re.fullmatch(r"(.+), (?:[\d,.]+(?:[KM]| million)?|No) views? - play Short",
+                         str(vm.get("accessibilityText") or ""))
+        title = m[1] if m else ""
+    views = parse_count(traverse_obj(meta, ("secondaryText", "content", {str})))
+    return _entry({"id": vid, "title": title, "view_count": views, "url": f"https://www.youtube.com/shorts/{vid}"})
+
+
+def _search_continuation(resp: dict, ie) -> dict | None:
+    found: list[dict] = []
+
+    def walk(o):
+        if isinstance(o, dict):
+            if isinstance(o.get("continuationItemRenderer"), dict):
+                found.append(o["continuationItemRenderer"])
+            for v in o.values():
+                walk(v)
+        elif isinstance(o, list):
+            for v in o:
+                walk(v)
+
+    walk(resp)
+    for r in reversed(found):  # the result list's own continuation comes last
+        if cont := ie._extract_continuation_ep_data(r.get("continuationEndpoint") or {}):
+            return cont
+    return None
+
+
+def search_shorts(query: str, n: int = 15, origin: str = "worker", *, start: int = 0) -> list[dict]:
+    """Shorts-filtered search through yt-dlp's InnerTube client (same cookies, proxy and PO tokens).
+    Uses yt-dlp internals; the response parsing is ours because yt-dlp drops Shorts shelves."""
+    t, want, out, seen = time.monotonic(), start + n, [], set()
+    detail = f"shorts search {query!r}" + (f" from {start + 1}" if start else "")
+    try:
+        with yt_dlp.YoutubeDL(_opts()) as ydl:
+            ie = ydl.get_info_extractor("YoutubeSearch")
+            ie.initialize()  # consent/locale cookies and auth state, as extract_info would set up
+            ytcfg = ie._download_ytcfg("web", query)
+            data, resp = {"query": query, "params": SHORTS_SEARCH_PARAMS}, None
+            for page in range(1, SHORTS_SEARCH_PAGES_MAX + 1):
+                headers = ie.generate_api_headers(ytcfg=ytcfg, visitor_data=ie._extract_visitor_data(resp),
+                                                  default_client="web")
+                resp = ie._extract_response(item_id=f"{detail} page {page}", ep="search", query=data,
+                                            default_client="web", ytcfg=ytcfg, headers=headers,
+                                            check_get_keys=("contents", "onResponseReceivedCommands"))
+                for vm in _shorts_lockups(resp, []):
+                    e = _shorts_entry(vm)
+                    if e and e["id"] not in seen:
+                        seen.add(e["id"])
+                        out.append(e)
+                cont = _search_continuation(resp, ie)
+                if len(out) >= want or not cont:
+                    break
+                data.update(cont)
+    except Exception as e:  # noqa: BLE001 - DownloadError / ExtractorError / network
+        err = classify(e)
+        log_yt_request("search", origin, False, f"{detail}: {type(err).__name__}: {str(e)[:300]}")
+        raise err from e
+    log_yt_request("search", origin, True, f"{detail} ({time.monotonic() - t:.1f}s)")
+    return out[start:want]
 
 
 def _channel_url(ref: str, tab: str | None = None) -> str:
@@ -350,13 +445,17 @@ def _avatar(info: dict) -> str:
     return max(sq, key=lambda t: t["width"])["url"] if sq else ""
 
 
-def channel_videos(ref: str, n: int = 30, origin: str = "worker", *, tab: str | None = None) -> tuple[dict, list[dict]]:
+def channel_videos(ref: str, n: int = 30, origin: str = "worker", *, tab: str | None = None,
+                   start: int = 0) -> tuple[dict, list[dict]]:
+    """Newest-first uploads `start+1 .. start+n` of a public channel tab."""
     n = max(1, min(int(n), 100))
+    start = max(0, min(int(start), SEARCH_DEPTH_MAX))
     url = _channel_url(ref, tab)
     # Only validated public channel tabs use this upstream-supported workaround.
     # Keep auth checks intact for private playlists, subscriptions and all other extractors.
-    info = _extract(url, "channel", origin, f"channel {ref}", extract_flat="in_playlist",
-                    playlistend=n, extractor_args={"youtubetab": {"skip": ["authcheck"], "approximate_date": ["1"]}})
+    info = _extract(url, "channel", origin, f"channel {ref}" + (f" from {start + 1}" if start else ""),
+                    extract_flat="in_playlist", playliststart=start + 1,
+                    playlistend=start + n, extractor_args={"youtubetab": {"skip": ["authcheck"], "approximate_date": ["1"]}})
     uid = info.get("uploader_id") or ""
     ch = {
         "id": info.get("channel_id") or info.get("id") or "",
