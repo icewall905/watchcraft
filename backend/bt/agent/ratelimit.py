@@ -68,6 +68,7 @@ class RateLimiter:
         self.rt = rt
         self.last_at: Optional[datetime] = None
         self._next_at: Optional[datetime] = None
+        self._next_follow_up = False
 
     def budget(self) -> dict:
         t = now()
@@ -134,7 +135,10 @@ class RateLimiter:
             if self.wait_blocker(category=category):
                 continue
             th = rt.throttle()
+            if self._next_follow_up != follow_up:
+                self._next_at = None  # an interrupted short gap must not carry over to a full turn
             if self._next_at is None:
+                self._next_follow_up = follow_up
                 last = max(filter(None, [self.last_at, _last_request()]), default=None)
                 lo, hi = float(th.get("min_delay_s") or 0), float(th.get("max_delay_s") or 0)
                 if follow_up:

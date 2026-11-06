@@ -193,3 +193,25 @@ def test_follow_up_turn_waits_a_short_gap(follow_up, lo, hi):
     with pytest.raises(Stop):
         RateLimiter(w.rt).wait_turn("comments", None, follow_up=follow_up)
     assert lo - 1 <= waits[0] <= hi
+
+
+def test_interrupted_follow_up_gap_does_not_shorten_the_next_full_turn():
+    from bt.agent.ratelimit import RateLimiter
+    from bt.db import log_yt_request, save_setting
+    save_setting("throttle", {"min_delay_s": 30, "max_delay_s": 30})
+    w = make_worker()
+    log_yt_request("metadata", "worker", True, "previous")
+    waits = []
+
+    class Stop(Exception):
+        pass
+
+    def sleep(secs, *a, **kw):
+        waits.append(secs)
+        raise Stop
+    w.rt.sleep = sleep
+    rl = RateLimiter(w.rt)
+    for follow_up in (True, False):
+        with pytest.raises(Stop):
+            rl.wait_turn("comments", None, follow_up=follow_up)
+    assert waits[0] <= 4 and waits[1] > 25
