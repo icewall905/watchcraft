@@ -147,3 +147,49 @@ def test_comment_acquisition_is_capped_at_the_judge_evidence_limit(monkeypatch):
 
 def test_comment_acquisition_keeps_a_lower_setting(monkeypatch):
     assert _acquired_comments(monkeypatch, 12, "fastpath010") == [12]
+
+
+def test_research_takes_one_full_turn_then_follows_up():
+    cat = make_category()
+    w = make_worker()
+    cand = candidate(cat, "fastpath009")
+    w.rt.yt.cached_video_info = lambda vid: None
+    w.rt.yt.pick_track = lambda info: {"url": "x"}
+    w.rt.yt.transcript = lambda info, n: "words"
+    turns = []
+    w.rl.wait_turn = lambda kind, *a, follow_up=False, **kw: turns.append((kind, follow_up))
+    assert enrich.enrich_one(w.rt, w.rl, cand, cat) == "enriched"
+    assert turns == [("metadata", False), ("transcript", True), ("comments", True)]
+
+
+def test_cached_metadata_keeps_a_full_turn_for_the_first_request():
+    cat = make_category()
+    w = make_worker()
+    cand = candidate(cat, "fastpath010")
+    w.rt.yt.cached_video_info = lambda vid: {"id": vid, "title": "Science build", "duration_s": 600}
+    w.rt.yt.pick_track = lambda info: None
+    turns = []
+    w.rl.wait_turn = lambda kind, *a, follow_up=False, **kw: turns.append((kind, follow_up))
+    assert enrich.enrich_one(w.rt, w.rl, cand, cat) == "enriched"
+    assert turns == [("comments", False)]
+
+
+@pytest.mark.parametrize("follow_up, lo, hi", [(False, 30, 30), (True, 1, 4)])
+def test_follow_up_turn_waits_a_short_gap(follow_up, lo, hi):
+    from bt.agent.ratelimit import RateLimiter
+    from bt.db import log_yt_request, save_setting
+    save_setting("throttle", {"min_delay_s": 30, "max_delay_s": 30})
+    w = make_worker()
+    log_yt_request("metadata", "worker", True, "previous")
+    waits = []
+
+    class Stop(Exception):
+        pass
+
+    def sleep(secs, *a, **kw):
+        waits.append(secs)
+        raise Stop
+    w.rt.sleep = sleep
+    with pytest.raises(Stop):
+        RateLimiter(w.rt).wait_turn("comments", None, follow_up=follow_up)
+    assert lo - 1 <= waits[0] <= hi

@@ -22,6 +22,9 @@ from .runtime import Runtime, aware, iso
 from . import timing
 
 
+FOLLOW_UP_DELAY_S = (1.0, 4.0)  # gap between requests for one video page, capped by the configured delays
+
+
 def quiet_remaining(spec: str, local_now: Optional[datetime] = None) -> float:
     """Seconds until quiet hours end (0 if not in quiet hours or spec empty/invalid)."""
     if not spec or "-" not in spec:
@@ -118,8 +121,13 @@ class RateLimiter:
                           until_end=iso(now() + timedelta(seconds=secs)))
         return True
 
-    def wait_turn(self, kind: str, category: Optional[Category] = None, **state_kw) -> None:
-        """Block until a worker YouTube request of `kind` may be made. Raises Interrupt on pause/stop."""
+    def wait_turn(self, kind: str, category: Optional[Category] = None, *, follow_up: bool = False,
+                  **state_kw) -> None:
+        """Block until a worker YouTube request of `kind` may be made. Raises Interrupt on pause/stop.
+
+        `follow_up`: the request belongs to the same video page as the previous one (captions and comments
+        after its metadata), so it waits a short browser-like gap instead of a full jittered turn.
+        Blockers (backoff, quiet hours, playback, hourly/daily caps) apply either way."""
         rt = self.rt
         while True:
             rt.check()
@@ -129,6 +137,8 @@ class RateLimiter:
             if self._next_at is None:
                 last = max(filter(None, [self.last_at, _last_request()]), default=None)
                 lo, hi = float(th.get("min_delay_s") or 0), float(th.get("max_delay_s") or 0)
+                if follow_up:
+                    lo, hi = min(lo, FOLLOW_UP_DELAY_S[0]), min(max(lo, hi), FOLLOW_UP_DELAY_S[1])
                 delay = rt.rng.uniform(lo, max(lo, hi))
                 self._next_at = (last + timedelta(seconds=delay)) if last else now()
             left = (self._next_at - now()).total_seconds()

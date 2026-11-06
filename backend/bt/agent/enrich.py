@@ -1,4 +1,4 @@
-"""Enrich one `found` candidate: video_info + transcript + comments (each separately rate-limited)."""
+"""Enrich one `found` candidate: video_info + transcript + comments (one throttle turn, then short follow-ups)."""
 from __future__ import annotations
 
 import logging
@@ -72,6 +72,8 @@ def enrich_one(rt: Runtime, rl, cand: Candidate, cat: Category) -> str:
     reuse = bool(v and v.fetched_at and progress.get("metadata_done") and
                  ("transcript" in progress or time() - progress.get("metadata_ts", 0) < 3600))
     info = progress.get("caption_info", {})
+    # One full throttle turn per video: once this research made a request, the rest follow it closely.
+    made = False
     if not reuse:
         request_made = False
         try:
@@ -94,6 +96,7 @@ def enrich_one(rt: Runtime, rl, cand: Candidate, cat: Category) -> str:
                     info = yt.video_info(cand.video_id, origin="worker")
                 log.info("research %s metadata completed in %.2fs", cand.video_id, monotonic() - started)
                 rl.success()
+                made = True
         except yt.YtBlocked:
             raise
         except yt.YtError as e:
@@ -149,7 +152,7 @@ def enrich_one(rt: Runtime, rl, cand: Candidate, cat: Category) -> str:
             progress["transcript_state"] = "no_track"
             save_setting(key, progress)
     if "transcript" not in progress:
-        rl.wait_turn("transcript", cat, **st)
+        rl.wait_turn("transcript", cat, follow_up=made, **st)
         rt.state("transcript", f"Reading transcript: {title}", cat, **st)
         rt.event("transcript", f"📜 Reading transcript: {title}", "info", cat, video_id=cand.video_id)
         try:
@@ -158,10 +161,12 @@ def enrich_one(rt: Runtime, rl, cand: Candidate, cat: Category) -> str:
                 tr = yt.transcript(info, int(th.get("transcript_max_chars") or 40000)) or ""
             log.info("research %s transcript completed in %.2fs", cand.video_id, monotonic() - started)
             rl.success()
+            made = True
         except yt.YtBlocked:
             raise
         except yt.YtError as e:
             rl.failed()
+            made = True
             tr = ""
             rt.event("transcript", f"⚠️ No transcript for {title}: {e}"[:500], "warn", cat, video_id=cand.video_id)
         # Empty is a completed attempt too. Blocked/paused attempts never reach
@@ -175,7 +180,7 @@ def enrich_one(rt: Runtime, rl, cand: Candidate, cat: Category) -> str:
     # only costs yt-dlp continuation pages. The player fetches its own page on
     # demand; this cache is a warm start, not its source of truth.
     n = min(int(th.get("max_comments") or 40), judge.JUDGE_COMMENTS_MAX)
-    rl.wait_turn("comments", cat, **st)
+    rl.wait_turn("comments", cat, follow_up=made, **st)
     rt.state("comments", f"Reading comments: {title}", cat, **st)
     try:
         started = monotonic()
