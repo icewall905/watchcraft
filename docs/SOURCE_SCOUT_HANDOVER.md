@@ -1,6 +1,25 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — lyrics auto-sync fits speed and shift (`70ceec2`, 2026-11-07)
+
+- Prod transcripts showed why auto-sync drifted: STT gives 6–12 s chunks without word timing, invents text over
+  music (non-Latin runs, "oh, oh, oh"), and some videos are a slower/faster edit (Burn the Witch 240 s vs 221 s
+  lyrics: +2 s early, +10 s by 2:10). The fit now interpolates words inside chunks, drops junk, matches lyric word
+  pairs and fits video = rate × lyric + offset over the most agreeing lines (RANSAC-style; length hint).
+  Backend 1030 passed/6 skipped; music browser tests 10/10; review approved, its three minors fixed.
+- Also deployed earlier the same day: `99870ff` (adult profiles may stay without a PIN while children exist —
+  admins still need one; Music in the TV-mode drawer). Backup `20261107-openadult-99870ff`, rollback image
+  `watchcraft:rollback-20261107-openadult-dc6d3b3`. Prod then had 2 admins (PIN) and 4 children, no adults.
+- This deploy: backup `/root/compose/watchcraft-backups/20261107-autosync-70ceec2` (online DB, integrity ok);
+  rollback image `watchcraft:rollback-20261107-autosync-99870ff`. rsync changed exactly the commit's 7 files.
+  `musiclyrics.rate` added, `quick_check` ok, all four app containers healthy, health 200. Fits on the prod
+  transcripts: R U Mine +22.8 s, Burn the Witch ×1.056 +2.2 s, Do I Wanna Know −1.4 s. Stored offsets
+  (Burn the Witch: manual −3.5 s) stay until someone presses Auto-sync again.
+- Rollback: tag `watchcraft:rollback-20261107-autosync-99870ff` as `watchcraft:latest`, restore `source.tar.gz`,
+  three-file Compose `up -d --no-build --force-recreate --no-deps --wait bt-api bt-worker bt-downloader
+  bt-subtitles`, restore `DEPLOYED_COMMIT`. The older image ignores the `rate` column.
+
 ## Deployment record — karaoke lyrics and saved mixes (`dc6d3b3`, 2026-11-07)
 
 - Music karaoke: LRCLIB timed lyrics (version closest to the video length), sweep overlay, shared per-song
