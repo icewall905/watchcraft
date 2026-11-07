@@ -31,6 +31,7 @@ import android.view.WindowInsetsController;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.webkit.CookieManager;
+import android.webkit.MimeTypeMap;
 import android.webkit.PermissionRequest;
 import android.webkit.SslErrorHandler;
 import android.webkit.URLUtil;
@@ -324,7 +325,8 @@ public final class MainActivity extends ComponentActivity {
             if (fileCallback != null) fileCallback.onReceiveValue(null);
             fileCallback = callback;
             Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT); pick.addCategory(Intent.CATEGORY_OPENABLE); pick.setType("*/*");
-            String[] types = params.getAcceptTypes(); if (types.length > 0 && !types[0].isEmpty()) pick.putExtra(Intent.EXTRA_MIME_TYPES, types);
+            String[] types = AcceptTypes.mimeTypes(params.getAcceptTypes(), MimeTypeMap.getSingleton()::getMimeTypeFromExtension);
+            if (types.length > 0) pick.putExtra(Intent.EXTRA_MIME_TYPES, types);
             pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE);
             try { startActivityForResult(pick, PICK_FILE); }
             catch (ActivityNotFoundException e) { fileCallback.onReceiveValue(null); fileCallback = null; toast("No file picker is available."); }
