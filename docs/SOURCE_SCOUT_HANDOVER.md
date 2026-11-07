@@ -1,6 +1,29 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — curator draft no longer blanks the review form (`2eeb9f4`, 2026-11-07)
+
+- Creating a curator reached "Review the proposal" with no form at all. `POST /api/hub/curators/draft` returned
+  one `source_suggestions` row per provider, all with `url: ''`, and `CuratorForm.svelte:206` keys that list by
+  `s.url`; Svelte raised `each_key_duplicate` while rendering and aborted the whole component, leaving only the
+  heading and the draft badge. Every draft proposing two or more providers was affected, since `be67a59`. The
+  existing browser test only checked the `?goal=` prefill and never clicked Draft.
+- `source_suggestions` now carries feeds only, deduplicated by url; providers stay available as tick boxes through
+  `provider_keys`. Backend 1041 passed/6 skipped; `svelte-check` 0 errors; `hub.spec.ts` 5/5. The extended browser
+  test fails with the fix reverted.
+- Backup `/root/compose/watchcraft-backups/20261107-draftfix-2eeb9f4` (online DB, integrity ok, source, config
+  hashes); rollback image `watchcraft:rollback-20261107-draftfix-331d08a`. rsync (checksum, no `--delete`) changed
+  exactly the 36 files of `3d8718a..2eeb9f4` — the Android client and this record aside, only `backend/bt/hub/api.py`,
+  `backend/tests/test_curation.py` and `frontend/tests/hub.spec.ts`; `.env`/`compose.host.yaml` hashes unchanged.
+  Rebuilt `watchcraft:latest` (`sha256:cbcc4d85f2e0204c746a4399fe2b2282dd9cc0e3d5acd0b3e11ac71c95d31698`), recreated
+  `bt-api`/`bt-worker`/`bt-downloader`/`bt-subtitles`; all healthy, no errors in their logs.
+- Checked on prod: health 200 locally and on `wc.tdgs.org`, `/curators/new` 200, `quick_check` ok, and the draft
+  endpoint returns `source_suggestions: []` with `provider_keys` intact for both a one-provider and a four-provider
+  goal (`nvd`, `github_search`, `cisa_kev`, `web_search`). No url-less or duplicate rows remain.
+- Rollback: tag `watchcraft:rollback-20261107-draftfix-331d08a` as `watchcraft:latest`, restore `source.tar.gz`,
+  run the two-file Compose `up -d --no-build --force-recreate --no-deps --wait bt-api bt-worker bt-downloader
+  bt-subtitles`, restore `DEPLOYED_COMMIT`. No schema or data change.
+
 ## Deployment record — Music section renamed Music Videos (`3d8718a`, 2026-11-07)
 
 - The Watch-section entry, the TV-mode drawer entry, the page title and the `/music` heading now read "Music
