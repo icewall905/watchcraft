@@ -7,5 +7,5 @@
         <item name="android:windowBackground">#110E26</item>
     </style>
     <style name="AppTheme" parent="BaseAppTheme"/>
-    <color name="launcher_background">#110E26</color>
+    <color name="launcher_background">#010613</color>
 </resources>
