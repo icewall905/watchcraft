@@ -3,6 +3,8 @@ name: Android release
 on:
   workflow_dispatch:
   push:
+    branches:
+      - codex/android-app
     tags:
       - 'android-v*'
 
@@ -26,6 +28,9 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+          log-accepted-android-sdk-licenses: false
 
       - name: Install Android build platform
         run: sdkmanager "platforms;android-37.0" "build-tools;36.0.0"
