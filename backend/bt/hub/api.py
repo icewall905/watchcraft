@@ -1561,14 +1561,15 @@ def draft(body: DraftIn, pid: int = Depends(profile_id)):
     d = ai.draft(body.goal, body.kind)
     with session() as s:
         existing = {x.provider: x.id for x in s.exec(select(Source).where(Source.profile_id == pid, Source.url == '')).all()}
+    # Only feeds carry a URL to approve. Providers are already offered as tick boxes through
+    # provider_keys, and a url-less row per provider gave the form duplicate list keys.
+    feeds = {f['url']: str(f.get('name') or f['url'])[:100] for f in d['feeds']}
     return {'name': d['name'], 'description': d['description'], 'icon': d['icon'], 'kind': body.kind, 'instructions': body.goal,
             'queries': d['queries'], 'keywords': d['keywords'], 'exclusions': d['exclusions'], 'content_types': d['content_types'],
             'interval_hours': d['interval_hours'], 'ai_enabled': ai.enabled() and body.kind == 'watch', 'ai': d['ai'],
             'subject': body.goal if body.kind == 'research' else '', 'provider_keys': [p for p in d['providers'] if p in PROVIDERS],
             'source_ids': [existing[p] for p in d['providers'] if p in existing],
-            'source_suggestions': [{'provider': p, 'url': '', 'name': PROVIDERS[p].label, 'available': PROVIDERS[p].availability()[0]}
-                                   for p in d['providers'] if p in PROVIDERS]
-                                  + [{'provider': 'rss', 'url': f['url'], 'name': str(f.get('name') or f['url'])[:100], 'available': True} for f in d['feeds']]}
+            'source_suggestions': [{'provider': 'rss', 'url': u, 'name': n, 'available': True} for u, n in feeds.items()]}
 
 
 @router.post('/curators')
