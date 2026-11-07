@@ -1,6 +1,29 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — Music section with live DJ and offline songs (`a487243`, 2026-11-07)
+
+- New `/music` (Watch section, Hub-gated): YouTube Music official videos only (InnerTube search/radio,
+  `MUSIC_VIDEO_TYPE_OMV`), favourite tracks/artists, seed/curator/manual mixes, For-you shelves, shuffle, live DJ
+  with party mode. Wanted music (favourites, For-you, newest 25 mixes per profile, recent full plays; cap 800) gets
+  its own downloader lane, is kept from eviction and is re-queued when evicted (not when deleted by hand, marked
+  `Download.error = 'deleted by hand'`). Five new additive tables (`music*`); no change to existing rows.
+  Backend suite 1004 passed/6 skipped; music browser tests 6/6; three independent review rounds addressed.
+- Backup `/root/compose/watchcraft-backups/20261107-music-a487243` (online DB, integrity ok, source, config hashes);
+  rollback image `watchcraft:rollback-20261107-music-39024ac`. rsync (checksum, no `--delete`) changed only the
+  commit's 25 files plus two plan documents; `.env`/`compose.host.yaml` hashes unchanged. Rebuilt via `bt-api`,
+  recreated `bt-api`/`bt-worker`/`bt-downloader`/`bt-subtitles` (downloader logic changed). All healthy, health 200.
+- Checked on prod: `music*` tables created, `quick_check` ok; search 1.0 s, radio 0.5 s (46 official videos); the
+  worker model DJ answered in 2.9 s and its picks resolved in 0.7 s; downloader `wanted_ids` 21 ms,
+  `next_download` and `eviction_order` fine with no music yet; bundle serves `/music`.
+- Known: some older official videos (Billie Jean `Zi_XLOBDo_Y`, Robyn `eH3giaIzONA`) fail DASH with "no DASH
+  formats with byte ranges" — also on the watch page. The music player falls back to the progressive proxy
+  (format 18, 360p) and the downloader stores them, so they play.
+- Rollback: tag `watchcraft:rollback-20261107-music-39024ac` as `watchcraft:latest`, restore `source.tar.gz`, run
+  the three-file Compose `up -d --no-build --force-recreate --no-deps --wait bt-api bt-worker bt-downloader
+  bt-subtitles`, restore `DEPLOYED_COMMIT`. The old image ignores the new tables; music Download rows stay ordinary
+  non-pinned rows that `drop_dead_queue`/eviction clean up.
+
 ## Deployment record — one throttle turn per researched video (`833232b..39024ac`, 2026-11-06)
 
 - Research waited a full 10–45 s jittered turn before metadata, captions and comments. The first request for a video
