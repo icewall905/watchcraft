@@ -2,6 +2,8 @@
 	import { music as api, type Lyrics as L } from './api';
 	// Shared across mounts so the up-next song's lyrics are ready before it starts.
 	const cache = new Map<string, L>();
+	/** Songs the app is listening to; a remount (another song and back) picks the progress up again. */
+	const inflight = new Set<string>();
 	export async function prefetchLyrics(videoId: string) {
 		if (cache.has(videoId)) return;
 		try {
@@ -19,7 +21,7 @@
 	import { onDestroy } from 'svelte';
 	import { focusable } from '$lib/nav';
 	import { toast } from '$lib/stores/toast.svelte';
-	import { music, type LyricLine, type Lyrics, type Track } from './api';
+	import { music, type LyricLine, type Lyrics, type Track, type Transcript } from './api';
 
 	interface Props {
 		track: Track;
@@ -38,6 +40,7 @@
 	let raf = 0;
 	let saveTimer: number | undefined;
 	let pollTimer: number | undefined;
+	let pollFails = 0;
 	let seq = 0;
 
 	async function load(videoId: string) {
@@ -49,13 +52,13 @@
 		data = hit ?? null;
 		offset = hit?.offset_ms ?? 0;
 		rate = hit?.rate || 1;
+		if (inflight.has(videoId)) {
+			listening = true; // still listening from before: keep following it
+			listenNote = 'Listening…';
+			poll(videoId, my);
+		}
 		if (hit && hit.status !== 'error') {
 			loading = false;
-			const st = hit.transcript?.status;
-			if (st === 'queued' || st === 'running') {
-				listening = true; // still transcribing from earlier: keep following it
-				poll(videoId, my);
-			}
 			return;
 		}
 		loading = true;
@@ -66,8 +69,6 @@
 			data = r;
 			offset = r.offset_ms;
 			rate = r.rate || 1;
-			const st = r.transcript?.status;
-			if (st === 'queued' || st === 'running') poll(videoId, my);
 		} catch {
 			if (my === seq) data = null;
 		} finally {
@@ -94,11 +95,16 @@
 		}
 		return found;
 	});
+	// The fill runs until the next line starts: singers hold notes, so a guess from the text length ends
+	// too early. Only a long gap (an instrumental break, or the empty LRC line that marks one) is not sung
+	// through: there the fill gets a generous singing time and then waits.
+	const LONG_GAP_MS = 12000;
 	function lineEnd(i: number): number {
 		const ln = timed[i];
 		if (ln?.end) return ln.end;
-		const next = timed[i + 1]?.t ?? ln.t + 5000;
-		return Math.min(next, ln.t + Math.max(1500, (ln.text.length || 10) * 180)); // a long gap is not sung
+		const next = timed[i + 1]?.t ?? ln.t + 6000;
+		if (next - ln.t <= LONG_GAP_MS) return next;
+		return Math.min(next, ln.t + Math.max(4000, (ln.text.length || 10) * 320));
 	}
 	const progress = $derived.by(() => {
 		if (idx < 0) return 0;
@@ -130,38 +136,61 @@
 
 	function poll(videoId: string, my: number) {
 		window.clearTimeout(pollTimer);
-		pollTimer = window.setTimeout(() => void listen(videoId, my, true), 4000);
+		pollTimer = window.setTimeout(() => void listen(videoId, my, false), 2500);
 	}
-	async function listen(videoId = track.video_id, my = seq, quiet = false) {
+	function keep(videoId: string, base: Lyrics | null, transcript?: Transcript) {
+		if (!base) return;
+		data = { ...$state.snapshot(base), transcript: transcript ?? (data?.transcript ? $state.snapshot(data.transcript) : undefined) } as Lyrics;
+		cache.set(videoId, $state.snapshot(data) as Lyrics);
+	}
+	function finish(videoId: string) {
+		inflight.delete(videoId);
+		listenNote = '';
+		listening = false;
+	}
+	/** `start` asks the server to begin; polls pass false so a failed job is never restarted silently. */
+	async function listen(videoId = track.video_id, my = seq, start = true) {
 		listening = true;
+		if (start) {
+			inflight.add(videoId);
+			listenNote = 'Starting…';
+		}
 		try {
-			const r = await music.listen(videoId);
+			const r = await music.listen(videoId, start);
 			if (my !== seq) return;
-			const tr = r.transcript;
-			const base = r.lyrics ?? data;
-			if (base) {
-				data = { ...$state.snapshot(base), transcript: tr } as Lyrics;
-				cache.set(videoId, $state.snapshot(data) as Lyrics);
+			pollFails = 0;
+			if (r.mode === 'sync') {
+				keep(videoId, r.lyrics);
+				const job = r.job;
+				if (!job) return finish(videoId); // nothing running any more (for example after a restart)
+				if (job.state === 'done') {
+					offset = r.lyrics?.offset_ms ?? offset;
+					rate = r.lyrics?.rate || 1;
+					if (inflight.has(videoId)) toast.success(`🎯 ${job.message}`);
+					return finish(videoId);
+				}
+				if (job.state === 'failed') {
+					if (inflight.has(videoId)) toast.warn(job.message);
+					return finish(videoId);
+				}
+				listenNote = job.message;
+				return poll(videoId, my);
 			}
-			if (r.aligned && r.lyrics) {
-				offset = r.lyrics.offset_ms;
-				rate = r.lyrics.rate || 1;
-				const speed = Math.abs(rate - 1) >= 0.005 ? `, video ${rate > 1 ? 'slower' : 'faster'} ×${rate.toFixed(3)}` : '';
-				toast.success(`🎯 Lyrics synced on ${r.matched_lines ?? 'several'} lines (${offset >= 0 ? '+' : ''}${(offset / 1000).toFixed(1)} s${speed})`);
-			} else if (tr.status === 'queued' || tr.status === 'running') {
-				listenNote = tr.status === 'queued' ? 'Waiting for the transcriber…' : `Listening… ${Math.round(tr.progress)}%`;
-				poll(videoId, my);
-				return;
-			} else if (tr.lines.length && data?.status === 'found' && data.synced && !quiet) {
-				toast.info('Could not match the lyrics to what is sung — nudge them by hand.');
-			} else if (!tr.lines.length && tr.status === 'failed') {
-				toast.warn('Transcribing this song failed.');
+			const tr = r.transcript!;
+			keep(videoId, r.lyrics, tr);
+			if (tr.status === 'queued' || tr.status === 'running') {
+				listenNote = r.message || 'Listening…';
+				return poll(videoId, my);
 			}
-			listenNote = '';
+			if (tr.status === 'failed' && inflight.has(videoId)) toast.warn(r.message || 'Transcribing this song failed.');
+			else if (!tr.lines.length && tr.status === 'ready' && start) toast.info('No words were recognised in this song.');
+			finish(videoId);
 		} catch {
-			listenNote = '';
-		} finally {
-			if (my === seq && !listenNote) listening = false;
+			if (my !== seq) return;
+			// A dropped progress check is not a failed job: keep following it a few more times.
+			if (!start && ++pollFails <= 3) return poll(videoId, my);
+			pollFails = 0;
+			finish(videoId); // a failed start already showed its error toast
 		}
 	}
 

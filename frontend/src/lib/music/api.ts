@@ -26,7 +26,8 @@ export type Lyrics = {
 	video_id: string; status: 'found' | 'missing' | 'error'; source: string; synced: boolean; lines: LyricLine[]; plain: string;
 	offset_ms: number; rate: number; offset_source: string; duration: number; transcript?: Transcript;
 };
-export type ListenResult = { transcript: Transcript; aligned: boolean; lyrics: Lyrics | null; matched_lines?: number };
+export type SyncJob = { state: 'waiting' | 'preparing' | 'listening' | 'done' | 'failed'; progress: number; message: string; offset_ms?: number; rate?: number; lines?: number };
+export type ListenResult = { mode: 'sync' | 'transcript'; job?: SyncJob | null; transcript?: Transcript; message?: string; lyrics: Lyrics | null };
 export type DjResult = { line: string; tracks: Track[]; source: 'ai' | 'radio' };
 
 const M = '/music';
@@ -55,7 +56,7 @@ export const music = {
 	mixPlayed: (id: number) => send<{ ok: boolean }>('POST', `/mixes/${id}/played`, {}, false),
 	lyrics: (videoId: string) => get<Lyrics>(`/lyrics/${enc(videoId)}`, false),
 	lyricsOffset: (videoId: string, offsetMs: number) => send<Lyrics>('POST', `/lyrics/${enc(videoId)}/offset`, { offset_ms: offsetMs }, false),
-	listen: (videoId: string) => send<ListenResult>('POST', `/lyrics/${enc(videoId)}/listen`, {}),
+	listen: (videoId: string, start = true) => send<ListenResult>('POST', `/lyrics/${enc(videoId)}/listen`, { start }, start),
 	refreshMix: (id: number) => send<Mix>('POST', `/mixes/${id}/refresh`),
 	addToMix: (id: number, t: Track) => send<Mix>('POST', `/mixes/${id}/tracks`, slim(t)),
 	removeFromMix: (id: number, videoId: string) => send<Mix>('DELETE', `/mixes/${id}/tracks/${enc(videoId)}`),

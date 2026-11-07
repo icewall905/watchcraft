@@ -130,6 +130,8 @@ test('karaoke lyrics follow the song and the timing can be nudged', async ({ pag
 	const deck = page.getByRole('region', { name: 'Music player' });
 	await deck.getByTitle('Lyrics (karaoke)').click();
 	await expect(deck.locator('.line.now')).toHaveText('Second line we sing now');
+	// 12 s into a line sung from 10 s until the next line at 16 s: a third of the way, not finished early.
+	await expect.poll(async () => Number(await deck.locator('.line.now').evaluate((el) => getComputedStyle(el).getPropertyValue('--p')))).toBeCloseTo(1 / 3, 2);
 	await expect(deck.locator('.line.next').first()).toHaveText('Third line is next');
 	await deck.getByRole('button', { name: 'Lyrics later' }).click();
 	await expect(deck.getByText('+0.5s')).toBeVisible();
@@ -141,7 +143,8 @@ test('songs without lyrics can be transcribed by listening', async ({ page }) =>
 	let calls = 0;
 	await page.route('**/api/music/lyrics/lovedtrack1/listen', (r) => {
 		calls++;
-		return r.fulfill({ json: { aligned: false, lyrics: null, transcript: calls < 2 ? { status: 'running', progress: 40, enabled: true, lines: [] } : { status: 'ready', progress: 100, enabled: true, lines: [{ t: 0, end: 60000, text: 'Words the app heard' }] } } });
+		const missing = { video_id: 'lovedtrack1', status: 'missing', source: '', synced: false, lines: [], plain: '', offset_ms: 0, rate: 1, offset_source: '', duration: 0 };
+		return r.fulfill({ json: { mode: 'transcript', lyrics: missing, message: calls < 2 ? 'Listening… 40%' : '', transcript: calls < 2 ? { status: 'running', progress: 40, enabled: true, lines: [] } : { status: 'ready', progress: 100, enabled: true, lines: [{ t: 0, end: 60000, text: 'Words the app heard' }] } } });
 	});
 	await freshPage(page, '/music');
 	await page.getByRole('button', { name: 'Play Dancing Queen by ABBA' }).first().click();
@@ -188,4 +191,52 @@ test('the front page shows recent mixes and recent plays first', async ({ page }
 	await page.getByRole('button', { name: '💾 Keep a copy' }).click();
 	await expect(page.getByRole('dialog', { name: /Roller Rink \(saved\)/ })).toBeVisible();
 	expect(copied).toBe(true);
+});
+
+test('auto-sync listens to samples, shows progress and applies the fit', async ({ page }) => {
+	await fixture(page);
+	await page.addInitScript(() => Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', { get: () => 12, set: () => {}, configurable: true }));
+	const lines = [{ t: 5000, text: 'First line of the song' }, { t: 10000, text: 'Second line we sing now' }, { t: 16000, text: 'Third line is next' }];
+	const base = { video_id: 'lovedtrack1', status: 'found', source: 'lrclib', synced: true, lines, plain: '', offset_source: '', duration: 200 };
+	await page.route('**/api/music/lyrics/lovedtrack1', (r) => r.fulfill({ json: { ...base, offset_ms: 0, rate: 1 } }));
+	const bodies: { start: boolean }[] = [];
+	await page.route('**/api/music/lyrics/lovedtrack1/listen', (r) => {
+		bodies.push(r.request().postDataJSON());
+		const done = bodies.length >= 3;
+		return r.fulfill({ json: { mode: 'sync', lyrics: { ...base, offset_ms: done ? 6000 : 0, rate: 1, offset_source: done ? 'auto' : '' },
+			job: done ? { state: 'done', progress: 100, message: 'Lined up on 9 lines (+6.0 s)' } : { state: 'listening', progress: 40, message: 'Listening… 3 of 10' } } });
+	});
+	await freshPage(page, '/music');
+	await page.getByRole('button', { name: 'Play Dancing Queen by ABBA' }).first().click();
+	const deck = page.getByRole('region', { name: 'Music player' });
+	await deck.getByTitle('Lyrics (karaoke)').click();
+	await expect(deck.locator('.line.now')).toHaveText('Second line we sing now');
+	await deck.getByRole('button', { name: /Auto-sync/ }).click();
+	await expect(deck.getByText('Listening… 3 of 10')).toBeVisible();
+	await expect(page.getByText('🎯 Lined up on 9 lines (+6.0 s)')).toBeVisible({ timeout: 10000 });
+	// 12 s on the video is 6 s in the lyrics now: the first line.
+	await expect(deck.locator('.line.now')).toHaveText('First line of the song');
+	expect(bodies[0]).toEqual({ start: true });
+	expect(bodies.slice(1).every((b) => b.start === false)).toBe(true);
+});
+
+test('a failed auto-sync says why and stops', async ({ page }) => {
+	await fixture(page);
+	const lines = [{ t: 5000, text: 'First line of the song' }, { t: 10000, text: 'Second line we sing now' }];
+	const base = { video_id: 'lovedtrack1', status: 'found', source: 'lrclib', synced: true, lines, plain: '', offset_ms: 0, rate: 1, offset_source: '', duration: 200 };
+	await page.route('**/api/music/lyrics/lovedtrack1', (r) => r.fulfill({ json: base }));
+	let calls = 0;
+	await page.route('**/api/music/lyrics/lovedtrack1/listen', (r) => {
+		calls++;
+		return r.fulfill({ json: { mode: 'sync', lyrics: base, job: { state: 'failed', progress: 0, message: "Couldn't hear enough of the words to line them up — nudge them by hand." } } });
+	});
+	await freshPage(page, '/music');
+	await page.getByRole('button', { name: 'Play Dancing Queen by ABBA' }).first().click();
+	const deck = page.getByRole('region', { name: 'Music player' });
+	await deck.getByTitle('Lyrics (karaoke)').click();
+	await deck.getByRole('button', { name: /Auto-sync/ }).click();
+	await expect(page.getByText(/Couldn't hear enough of the words/)).toBeVisible();
+	await expect(deck.getByRole('button', { name: /Auto-sync/ })).toBeEnabled();
+	await page.waitForTimeout(3500);
+	expect(calls).toBe(1); // no silent retry loop
 });

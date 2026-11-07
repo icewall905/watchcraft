@@ -52,7 +52,8 @@ def _song(n=18, start=10000):
     lines, t = [], start
     for i in range(n):
         k = 1 if i == 5 else i
-        lines.append({'t': t, 'text': ' '.join(WORDS[(k * 3) % 20:(k * 3) % 20 + 4])})
+        # Distinct verses, as in real songs: each line has its own word (the number) besides shared ones.
+        lines.append({'t': t, 'text': f'{WORDS[k % 20]} {WORDS[(k + 7) % 20]} verse{k} {WORDS[(k + 13) % 20]}'})
         t += gaps[i % len(gaps)]
     return lines
 
@@ -128,33 +129,187 @@ def test_offset_nudge_is_bounded_and_needs_lyrics(music, lrclib):  # noqa: F811
     assert music.post(f'/api/music/lyrics/{vid}/offset', json={'offset_ms': 10**7}).status_code == 422
 
 
-def test_listen_aligns_lyrics_with_the_transcript(music, lrclib, monkeypatch):  # noqa: F811
-    from bt.music import api as music_api
-    music.get('/api/music/search', params={'q': 'abba'})
-    vid = SEED['video_id']
-    queued = []
-    state = {'status': 'idle'}
-    monkeypatch.setattr(music_api.subtitle_jobs, 'status', lambda v: {'enabled': True, 'status': state['status'], 'progress': 0,
-                                                                     'track': {'url': 'x'} if state['status'] == 'ready' else None})
-    monkeypatch.setattr(music_api.subtitle_jobs, 'enqueue', lambda v, pid: (queued.append(v), state.update(status='queued')))
-    r = music.post(f'/api/music/lyrics/{vid}/listen').json()
-    assert queued == [vid] and r['transcript']['status'] == 'queued' and not r['aligned']
-    from bt.db import session
-    from bt.models import GeneratedSubtitles
-    with session() as s:
-        s.add(GeneratedSubtitles(video_id=vid, status='ready', vtt='WEBVTT\n\n00:00:29.830 --> 00:00:31.000\nShe was more like a beauty queen\n\n'
-                                 '00:00:34.960 --> 00:00:36.000\nI said dont mind\n\n00:01:12.000 --> 00:01:14.000\nBillie Jean is not my lover\n'))
-        s.commit()
-    state['status'] = 'ready'
-    r = music.post(f'/api/music/lyrics/{vid}/listen').json()
-    assert r['aligned'] and abs(r['lyrics']['offset_ms'] - 2000) < 800 and r['lyrics']['offset_source'] == 'auto'
-    assert r['lyrics']['rate'] == 1.0 and r['matched_lines'] == 3
-
-
 def test_listen_refuses_when_speech_to_text_is_off(music, monkeypatch):  # noqa: F811
     from bt.music import api as music_api
     monkeypatch.setattr(music_api.subtitle_jobs, 'status', lambda v: {'enabled': False, 'status': 'idle', 'progress': 0, 'track': None})
-    assert music.post(f'/api/music/lyrics/{SEED["video_id"]}/listen').status_code == 409
+    monkeypatch.setattr(lyrics, '_fetch', lambda params: [])
+    assert music.post(f'/api/music/lyrics/{SEED["video_id"]}/listen', json={}).status_code == 409
+
+
+def _quick_sync_fakes(monkeypatch, heard, calls):
+    """Fake audio and speech-to-text: the n-th transcribed sample is heard as heard(n)."""
+    from bt.music import sync
+    from bt import subtitle_jobs
+    monkeypatch.setattr(sync, 'spawn', lambda fn, *a: fn(*a))
+    monkeypatch.setattr(subtitle_jobs, 'enabled', lambda cfg=None: True)
+    monkeypatch.setattr(sync, '_audio', lambda vid, d, stop: d / 'x')
+    monkeypatch.setattr(subtitle_jobs, 'normalize', lambda src, target, beat, stop: 200.0)
+
+    class FakeWav:
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    monkeypatch.setattr(sync.wave, 'open', lambda *a, **k: FakeWav())
+    monkeypatch.setattr(subtitle_jobs, 'audio_chunk', lambda wav, at, *a: (at + 12, b'audio', at, at + 12))
+
+    def transcribe(audio, cfg, stop=None):
+        calls.append(1)
+        return heard(len(calls))
+    monkeypatch.setattr(subtitle_jobs, 'transcribe_chunk', transcribe)
+    sync._jobs.clear()
+
+
+def test_quick_sync_listens_to_samples_and_stops_once_steady(music, lrclib, monkeypatch):  # noqa: F811
+    from bt.music import sync
+    music.get('/api/music/search', params={'q': 'abba'})
+    vid = SEED['video_id']
+    music.get(f'/api/music/lyrics/{vid}')
+    calls = []
+    _quick_sync_fakes(monkeypatch, lambda n: 'some words', calls)
+    monkeypatch.setattr(sync.lyrics, 'fit', lambda ls, cs, hint=1.0: {'offset_ms': 9000, 'rate': 1.0, 'lines': 8})
+    r = music.post(f'/api/music/lyrics/{vid}/listen', json={}).json()
+    assert r['mode'] == 'sync' and r['job']['state'] == 'done' and '+9.0 s' in r['job']['message']
+    assert r['lyrics']['offset_ms'] == 9000 and r['lyrics']['offset_source'] == 'auto'
+    assert len(calls) == sync.MIN_SAMPLES + 1  # stopped once two fits agreed, not the whole song
+
+
+def test_quick_sync_lines_up_a_real_fit(music, lrclib, monkeypatch):  # noqa: F811
+    """End to end with the real fit: samples of a song sung 9 s late give +9 s."""
+    from bt.db import session
+    from bt.music import sync
+    from bt.music.models import MusicLyrics
+    music.get('/api/music/search', params={'q': 'abba'})
+    vid = SEED['video_id']
+    lines = _song(24)
+    with session() as s:
+        s.add(MusicLyrics(video_id=vid, status='found', synced=True, lines=lines, duration=200, fetched_at=1e12))
+        s.commit()
+    words = [(ln['t'] + 450 * k + 9000, w) for ln in lines for k, w in enumerate(ln['text'].split())]
+    calls = []
+    heard_at = {}
+
+    def chunk(wav, at, *a):  # like the real chunker: the sample, trimmed to where there is sound
+        inside = [(t, w) for t, w in words if at * 1000 <= t < at * 1000 + 12000]
+        heard_at['last'] = ' '.join(w for _, w in inside)
+        if not inside:
+            return at + 12, b'', at, at + 12
+        return at + 12, b'audio', inside[0][0] / 1000, (inside[-1][0] + 450) / 1000
+    _quick_sync_fakes(monkeypatch, lambda n: heard_at.get('last', ''), calls)  # the sample just cut
+    from bt import subtitle_jobs
+    monkeypatch.setattr(subtitle_jobs, 'audio_chunk', chunk)
+    r = music.post(f'/api/music/lyrics/{vid}/listen', json={}).json()
+    assert r['job']['state'] == 'done', r['job']
+    assert abs(r['lyrics']['offset_ms'] - 9000) < 1500 and r['lyrics']['rate'] == 1.0
+
+
+def test_quick_sync_reports_why_it_failed_and_polling_does_not_restart_it(music, lrclib, monkeypatch):  # noqa: F811
+    music.get('/api/music/search', params={'q': 'abba'})
+    vid = SEED['video_id']
+    music.get(f'/api/music/lyrics/{vid}')
+    calls = []
+    _quick_sync_fakes(monkeypatch, lambda n: '', calls)
+    r = music.post(f'/api/music/lyrics/{vid}/listen', json={'start': True}).json()
+    assert r['job']['state'] == 'failed' and "Couldn't hear enough" in r['job']['message']
+    n = len(calls)
+    r = music.post(f'/api/music/lyrics/{vid}/listen', json={'start': False}).json()
+    assert r['job']['state'] == 'failed' and len(calls) == n  # a poll only reports
+
+
+def test_quick_sync_job_ends_with_a_reason_when_it_breaks(music, lrclib, monkeypatch):  # noqa: F811
+    from bt.music import sync
+    music.get('/api/music/search', params={'q': 'abba'})
+    vid = SEED['video_id']
+    music.get(f'/api/music/lyrics/{vid}')
+    _quick_sync_fakes(monkeypatch, lambda n: '', [])
+
+    def boom(vid, d, stop):
+        raise RuntimeError('network gone')
+    monkeypatch.setattr(sync, '_audio', boom)
+    r = music.post(f'/api/music/lyrics/{vid}/listen', json={}).json()
+    assert r['job']['state'] == 'failed' and r['job']['message']
+
+
+def test_busy_speech_service_skips_samples_and_says_so(music, lrclib, monkeypatch):  # noqa: F811
+    from bt import subtitle_jobs
+    music.get('/api/music/search', params={'q': 'abba'})
+    vid = SEED['video_id']
+    music.get(f'/api/music/lyrics/{vid}')
+    _quick_sync_fakes(monkeypatch, lambda n: '', [])
+
+    def busy(audio, cfg, stop=None):
+        raise subtitle_jobs.TransientSubtitleError('The STT service returned HTTP 429.')
+    monkeypatch.setattr(subtitle_jobs, 'transcribe_chunk', busy)
+    r = music.post(f'/api/music/lyrics/{vid}/listen', json={}).json()
+    assert r['job']['state'] == 'failed' and 'busy' in r['job']['message']
+
+
+def test_hand_nudge_during_listening_is_kept(music, lrclib, monkeypatch):  # noqa: F811
+    from bt.db import session
+    from bt.music import sync
+    music.get('/api/music/search', params={'q': 'abba'})
+    vid = SEED['video_id']
+    music.get(f'/api/music/lyrics/{vid}')
+
+    def heard(n):
+        if n == 1:  # someone nudges by hand while the job listens
+            with session() as s:
+                lyrics.set_offset(s, vid, 1500)
+        return 'words'
+    _quick_sync_fakes(monkeypatch, heard, [])
+    monkeypatch.setattr(sync.lyrics, 'fit', lambda ls, cs, hint=1.0: {'offset_ms': 9000, 'rate': 1.0, 'lines': 8})
+    r = music.post(f'/api/music/lyrics/{vid}/listen', json={}).json()
+    assert r['job']['state'] == 'done' and 'kept' in r['job']['message'] and r['lyrics']['offset_ms'] == 1500
+
+
+def test_dead_job_can_be_started_again(monkeypatch):
+    import time
+    from bt.music import sync
+    sync._jobs.clear()
+    sync._jobs['AAAAAAAAAAA'] = {'state': 'listening', 'message': 'Listening… 2 of 10', 'updated': time.time() - sync.STALE_S - 5}
+    assert sync.state('AAAAAAAAAAA')['state'] == 'failed'
+    started = []
+    monkeypatch.setattr(sync, 'spawn', lambda fn, *a: started.append(a))
+    sync._jobs['BBBBBBBBBBB'] = {'state': 'listening', 'updated': time.time() - sync.STALE_S - 5}
+    sync.start('BBBBBBBBBBB')
+    assert [a[0] for a in started] == ['BBBBBBBBBBB']
+    # The old thread of the replaced job can no longer write; the new one can.
+    assert not sync._set('BBBBBBBBBBB', 'old-token', state='done')
+    assert sync._set('BBBBBBBBBBB', started[0][1], state='listening')
+    # A job waiting its turn is never declared dead, however long the line.
+    sync._jobs['CCCCCCCCCCC'] = {'state': 'waiting', 'updated': time.time() - 3600, 'token': 't'}
+    assert sync.state('CCCCCCCCCCC')['state'] == 'waiting'
+    sync._jobs.clear()
+
+
+def test_transcript_mode_never_restarts_a_failed_job_on_poll(music, monkeypatch):  # noqa: F811
+    from bt.music import api as music_api
+    music.get('/api/music/search', params={'q': 'abba'})
+    vid = RADIO[4]['video_id']  # no lyrics anywhere: the whole song gets transcribed
+    monkeypatch.setattr(lyrics, '_fetch', lambda params: [])
+    queued = []
+    state = {'status': 'failed'}
+    monkeypatch.setattr(music_api.subtitle_jobs, 'status', lambda v: {'enabled': True, 'status': state['status'], 'progress': 0,
+                                                                     'error': 'STT down', 'retry_at': 0, 'track': None})
+    monkeypatch.setattr(music_api.subtitle_jobs, 'enqueue', lambda v, pid: (queued.append(v), state.update(status='queued')))
+    r = music.post(f'/api/music/lyrics/{vid}/listen', json={'start': False}).json()
+    assert r['mode'] == 'transcript' and queued == [] and r['message'] == 'STT down'
+    r = music.post(f'/api/music/lyrics/{vid}/listen', json={'start': True}).json()
+    assert queued == [vid] and r['message'] == 'Waiting for the transcriber…'
+
+
+def test_busy_transcriber_says_when_it_retries(monkeypatch):
+    import time
+    from bt.music import api as music_api
+    msg = music_api._transcript_message({'status': 'queued', 'progress': 0, 'retry_at': time.time() + 300})
+    assert 'busy' in msg and '5 min' in msg
+
+
+def test_sample_positions_spread_first():
+    from bt.music import sync
+    spots = sync.positions(240.0)
+    assert len(spots) == sync.SAMPLES and len(set(spots)) == len(spots)
+    first = sorted(spots[:4])
+    assert first[0] < 60 and first[-1] > 180  # the first few already span the song (the speed needs it)
+
 
 
 # ---------- saving mixes

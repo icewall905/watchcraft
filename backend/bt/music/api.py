@@ -2,6 +2,7 @@
 block the event loop. Hub-gated like the other discovery sections (open YouTube search)."""
 from __future__ import annotations
 
+import time
 from contextlib import contextmanager
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,7 +13,7 @@ from ..access import require_hub
 from ..db import session
 from ..hub import ai
 from .. import subtitle_jobs
-from . import dj, lyrics, service, yt
+from . import dj, lyrics, service, sync, yt
 from .models import MusicTrack
 
 router = APIRouter(prefix='/music', tags=['music'], dependencies=[Depends(require_hub)])
@@ -261,29 +262,50 @@ def lyrics_offset(video_id: str, body: OffsetIn, pid: int = Depends(require_hub)
         return lyrics.as_dict(lyrics.set_offset(s, _vid(video_id), body.offset_ms))
 
 
+class ListenIn(BaseModel):
+    start: bool = True  # False only reports progress (the page polls with it)
+
+
+def _transcript_message(st: dict) -> str:
+    if st['status'] == 'queued' and st.get('retry_at', 0) > time.time():
+        return f"The speech service is busy — trying again in {max(1, round((st['retry_at'] - time.time()) / 60))} min."
+    if st['status'] == 'queued':
+        return 'Waiting for the transcriber…'
+    if st['status'] == 'running':
+        return f"Listening… {round(st['progress'])}%"
+    if st['status'] == 'failed':
+        return st.get('error') or 'Transcribing failed.'
+    return ''
+
+
 @router.post('/lyrics/{video_id}/listen')
-def lyrics_listen(video_id: str, pid: int = Depends(require_hub)):
-    """Auto-sync: transcribe the song (speech-to-text) and line the lyrics up with what is sung.
-    Call again to poll; once the transcript is ready the offset is saved, or the transcript itself
-    becomes the karaoke text when there are no lyrics."""
+def lyrics_listen(video_id: str, body: ListenIn | None = None, pid: int = Depends(require_hub)):
+    """Let the app listen to the song.
+
+    With timed lyrics this is a quick sync: a few samples are transcribed and the lyrics' shift and speed
+    are fitted (see sync.py). Without them the whole song is transcribed by the subtitle queue and the
+    transcript becomes the karaoke text. `start: false` only reports progress, so polling never starts
+    a failed job again by itself."""
     _vid(video_id)
+    begin = body.start if body else True
     st = subtitle_jobs.status(video_id)
-    if not st['enabled']:
-        raise HTTPException(409, 'Speech-to-text is turned off in Settings, so songs cannot be transcribed.')
-    if st['status'] not in ('ready', 'queued', 'running'):
-        subtitle_jobs.enqueue(video_id, pid)
-    tr = _transcript(video_id)
-    out = {'transcript': tr, 'aligned': False, 'lyrics': None}
-    if tr['lines']:
+    with session() as s:
+        row = lyrics.get(s, video_id)
+        timed = row.status == 'found' and row.synced
+    if timed:
+        if begin and not st['enabled']:
+            raise HTTPException(409, 'Speech-to-text is turned off in Settings, so songs cannot be listened to.')
+        job = sync.start(video_id) if begin else sync.state(video_id)
         with session() as s:
-            row = lyrics.get(s, video_id)
-            if row.status == 'found' and row.synced:
-                track = s.get(MusicTrack, video_id)
-                hint = track.duration_s / row.duration if track and track.duration_s and row.duration else 1.0
-                f = lyrics.fit(row.lines, tr['lines'], hint)
-                if f is not None:
-                    row = lyrics.set_offset(s, video_id, f['offset_ms'], 'auto', f['rate'])
-                    out['aligned'] = True
-                    out['matched_lines'] = f['lines']
-            out['lyrics'] = lyrics.as_dict(row)
-    return out
+            fresh = lyrics.as_dict(lyrics.get(s, video_id))
+        return {'mode': 'sync', 'job': job, 'lyrics': fresh}
+    if begin:
+        if not st['enabled']:
+            raise HTTPException(409, 'Speech-to-text is turned off in Settings, so songs cannot be transcribed.')
+        if st['status'] not in ('ready', 'queued', 'running'):
+            subtitle_jobs.enqueue(video_id, pid)
+            st = subtitle_jobs.status(video_id)
+    tr = _transcript(video_id)
+    with session() as s:
+        out_lyrics = lyrics.as_dict(lyrics.get(s, video_id))
+    return {'mode': 'transcript', 'transcript': tr, 'message': _transcript_message(st), 'lyrics': out_lyrics}
