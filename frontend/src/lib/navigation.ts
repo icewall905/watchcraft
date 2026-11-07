@@ -13,11 +13,12 @@ export const TV: NavEntry = entry('/tv', 'TV', 'tv', undefined, (p) => p === '/'
 export const DISCOVER = entry('/discover', 'Discover', 'compass', 'discover_unread');
 export const LIBRARY = entry('/library', 'Library', 'library');
 export const SHORTS = entry('/shorts', 'Feeds', 'play');
+export const MUSIC = entry('/music', 'Music', 'music');
 export const ALERTS = entry('/alerts', 'Alerts', 'alert', 'alerts_new');
 export const SETTINGS = entry('/settings', 'Settings', 'settings');
 
 export const SECTIONS: NavSection[] = [
-	{ key: 'watch', title: 'Watch', items: [TV, SHORTS, entry('/subscriptions', 'Subscriptions', 'subs')] },
+	{ key: 'watch', title: 'Watch', items: [TV, SHORTS, MUSIC, entry('/subscriptions', 'Subscriptions', 'subs')] },
 	{ key: 'explore', title: 'Explore', items: [entry('/today', 'Today', 'news'), DISCOVER, entry('/news', 'News', 'news'), entry('/memes', 'Meme Radar', 'meme'), LIBRARY, entry('/knowledge', 'Knowledge', 'book'), entry('/briefings', 'Briefings', 'briefing'), ALERTS] },
 	{ key: 'research', title: 'Research', items: [entry('/research', 'Research', 'research'), entry('/scout-report', 'Scout Report', 'briefing')] },
 	{ key: 'workshop', title: 'Workshop', quiet: true, items: [entry('/team', 'Agent Activity', 'team'), entry('/curators', 'Curators', 'curator'), entry('/sources', 'Sources', 'source'), entry('/agent', 'Video AI', 'agent'), entry('/stats', 'Statistics', 'chart')] }
@@ -41,6 +42,6 @@ export const MOBILE_MORE = { label: 'More', icon: 'more' };
 export const FIND = { href: '/find', label: 'Find', icon: 'search' };
 
 export function isHubPath(path: string): boolean {
-	return ['/today', '/discover', '/news', '/knowledge', '/library', '/memes', '/briefings', '/alerts', '/research', '/scout-report', '/team', '/curators', '/sources', '/find', '/item']
+	return ['/today', '/discover', '/news', '/knowledge', '/library', '/memes', '/music', '/briefings', '/alerts', '/research', '/scout-report', '/team', '/curators', '/sources', '/find', '/item']
 		.some((p) => path === p || path.startsWith(p + '/'));
 }

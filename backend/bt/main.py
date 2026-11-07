@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from . import auth
 from .hub import api as hub_api, engine as hub_engine, master_api as hub_master_api, sharing as hub_sharing
 from .api import agent as agent_api
+from .music import api as music_api
 from .api import core
 from .api import proxy as proxy_api
 from .api import video
@@ -58,6 +59,7 @@ app.include_router(speech.router, prefix="/api")
 app.include_router(subtitle_api.router, prefix="/api")
 
 app.include_router(agent_api.router, prefix="/api")
+app.include_router(music_api.router, prefix="/api")
 
 @app.get("/api/health")
 def health():

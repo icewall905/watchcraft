@@ -25,6 +25,7 @@ from ..db import emit, get_agent_control, get_agent_state, get_settings, save_se
     yt_request_counts
 from ..models import Candidate, Category, Download, ReencodeJob, ReencodeResult, Video, WatchHistory, now
 from . import transcode
+from ..music import offline as music_offline
 
 log = logging.getLogger("bt.downloader")
 
@@ -36,6 +37,7 @@ STATE_EVERY_S = 1.0
 CONTROL_EVERY_S = 2.0
 EST_BYTES_PER_S = 600_000  # ~1080p H.264 + AAC, used to reserve room before a download
 GB = 1_000_000_000
+MUSIC_LANE = -1  # music videos take turns with the playlist categories in the auto queue
 
 
 # ---------------------------------------------------------------- paths
@@ -98,7 +100,8 @@ def sync_queue(s: Session, cfg: dict) -> int:
             s.add(Download(video_id=vid, status="queued"))
     if ids:
         s.commit()
-    return len(ids)
+    # Music is always stored offline, like Shorts: favourites, mixes and suggestions play from disk.
+    return len(ids) + music_offline.queue(s)
 
 
 def _retry_ready(d: Download, t: datetime) -> bool:
@@ -120,6 +123,7 @@ def next_download(s: Session, last_category: Optional[int] = None) -> tuple[Opti
     if pinned:
         return pinned[0], last_category
     ids = [d.video_id for d in rows]
+    music = {v: i for i, v in enumerate(music_offline.wanted_ids(s))}
     cands = s.exec(select(Candidate, Video).join(Video, Video.id == Candidate.video_id, isouter=True)
                    .where(col(Candidate.video_id).in_(ids), Candidate.status == "accepted",
                           Candidate.dismissed == False)).all()  # noqa: E712
@@ -127,6 +131,9 @@ def next_download(s: Session, last_category: Optional[int] = None) -> tuple[Opti
     for c, v in cands:
         pub = _aware(v.published_at) if v and v.published_at else datetime.min.replace(tzinfo=timezone.utc)
         by_cat.setdefault(c.category_id, []).append((-(c.score or 0), -pub.timestamp(), c.video_id))
+    queued_music = [(music[v], 0, v) for v in ids if v in music]  # favourites first, then mixes, ...
+    if queued_music:
+        by_cat[MUSIC_LANE] = queued_music
     if not by_cat:
         return None, last_category
     cats = sorted(by_cat)
@@ -151,6 +158,8 @@ def eviction_order(s: Session, allow_wanted: bool) -> list[Download]:
     wanted = set(s.exec(select(Candidate.video_id).where(col(Candidate.video_id).in_(ids),
                                                          Candidate.status == "accepted",
                                                          Candidate.dismissed == False)).all())  # noqa: E712
+    music = set(music_offline.wanted_ids(s)) & set(ids)
+    wanted |= music
     hist: dict[str, list[bool]] = {}
     for vid, fin in s.exec(select(WatchHistory.video_id, WatchHistory.finished)
                            .where(col(WatchHistory.video_id).in_(ids))).all():
@@ -158,6 +167,8 @@ def eviction_order(s: Session, allow_wanted: bool) -> list[Download]:
     epoch = datetime.min.replace(tzinfo=timezone.utc)
 
     def group(d: Download) -> int:
+        if d.video_id in music:
+            return 2  # wanted music stays even when watched to the end: songs get played again
         if hist.get(d.video_id) and all(hist[d.video_id]):
             return 0
         return 1 if d.video_id not in wanted else 2
@@ -205,6 +216,8 @@ def _unwanted(s: Session, vid: str, d: Optional[Download] = None) -> Optional[st
     d = d or s.get(Download, vid)
     if d is None or d.pinned or d.status == "evicted" or _playing_now(d):
         return None
+    if music_offline.is_wanted(s, vid):
+        return None  # songs are played again and again: watching one to the end keeps it
     watched = s.exec(select(WatchHistory.finished).where(WatchHistory.video_id == vid,
                                                          WatchHistory.finished == True)).first()  # noqa: E712
     if watched is not None:
@@ -238,9 +251,10 @@ def unwanted_reasons(s: Session) -> dict[str, str]:
                                                          Candidate.dismissed == False)).all())  # noqa: E712
     rejected = set(s.exec(select(Candidate.video_id).where(col(Candidate.video_id).in_(ids),
                                                            Candidate.status == "rejected")).all())  # noqa: E711
+    music = set(music_offline.wanted_ids(s))
     out: dict[str, str] = {}
     for d in rows:
-        if _playing_now(d):
+        if _playing_now(d) or d.video_id in music:
             continue
         if d.video_id in watched:
             out[d.video_id] = "finished watching"
@@ -278,6 +292,7 @@ def drop_dead_queue(s: Session) -> int:
     wanted = set(s.exec(select(Candidate.video_id).where(col(Candidate.video_id).in_(ids),
                                                          Candidate.status == "accepted",
                                                          Candidate.dismissed == False)).all())  # noqa: E712
+    wanted |= set(music_offline.wanted_ids(s))
     dead = [d for d in rows if d.video_id not in wanted]
     for d in dead:
         s.delete(d)
@@ -693,8 +708,8 @@ class Downloader:
                 self.set_state("idle", detail="Nothing to download")
             return 30
         r = self.run_one(d, cfg)
-        if r == "done" or r == "error":
-            self.last_category = cat
+        if r in ("done", "error", "full"):
+            self.last_category = cat  # a full cache must not pin the queue to one lane
         if r == "full":
             return 300
         if r in ("aborted", "blocked", "removed"):

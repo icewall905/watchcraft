@@ -11,6 +11,7 @@ from sqlmodel import Session, col, select
 
 from ..db import get_kv, get_session, get_settings
 from ..access import require_admin
+from ..music.offline import HAND_DELETED
 from ..downloader.service import GB, delete_files, used_bytes
 from ..models import Download, ReencodeJob, Video, now
 from .core import profile_id, video_out
@@ -92,6 +93,7 @@ def _remove(s: Session, d: Download) -> None:
         s.delete(job)
     delete_files(d)  # the downloader also notices (status != downloading) and stops within ~2 s
     d.status, d.pinned, d.size_bytes, d.progress = "evicted", False, 0, 0.0
+    d.error = HAND_DELETED  # wanted music re-queues evicted copies, but never ones deleted by hand
     s.add(d)
 
 

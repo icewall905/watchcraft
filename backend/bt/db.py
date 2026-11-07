@@ -47,6 +47,7 @@ def init_db() -> None:
         connection.exec_driver_sql("BEGIN IMMEDIATE")
         from . import curation  # noqa: F401  (registers v1 + hub tables)
         from .hub import migrate, models as _hub_models  # noqa: F401
+        from .music import models as _music_models  # noqa: F401
         SQLModel.metadata.create_all(connection)
         # Additive shared-learning type columns. Existing rows are videos by default;
         # keep the legacy video_id column unchanged for old feedback and callers.

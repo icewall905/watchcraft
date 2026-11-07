@@ -14,7 +14,8 @@ from bt.config import MEDIA_DIR
 from bt.db import get_kv, init_db, save_setting, session, set_agent_state, update_agent_control
 from bt.downloader import service as svc
 from bt.downloader import transcode
-from bt.models import Candidate, Category, Download, Profile, ReencodeJob, ReencodeResult, Video, WatchHistory, YtRequest, now
+from bt.models import Candidate, Category, Download, Profile, ReencodeJob, ReencodeResult, Setting, Video, WatchHistory, YtRequest, now
+from bt.music.models import MusicFavorite, MusicMix, MusicMixTrack, MusicPlay
 
 IDS = [f"vid{i:08d}" for i in range(10)]  # 11 chars
 
@@ -23,8 +24,10 @@ IDS = [f"vid{i:08d}" for i in range(10)]  # 11 chars
 def clean():
     init_db()
     with session() as s:
-        for m in (ReencodeResult, ReencodeJob, Download, Candidate, WatchHistory, Category, YtRequest):
+        for m in (ReencodeResult, ReencodeJob, Download, Candidate, WatchHistory, Category, YtRequest,
+                  MusicFavorite, MusicMix, MusicMixTrack, MusicPlay):
             s.exec(delete(m))
+        s.exec(delete(Setting).where(Setting.key.startswith('music_for_you:')))
         s.commit()
     save_setting("cache", {"enabled": True, "max_gb": 1, "max_height": 720, "rate_limit": 0, "min_gap_s": 0,
                            "auto": "accepted"})
