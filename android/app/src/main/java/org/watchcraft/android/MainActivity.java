@@ -80,7 +80,7 @@ public final class MainActivity extends ComponentActivity {
     private FrameLayout content;
     private WebView web;
     private ProgressBar progress;
-    private TextView heading, serverLabel;
+    private TextView heading;
     private View errorPanel, customView;
     private WebChromeClient.CustomViewCallback customCallback;
     private ValueCallback<Uri[]> fileCallback;
@@ -208,15 +208,14 @@ public final class MainActivity extends ComponentActivity {
         exportBytes = null; pendingDownload = null; downloadCookie = null;
         root.removeAllViews();
         shell = column(); root.addView(shell, new LinearLayout.LayoutParams(-1, -1));
-        LinearLayout header = row(); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(16), dp(5), dp(8), dp(5));
+        LinearLayout header = row(); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(14), 0, dp(6), 0);
         ImageView logo = new ImageView(this); logo.setImageResource(R.drawable.ic_badge); logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        header.addView(logo, new LinearLayout.LayoutParams(dp(38), dp(38)));
-        LinearLayout labels = column(); labels.setPadding(dp(10), 0, 0, 0);
-        heading = text("WatchCraft", 18, TEXT, true); serverLabel = text(Uri.parse(server).getAuthority(), 11, MUTED, false);
-        labels.addView(heading); labels.addView(serverLabel); header.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
-        header.addView(iconButton("search", "Search WatchCraft", v -> search()));
+        header.addView(logo, new LinearLayout.LayoutParams(dp(30), dp(30)));
+        heading = text("WatchCraft", 17, TEXT, true);
+        LinearLayout.LayoutParams title = new LinearLayout.LayoutParams(0, -2, 1); title.leftMargin = dp(10);
+        header.addView(heading, title);
         header.addView(iconButton("more", "Page options", v -> pageOptions()));
-        shell.addView(header, new LinearLayout.LayoutParams(-1, dp(62)));
+        shell.addView(header, new LinearLayout.LayoutParams(-1, dp(52)));
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
         progress.setProgressTintList(ColorStateList.valueOf(AMBER)); progress.setProgressBackgroundTintList(ColorStateList.valueOf(PANEL));
         shell.addView(progress, new LinearLayout.LayoutParams(-1, dp(2)));
@@ -423,12 +422,13 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void pageOptions() {
-        String[] options = {"Share this page", "Refresh", "Open in browser", "Server & app"};
+        String[] options = {"Search", "Share this page", "Refresh", "Open in browser", "Server & app"};
         new AlertDialog.Builder(this).setTitle(Feature.titleFor(Uri.parse(server + currentPath).getPath())).setItems(options, (dialog, which) -> {
-            if (which == 0) {
+            if (which == 0) search();
+            else if (which == 1) {
                 Intent share = new Intent(Intent.ACTION_SEND); share.setType("text/plain"); share.putExtra(Intent.EXTRA_TEXT, pageUrl()); startActivity(Intent.createChooser(share, "Share WatchCraft page"));
-            } else if (which == 1) { if (web == null) showService(null); else web.reload(); }
-            else if (which == 2) openExternal(pageUrl()); else connectionOptions();
+            } else if (which == 2) { if (web == null) showService(null); else web.reload(); }
+            else if (which == 3) openExternal(pageUrl()); else connectionOptions();
         }).show();
     }
 
