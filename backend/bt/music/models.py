@@ -43,6 +43,7 @@ class MusicMix(SQLModel, table=True):
     error: str = ''
     created_at: float = Field(default_factory=time.time)
     refreshed_at: float = 0
+    last_played_at: float = 0
     build_started: float = 0  # a build older than service.BUILD_TIMEOUT_S counts as dead
 
 
@@ -59,3 +60,18 @@ class MusicPlay(SQLModel, table=True):
     video_id: str = Field(index=True)
     played_at: float = Field(default_factory=time.time)
     skipped: bool = False
+
+
+class MusicLyrics(SQLModel, table=True):
+    """Lyrics for one video, shared by every profile (lyrics do not depend on who listens)."""
+    video_id: str = Field(primary_key=True)
+    status: str = 'missing'  # found | missing | error
+    source: str = ''         # lrclib
+    source_id: int = 0
+    synced: bool = False
+    lines: list = Field(default_factory=list, sa_column=Column(JSON))  # [{t: ms, text, words?: [{t, text}]}]
+    plain: str = ''
+    duration: float = 0      # length of the recording the timing was made for (s)
+    offset_ms: int = 0       # shift applied when playing: + means the words come later
+    offset_source: str = ''  # manual | auto
+    fetched_at: float = 0

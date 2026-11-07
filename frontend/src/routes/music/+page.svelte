@@ -23,6 +23,7 @@
 	let offline = $state<OfflineSummary | null>(null);
 	let curators = $state<Curator[]>([]);
 	let recent = $state<Track[]>([]);
+	let recentMixes = $state<Mix[]>([]);
 	let favTracks = $state<Track[]>([]);
 	let favArtists = $state<FavArtist[]>([]);
 	let mixes = $state<Mix[]>([]);
@@ -59,6 +60,7 @@
 			offline = h.offline;
 			curators = h.curators;
 			recent = h.recent;
+			recentMixes = h.recent_mixes;
 			favTracks = h.favorites.tracks;
 			favArtists = h.favorites.artists;
 			mixes = h.mixes;
@@ -125,10 +127,48 @@
 	});
 
 	onMount(async () => {
+		player.savedMix = (m) => {
+			mixes = [m, ...mixes.filter((x) => x.id !== m.id)];
+			recentMixes = [m, ...recentMixes.filter((x) => x.id !== m.id)].slice(0, 8);
+		};
 		await loadHome();
 		void loadForYou();
 	});
-	onDestroy(() => window.clearInterval(poll));
+	onDestroy(() => {
+		window.clearInterval(poll);
+		player.savedMix = null;
+	});
+
+	/** Play a mix and remember it for "Recent mixes". */
+	function playMix(m: Mix, how: 'play' | 'shuffle' | 'dj', start = 0) {
+		const tracks = m.tracks ?? [];
+		if (!tracks.length) return;
+		if (how === 'play') player.play(tracks, start, { source: m.name });
+		else if (how === 'shuffle') player.shuffleAll(tracks, m.name);
+		else {
+			player.party = true;
+			void player.startDj(m.name, shuffled(tracks));
+		}
+		void music.mixPlayed(m.id).catch(() => {});
+		m.last_played_at = Date.now() / 1000;
+		recentMixes = [m, ...recentMixes.filter((x) => x.id !== m.id)].slice(0, 8);
+	}
+	async function keepCopy(m: Mix) {
+		const copy = await music.copyMix(m.id).catch(() => null);
+		if (!copy) return;
+		mixes = [copy, ...mixes];
+		toast.success(`💾 Kept "${copy.name}" — refreshes will not change it`);
+		setParams({ mix: String(copy.id) });
+	}
+	async function renameMix(m: Mix) {
+		const name = prompt('Rename mix', m.name)?.trim();
+		if (!name || name === m.name) return;
+		const r = await music.renameMix(m.id, name).catch(() => null);
+		if (!r) return;
+		mixes = mixes.map((x) => (x.id === m.id ? { ...x, name: r.name } : x));
+		recentMixes = recentMixes.map((x) => (x.id === m.id ? { ...x, name: r.name } : x));
+		if (openMix?.id === m.id) openMix = { ...openMix, name: r.name };
+	}
 
 	function doSearch(e: Event) {
 		e.preventDefault();
@@ -275,6 +315,21 @@
 	{#if failed}
 		<p class="err">{failed} <button class="btn small" onclick={loadHome}>Retry</button></p>
 	{:else if tab === 'foryou'}
+		{#if recentMixes.length}
+			<section class="shelf">
+				<header><h2>💿 Recent mixes</h2><div class="acts"><button class="btn ghost" use:focusable onclick={() => setParams({ tab: 'mixes' })}>All mixes →</button></div></header>
+				<div class="strip">
+					{#each recentMixes as m (m.id)}
+						<button class="mix small" use:focusable style:--mix={m.color || '#ff4fa3'} onclick={() => setParams({ mix: String(m.id) })}>
+							<div class="covers">{#each m.covers.slice(0, 4) as c}<img src={c} alt="" loading="lazy" />{:else}<span class="big-emoji">{m.emoji}</span>{/each}</div>
+							<strong>{m.emoji} {m.name}</strong>
+							<small>{m.status === 'building' ? 'Curating…' : `${m.count} videos`}</small>
+						</button>
+					{/each}
+				</div>
+			</section>
+		{/if}
+		{#if recent.length}{@render shelf('🕘 Recently played', recent.slice(0, 8), 'Recently played')}{/if}
 		{#if forYouLoading && !forYou}
 			<div class="sk-grid">{#each Array(8) as _}<div class="skeleton sk"></div>{/each}</div>
 		{:else if forYou}
@@ -288,7 +343,6 @@
 			{/snippet}
 			{@render shelf('🌱 New for you', forYou.fresh, 'New for you', refreshBtn)}
 		{/if}
-		{#if recent.length}{@render shelf('🕘 Recently played', recent, 'Recently played')}{/if}
 	{:else if tab === 'mixes'}
 		<div class="mixes">
 			<button class="mix new" use:focusable onclick={() => (creating = true)}>
@@ -362,10 +416,12 @@
 			{/if}
 			<div class="acts">
 				{#if m.tracks?.length}
-					<button class="btn primary" use:focusable onclick={() => { player.play(m.tracks!, 0, { source: m.name }); setParams({ mix: null }); }}>▶ Play</button>
-					<button class="btn" use:focusable onclick={() => { player.shuffleAll(m.tracks!, m.name); setParams({ mix: null }); }}>🔀 Shuffle</button>
-					<button class="btn" use:focusable onclick={() => { setParams({ mix: null }); player.party = true; void player.startDj(m.name, shuffled(m.tracks!)); }}>🎧 DJ from this mix</button>
+					<button class="btn primary" use:focusable onclick={() => { playMix(m, 'play'); setParams({ mix: null }); }}>▶ Play</button>
+					<button class="btn" use:focusable onclick={() => { playMix(m, 'shuffle'); setParams({ mix: null }); }}>🔀 Shuffle</button>
+					<button class="btn" use:focusable onclick={() => { setParams({ mix: null }); playMix(m, 'dj'); }}>🎧 DJ from this mix</button>
+					{#if m.kind !== 'manual' && m.status === 'ready'}<button class="btn" use:focusable title="Keep these exact songs as your own mix" onclick={() => keepCopy(m)}>💾 Keep a copy</button>{/if}
 				{/if}
+				<button class="btn ghost" use:focusable onclick={() => renameMix(m)}>✏️ Rename</button>
 				{#if m.kind !== 'manual'}<button class="btn ghost" use:focusable disabled={m.status === 'building'} onclick={() => refreshMix(m)}>🔄 Fresh picks</button>{/if}
 				<button class="btn ghost danger" use:focusable onclick={() => removeMix(m)}>🗑 Delete</button>
 			</div>
@@ -378,7 +434,7 @@
 				<ol class="tracklist">
 					{#each m.tracks as t, i (t.video_id)}
 						<li class:now={player.current?.video_id === t.video_id}>
-							<button class="row" use:focusable onclick={() => { player.play(m.tracks!, i, { source: m.name }); }}>
+							<button class="row" use:focusable onclick={() => playMix(m, 'play', i)}>
 								<span class="n">{i + 1}</span>
 								<img src={t.thumbnail} alt="" loading="lazy" />
 								<span class="tt"><strong>{t.title}</strong><small>{t.offline ? '💾 ' : ''}{t.artist}{t.reason ? ` · ${t.reason}` : ''}</small></span>
@@ -489,6 +545,8 @@
 	.covers { display: grid; grid-template-columns: 1fr 1fr; aspect-ratio: 16 / 10; border-radius: var(--r-md); overflow: hidden; background: rgba(0, 0, 0, 0.3); }
 	.covers img { width: 100%; height: 100%; object-fit: cover; }
 	.big-emoji { grid-column: 1 / -1; display: grid; place-items: center; font-size: 3rem; }
+	.strip { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(11rem, 13rem); gap: 0.8rem; overflow-x: auto; padding-bottom: 0.3rem; }
+	.mix.small strong { font-size: 0.92rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 	.mix.new { place-content: center; justify-items: center; text-align: center; border-style: dashed; background: var(--surface); min-height: 12rem; }
 	.plus { font-size: 2.6rem; line-height: 1; color: var(--accent); }
 	.pulse { animation: blink 1.2s infinite; color: var(--accent); }

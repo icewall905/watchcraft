@@ -38,12 +38,17 @@ class MusicPlayer {
 	party = $state(false);
 	djBusy = $state(false);
 	djVoice = $state(false);
+	/** Karaoke: lyrics over the video, and optionally the vocals turned down. */
+	showLyrics = $state(false);
+	vocalCut = $state(false);
 	/** The DJ's mic: newest last. */
 	messages = $state<DjMessage[]>([]);
 	/** Shown big over the video when a DJ track starts. */
 	announce = $state('');
 	favTracks = new SvelteSet<string>();
 	favArtists = new SvelteSet<string>();
+	/** The page sets this to show a mix the player just saved. */
+	savedMix: ((m: import('./api').Mix) => void) | null = null;
 	/** Bumped only when the user changes a favourite here: lists that show favourites reload on it. */
 	favVersion = $state(0);
 	private played: string[] = [];
@@ -197,6 +202,7 @@ class MusicPlayer {
 		this.queue = [];
 		this.index = -1;
 		this.party = false;
+		this.vocalCut = false; // the deck's <video> goes away, and its audio graph with it
 		this.announce = '';
 	}
 

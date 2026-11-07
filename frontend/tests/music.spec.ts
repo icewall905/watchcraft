@@ -15,9 +15,10 @@ async function fixture(page: Page) {
 		Object.defineProperty(window, 'MediaSource', { value: undefined });
 		HTMLMediaElement.prototype.play = async function () {};
 	});
-	await page.route('**/api/music/home', (r) => r.fulfill({ json: { favorites: { tracks: LOVED, artists: [{ name: 'ABBA', artist_id: '', key: 'abba' }] }, mixes: [], recent: [], ai: true, curators } }));
+	await page.route('**/api/music/home', (r) => r.fulfill({ json: { favorites: { tracks: LOVED, artists: [{ name: 'ABBA', artist_id: '', key: 'abba' }] }, mixes: [], recent: [], recent_mixes: [], ai: true, curators, offline: { wanted: 0, saved: 0, pending: 0 } } }));
 	await page.route('**/api/music/for-you*', (r) => r.fulfill({ json: { loved: LOVED, fresh: FRESH, generated_at: 1 } }));
 	await page.route('**/api/music/plays', (r) => r.fulfill({ json: { ok: true } }));
+	await page.route('**/api/music/lyrics/**', (r) => r.fulfill({ json: { video_id: 'x', status: 'missing', source: '', synced: false, lines: [], plain: '', offset_ms: 0, offset_source: '', duration: 0, transcript: { status: 'idle', progress: 0, enabled: true, lines: [] } } }));
 	// Streams never answer: the deck stays on its first track while the test drives the UI.
 	await page.route('**/api/video/**', () => new Promise(() => {}));
 }
@@ -114,4 +115,77 @@ test('a song stored offline plays from the server copy', async ({ page }) => {
 	await expect(page.getByText('💾 1 of 3 songs saved offline · 2 on the way')).toBeVisible();
 	await page.getByRole('button', { name: 'Play Saved Song by Local Band' }).click();
 	await expect(page.locator('section[aria-label="Music player"] video')).toHaveAttribute('src', '/api/video/savedtrack1/file');
+});
+
+test('karaoke lyrics follow the song and the timing can be nudged', async ({ page }) => {
+	await fixture(page);
+	// The video reports 12 s in: the second line is being sung.
+	await page.addInitScript(() => Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', { get: () => 12, set: () => {}, configurable: true }));
+	const lines = [{ t: 5000, text: 'First line of the song' }, { t: 10000, text: 'Second line we sing now' }, { t: 16000, text: 'Third line is next' }];
+	let saved: unknown = null;
+	await page.route('**/api/music/lyrics/lovedtrack1', (r) => r.fulfill({ json: { video_id: 'lovedtrack1', status: 'found', source: 'lrclib', synced: true, lines, plain: '', offset_ms: 0, offset_source: '', duration: 200 } }));
+	await page.route('**/api/music/lyrics/lovedtrack1/offset', (r) => { saved = r.request().postDataJSON(); return r.fulfill({ json: { video_id: 'lovedtrack1', status: 'found', source: 'lrclib', synced: true, lines, plain: '', offset_ms: 500, offset_source: 'manual', duration: 200 } }); });
+	await freshPage(page, '/music');
+	await page.getByRole('button', { name: 'Play Dancing Queen by ABBA' }).first().click();
+	const deck = page.getByRole('region', { name: 'Music player' });
+	await deck.getByTitle('Lyrics (karaoke)').click();
+	await expect(deck.locator('.line.now')).toHaveText('Second line we sing now');
+	await expect(deck.locator('.line.next').first()).toHaveText('Third line is next');
+	await deck.getByRole('button', { name: 'Lyrics later' }).click();
+	await expect(deck.getByText('+0.5s')).toBeVisible();
+	await expect.poll(() => saved).toEqual({ offset_ms: 500 });
+});
+
+test('songs without lyrics can be transcribed by listening', async ({ page }) => {
+	await fixture(page);
+	let calls = 0;
+	await page.route('**/api/music/lyrics/lovedtrack1/listen', (r) => {
+		calls++;
+		return r.fulfill({ json: { aligned: false, lyrics: null, transcript: calls < 2 ? { status: 'running', progress: 40, enabled: true, lines: [] } : { status: 'ready', progress: 100, enabled: true, lines: [{ t: 0, end: 60000, text: 'Words the app heard' }] } } });
+	});
+	await freshPage(page, '/music');
+	await page.getByRole('button', { name: 'Play Dancing Queen by ABBA' }).first().click();
+	const deck = page.getByRole('region', { name: 'Music player' });
+	await deck.getByTitle('Lyrics (karaoke)').click();
+	await deck.getByRole('button', { name: /Listen and write them/ }).click();
+	await expect(deck.getByText(/Listening… 40%/)).toBeVisible();
+	await expect(deck.getByText('Words the app heard')).toBeVisible({ timeout: 8000 });
+	await expect(deck.getByText(/heard by the app/)).toBeVisible();
+});
+
+test('what is playing can be saved as a mix, and a curated mix kept as a copy', async ({ page }) => {
+	await fixture(page);
+	let body: Record<string, unknown> | null = null;
+	const saved = { id: 11, name: 'Friday', kind: 'manual', emoji: '💿', description: '', curator: '', curator_name: '', color: '', blurb: '', seed_video_id: '', status: 'ready', error: '', count: 2, created_at: 2, refreshed_at: 2, last_played_at: 0, covers: [] };
+	await page.route('**/api/music/mixes', (r) => {
+		if (r.request().method() === 'POST') { body = r.request().postDataJSON(); return r.fulfill({ json: saved }); }
+		return r.fulfill({ json: { mixes: [] } });
+	});
+	await freshPage(page, '/music');
+	await page.getByRole('heading', { name: '🌱 New for you' }).locator('..').getByRole('button', { name: '▶ Play' }).click();
+	page.once('dialog', (d) => d.accept('Friday'));
+	await page.getByRole('region', { name: 'Music player' }).getByRole('button', { name: 'Save as mix' }).click();
+	await expect(page.getByText('💾 Saved "Friday" with 2 songs')).toBeVisible();
+	expect(body).toMatchObject({ kind: 'manual', name: 'Friday' });
+	expect((body!.tracks as { video_id: string }[]).map((t) => t.video_id)).toEqual(['freshtrack1', 'freshtrack2']);
+	await expect(page.getByRole('heading', { name: '💿 Recent mixes' })).toBeVisible();
+	await expect(page.getByRole('button', { name: /💿 Friday/ })).toBeVisible();
+});
+
+test('the front page shows recent mixes and recent plays first', async ({ page }) => {
+	await fixture(page);
+	const mix = { id: 3, name: 'Roller Rink', kind: 'curator', emoji: '🛼', description: '', curator: 'retro', curator_name: 'Rewind Rae', color: '#ffb020', blurb: 'Lace up', seed_video_id: '', status: 'ready', error: '', count: 2, created_at: 1, refreshed_at: 1, last_played_at: 5, covers: [] };
+	await page.route('**/api/music/home', (r) => r.fulfill({ json: { favorites: { tracks: [], artists: [] }, mixes: [mix], recent: [FRESH[1]], recent_mixes: [mix], ai: true, curators, offline: { wanted: 0, saved: 0, pending: 0 } } }));
+	let copied = false;
+	await page.route('**/api/music/mixes/3', (r) => r.fulfill({ json: { ...mix, tracks: FRESH } }));
+	await page.route('**/api/music/mixes/3/copy', (r) => { copied = true; return r.fulfill({ json: { ...mix, id: 4, kind: 'manual', name: 'Roller Rink (saved)', tracks: FRESH } }); });
+	await page.route('**/api/music/mixes/4', (r) => r.fulfill({ json: { ...mix, id: 4, kind: 'manual', name: 'Roller Rink (saved)', tracks: FRESH } }));
+	await freshPage(page, '/music');
+	const headings = page.locator('.shelf h2');
+	await expect(headings.nth(0)).toHaveText('💿 Recent mixes');
+	await expect(headings.nth(1)).toHaveText('🕘 Recently played');
+	await page.getByRole('button', { name: /🛼 Roller Rink/ }).first().click();
+	await page.getByRole('button', { name: '💾 Keep a copy' }).click();
+	await expect(page.getByRole('dialog', { name: /Roller Rink \(saved\)/ })).toBeVisible();
+	expect(copied).toBe(true);
 });

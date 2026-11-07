@@ -18,6 +18,7 @@ from .models import MusicFavorite, MusicMix, MusicMixTrack, MusicPlay, MusicTrac
 log = logging.getLogger(__name__)
 
 MIX_SIZE = 40
+MAX_MIX_TRACKS = 300
 MAX_MIXES = 60
 CURATOR_STALE_S = 24 * 3600
 BUILD_TIMEOUT_S = 10 * 60  # a build this old died with its thread or process
@@ -153,6 +154,7 @@ def mix_dict(s: Session, m: MusicMix, pid: int, with_tracks: bool = False) -> di
            'curator': m.curator, 'curator_name': persona.get('name', ''), 'color': persona.get('color', ''),
            'blurb': m.blurb, 'seed_video_id': m.seed_video_id, 'status': m.status, 'error': m.error,
            'count': len(links), 'created_at': m.created_at, 'refreshed_at': m.refreshed_at,
+           'last_played_at': m.last_played_at,
            'covers': [f'https://i.ytimg.com/vi/{lk.video_id}/mqdefault.jpg' for lk in links[:4]]}
     if with_tracks:
         known = tracks_by_id(s, [lk.video_id for lk in links])
@@ -197,7 +199,7 @@ def claim_build(s: Session, m: MusicMix) -> bool:
 
 
 def create_mix(s: Session, pid: int, *, kind: str, seed: dict | None = None, description: str = '',
-               curator: str = '', name: str = '') -> MusicMix:
+               curator: str = '', name: str = '', tracks: list[dict] | None = None) -> MusicMix:
     count = s.exec(select(func.count()).select_from(MusicMix).where(MusicMix.profile_id == pid)).one()
     if count >= MAX_MIXES:
         raise ValueError(f'You have {MAX_MIXES} mixes already. Delete one first.')
@@ -224,7 +226,52 @@ def create_mix(s: Session, pid: int, *, kind: str, seed: dict | None = None, des
     s.refresh(m)
     if m.status == 'building':
         spawn(build_mix, m.id)
+    elif tracks:  # "Save as mix": what was playing becomes a mix of your own
+        _fill(s, m, tracks)
     return m
+
+
+def _fill(s: Session, m: MusicMix, tracks: list[dict]) -> None:
+    seen: set[str] = set()
+    tracks = [t for t in tracks if yt.VID_RE.match(t.get('video_id') or '')
+              and not (t['video_id'] in seen or seen.add(t['video_id']))][:MAX_MIX_TRACKS]
+    store(s, tracks, trusted=False)
+    for i, t in enumerate(tracks):
+        s.add(MusicMixTrack(mix_id=m.id, video_id=t['video_id'], position=i, reason=(t.get('reason') or '')[:200]))
+    s.commit()
+
+
+def copy_mix(s: Session, pid: int, m: MusicMix, name: str = '') -> MusicMix:
+    """Keep a curated or radio mix as it is now: a hand-made copy that refreshes never touch."""
+    links = s.exec(select(MusicMixTrack).where(MusicMixTrack.mix_id == m.id).order_by(MusicMixTrack.position)).all()
+    copy = create_mix(s, pid, kind='manual', name=(name or f'{m.name} (saved)')[:80])
+    copy.emoji, copy.blurb, copy.description = m.emoji, m.blurb, m.description
+    s.add(copy)
+    for lk in links:
+        s.add(MusicMixTrack(mix_id=copy.id, video_id=lk.video_id, position=lk.position, reason=lk.reason))
+    s.commit()
+    return copy
+
+
+def mark_played(s: Session, m: MusicMix) -> None:
+    m.last_played_at = time.time()
+    s.add(m)
+    s.commit()
+
+
+def recent_mixes(s: Session, pid: int, limit: int = 8) -> list[dict]:
+    """Mixes you played or made lately, newest activity first."""
+    rows = s.exec(select(MusicMix).where(MusicMix.profile_id == pid)).all()
+    rows = sorted(rows, key=lambda m: max(m.last_played_at or 0, m.created_at or 0), reverse=True)[:limit]
+    return [mix_dict(s, m, pid) for m in rows]
+
+
+def rename_mix(s: Session, m: MusicMix, name: str) -> None:
+    if not name.strip():
+        raise ValueError('a mix needs a name')
+    m.name = name.strip()[:80]
+    s.add(m)
+    s.commit()
 
 
 def _resolve(pick: dict) -> dict | None:
@@ -324,6 +371,9 @@ def add_to_mix(s: Session, m: MusicMix, track: dict) -> None:
         raise ValueError('bad track')
     store(s, [track], trusted=False)
     if not s.get(MusicMixTrack, (m.id, track['video_id'])):
+        count = s.exec(select(func.count()).select_from(MusicMixTrack).where(MusicMixTrack.mix_id == m.id)).one()
+        if count >= MAX_MIX_TRACKS:
+            raise ValueError(f'A mix holds at most {MAX_MIX_TRACKS} songs.')
         last = s.exec(select(func.max(MusicMixTrack.position)).where(MusicMixTrack.mix_id == m.id)).one()
         s.add(MusicMixTrack(mix_id=m.id, video_id=track['video_id'], position=(last if last is not None else -1) + 1))
     s.commit()
@@ -449,7 +499,7 @@ def _radio_picks(s: Session, pid: int, history: list[dict], favs: dict, exclude:
 
 
 def delete_profile(s: Session, pid: int) -> None:
-    mids = list(s.exec(select(MusicMix.id).where(MusicMix.profile_id == pid)).all())
+    mids = list(s.exec(select(MusicMix.id).where(MusicMix.profile_id == pid)).all())  # lyrics are shared: kept
     s.exec(delete(MusicMixTrack).where(MusicMixTrack.mix_id.in_(mids or [0])))
     for model in (MusicMix, MusicFavorite, MusicPlay):
         s.exec(delete(model).where(model.profile_id == pid))

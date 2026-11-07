@@ -11,7 +11,8 @@ from .. import ytdl
 from ..access import require_hub
 from ..db import session
 from ..hub import ai
-from . import dj, service, yt
+from .. import subtitle_jobs
+from . import dj, lyrics, service, yt
 
 router = APIRouter(prefix='/music', tags=['music'], dependencies=[Depends(require_hub)])
 
@@ -40,6 +41,19 @@ class MixIn(BaseModel):
     description: str = Field('', max_length=500)
     curator: str = Field('', max_length=20)
     name: str = Field('', max_length=80)
+    tracks: list[TrackIn] = Field(default_factory=list, max_length=300)
+
+
+class MixPatch(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+
+
+class CopyIn(BaseModel):
+    name: str = Field('', max_length=80)
+
+
+class OffsetIn(BaseModel):
+    offset_ms: int = Field(ge=-lyrics.MAX_OFFSET_MS, le=lyrics.MAX_OFFSET_MS)
 
 
 class PlayIn(BaseModel):
@@ -78,7 +92,7 @@ def _mix(s, pid: int, mid: int):
 def home(pid: int = Depends(require_hub)):
     with session() as s:
         return {'favorites': service.favorites(s, pid), 'mixes': service.list_mixes(s, pid),
-                'recent': service.recent(s, pid, 16), 'ai': ai.enabled(), 'offline': service.offline_summary(s),
+                'recent': service.recent(s, pid, 16), 'recent_mixes': service.recent_mixes(s, pid), 'ai': ai.enabled(), 'offline': service.offline_summary(s),
                 'curators': [{'key': k, **v} for k, v in dj.CURATORS.items()]}
 
 
@@ -140,7 +154,8 @@ def mixes(pid: int = Depends(require_hub)):
 def create_mix(body: MixIn, pid: int = Depends(require_hub)):
     with _yt_errors(), session() as s:
         m = service.create_mix(s, pid, kind=body.kind, seed=body.seed.model_dump() if body.seed else None,
-                               description=body.description, curator=body.curator, name=body.name)
+                               description=body.description, curator=body.curator, name=body.name,
+                               tracks=[t.model_dump() for t in body.tracks])
         return service.mix_dict(s, m, pid, with_tracks=True)
 
 
@@ -148,6 +163,28 @@ def create_mix(body: MixIn, pid: int = Depends(require_hub)):
 def get_mix(mid: int, pid: int = Depends(require_hub)):
     with session() as s:
         return service.mix_dict(s, _mix(s, pid, mid), pid, with_tracks=True)
+
+
+@router.patch('/mixes/{mid}')
+def rename_mix(mid: int, body: MixPatch, pid: int = Depends(require_hub)):
+    with _yt_errors(), session() as s:
+        m = _mix(s, pid, mid)
+        service.rename_mix(s, m, body.name)
+        return service.mix_dict(s, m, pid)
+
+
+@router.post('/mixes/{mid}/played')
+def mix_played(mid: int, pid: int = Depends(require_hub)):
+    with session() as s:
+        service.mark_played(s, _mix(s, pid, mid))
+    return {'ok': True}
+
+
+@router.post('/mixes/{mid}/copy')
+def copy_mix(mid: int, body: CopyIn | None = None, pid: int = Depends(require_hub)):
+    with _yt_errors(), session() as s:
+        copy = service.copy_mix(s, pid, _mix(s, pid, mid), body.name if body else '')
+        return service.mix_dict(s, copy, pid, with_tracks=True)
 
 
 @router.post('/mixes/{mid}/refresh')
@@ -185,3 +222,64 @@ def delete_mix(mid: int, pid: int = Depends(require_hub)):
 def dj_next(body: DjIn, pid: int = Depends(require_hub)):
     with _yt_errors(), session() as s:
         return service.dj_next(s, pid, body.played, body.queue, body.vibe.strip(), body.request.strip(), body.n)
+
+
+# ---------- lyrics / karaoke
+
+def _vid(video_id: str) -> str:
+    if not yt.VID_RE.match(video_id):
+        raise HTTPException(404, 'bad video id')
+    return video_id
+
+
+def _transcript(video_id: str) -> dict:
+    """The app's speech-to-text track for this video, as timed lines (empty until generated)."""
+    st = subtitle_jobs.status(video_id)
+    out = {'status': st['status'], 'progress': st['progress'], 'enabled': st['enabled'], 'lines': []}
+    if st.get('track'):
+        from ..db import session as db_session
+        from ..models import GeneratedSubtitles
+        with db_session() as s:
+            row = s.get(GeneratedSubtitles, video_id)
+            out['lines'] = [{'t': c['t'], 'end': c['end'], 'text': c['text']} for c in lyrics.parse_vtt(row.vtt if row else '')]
+    return out
+
+
+@router.get('/lyrics/{video_id}')
+def get_lyrics(video_id: str, refresh: bool = False, pid: int = Depends(require_hub)):
+    with session() as s:
+        out = lyrics.as_dict(lyrics.get(s, _vid(video_id), refresh))
+    if out['status'] != 'found' or not out['synced']:
+        out['transcript'] = _transcript(video_id)  # karaoke text for songs without timed lyrics
+    return out
+
+
+@router.post('/lyrics/{video_id}/offset')
+def lyrics_offset(video_id: str, body: OffsetIn, pid: int = Depends(require_hub)):
+    with _yt_errors(), session() as s:
+        return lyrics.as_dict(lyrics.set_offset(s, _vid(video_id), body.offset_ms))
+
+
+@router.post('/lyrics/{video_id}/listen')
+def lyrics_listen(video_id: str, pid: int = Depends(require_hub)):
+    """Auto-sync: transcribe the song (speech-to-text) and line the lyrics up with what is sung.
+    Call again to poll; once the transcript is ready the offset is saved, or the transcript itself
+    becomes the karaoke text when there are no lyrics."""
+    _vid(video_id)
+    st = subtitle_jobs.status(video_id)
+    if not st['enabled']:
+        raise HTTPException(409, 'Speech-to-text is turned off in Settings, so songs cannot be transcribed.')
+    if st['status'] not in ('ready', 'queued', 'running'):
+        subtitle_jobs.enqueue(video_id, pid)
+    tr = _transcript(video_id)
+    out = {'transcript': tr, 'aligned': False, 'lyrics': None}
+    if tr['lines']:
+        with session() as s:
+            row = lyrics.get(s, video_id)
+            if row.status == 'found' and row.synced:
+                delta = lyrics.align_offset(row.lines, tr['lines'])
+                if delta is not None:
+                    row = lyrics.set_offset(s, video_id, delta, 'auto')
+                    out['aligned'] = True
+            out['lyrics'] = lyrics.as_dict(row)
+    return out

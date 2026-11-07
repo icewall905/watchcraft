@@ -54,6 +54,10 @@ def init_db() -> None:
         _migrate_shared_learning_columns(connection)
         if 'kind' not in {c['name'] for c in inspect(connection).get_columns('category')}:
             connection.exec_driver_sql("ALTER TABLE category ADD COLUMN kind VARCHAR NOT NULL DEFAULT 'playlist'")
+        have_mix = {c['name'] for c in inspect(connection).get_columns('musicmix')}
+        for col in ('build_started', 'last_played_at'):  # Music columns added after the first release
+            if col not in have_mix:
+                connection.exec_driver_sql(f"ALTER TABLE musicmix ADD COLUMN {col} FLOAT NOT NULL DEFAULT 0")
         if 'shorts_verified' not in {c['name'] for c in inspect(connection).get_columns('video')}:
             connection.exec_driver_sql("ALTER TABLE video ADD COLUMN shorts_verified BOOLEAN NOT NULL DEFAULT 0")
         if 'local_only' not in {c['name'] for c in inspect(connection).get_columns('generatedsubtitles')}:

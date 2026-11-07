@@ -7,7 +7,9 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import { warmVideo } from '$lib/prefetch';
 	import { player } from './player.svelte';
-	import { fmtDuration, type Track } from './api';
+	import { fmtDuration, music, type Track } from './api';
+	import Lyrics, { prefetchLyrics } from './Lyrics.svelte';
+	import { closeVocals, setVocalCut } from './vocals';
 
 	interface Props {
 		onArtist: (name: string) => void;
@@ -157,6 +159,13 @@
 		player.next(false);
 	}
 
+	// The deck's <video> is replaced whenever the deck closes and opens again: release the old
+	// element's audio graph with it, or every karaoke session would leave a running AudioContext.
+	$effect(() => {
+		const v = el;
+		return () => closeVocals(v);
+	});
+
 	// Keyed on the play token, not the video id: replaying the same song must reload it too.
 	$effect(() => {
 		const t = cur;
@@ -177,7 +186,10 @@
 	$effect(() => {
 		const next = player.upNext[0];
 		if (next && cur) {
-			const id = window.setTimeout(() => warmVideo(next.video_id, { manifest: true, force: true }), 4000);
+			const id = window.setTimeout(() => {
+				warmVideo(next.video_id, { manifest: true, force: true });
+				if (player.showLyrics) void prefetchLyrics(next.video_id);
+			}, 4000);
 			return () => window.clearTimeout(id);
 		}
 	});
@@ -200,6 +212,42 @@
 	function toBody(node: HTMLElement) {
 		document.body.appendChild(node);
 		return { destroy: () => node.remove() };
+	}
+
+	function toggleLyrics() {
+		player.showLyrics = !player.showLyrics;
+		if (!player.showLyrics && player.vocalCut) toggleVocals();
+	}
+	function toggleVocals() {
+		if (!el) return;
+		const on = !player.vocalCut;
+		if (!setVocalCut(el, on)) {
+			toast.warn('This browser cannot turn the vocals down.');
+			return;
+		}
+		player.vocalCut = on;
+		if (on) {
+			player.showLyrics = true;
+			toast.info('🎤 Vocals turned down — your turn to sing!');
+		}
+	}
+	let saving = $state(false);
+	async function saveMix() {
+		const tracks = player.queue;
+		if (!tracks.length) return;
+		const when = new Date().toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' });
+		const name = prompt('Save these songs as a mix called…', `${player.source || 'My set'} · ${when}`);
+		if (!name?.trim()) return;
+		saving = true;
+		try {
+			const m = await music.createMix({ kind: 'manual', name: name.trim(), tracks });
+			toast.success(`💾 Saved "${m.name}" with ${m.count || tracks.length} songs`);
+			player.savedMix?.(m);
+		} catch {
+			/* toast shown */
+		} finally {
+			saving = false;
+		}
 	}
 
 	function toggle() {
@@ -240,6 +288,8 @@
 		loadSeq++;
 		window.clearTimeout(announceTimer);
 		void shaka?.destroy?.().catch?.(() => {});
+		closeVocals(el);
+		player.vocalCut = false;
 		player.stop();
 		try { window.speechSynthesis?.cancel(); } catch { /* none */ }
 	});
@@ -260,8 +310,9 @@
 				onclick={toggle}
 			></video>
 			{#if loading}<div class="spinner" aria-label="Loading"><span class="vinyl"></span></div>{/if}
+			{#if player.showLyrics}<Lyrics track={cur} {el} big={player.party} />{/if}
 			{#if showAnnounce && player.mode === 'dj'}
-				<div class="announce" role="status"><span class="mic">🎙️</span>{player.announce}</div>
+				<div class="announce" class:top={player.showLyrics} role="status"><span class="mic">🎙️</span>{player.announce}</div>
 			{/if}
 			{#if player.party}
 				<div class="now">
@@ -289,6 +340,9 @@
 				<span class="mode">{player.mode === 'dj' ? '🎧 DJ' : player.mode === 'shuffle' ? '🔀 Shuffle' : '▶ Playlist'}</span>
 			</div>
 			<div class="right">
+				<button class="mini toggle" class:on={player.showLyrics} use:focusable aria-pressed={player.showLyrics} title="Lyrics (karaoke)" onclick={toggleLyrics}>📝</button>
+				<button class="mini toggle" class:on={player.vocalCut} use:focusable aria-pressed={player.vocalCut} title="Karaoke: turn the vocals down" onclick={toggleVocals}>🎤</button>
+				<button class="mini" use:focusable disabled={saving} title="Save what is playing as a mix" aria-label="Save as mix" onclick={saveMix}>💾</button>
 				<button class="btn ghost" use:focusable onclick={() => (player.party = !player.party)}>{player.party ? '↙ Shrink' : '🎉 Party mode'}</button>
 				<button class="mini" use:focusable aria-label="Stop and close player" onclick={() => player.stop()}>✕</button>
 			</div>
@@ -388,6 +442,11 @@
 	.vinyl { width: 3rem; height: 3rem; border-radius: 50%; background: radial-gradient(circle, var(--accent) 0 18%, #111 19% 60%, #333 61% 64%, #111 65%); animation: spin 1.2s linear infinite; }
 	.announce { position: absolute; left: 50%; bottom: 1.2rem; transform: translateX(-50%); max-width: 90%; padding: 0.7rem 1.2rem; border-radius: var(--r-pill); background: rgba(10, 8, 23, 0.82); color: #fff; font-weight: 700; font-size: clamp(0.9rem, 1.4vw, 1.5rem); display: flex; gap: 0.6rem; align-items: center; animation: rise 0.5s ease; backdrop-filter: blur(8px); }
 	.mic { font-size: 1.3em; }
+	.announce.top { bottom: auto; top: 1.2rem; }
+	.party .announce.top { top: 7.5rem; }
+	.mini.toggle { opacity: 0.55; }
+	.mini.toggle.on { opacity: 1; background: color-mix(in srgb, #ff4fa3 30%, transparent); }
+	.mini:disabled { opacity: 0.4; }
 
 	/* ---------- party mode: full screen, big type, the booth on the side */
 	.deck.party {

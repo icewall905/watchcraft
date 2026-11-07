@@ -15,11 +15,18 @@ export type Curator = { key: string; name: string; emoji: string; color: string;
 export type Mix = {
 	id: number; name: string; kind: 'seed' | 'curator' | 'manual'; emoji: string; description: string; curator: string;
 	curator_name: string; color: string; blurb: string; seed_video_id: string; status: 'building' | 'ready' | 'error';
-	error: string; count: number; created_at: number; refreshed_at: number; covers: string[]; tracks?: Track[];
+	error: string; count: number; created_at: number; refreshed_at: number; last_played_at: number; covers: string[]; tracks?: Track[];
 };
 export type OfflineSummary = { wanted: number; saved: number; pending: number };
-export type MusicHome = { favorites: Favorites; mixes: Mix[]; recent: Track[]; ai: boolean; curators: Curator[]; offline: OfflineSummary };
+export type MusicHome = { favorites: Favorites; mixes: Mix[]; recent: Track[]; recent_mixes: Mix[]; ai: boolean; curators: Curator[]; offline: OfflineSummary };
 export type ForYou = { loved: Track[]; fresh: Track[]; generated_at: number };
+export type LyricLine = { t: number; end?: number; text: string; words?: { t: number; text: string }[] };
+export type Transcript = { status: string; progress: number; enabled: boolean; lines: LyricLine[] };
+export type Lyrics = {
+	video_id: string; status: 'found' | 'missing' | 'error'; source: string; synced: boolean; lines: LyricLine[]; plain: string;
+	offset_ms: number; offset_source: string; duration: number; transcript?: Transcript;
+};
+export type ListenResult = { transcript: Transcript; aligned: boolean; lyrics: Lyrics | null };
 export type DjResult = { line: string; tracks: Track[]; source: 'ai' | 'radio' };
 
 const M = '/music';
@@ -41,8 +48,14 @@ export const music = {
 	play: (videoId: string, skipped: boolean) => send<{ ok: boolean }>('POST', '/plays', { video_id: videoId, skipped }, false),
 	mixes: () => get<{ mixes: Mix[] }>('/mixes'),
 	mix: (id: number) => get<Mix>(`/mixes/${id}`),
-	createMix: (body: { kind: Mix['kind']; seed?: Track; description?: string; curator?: string; name?: string }) =>
-		send<Mix>('POST', '/mixes', { ...body, seed: body.seed ? slim(body.seed) : undefined }),
+	createMix: (body: { kind: Mix['kind']; seed?: Track; description?: string; curator?: string; name?: string; tracks?: Track[] }) =>
+		send<Mix>('POST', '/mixes', { ...body, seed: body.seed ? slim(body.seed) : undefined, tracks: body.tracks?.map(slim) }),
+	renameMix: (id: number, name: string) => send<Mix>('PATCH', `/mixes/${id}`, { name }),
+	copyMix: (id: number, name = '') => send<Mix>('POST', `/mixes/${id}/copy`, { name }),
+	mixPlayed: (id: number) => send<{ ok: boolean }>('POST', `/mixes/${id}/played`, {}, false),
+	lyrics: (videoId: string) => get<Lyrics>(`/lyrics/${enc(videoId)}`, false),
+	lyricsOffset: (videoId: string, offsetMs: number) => send<Lyrics>('POST', `/lyrics/${enc(videoId)}/offset`, { offset_ms: offsetMs }, false),
+	listen: (videoId: string) => send<ListenResult>('POST', `/lyrics/${enc(videoId)}/listen`, {}),
 	refreshMix: (id: number) => send<Mix>('POST', `/mixes/${id}/refresh`),
 	addToMix: (id: number, t: Track) => send<Mix>('POST', `/mixes/${id}/tracks`, slim(t)),
 	removeFromMix: (id: number, videoId: string) => send<Mix>('DELETE', `/mixes/${id}/tracks/${enc(videoId)}`),
