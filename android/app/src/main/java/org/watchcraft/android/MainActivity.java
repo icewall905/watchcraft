@@ -126,7 +126,7 @@ public final class MainActivity extends ComponentActivity {
         LinearLayout form = column();
         int max = Math.min(getResources().getDisplayMetrics().widthPixels - dp(48), dp(460));
         outer.addView(form, new LinearLayout.LayoutParams(max, -2));
-        ImageView mark = icon("mark", AMBER, 48); mark.setBackground(round(PANEL, 20)); mark.setPadding(dp(14), dp(14), dp(14), dp(14));
+        ImageView mark = new ImageView(this); mark.setImageResource(R.drawable.ic_badge); mark.setScaleType(ImageView.ScaleType.FIT_CENTER);
         form.addView(mark, new LinearLayout.LayoutParams(dp(80), dp(80))); gap(form, 28);
         TextView name = text("WatchCraft", 34, TEXT, true); form.addView(name);
         TextView intro = text("Your world. Your server.", 21, TEXT, false); form.addView(intro); gap(form, 12);
@@ -209,7 +209,8 @@ public final class MainActivity extends ComponentActivity {
         root.removeAllViews();
         shell = column(); root.addView(shell, new LinearLayout.LayoutParams(-1, -1));
         LinearLayout header = row(); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(16), dp(5), dp(8), dp(5));
-        ImageView logo = icon("mark", AMBER, 27); header.addView(logo, new LinearLayout.LayoutParams(dp(34), dp(42)));
+        ImageView logo = new ImageView(this); logo.setImageResource(R.drawable.ic_badge); logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        header.addView(logo, new LinearLayout.LayoutParams(dp(38), dp(38)));
         LinearLayout labels = column(); labels.setPadding(dp(10), 0, 0, 0);
         heading = text("WatchCraft", 18, TEXT, true); serverLabel = text(Uri.parse(server).getAuthority(), 11, MUTED, false);
         labels.addView(heading); labels.addView(serverLabel); header.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
