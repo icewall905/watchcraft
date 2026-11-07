@@ -1,6 +1,25 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — quick lyrics auto-sync and line fill (`f6e26d6`, `cc64bd7`, `2d5c29e`, 2026-11-07)
+
+- Auto-sync was slow and could look stuck: it used the serial subtitle queue (whole song, sequential 12 s STT
+  chunks), the page's poll re-queued failed jobs every 4 s, STT backoffs (1–15 min) showed only "Waiting…", and an
+  unmatched transcript ended silently. Now songs with timed lyrics get a quick sync (`bt/music/sync.py`): an
+  existing full transcript is used at once; otherwise the offline copy (or one audio fetch) and up to 10 samples
+  (16 when video/lyrics length is ≥3 % off) are transcribed, re-fitted after each, early stop once two fits agree;
+  8 min deadline, stale/replaced jobs restartable with per-job tokens, busy STT samples skipped, hand nudges made
+  while listening kept, clear messages. Songs without lyrics keep the full transcript but polls never restart a
+  failed job. The sung-line fill now runs until the next line starts (capped over >12 s breaks).
+- Backend 1039+ passed; music browser tests 12/12; independent review approved after its fixes.
+- Backups/rollback: DB backup `20261107-quicksync-f6e26d6` (integrity ok) before the first of these; rollback images
+  `watchcraft:rollback-20261107-quicksync-70ceec2`, `…-samples-f6e26d6`, `…-fulltx-cc64bd7`. Code only, no schema
+  change; all four app containers healthy, health 200.
+- Measured on prod with real STT (dry runs, stored timings untouched): R U Mine 4–6 s (+23 s); Do I Wanna Know 36 s
+  sampled / 0.1 s from its transcript (−1.0 / −1.4 s); Burn the Witch 37 s sampled gave a flat +8–10 s (speech
+  recognition hears only ~8 lines), 0.0 s from its full transcript ×1.056 +2.2 s. Single samples can take ~34 s when
+  the recogniser loops on "oh, oh, oh…" over instrumental parts.
+
 ## Deployment record — lyrics auto-sync fits speed and shift (`70ceec2`, 2026-11-07)
 
 - Prod transcripts showed why auto-sync drifted: STT gives 6–12 s chunks without word timing, invents text over
