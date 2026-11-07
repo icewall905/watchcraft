@@ -1,7 +1,9 @@
 """Household authorization built on server-verified profile PIN sessions.
 
 An open household keeps its first administrator accessible without a PIN. Child
-profiles require PINs on every non-child profile, including administrators.
+profiles require PINs on every administrator profile. Adult profiles may stay
+open by the household's choice: anyone on the device, children included, can
+then switch to them, so they are the household's own call.
 Roles are dedicated fields; arbitrary profile preferences never grant access.
 """
 from typing import Optional
@@ -38,10 +40,20 @@ def require_admin(pid: int = Depends(profile_id)) -> int:
     return pid
 
 
+def needs_pin(s: Session, p: Profile) -> bool:
+    """Whether this profile must have a PIN to keep its grown-up access: administrators do once
+    child profiles exist; adult profiles may stay open."""
+    return p.role == 'admin' and has_children(s)
+
+
+def grown_up_access(s: Session, p: Profile) -> bool:
+    """Adult features (Hub, Music, unfiltered search) for this profile."""
+    return p.role in ('admin', 'adult') and (not needs_pin(s, p) or profile_pins.record(s, p.id) is not None)
+
+
 def hub_allowed(s: Session, pid: int) -> bool:
     p = s.get(Profile, pid)
-    return bool(p and p.role in ('admin', 'adult') and
-                (not has_children(s) or profile_pins.record(s, pid)))
+    return bool(p and grown_up_access(s, p))
 
 
 def require_hub(pid: int = Depends(profile_id)) -> int:
@@ -57,6 +69,6 @@ def validate_household(s: Session) -> None:
     if not any(p.role == 'admin' for p in profiles):
         raise HTTPException(400, 'Keep at least one administrator profile.')
     if any(p.role == 'child' for p in profiles):
-        missing = [p.name for p in profiles if p.role != 'child' and not profile_pins.record(s, p.id)]
+        missing = [p.name for p in profiles if p.role == 'admin' and not profile_pins.record(s, p.id)]
         if missing:
-            raise HTTPException(400, 'Set a PIN on every adult and administrator profile before enabling child profiles: ' + ', '.join(missing))
+            raise HTTPException(400, 'Set a PIN on every administrator profile before enabling child profiles: ' + ', '.join(missing))

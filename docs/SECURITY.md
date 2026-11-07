@@ -32,8 +32,9 @@ so a claim can be checked rather than trusted.
 - **Profile PINs** are optional per profile, PBKDF2-SHA256 with 260k iterations and a random
   salt, stored as a hash. Five wrong attempts lock the profile for 30 seconds. A signed cookie
   records the unlock and is invalidated when the PIN changes (`version`).
-- **Child profiles** require a PIN on every adult and administrator profile before they can be
-  created. Children are blocked from the whole Hub (`require_hub`) and from Hub routes in the
+- **Child profiles** require a PIN on every administrator profile before they can be created.
+  Adult profiles may stay without a PIN by the household's choice (2026-11-07): such a profile keeps
+  Hub and Music access, and anyone on the device, children included, can switch to it. Children are blocked from the whole Hub (`require_hub`) and from Hub routes in the
   navigation. They can still watch video and cast to a paired screen, which is the intended
   family behaviour.
 - **Cross-profile isolation** is enforced per endpoint: `owned()` raises 404 (not 403) for a

@@ -154,8 +154,7 @@ def backfill():
     """Fill spare STT slots from saved feed clips, without retries or source fetches."""
     if not enabled():
         return 0
-    from .access import has_children
-    from . import profile_pins
+    from .access import grown_up_access, has_children
     with session() as s:
         s.exec(text('BEGIN IMMEDIATE'))
         pending = len(s.exec(select(GeneratedSubtitles.video_id).where(
@@ -165,7 +164,7 @@ def backfill():
             return 0
         children = has_children(s)
         allowed = {p.id for p in s.exec(select(Profile)).all()
-                   if not children or p.role == 'child' or profile_pins.record(s, p.id)}
+                   if not children or p.role == 'child' or grown_up_access(s, p)}
         if not allowed:
             return 0
         rows = s.exec(select(Candidate.video_id, Category.profile_id, Download.path)

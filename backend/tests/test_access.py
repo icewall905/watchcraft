@@ -84,12 +84,11 @@ def test_admin_pin_and_existing_profile_preferences(client):
     assert client.put('/api/settings/appearance', json={'theme': 'ocean'}).status_code == 200
 
 
-def test_child_requires_pins_and_cannot_bypass_hub(client, monkeypatch):
+def test_child_requires_admin_pin_and_cannot_bypass_hub(client, monkeypatch):
     assert client.post('/api/profiles', json={'name': 'Child', 'role': 'child'}).status_code == 400
     assert len(client.get('/api/profiles').json()) == 1
     admin = protect_admin(client)
     adult = client.post('/api/profiles', json={'name': 'Adult'}).json()
-    assert client.post('/api/profiles', json={'name': 'Child', 'role': 'child'}).status_code == 400
     assert client.patch(f"/api/profiles/{adult['id']}", json={'pin': '9321'}).status_code == 200
     child = client.post('/api/profiles', json={'name': 'Child', 'role': 'child'}).json()
     assert child['role'] == 'child'
@@ -114,7 +113,6 @@ def test_child_requires_pins_and_cannot_bypass_hub(client, monkeypatch):
     assert client.patch(f"/api/profiles/{child['id']}", json={'prefs': {'role': 'admin'}}, headers=h).status_code == 200
     assert client.get('/api/hub/items', headers=h).status_code == 403
     assert client.patch(f"/api/profiles/{admin['id']}", json={'pin': ''}).status_code == 400
-    assert client.post('/api/profiles', json={'name': 'Unprotected adult'}).status_code == 400
     client.cookies.clear()
     # Guessing an adult id, omitting the header, or sending zero must not bypass PINs.
     for hh in ({}, headers(admin), headers(adult), {'X-Profile-Id': '0'}):
@@ -260,3 +258,25 @@ def test_real_database_backup_restores_roles_pins_and_hub_findings(tmp_path, mon
         assert len(s.exec(select(CuratorDiscovery)).all()) == 1
         assert s.exec(text("SELECT rowid FROM content_fts WHERE content_fts MATCH 'Preserved'")).first()[0] == iid
     restored_engine.dispose()
+
+
+def test_adult_profile_may_stay_open_while_children_exist(client):
+    """The household chose this: an adult without a PIN keeps Hub/Music access; admins still need one."""
+    admin = protect_admin(client)
+    open_adult = client.post('/api/profiles', json={'name': 'Party'}).json()
+    child = client.post('/api/profiles', json={'name': 'Kid', 'role': 'child'}).json()
+    assert child['role'] == 'child'
+    assert client.get('/api/hub/items', headers=headers(open_adult)).status_code == 200
+    assert client.get('/api/music/home', headers=headers(open_adult)).status_code == 200
+    assert client.get('/api/hub/items', headers=headers(child)).status_code == 403
+    # An adult can drop its PIN later too; an administrator cannot.
+    locked = client.post('/api/profiles', json={'name': 'Private', 'pin': '5555'}).json()
+    assert client.post(f"/api/profiles/{admin['id']}/unlock", json={'pin': '4826'}).status_code == 200
+    assert client.post(f"/api/profiles/{locked['id']}/unlock", json={'pin': '5555'}).status_code == 200
+    r = client.patch(f"/api/profiles/{locked['id']}", json={'pin': ''}, headers=headers(admin))
+    assert r.status_code == 200, r.text
+    assert client.patch(f"/api/profiles/{admin['id']}", json={'pin': ''}).status_code == 400
+    # A PIN-less adult cannot become an administrator while children exist.
+    assert client.patch(f"/api/profiles/{open_adult['id']}", json={'role': 'admin'}, headers=headers(admin)).status_code == 400
+    # Still no shared settings for an open adult.
+    assert client.put('/api/settings/appearance', json={'theme': 'ocean'}, headers=headers(open_adult)).status_code == 403

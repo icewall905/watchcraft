@@ -3,8 +3,8 @@ import time
 import re
 from sqlmodel import select
 from sqlalchemy.orm import load_only
-from . import profile_pins, subtitle_jobs
-from .access import has_children
+from . import subtitle_jobs
+from .access import grown_up_access, has_children
 from .models import Candidate, Category, Download, GeneratedSubtitles, Profile, Video, WatchHistory
 from .downloader.service import abs_path
 
@@ -14,7 +14,7 @@ def snapshot(s, pid, heartbeat_path=None, clock=None):
     admin = s.get(Profile, pid).role == 'admin'
     children = has_children(s)
     allowed = {p.id for p in s.exec(select(Profile)).all()
-               if (admin or p.id == pid) and (not children or p.role == 'child' or profile_pins.record(s, p.id))}
+               if (admin or p.id == pid) and (not children or p.role == 'child' or grown_up_access(s, p))}
     owned = set(s.exec(select(Candidate.video_id).join(Category, Category.id == Candidate.category_id)
                        .where(Category.profile_id.in_(allowed))).all())
     jobs = {r.video_id: r for r in s.exec(select(GeneratedSubtitles).options(load_only(

@@ -73,7 +73,7 @@
 				{ value: 'adult', label: 'Adult', hint: 'Use Hub content and manage personal playlists and curators.' },
 				{ value: 'child', label: 'Child', hint: 'Hub discovery, external sources and research are disabled.' }
 			]} />
-			{#if role === 'child'}<p class="small muted">Every adult and administrator profile needs a PIN first. Video playlists keep their existing kid-safe checks; this setting does not filter all video playback.</p>{/if}
+			{#if role === 'child'}<p class="small muted">Every administrator profile needs a PIN first. Adult profiles without a PIN stay open to anyone on this device, children included. Video playlists keep their existing kid-safe checks; this setting does not filter all video playback.</p>{/if}
 		{/if}
 		<div class="field"><span class="label">Emoji</span><EmojiPicker bind:value={emoji} /></div>
 		<div class="field"><span class="label">Colour</span><ColorPicker bind:value={color} /></div>
