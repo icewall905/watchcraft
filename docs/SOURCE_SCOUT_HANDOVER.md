@@ -1,6 +1,23 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — Music section renamed Music Videos (`3d8718a`, 2026-11-07)
+
+- The Watch-section entry, the TV-mode drawer entry, the page title and the `/music` heading now read "Music
+  Videos". Route, the `Music player`/`Music sections` aria labels and "YouTube Music" are unchanged. Frontend only,
+  no backend or schema change. `svelte-check` 0 errors; navigation + music browser tests 17/17.
+- Backup `/root/compose/watchcraft-backups/20261107-musicvideos-3d8718a` (online DB, integrity ok, source, config
+  hashes); rollback image `watchcraft:rollback-20261107-musicvideos-2d5c29e`. rsync (checksum, no `--delete`)
+  changed exactly the commit's 4 files; `.env`/`compose.host.yaml` hashes unchanged. Rebuilt `watchcraft:latest`
+  (`sha256:331d08a2b46a6938d8b7c42161e66c46349d3123271940af75c3c04b16140d9b`), recreated
+  `bt-api`/`bt-worker`/`bt-downloader`/`bt-subtitles`; all healthy, no restarts, no errors in their logs.
+- Checked on prod: health 200 locally and on `wc.tdgs.org`, `/music` 200, `quick_check` ok, and the served bundles
+  carry "Music Videos" (nav node `0.DSLChTLh.js`, page node `18.FDCe1lrA.js`). `wc.nygaardboysen.dk` does not
+  resolve from the host or from the dev machine — unrelated to this deploy, still open.
+- Rollback: tag `watchcraft:rollback-20261107-musicvideos-2d5c29e` as `watchcraft:latest`, restore `source.tar.gz`,
+  run the two-file Compose `up -d --no-build --force-recreate --no-deps --wait bt-api bt-worker bt-downloader
+  bt-subtitles`, restore `DEPLOYED_COMMIT`. No schema or data change.
+
 ## Deployment record — quick lyrics auto-sync and line fill (`f6e26d6`, `cc64bd7`, `2d5c29e`, 2026-11-07)
 
 - Auto-sync was slow and could look stuck: it used the serial subtitle queue (whole song, sequential 12 s STT
