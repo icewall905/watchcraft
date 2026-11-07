@@ -384,6 +384,15 @@ def test_research_report_fallback_and_draft(client, monkeypatch):
     assert 'findings by type' not in rep['report']
 
 
+def test_curator_draft_suggests_only_feeds_with_urls(client):
+    # Providers are offered as tick boxes through provider_keys. A url-less row per provider
+    # gave the review form duplicate list keys, which aborted its whole render.
+    d = client.post('/api/hub/curators/draft', json={'goal': 'Find beginner knitting patterns for scarves'}).json()
+    assert len(d['provider_keys']) > 1
+    urls = [s['url'] for s in d['source_suggestions']]
+    assert all(urls) and len(urls) == len(set(urls))
+
+
 def test_import_url_extracts_recipe(client, monkeypatch):
     html = b'''<html><head><title>x</title><meta property="og:image" content="https://img.example/p.jpg">
     <script type="application/ld+json">{"@type":"Recipe","name":"Pancakes","recipeIngredient":["flour","milk"],"totalTime":"PT20M","recipeYield":"4"}</script>
