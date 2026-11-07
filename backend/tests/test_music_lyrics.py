@@ -32,14 +32,61 @@ def test_best_match_prefers_timed_lyrics_closest_to_the_video_length():
     assert lyrics.best_match(c, 'Michael Jackson', 'Billie Jean', 294)['id'] == 3
 
 
-def test_align_offset_uses_median_of_confident_matches():
+def test_align_offset_uses_the_agreeing_lines():
     lines = [{'t': 10_000, 'text': 'she was more like a beauty queen'}, {'t': 20_000, 'text': 'from a movie scene tonight'},
              {'t': 30_000, 'text': 'billie jean is not my lover'}, {'t': 40_000, 'text': 'la la'}]
-    cues = [{'t': 14_100, 'end': 16_000, 'text': 'She was more like a beauty queen'},
+    cues = [{'t': 14_000, 'end': 16_000, 'text': 'She was more like a beauty queen'},
             {'t': 24_000, 'end': 26_000, 'text': 'from a movie scene tonight'},
-            {'t': 33_900, 'end': 36_000, 'text': 'Billie Jean is not my lover'}]
-    assert lyrics.align_offset(lines, cues) == 4000
+            {'t': 34_000, 'end': 36_000, 'text': 'Billie Jean is not my lover'}]
+    assert abs(lyrics.align_offset(lines, cues) - 4000) < 800
     assert lyrics.align_offset(lines[:2], cues) is None
+
+
+WORDS = ('amber river morning light falls across the quiet harbour stones while seven silver birds '
+         'circle older towers under heavy painted clouds that drift beyond the northern hills tonight').split()
+
+
+def _song(n=18, start=10000):
+    """Made-up lyric lines (no real song text) at uneven gaps; line 5 repeats line 1 like a chorus."""
+    gaps = (5300, 7900, 6400, 9100, 4700, 8300)
+    lines, t = [], start
+    for i in range(n):
+        k = 1 if i == 5 else i
+        lines.append({'t': t, 'text': ' '.join(WORDS[(k * 3) % 20:(k * 3) % 20 + 4])})
+        t += gaps[i % len(gaps)]
+    return lines
+
+
+def _transcript(lines, rate=1.0, offset=0, junk=True):
+    """What speech-to-text returns: chunks of about two lines, cut at the pauses between lines (as the
+    chunker does), each one cue without word timing; plus music junk at the start."""
+    sung = []
+    for ln in lines:
+        toks = ln['text'].split()
+        sung.append((rate * ln['t'] + offset, rate * (ln['t'] + 450 * len(toks)) + offset, toks))
+    cues = [{'t': 0, 'end': int(max(1, sung[0][0] - 500)), 'text': '呜呜呜呜 oh, oh, oh, oh, oh'}] if junk else []
+    for i in range(0, len(sung), 2):
+        group = sung[i:i + 2]
+        cues.append({'t': int(group[0][0] - 300), 'end': int(group[-1][1] + 300),
+                     'text': ' '.join(w for g in group for w in g[2])})
+    return cues
+
+
+@pytest.mark.parametrize('rate,offset', [(1.0, 0), (1.0, 21000), (1.0, -3500), (1.08, 800), (0.93, 12000)])
+def test_fit_recovers_shift_and_speed(rate, offset):
+    lines = _song()
+    f = lyrics.fit(lines, _transcript(lines, rate, offset))
+    assert f is not None
+    for ln in lines:  # every line lands within a second of where it is really sung
+        assert abs(f['rate'] * ln['t'] + f['offset_ms'] - (rate * ln['t'] + offset)) < 1000, (ln, f)
+    if rate == 1.0:
+        assert f['rate'] == 1.0
+
+
+def test_fit_refuses_unrelated_transcript():
+    lines = _song()
+    other = [{'t': i * 8000, 'end': i * 8000 + 8000, 'text': 'completely different words about nothing here'} for i in range(20)]
+    assert lyrics.fit(lines, other) is None
 
 
 def test_parse_vtt():
@@ -100,7 +147,8 @@ def test_listen_aligns_lyrics_with_the_transcript(music, lrclib, monkeypatch):  
         s.commit()
     state['status'] = 'ready'
     r = music.post(f'/api/music/lyrics/{vid}/listen').json()
-    assert r['aligned'] and r['lyrics']['offset_ms'] == 2000 and r['lyrics']['offset_source'] == 'auto'
+    assert r['aligned'] and abs(r['lyrics']['offset_ms'] - 2000) < 800 and r['lyrics']['offset_source'] == 'auto'
+    assert r['lyrics']['rate'] == 1.0 and r['matched_lines'] == 3
 
 
 def test_listen_refuses_when_speech_to_text_is_off(music, monkeypatch):  # noqa: F811
@@ -167,6 +215,53 @@ def test_previous_release_mix_table_gains_new_columns(client):  # noqa: F811
     with engine.begin() as c:
         c.exec_driver_sql('ALTER TABLE musicmix DROP COLUMN last_played_at')
         c.exec_driver_sql('ALTER TABLE musicmix DROP COLUMN build_started')
+        c.exec_driver_sql('ALTER TABLE musiclyrics DROP COLUMN rate')
     init_db()
     cols = {c['name'] for c in inspect(engine).get_columns('musicmix')}
     assert {'last_played_at', 'build_started'} <= cols
+    assert 'rate' in {c['name'] for c in inspect(engine).get_columns('musiclyrics')}
+
+
+def test_length_hint_never_forces_a_speed_change():
+    """A radio cut is shorter than the record without running faster: the hint must not bend it."""
+    lines = _song()
+    f = lyrics.fit(lines, _transcript(lines, 1.0, 21000), hint_rate=0.91)
+    assert f['rate'] == 1.0 and abs(f['offset_ms'] - 21000) < 1000
+
+
+def test_fit_ignores_a_chorus_sung_many_times():
+    lines = _song(24)
+    for i in (9, 13, 17, 21):  # the same chorus line four more times
+        lines[i] = dict(lines[i], text=lines[1]['text'])
+    f = lyrics.fit(lines, _transcript(lines, 1.0, 7000))
+    assert f['rate'] == 1.0 and abs(f['offset_ms'] - 7000) < 1000
+
+
+def test_hint_lets_a_close_slope_win():
+    lines = _song(24)
+    f = lyrics.fit(lines, _transcript(lines, 1.07, 1500), hint_rate=1.08)
+    assert abs(f['rate'] - 1.07) < 0.01
+
+
+def test_manual_nudge_keeps_the_fitted_speed(music, lrclib):  # noqa: F811
+    from bt.db import session
+    music.get('/api/music/search', params={'q': 'abba'})
+    vid = SEED['video_id']
+    music.get(f'/api/music/lyrics/{vid}')
+    with session() as s:
+        lyrics.set_offset(s, vid, 2000, 'auto', 1.06)
+    r = music.post(f'/api/music/lyrics/{vid}/offset', json={'offset_ms': 2500}).json()
+    assert r['offset_ms'] == 2500 and r['rate'] == 1.06 and r['offset_source'] == 'manual'
+
+
+def test_new_recording_drops_an_old_auto_fit(music, lrclib, monkeypatch):  # noqa: F811
+    from bt.db import session
+    music.get('/api/music/search', params={'q': 'abba'})
+    vid = SEED['video_id']
+    music.get(f'/api/music/lyrics/{vid}')
+    with session() as s:
+        lyrics.set_offset(s, vid, 4000, 'auto', 1.05)
+    monkeypatch.setattr(lyrics, 'lookup', lambda *a: {'source': 'lrclib', 'source_id': 77, 'synced': True,
+                                                      'lines': [{'t': 1, 'text': 'x'}], 'plain': '', 'duration': 1})
+    r = music.get(f'/api/music/lyrics/{vid}', params={'refresh': True}).json()
+    assert r['rate'] == 1.0 and r['offset_ms'] == 0

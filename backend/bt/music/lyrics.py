@@ -145,6 +145,11 @@ def get(s: Session, video_id: str, refresh: bool = False) -> MusicLyrics:
         found, status = None, 'error'
     row = s.get(MusicLyrics, video_id) or MusicLyrics(video_id=video_id)
     if found:
+        if row.source_id and row.source_id != found['source_id']:
+            # Another recording's timing: an auto-sync fitted to the old one no longer applies.
+            row.rate = 1.0
+            if row.offset_source == 'auto':
+                row.offset_ms, row.offset_source = 0, ''
         row.status, row.source, row.source_id = 'found', found['source'], found['source_id']
         row.synced, row.lines, row.plain, row.duration = found['synced'], found['lines'], found['plain'], found['duration']
     else:
@@ -163,14 +168,19 @@ def get(s: Session, video_id: str, refresh: bool = False) -> MusicLyrics:
 
 def as_dict(row: MusicLyrics) -> dict:
     return {'video_id': row.video_id, 'status': row.status, 'source': row.source, 'synced': row.synced,
-            'lines': row.lines or [], 'plain': row.plain, 'offset_ms': row.offset_ms, 'duration': row.duration,
+            'lines': row.lines or [], 'plain': row.plain, 'offset_ms': row.offset_ms, 'rate': row.rate or 1.0,
+            'duration': row.duration,
             'offset_source': row.offset_source}
 
 
-def set_offset(s: Session, video_id: str, offset_ms: int, source: str = 'manual') -> MusicLyrics:
+def set_offset(s: Session, video_id: str, offset_ms: int, source: str = 'manual',
+               rate: float | None = None) -> MusicLyrics:
+    """Shift the lyrics; auto-sync also sets the speed ratio, a manual nudge keeps it."""
     row = s.get(MusicLyrics, video_id)
     if not row or row.status != 'found':
         raise ValueError('no lyrics to shift')
+    if rate is not None:
+        row.rate = min(RATE_MAX, max(RATE_MIN, float(rate)))
     row.offset_ms = max(-MAX_OFFSET_MS, min(MAX_OFFSET_MS, int(offset_ms)))
     row.offset_source = source
     s.add(row)
@@ -205,28 +215,121 @@ def parse_vtt(vtt: str) -> list[dict]:
     return out
 
 
-def align_offset(lines: list[dict], cues: list[dict]) -> int | None:
-    """How far the lyrics must shift to match the transcript (ms), from the median of confident matches.
+WORD_MS = 450            # typical time to sing one word
+LINE_MAX_MS = 6000       # a lyric line is assumed sung within this long when estimating word times
+MIN_LINES = 3            # distinct lyric lines that must agree before a shift is trusted
 
-    Each lyric line is matched to the transcript cue that shares most of its words (Jaccard >= 0.5) and that
-    starts within two minutes of it. None when fewer than three lines match: then nothing is trustworthy."""
-    def words(t):
-        return set(norm(t).split())
-    deltas = []
-    for ln in lines:
-        w = words(ln['text'])
-        if len(w) < 3:
+
+def _timeline(cues: list[dict]) -> list[tuple[int, str]]:
+    """Transcript words with an estimated time each.
+
+    Speech-to-text returns whole chunks (often 6-12 s, cut at pauses) without word timing, so a word's
+    time is interpolated from its position inside its cue. Music confuses the recogniser: non-Latin
+    hallucinations normalise away to nothing, and filler runs ("oh, oh, oh ...", the same word three or
+    more times in a row) are dropped."""
+    out: list[tuple[int, str]] = []
+    for c in cues:
+        toks = norm(c['text']).split()
+        if not toks:
             continue
-        best, score = None, 0.0
-        for c in cues:
-            if abs(c['t'] - ln['t']) > 120_000:
-                continue
-            cw = words(c['text'])
-            j = len(w & cw) / len(w | cw) if cw else 0
-            if j > score:
-                best, score = c, j
-        if best and score >= 0.5:
-            deltas.append(best['t'] - ln['t'])
-    if len(deltas) < 3:
+        span = max(1, c['end'] - c['t'])
+        for i, w in enumerate(toks):
+            run = (i >= 2 and toks[i - 1] == w == toks[i - 2]) or (i + 2 < len(toks) and toks[i + 1] == w == toks[i + 2]) \
+                or (0 < i < len(toks) - 1 and toks[i - 1] == w == toks[i + 1])
+            if not run:
+                out.append((c['t'] + int(span * (i + 0.5) / len(toks)), w))
+    return out
+
+
+def anchors(lines: list[dict], cues: list[dict]) -> list[tuple[int, int, int]]:
+    """(lyric line, lyric time ms, video time ms) for every word pair of a lyric line that also occurs, in
+    order, in the transcript. A chorus yields one candidate per repeat; only one of them fits the rest."""
+    words = _timeline(cues)
+    where: dict[tuple[str, str], list[int]] = {}
+    for j in range(len(words) - 1):
+        where.setdefault((words[j][1], words[j + 1][1]), []).append(j)
+    out = []
+    for n, ln in enumerate(lines):
+        toks = norm(ln['text']).split()
+        if len(toks) < 2:
+            continue
+        nxt = lines[n + 1]['t'] if n + 1 < len(lines) else ln['t'] + LINE_MAX_MS
+        # A line takes about WORD_MS per word to sing, and never runs into the next one.
+        dur = max(500, min(LINE_MAX_MS, nxt - ln['t'], len(toks) * WORD_MS))
+        for k in range(len(toks) - 1):
+            sung = ln['t'] + int(dur * (k + 0.5) / len(toks))
+            for j in where.get((toks[k], toks[k + 1]), []):
+                if abs(words[j][0] - sung) <= MAX_OFFSET_MS:
+                    out.append((n, sung, words[j][0]))
+    return out
+
+
+RATE_MIN, RATE_MAX = 0.85, 1.2  # a music-video edit runs at most this much slower or faster than the record
+FIT_MS = 1800                    # an anchor this close to the fitted line agrees with it
+
+
+def _support(votes, rate: float, offset: float) -> tuple[int, list]:
+    agree = [v for v in votes if abs(v[2] - (rate * v[1] + offset)) <= FIT_MS]
+    return len({v[0] for v in agree}), agree
+
+
+def fit(lines: list[dict], cues: list[dict], hint_rate: float = 1.0) -> dict | None:
+    """Map lyric time to video time as video = rate * lyric + offset.
+
+    Most videos only start late or early (rate 1). Some are a different edit or speed of the record, and
+    then the shift grows through the song, so one offset fits nowhere. Constant shifts and every line
+    through two anchors on distant lines are tried; the one most distinct lyric lines agree with wins
+    (RANSAC-style, so a repeated chorus cannot outvote the song), and a least-squares pass over those
+    lines refines it. A speed other than 1 must explain clearly more lines, unless the video's length
+    already says it runs slower or faster (`hint_rate` = video length / lyrics length, 3 % or more off):
+    then a speed near that hint only has to match as many lines. None when fewer than MIN_LINES agree."""
+    votes = anchors(lines, cues)
+    if len({v[0] for v in votes}) < MIN_LINES:
         return None
-    return int(statistics.median(deltas))
+    shifts = sorted(v[2] - v[1] for v in votes)
+    best = (0, 1.0, 0.0)
+    for sh in shifts[::max(1, len(shifts) // 400)]:
+        n, _ = _support(votes, 1.0, sh)
+        if n > best[0]:
+            best = (n, 1.0, float(sh))
+    flat = best
+    sample = votes[::max(1, len(votes) // 120)]
+    for i, a in enumerate(sample):
+        for b in sample[i + 1:]:
+            if a[0] == b[0] or abs(b[1] - a[1]) < 30_000:
+                continue
+            rate = (b[2] - a[2]) / (b[1] - a[1])
+            if not RATE_MIN <= rate <= RATE_MAX:
+                continue
+            off = a[2] - rate * a[1]
+            n, _ = _support(votes, rate, off)
+            if n > best[0]:
+                best = (n, rate, off)
+    hinted = abs(hint_rate - 1) >= 0.03 and abs(best[1] - hint_rate) <= 0.04
+    if best[1] != 1.0 and best[0] < flat[0] + (0 if hinted else max(2, flat[0] // 5)):
+        best = flat  # a speed change must earn its keep
+    n, rate, off = best
+    if n < MIN_LINES:
+        return None
+    _, agree = _support(votes, rate, off)
+    per_line: dict[int, list] = {}
+    for v in agree:
+        per_line.setdefault(v[0], []).append(v)
+    pts = [(statistics.median(v[1] for v in vs), statistics.median(v[2] for v in vs)) for vs in per_line.values()]
+    if rate == 1.0 or len(pts) < 4:
+        rate, off = 1.0, statistics.median(y - x for x, y in pts)
+    else:
+        mx, my = statistics.fmean(x for x, _ in pts), statistics.fmean(y for _, y in pts)
+        sxx = sum((x - mx) ** 2 for x, _ in pts)
+        if sxx > 0:
+            rate = min(RATE_MAX, max(RATE_MIN, sum((x - mx) * (y - my) for x, y in pts) / sxx))
+            off = my - rate * mx
+    if abs(off) > MAX_OFFSET_MS:
+        return None  # clamping the intercept alone would skew every line
+    return {'offset_ms': int(round(off)), 'rate': round(rate, 4), 'lines': len(pts)}
+
+
+def align_offset(lines: list[dict], cues: list[dict]) -> int | None:
+    """The constant part of the fit, for callers that only shift."""
+    f = fit(lines, cues)
+    return f['offset_ms'] if f else None

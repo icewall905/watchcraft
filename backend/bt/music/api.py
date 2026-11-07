@@ -13,6 +13,7 @@ from ..db import session
 from ..hub import ai
 from .. import subtitle_jobs
 from . import dj, lyrics, service, yt
+from .models import MusicTrack
 
 router = APIRouter(prefix='/music', tags=['music'], dependencies=[Depends(require_hub)])
 
@@ -277,9 +278,12 @@ def lyrics_listen(video_id: str, pid: int = Depends(require_hub)):
         with session() as s:
             row = lyrics.get(s, video_id)
             if row.status == 'found' and row.synced:
-                delta = lyrics.align_offset(row.lines, tr['lines'])
-                if delta is not None:
-                    row = lyrics.set_offset(s, video_id, delta, 'auto')
+                track = s.get(MusicTrack, video_id)
+                hint = track.duration_s / row.duration if track and track.duration_s and row.duration else 1.0
+                f = lyrics.fit(row.lines, tr['lines'], hint)
+                if f is not None:
+                    row = lyrics.set_offset(s, video_id, f['offset_ms'], 'auto', f['rate'])
                     out['aligned'] = True
+                    out['matched_lines'] = f['lines']
             out['lyrics'] = lyrics.as_dict(row)
     return out

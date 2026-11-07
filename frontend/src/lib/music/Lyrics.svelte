@@ -31,6 +31,7 @@
 	let data = $state<Lyrics | null>(null);
 	let loading = $state(false);
 	let offset = $state(0);
+	let rate = $state(1); // video time = rate × lyric time + offset (auto-sync finds edits that run slower or faster)
 	let now = $state(0); // playback position in ms, read every animation frame
 	let listening = $state(false);
 	let listenNote = $state('');
@@ -47,6 +48,7 @@
 		const hit = cache.get(videoId);
 		data = hit ?? null;
 		offset = hit?.offset_ms ?? 0;
+		rate = hit?.rate || 1;
 		if (hit && hit.status !== 'error') {
 			loading = false;
 			const st = hit.transcript?.status;
@@ -63,6 +65,7 @@
 			cache.set(videoId, r);
 			data = r;
 			offset = r.offset_ms;
+			rate = r.rate || 1;
 			const st = r.transcript?.status;
 			if (st === 'queued' || st === 'running') poll(videoId, my);
 		} catch {
@@ -82,7 +85,7 @@
 		return data.transcript?.lines ?? [];
 	});
 	const fromTranscript = $derived(!!data && !(data.status === 'found' && data.synced) && timed.length > 0);
-	const at = $derived(now - (fromTranscript ? 0 : offset));
+	const at = $derived(fromTranscript ? now : (now - offset) / rate);
 	const idx = $derived.by(() => {
 		let lo = 0, hi = timed.length - 1, found = -1;
 		while (lo <= hi) {
@@ -102,7 +105,8 @@
 		const ln = timed[idx];
 		return Math.max(0, Math.min(1, (at - ln.t) / Math.max(1, lineEnd(idx) - ln.t)));
 	});
-	const waitingFor = $derived(idx < 0 && timed.length ? Math.ceil((timed[0].t - at) / 1000) : 0);
+	// Counted in video seconds: lyric time runs `rate` times slower or faster than the video.
+	const waitingFor = $derived(idx < 0 && timed.length ? Math.ceil(((timed[0].t - at) * (fromTranscript ? 1 : rate)) / 1000) : 0);
 
 	function frame() {
 		if (el) now = el.currentTime * 1000;
@@ -141,7 +145,9 @@
 			}
 			if (r.aligned && r.lyrics) {
 				offset = r.lyrics.offset_ms;
-				toast.success(`🎯 Lyrics synced (${(offset / 1000).toFixed(1)} s)`);
+				rate = r.lyrics.rate || 1;
+				const speed = Math.abs(rate - 1) >= 0.005 ? `, video ${rate > 1 ? 'slower' : 'faster'} ×${rate.toFixed(3)}` : '';
+				toast.success(`🎯 Lyrics synced on ${r.matched_lines ?? 'several'} lines (${offset >= 0 ? '+' : ''}${(offset / 1000).toFixed(1)} s${speed})`);
 			} else if (tr.status === 'queued' || tr.status === 'running') {
 				listenNote = tr.status === 'queued' ? 'Waiting for the transcriber…' : `Listening… ${Math.round(tr.progress)}%`;
 				poll(videoId, my);
@@ -193,7 +199,7 @@
 				<span class="src" title="No timed lyrics were found, so these are what the app heard">👂 heard by the app</span>
 			{:else}
 				<button class="t" use:focusable aria-label="Lyrics earlier" onclick={() => nudge(-500)}>⏪</button>
-				<span class="off" title="Lyrics timing shift">{offset >= 0 ? '+' : ''}{(offset / 1000).toFixed(1)}s</span>
+				<span class="off" title="Lyrics timing shift">{offset >= 0 ? '+' : ''}{(offset / 1000).toFixed(1)}s{Math.abs(rate - 1) >= 0.005 ? ` ×${rate.toFixed(2)}` : ''}</span>
 				<button class="t" use:focusable aria-label="Lyrics later" onclick={() => nudge(500)}>⏩</button>
 				<button class="t" use:focusable disabled={listening} title="Listen to the song and line the lyrics up automatically" onclick={() => listen()}>{listening ? listenNote || '🎯…' : '🎯 Auto-sync'}</button>
 			{/if}

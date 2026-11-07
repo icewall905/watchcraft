@@ -73,5 +73,6 @@ class MusicLyrics(SQLModel, table=True):
     plain: str = ''
     duration: float = 0      # length of the recording the timing was made for (s)
     offset_ms: int = 0       # shift applied when playing: + means the words come later
+    rate: float = 1.0        # video time = rate * lyric time + offset (a slower or faster edit of the song)
     offset_source: str = ''  # manual | auto
     fetched_at: float = 0

@@ -24,9 +24,9 @@ export type LyricLine = { t: number; end?: number; text: string; words?: { t: nu
 export type Transcript = { status: string; progress: number; enabled: boolean; lines: LyricLine[] };
 export type Lyrics = {
 	video_id: string; status: 'found' | 'missing' | 'error'; source: string; synced: boolean; lines: LyricLine[]; plain: string;
-	offset_ms: number; offset_source: string; duration: number; transcript?: Transcript;
+	offset_ms: number; rate: number; offset_source: string; duration: number; transcript?: Transcript;
 };
-export type ListenResult = { transcript: Transcript; aligned: boolean; lyrics: Lyrics | null };
+export type ListenResult = { transcript: Transcript; aligned: boolean; lyrics: Lyrics | null; matched_lines?: number };
 export type DjResult = { line: string; tracks: Track[]; source: 'ai' | 'radio' };
 
 const M = '/music';
