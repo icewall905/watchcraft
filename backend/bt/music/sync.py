@@ -149,6 +149,9 @@ def _run(video_id: str, token: str, stop: threading.Event) -> None:
         lines, lyr_dur = list(row.lines or []), row.duration
         before = (row.offset_ms, row.rate, row.offset_source)  # a hand nudge while listening wins
         hint = track.duration_s / lyr_dur if track and track.duration_s and lyr_dur else 1.0
+    full = _full_transcript(video_id)
+    if full:  # the app transcribed the whole song before: fit on that at once, no listening needed
+        return _finish(video_id, token, lines, full, hint, before)
     cfg = stt.config()
     if not subtitle_jobs.enabled(cfg):
         return _fail(video_id, token, 'Speech-to-text is turned off in Settings, so songs cannot be listened to.')
@@ -189,9 +192,23 @@ def _run(video_id: str, token: str, stop: threading.Event) -> None:
                             and abs(f['rate'] - last['rate']) < 0.003 and f['lines'] >= 6:
                         break  # two fits in a row agree: settled
                     last = f
-    f = lyrics.fit(lines, sorted(cues, key=lambda c: c['t']), hint)
-    if not f and busy and not heard:
+    if busy and not heard:
         return _fail(video_id, token, 'The speech service is busy right now. Try again in a minute.')
+    return _finish(video_id, token, lines, sorted(cues, key=lambda c: c['t']), hint, before)
+
+
+def _full_transcript(video_id: str) -> list[dict]:
+    """Cues of a finished whole-song transcript from the subtitle queue, if there is one."""
+    from ..models import GeneratedSubtitles
+    with session() as s:
+        row = s.get(GeneratedSubtitles, video_id)
+        if row and row.status == 'ready' and subtitle_jobs.usable_vtt(row.vtt):
+            return lyrics.parse_vtt(row.vtt)
+    return []
+
+
+def _finish(video_id: str, token: str, lines: list[dict], cues: list[dict], hint: float, before: tuple) -> None:
+    f = lyrics.fit(lines, cues, hint)
     if not f:
         return _fail(video_id, token, "Couldn't hear enough of the words to line them up — nudge them by hand.")
     sign = '+' if f['offset_ms'] >= 0 else ''
@@ -201,9 +218,10 @@ def _run(video_id: str, token: str, stop: threading.Event) -> None:
     with session() as s:
         row = s.get(MusicLyrics, video_id)
         if row and (row.offset_ms, row.rate, row.offset_source) != before:
-            return _set(video_id, token, state='done', progress=100, ended=time.time(), kept=True,
-                        message=f"You set the timing yourself meanwhile, so it was kept "
-                                f"(auto-sync found {sign}{f['offset_ms'] / 1000:.1f} s).")
+            _set(video_id, token, state='done', progress=100, ended=time.time(), kept=True,
+                 message=f"You set the timing yourself meanwhile, so it was kept "
+                         f"(auto-sync found {sign}{f['offset_ms'] / 1000:.1f} s).")
+            return
         lyrics.set_offset(s, video_id, f['offset_ms'], 'auto', f['rate'])
     speed = f" · video ×{f['rate']:.3f}" if abs(f['rate'] - 1) >= 0.005 else ''
     _set(video_id, token, state='done', progress=100, ended=time.time(), offset_ms=f['offset_ms'], rate=f['rate'],

@@ -420,3 +420,20 @@ def test_new_recording_drops_an_old_auto_fit(music, lrclib, monkeypatch):  # noq
                                                       'lines': [{'t': 1, 'text': 'x'}], 'plain': '', 'duration': 1})
     r = music.get(f'/api/music/lyrics/{vid}', params={'refresh': True}).json()
     assert r['rate'] == 1.0 and r['offset_ms'] == 0
+
+
+def test_quick_sync_uses_an_existing_full_transcript_at_once(music, lrclib, monkeypatch):  # noqa: F811
+    from bt.db import session
+    from bt.models import GeneratedSubtitles
+    music.get('/api/music/search', params={'q': 'abba'})
+    vid = SEED['video_id']
+    music.get(f'/api/music/lyrics/{vid}')
+    calls = []
+    _quick_sync_fakes(monkeypatch, lambda n: 'x', calls)
+    with session() as s:
+        s.add(GeneratedSubtitles(video_id=vid, status='ready', vtt='WEBVTT\n\n00:00:29.830 --> 00:00:31.000\nShe was more like a beauty queen\n\n'
+                                 '00:00:34.960 --> 00:00:36.000\nI said dont mind\n\n00:01:12.000 --> 00:01:14.000\nBillie Jean is not my lover\n'))
+        s.commit()
+    r = music.post(f'/api/music/lyrics/{vid}/listen', json={}).json()
+    assert r['job']['state'] == 'done' and calls == []  # nothing transcribed again
+    assert abs(r['lyrics']['offset_ms'] - 2000) < 800
