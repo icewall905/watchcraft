@@ -13,7 +13,7 @@ export const TV: NavEntry = entry('/tv', 'TV', 'tv', undefined, (p) => p === '/'
 export const DISCOVER = entry('/discover', 'Discover', 'compass', 'discover_unread');
 export const LIBRARY = entry('/library', 'Library', 'library');
 export const SHORTS = entry('/shorts', 'Feeds', 'play');
-export const MUSIC = entry('/music', 'Music', 'music');
+export const MUSIC = entry('/music', 'Music Videos', 'music');
 export const ALERTS = entry('/alerts', 'Alerts', 'alert', 'alerts_new');
 export const SETTINGS = entry('/settings', 'Settings', 'settings');
 
@@ -32,7 +32,7 @@ export const TV_DRAWER: DrawerEntry[] = [
 	{ href: '/', label: 'TV Home', icon: 'home', active: (p) => p === '/' || p === '/tv' || p.startsWith('/category/') || p.startsWith('/channel/') },
 	{ href: '/search', label: 'Video search', icon: 'search', active: (p) => p.startsWith('/search') },
 	{ href: '/subscriptions', label: 'Subscriptions', icon: 'subs', active: (p) => p.startsWith('/subscriptions') },
-	{ href: '/music', label: 'Music', icon: 'music', active: (p) => p === '/music' || p.startsWith('/music/') },
+	{ href: '/music', label: 'Music Videos', icon: 'music', active: (p) => p === '/music' || p.startsWith('/music/') },
 	{ href: '/settings?tab=categories', label: 'Playlists', icon: 'list', active: (p, s) => p.startsWith('/settings') && s.includes('tab=categories') },
 	{ href: '/today', label: 'Hub', icon: 'compass', active: (p) => p === '/today' || p.startsWith('/today/') },
 	{ href: '/settings', label: 'Settings', icon: 'settings', active: (p, s) => p.startsWith('/settings') && !s.includes('tab=categories') }

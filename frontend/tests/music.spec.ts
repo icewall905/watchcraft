@@ -28,7 +28,7 @@ test.beforeAll(async ({ request }) => resetBackend(request));
 test('music page shows loved and fresh shelves and the nav entry', async ({ page }) => {
 	await fixture(page);
 	await freshPage(page, '/music');
-	await expect(page.getByRole('link', { name: 'Music' }).first()).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Music Videos' }).first()).toBeVisible();
 	await expect(page.getByRole('heading', { name: '💖 Songs you love' })).toBeVisible();
 	await expect(page.getByRole('heading', { name: '🌱 New for you' })).toBeVisible();
 	await expect(page.getByText('Titanium')).toBeVisible();

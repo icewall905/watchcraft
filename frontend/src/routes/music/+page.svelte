@@ -237,7 +237,7 @@
 	const manualMixes = $derived(mixes.filter((m) => m.kind === 'manual')); // curated mixes get rebuilt, so hand-picks go in your own
 </script>
 
-<svelte:head><title>Music · WatchCraft</title></svelte:head>
+<svelte:head><title>Music Videos · WatchCraft</title></svelte:head>
 
 {#snippet grid(tracks: Track[], source: string)}
 	<div class="grid">
@@ -266,7 +266,7 @@
 <div class="music" class:docked={player.active}>
 	<header class="top">
 		<div class="title">
-			<h1>🎶 Music</h1>
+			<h1>🎶 Music Videos</h1>
 			{#if offline && offline.wanted}
 				<span class="stored" title="Favourites, mixes and suggestions are stored on the server so they play without YouTube">💾 {offline.saved} of {offline.wanted} songs saved offline{offline.pending ? ` · ${offline.pending} on the way` : ''}</span>
 			{/if}
