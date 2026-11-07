@@ -1,6 +1,23 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — karaoke lyrics and saved mixes (`dc6d3b3`, 2026-11-07)
+
+- Music karaoke: LRCLIB timed lyrics (version closest to the video length), sweep overlay, shared per-song
+  timing nudge, auto-sync/transcription through the existing STT subtitle jobs, Web Audio vocal reducer. Save what
+  is playing as a mix, keep a copy of curated/radio mixes, rename; front page opens with recent mixes and plays.
+  New table `musiclyrics`; `musicmix.last_played_at` added by `init_db` (guarded ALTER). Backend 1018 passed/6
+  skipped; music browser tests 10/10; independent review approved after two fixes.
+- Backup `/root/compose/watchcraft-backups/20261107-karaoke-dc6d3b3` (online DB, integrity ok, source, config
+  hashes); rollback image `watchcraft:rollback-20261107-karaoke-a487243`. rsync (checksum) changed exactly the
+  commit's 13 files; config hashes unchanged. Recreated api/worker/downloader/subtitles; all healthy, health 200.
+- Checked on prod: `last_played_at` column added, existing music rows kept (1 mix, 3 favourites, 2 plays),
+  `quick_check` ok; LRCLIB reachable from the container (Billie Jean: 67 timed lines, 294 s, 0.2 s); STT enabled;
+  bundle serves the karaoke view.
+- Rollback: tag `watchcraft:rollback-20261107-karaoke-a487243` as `watchcraft:latest`, restore `source.tar.gz`,
+  run the three-file Compose `up -d --no-build --force-recreate --no-deps --wait bt-api bt-worker bt-downloader
+  bt-subtitles`, restore `DEPLOYED_COMMIT`. The older image ignores `musiclyrics` and the extra column.
+
 ## Deployment record — Music section with live DJ and offline songs (`a487243`, 2026-11-07)
 
 - New `/music` (Watch section, Hub-gated): YouTube Music official videos only (InnerTube search/radio,
