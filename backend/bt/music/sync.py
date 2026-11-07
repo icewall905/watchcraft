@@ -31,6 +31,7 @@ from .models import MusicLyrics, MusicTrack
 log = logging.getLogger(__name__)
 
 SAMPLES = 10          # at most this many chunks are transcribed
+SAMPLES_SPEED = 16    # ... when the video's length suggests it runs slower or faster than the lyrics
 MIN_SAMPLES = 4       # before an early stop is considered
 STEADY_MS = 400       # two fits this close (and same speed) mean the answer is settled
 KEEP_S = 3600
@@ -158,7 +159,8 @@ def _run(video_id: str, token: str, stop: threading.Event) -> None:
         directory = Path(temp)
         source = _audio(video_id, directory, stop)
         duration = subtitle_jobs.normalize(source, directory / 'song.wav', lambda: None, stop)
-        spots = positions(duration)
+        # A video whose length suggests another speed gets more samples: the drift shows only across the song.
+        spots = positions(duration, n=SAMPLES_SPEED if abs(hint - 1) >= 0.03 else SAMPLES)
         cues: list[dict] = []
         last = None
         busy = heard = 0
@@ -180,7 +182,8 @@ def _run(video_id: str, token: str, stop: threading.Event) -> None:
                     continue
                 if text:
                     cues.append({'t': int(begin * 1000), 'end': int(finish * 1000), 'text': text})
-                if i + 1 >= MIN_SAMPLES:
+                # A video whose length says it runs at another speed needs every sample to see the drift.
+                if i + 1 >= MIN_SAMPLES and abs(hint - 1) < 0.03:
                     f = lyrics.fit(lines, sorted(cues, key=lambda c: c['t']), hint)
                     if f and last and abs(f['offset_ms'] - last['offset_ms']) <= STEADY_MS \
                             and abs(f['rate'] - last['rate']) < 0.003 and f['lines'] >= 6:

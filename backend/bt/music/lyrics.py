@@ -282,7 +282,7 @@ def fit(lines: list[dict], cues: list[dict], hint_rate: float = 1.0) -> dict | N
     (RANSAC-style, so a repeated chorus cannot outvote the song), and a least-squares pass over those
     lines refines it. A speed other than 1 must explain clearly more lines, unless the video's length
     already says it runs slower or faster (`hint_rate` = video length / lyrics length, 3 % or more off):
-    then a speed near that hint only has to match as many lines. None when fewer than MIN_LINES agree."""
+    then a speed near that hint only has to match one line more. None when fewer than MIN_LINES agree."""
     votes = anchors(lines, cues)
     if len({v[0] for v in votes}) < MIN_LINES:
         return None
