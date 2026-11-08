@@ -1,6 +1,25 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — News paging, per-interest refill, article upgrade, folded shelf (`1935ec2..4cd898e`, 2026-11-08)
+
+- T-120 `1935ec2`: the capture lane re-reads recent `web` captures of news curators (one per 120 s, only when no
+  capture job is due) and promotes those whose markup proves article identity; audits news curators that find
+  no articles. T-121 `12143d4`: boost per interest (unseen/fresh shares), never saturated ones, quiet curators back
+  off. T-122 + UI `4cd898e`: server-paged News (topic/mute filters in SQL, Unicode casefold, Latest keyset, For you
+  per-visit ranking with late arrivals appended, interest balance, outlet/discussion counts); Today shelf folded
+  into a side widget. No schema change.
+- Backup `/root/compose/watchcraft-backups/20261108-news3-4cd898e` (online DB, quick_check ok, profile hash,
+  config hashes, previous source); rollback images `watchcraft:rollback-20261108-news3-api`/`-worker`, `rollback.sh`.
+  rsync (checksum, no `--delete`) changed exactly the 21 files of `c90a271..4cd898e`.
+- Network-isolated run of the new image on a copy, profile 2 in-process: Latest 15 pages/429 stories, For you 14
+  pages/411 stories, 0 duplicates, ≤0.08 s per page; shelf 0.05 s (General News saturated/not boosted; four other
+  interests underserved, quiet backoff 2–24 h); upgrade dry run 118 web captures, 65 eligible. Copy removed.
+- Image `sha256:18c73050056dd9380ad39c87ac2ee8dfeef4f251e59f9007290fae679f98d4d3`; recreated `bt-api`/`bt-worker`,
+  zero restarts, no tracebacks. Health 200 local and public; `/news`, `/today`, `/` 200; bad cursor 422; new
+  bundle present; quick_check ok; profiles/PINs hash and `.env`/`compose.host.yaml` unchanged.
+- Acceptance pending: V-079 (fresh mix per visit), V-080 (article upgrade yield and per-interest refill on prod).
+
 ## Deployment record — News For you mix per visit (`c90a271`, 2026-11-08)
 
 - News gets a For you tab (default) that leads each visit with stories not shown before; one visit (activity gap
