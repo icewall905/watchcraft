@@ -3,6 +3,7 @@ import json
 import logging
 import subprocess
 import time
+from urllib.parse import urlsplit
 
 from sqlalchemy import func, text, update, or_
 from sqlmodel import select
@@ -29,6 +30,32 @@ DOCUMENT_TYPES = ('application/pdf',)
 VIDEO_TYPES = ('video/mp4', 'video/webm')
 VIDEO_MAX_BYTES = 25_000_000
 VIDEO_MAX_SECONDS = 180
+
+
+def _captured_page_identity(item_type, author, publisher, published_at, page, fetched_url,
+                            *, social_post=False):
+    """Return conservative identity updates from a successfully read HTML page.
+
+    Capture must not turn a social post (including one with a linked article) into
+    the linked publisher's item.  For ordinary items, structured article/news
+    evidence may promote a generic web discovery; existing identity values win.
+    """
+    if social_post or not isinstance(page, dict):
+        return item_type, author, publisher, published_at, False
+    page_type = page.get('type')
+    promoted = item_type == 'web' and page_type in ('article', 'news')
+    new_type = page_type if promoted else item_type
+    new_author = author or (page.get('author') or '')
+    new_published = published_at if published_at is not None else page.get('published_at')
+    new_publisher = publisher or (page.get('publisher') or '')
+    # A hostname is a useful, stable display fallback only once the page has
+    # positively identified itself as an article/news page.
+    if not new_publisher and promoted:
+        host = (urlsplit(fetched_url or '').hostname or '').lower()
+        if host.startswith('www.'):
+            host = host[4:]
+        new_publisher = host
+    return new_type, new_author, new_publisher, new_published, promoted
 
 
 def validate_video(data, mime):
@@ -192,6 +219,9 @@ def run(pid, iid, lease):
     errors, summary_status = [], 'pending'
     primary_error = ''
     page = None
+    page_identity = None
+    promoted = False
+    promote_profiles = []
     links = []
     has_document = False
     is_pdf = False
@@ -243,6 +273,9 @@ def run(pid, iid, lease):
                 truncated = len(body) >= TEXT_LIMIT
                 if not body: raise ValueError('No readable text was found on this page.')
                 image = page.get('image') or image
+                page_identity = _captured_page_identity(
+                    typ, '', '', None, page, final,
+                    social_post=social_post)
     except Exception as e:  # noqa: BLE001
         primary_error = _safe_error(e)
         errors.append(primary_error)
@@ -322,6 +355,26 @@ def run(pid, iid, lease):
             review.status, review.version = cleanup['status'], article_cleanup.VERSION
             review.removed, review.reviewed_at = cleanup['removed'], time.time()
             s.add(review)
+        if page_identity:
+            # Merge into the freshly loaded row: another scout/profile may have
+            # learned identity while this worker was fetching the page.
+            page_type, page_author, page_publisher, page_published, _ = page_identity
+            was_type = item.type
+            if not social_post and item.type == 'web' and page_type in ('article', 'news'):
+                item.type = page_type
+            item.author = item.author or page_author
+            item.publisher = item.publisher or page_publisher
+            if item.published_at is None:
+                item.published_at = page_published
+            promoted = was_type == 'web' and item.type in ('article', 'news')
+            if promoted:
+                promote_profiles = set(s.exec(select(CuratorDiscovery.profile_id).where(
+                    CuratorDiscovery.item_id == iid)).all())
+                promote_profiles.update(s.exec(select(ItemState.profile_id).where(
+                    ItemState.item_id == iid)).all())
+                promote_profiles = [profile_id for profile_id in promote_profiles
+                                    if (profile := s.get(Profile, profile_id))
+                                    and profile.role in ('adult', 'admin') and hub_allowed(s, profile_id)]
         if body:
             item.body = body
             if linked_url: item.meta = {**item.meta, 'post_body': post_body}
@@ -334,6 +387,15 @@ def run(pid, iid, lease):
         else:
             job.status, job.next_run = ('partial' if errors and (body or has_document or typ == 'video') else 'failed') if errors else 'complete', 0
         s.add(job); s.commit()
+    if promoted:
+        # Queue the normal profile-scoped master pass after the item commit. It
+        # rejudges the promoted item without touching manual verdicts.
+        try:
+            from .master import schedule as master
+            for profile_id in promote_profiles:
+                master.mark(profile_id)
+        except Exception:  # noqa: BLE001 — capture success must survive queue issues
+            log.exception('could not queue master curator after article promotion for %s', iid)
 
 
 def dispatch():

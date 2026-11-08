@@ -8,7 +8,9 @@ from sqlmodel import SQLModel
 from bt import db
 from bt.db import init_db, session
 from bt.hub import capture
-from bt.hub.models import CaptureJob, CapturedAsset, CapturedPage, ContentItem, ItemState
+from bt.hub.models import (CaptureJob, CapturedAsset, CapturedPage, ContentItem, CuratorDiscovery,
+                           ItemState, MasterQueue)
+from bt.models import Profile
 
 PDF = b'%PDF-1.4\nscanned document'
 OCR_TEXT = 'Recovered evidence from the scanned document.'
@@ -47,6 +49,7 @@ def test_lemmy_linked_article_preserves_message_and_summarizes_article(monkeypat
     with session() as s:
         item = s.get(ContentItem, iid)
         item.type, item.provider, item.body = 'news', 'lemmy', 'User message context'
+        item.author, item.publisher, item.published_at = 'Community author', 'Community', 77.0
         item.meta = {'social_post': True, 'article_url': article_url}
         s.add(item); s.commit()
     article = 'Full article evidence. ' * 600 + 'Essential article ending.'
@@ -70,6 +73,7 @@ def test_lemmy_linked_article_preserves_message_and_summarizes_article(monkeypat
         item, job = s.get(ContentItem, iid), s.get(CaptureJob, (1, iid))
         assert 'User message context' in item.body
         assert item.meta['post_body'] == 'User message context'
+        assert (item.author, item.publisher, item.published_at) == ('Community author', 'Community', 77.0)
         assert job.status == ('partial' if unavailable else 'complete')
         if unavailable:
             assert item.body == 'User message context'
@@ -193,6 +197,157 @@ def test_stored_feed_excerpt_does_not_suppress_rescue_or_get_erased(monkeypatch)
     with session() as s:
         assert s.get(ContentItem, iid).body == 'Existing feed excerpt'
         assert s.get(CaptureJob, (1, iid)).error == 'Offline'
+
+
+def _html_capture(monkeypatch, page):
+    monkeypatch.setattr(capture.curation, 'fetch',
+                        lambda url, **kw: (b'<html>readable</html>', url,
+                                           {'content_type': 'text/html'}))
+    monkeypatch.setattr(capture, 'extract_page', lambda *args: page)
+
+
+def test_readable_structured_article_promotes_web_and_queues_master(monkeypatch):
+    iid = seed()
+    with session() as s:
+        item = s.get(ContentItem, iid)
+        item.type = 'web'
+        s.add(item)
+        s.commit()
+    _html_capture(monkeypatch, {'body': 'A long article body.', 'type': 'article',
+                                'author': 'Ada', 'publisher': '', 'published_at': 1234.0})
+    capture.run(1, iid, 123)
+    with session() as s:
+        item, queue = s.get(ContentItem, iid), s.get(MasterQueue, 1)
+        assert item.type == 'article'
+        assert item.author == 'Ada' and item.publisher == 'example.org'
+        assert item.published_at == 1234.0
+        assert queue is not None
+
+
+def test_readable_generic_page_fills_metadata_without_promotion(monkeypatch):
+    iid = seed()
+    with session() as s:
+        item = s.get(ContentItem, iid)
+        item.type = 'web'
+        s.add(item)
+        s.commit()
+    _html_capture(monkeypatch, {'body': 'A generic page.', 'type': 'web',
+                                'author': 'Page owner', 'publisher': 'Example',
+                                'published_at': 1234.0})
+    capture.run(1, iid, 123)
+    with session() as s:
+        item = s.get(ContentItem, iid)
+        assert item.type == 'web'
+        assert item.author == 'Page owner' and item.publisher == 'Example'
+        assert item.published_at == 1234.0
+        assert s.get(MasterQueue, 1) is None
+
+
+def test_existing_direct_identity_wins_over_captured_page(monkeypatch):
+    iid = seed()
+    with session() as s:
+        item = s.get(ContentItem, iid)
+        item.type, item.author, item.publisher, item.published_at = 'article', 'Known', 'Known Pub', 99.0
+        s.add(item)
+        s.commit()
+    _html_capture(monkeypatch, {'body': 'A refreshed article.', 'type': 'article',
+                                'author': 'Page Author', 'publisher': 'Page Pub',
+                                'published_at': 1234.0})
+    capture.run(1, iid, 123)
+    with session() as s:
+        item = s.get(ContentItem, iid)
+        assert item.type == 'article'
+        assert (item.author, item.publisher, item.published_at) == ('Known', 'Known Pub', 99.0)
+
+
+def test_capture_identity_merge_keeps_concurrent_values(monkeypatch):
+    iid = seed()
+    with session() as s:
+        item = s.get(ContentItem, iid)
+        item.type = 'web'
+        s.add(item)
+        s.commit()
+
+    def fetch(url, **kwargs):
+        with session() as s:
+            item = s.get(ContentItem, iid)
+            item.author, item.publisher, item.published_at = 'Concurrent', 'Concurrent Pub', 88.0
+            s.add(item)
+            s.commit()
+        return b'<html>readable</html>', url, {'content_type': 'text/html'}
+
+    monkeypatch.setattr(capture.curation, 'fetch', fetch)
+    monkeypatch.setattr(capture, 'extract_page', lambda *args: {
+        'body': 'A structured article.', 'type': 'article', 'author': 'Fetched',
+        'publisher': 'Fetched Pub', 'published_at': 1234.0})
+    capture.run(1, iid, 123)
+    with session() as s:
+        item = s.get(ContentItem, iid)
+        assert item.type == 'article'
+        assert (item.author, item.publisher, item.published_at) == ('Concurrent', 'Concurrent Pub', 88.0)
+
+
+def test_shared_promotion_queues_each_discovering_profile(monkeypatch):
+    iid = seed()
+    with session() as s:
+        second = Profile(name='Second', role='adult')
+        s.add(second)
+        s.flush()
+        s.add(CuratorDiscovery(curator_id=2, item_id=iid, profile_id=second.id, query='topic'))
+        item = s.get(ContentItem, iid)
+        item.type = 'web'
+        s.add(item)
+        s.commit()
+        second_id = second.id
+    _html_capture(monkeypatch, {'body': 'Shared article.', 'type': 'news',
+                                'author': '', 'publisher': 'Publisher', 'published_at': 1234.0})
+    capture.run(1, iid, 123)
+    with session() as s:
+        assert s.get(MasterQueue, 1) is not None
+        assert s.get(MasterQueue, second_id) is not None
+
+
+@pytest.mark.parametrize('page', [
+    {'body': '', 'type': 'article', 'author': 'Author', 'publisher': 'Publisher', 'published_at': 1234.0},
+    None,
+])
+def test_empty_or_failed_extraction_cannot_promote_or_fill_identity(monkeypatch, page):
+    iid = seed()
+    with session() as s:
+        item = s.get(ContentItem, iid)
+        item.type = 'web'
+        s.add(item)
+        s.commit()
+    if page is None:
+        monkeypatch.setattr(capture.curation, 'fetch', lambda *a, **kw: (_ for _ in ()).throw(ValueError('Offline')))
+    else:
+        _html_capture(monkeypatch, page)
+    monkeypatch.setattr(capture.rescue, 'rescue', lambda *a, **kw: {'body': '', 'tool': ''})
+    capture.run(1, iid, 123)
+    with session() as s:
+        item = s.get(ContentItem, iid)
+        assert item.type == 'web'
+        assert not item.author and not item.publisher and item.published_at is None
+        assert s.get(MasterQueue, 1) is None
+
+
+def test_capture_preserves_known_identity_and_social_link_identity(monkeypatch):
+    iid = seed()
+    with session() as s:
+        item = s.get(ContentItem, iid)
+        item.type, item.author, item.publisher, item.published_at = 'web', 'Known', 'Known Pub', 99.0
+        item.provider, item.meta = 'lemmy', {'social_post': True, 'article_url': 'https://publisher.example/story'}
+        s.add(item)
+        s.commit()
+    _html_capture(monkeypatch, {'body': 'Linked article body.', 'type': 'article',
+                                'author': 'Publisher Author', 'publisher': 'Publisher',
+                                'published_at': 1234.0})
+    capture.run(1, iid, 123)
+    with session() as s:
+        item = s.get(ContentItem, iid)
+        assert item.type == 'web'
+        assert (item.author, item.publisher, item.published_at) == ('Known', 'Known Pub', 99.0)
+        assert s.get(MasterQueue, 1) is None
 
 
 @pytest.mark.parametrize('truncated', [True, False])
