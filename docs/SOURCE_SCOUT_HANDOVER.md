@@ -1,6 +1,22 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — News For you mix per visit (`c90a271`, 2026-11-08)
+
+- News gets a For you tab (default) that leads each visit with stories not shown before; one visit (activity gap
+  under 30 min) keeps its order and scroll. New table `newsimpression` (additive, created at startup) and
+  `POST /api/hub/news/seen`. Latest stays chronological.
+- Backup `/root/compose/watchcraft-backups/20261108-foryou-c90a271` (online DB, quick_check ok, profile hash,
+  `.env`/`compose.host.yaml` hashes, previous source); rollback images `watchcraft:rollback-20261108-foryou-api`
+  and `-worker`; `rollback.sh` there. rsync (checksum, no `--delete`) changed exactly the 9 files of
+  `dffedb9..c90a271`.
+- Before rollout the new image ran network-isolated on a copy of the backup: table created, quick_check ok,
+  profile 2 For you returned 300 groups (13 publishers in the top 20) in 0.1 s; copy removed afterwards.
+- Rebuilt `watchcraft:latest` (`sha256:e66056ba3ca88ab65f62e2989bd1a830a77dc7cfe915a16e96c70c48df7c1276`), recreated
+  `bt-api`/`bt-worker` only; zero restarts, no tracebacks. Health 200 locally and on `wc.tdgs.org`; `/news`,
+  `/today`, `/` 200; `visit_at=nan` 422; new bundle present; quick_check ok; profiles/PINs hash unchanged;
+  `.env`/`compose.host.yaml` unchanged. Real-visit acceptance is V-079.
+
 ## Deployment record — curator draft no longer blanks the review form (`2eeb9f4`, 2026-11-07)
 
 - Creating a curator reached "Review the proposal" with no form at all. `POST /api/hub/curators/draft` returned
