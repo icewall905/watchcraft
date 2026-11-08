@@ -76,23 +76,23 @@ def test_today_fills_a_larger_edition_from_featured_then_keeper_pool():
     with session() as s:
         # Candidates comfortably exceed the old 20-entry total and each section's
         # featured subset is smaller than its new capacity.
-        stories = [story(s) for _ in range(36)]
-        story_ids = [featured(s, story=st, final=90 + i if i < 20 else 60 + i, tier='feature' if i < 20 else 'keep')
+        stories = [story(s) for _ in range(90)]
+        story_ids = [featured(s, story=st, final=90 + i if i < 20 else 60 + i % 25, tier='feature' if i < 20 else 'keep')
                      for i, st in enumerate(stories)]
-        read_ids = [featured(s, type='project', final=90 + i if i < 12 else 60 + i, tier='feature' if i < 12 else 'keep')
-                    for i in range(28)]
+        read_ids = [featured(s, type='project', final=90 + i if i < 12 else 60 + i % 25, tier='feature' if i < 12 else 'keep')
+                    for i in range(48)]
         meme_ids = [featured(s, type='meme', final=90 + i if i < 8 else 60 + i, tier='feature' if i < 8 else 'keep')
-                    for i in range(15)]
+                    for i in range(20)]
         s.commit()
 
         ed = edition.patch(s, 1)
         assert len(ids(ed, 'lead')) == 1
-        assert len(ids(ed, 'stories')) == 29
-        assert len(ids(ed, 'reads')) == 20
-        assert len(ids(ed, 'memes')) == 10
+        assert len(ids(ed, 'stories')) == 79
+        assert len(ids(ed, 'reads')) == 40
+        assert len(ids(ed, 'memes')) == 16
         selected = [*ids(ed, 'lead'), *ids(ed, 'stories')]
         assert set(selected[:20]) == set(story_ids[:20])
-        assert len(set(selected)) == 30
+        assert len(set(selected)) == 80
         assert set(ids(ed, 'reads')[:12]) == set(read_ids[:12])
         assert set(ids(ed, 'memes')[:8]) == set(meme_ids[:8])
 
@@ -109,7 +109,7 @@ def test_existing_today_edition_expands_on_patch_without_moving_seen_items():
 
         patched = edition.patch(s, 1)
         selected = ids(patched, 'memes')
-        assert len(selected) == 10
+        assert len(selected) == 13  # every candidate fits the larger section
         assert selected[0] == featured_memes[1]
 
 

@@ -30,17 +30,17 @@
 	let clock = $state(Date.now());
 	let lastRefresh = 0;
 	let rerunning = $state(false);
-	let expandedStories = $state(false);
-	let expandedReads = $state(false);
-	let expandedMemes = $state(false);
-	const storyLimit = 8;
-	const readLimit = 6;
-	const memeLimit = 4;
-	const sectionLimit: Record<string, number> = { stories: 29, reads: 20, memes: 10 };
+	// Today opens generously and grows in steps; only rendered entries count as delivered.
+	const sectionLimit: Record<string, number> = { stories: 79, reads: 40, memes: 16 };
+	const initial = { stories: 16, reads: 9, memes: 6 } as const;
+	const steps = { stories: 20, reads: 9, memes: 6 } as const;
+	type Part = keyof typeof initial;
+	let showing = $state<Record<Part, number>>({ ...initial });
 	const accessAllowed = () => session.ready && !session.needsLogin && !session.choosing && !session.profile?.pin_locked;
 	function clearEdition() {
 		edition = null;
-		expandedStories = expandedReads = expandedMemes = false;
+		// Field-wise reset: an unchanged value must not re-trigger the load effect.
+		showing.stories = initial.stories; showing.reads = initial.reads; showing.memes = initial.memes;
 	}
 	async function rerun() {
 		const pid = session.profileId, version = session.version;
@@ -73,9 +73,9 @@
 		error = '';
 		try {
 			const result = await hub.today(signal, {
-				stories: expandedStories ? sectionLimit.stories : storyLimit,
-				reads: expandedReads ? sectionLimit.reads : readLimit,
-				memes: expandedMemes ? sectionLimit.memes : memeLimit
+				stories: showing.stories,
+				reads: showing.reads,
+				memes: showing.memes
 			});
 			if (signal.aborted || token !== loadToken || profileVersion !== session.version || profileId !== session.profileId || !accessAllowed()) return;
 			if (edition?.rerun && edition.rerun.requested_at > edition.rerun.completed_at && result.rerun && result.rerun.completed_at >= result.rerun.requested_at) notice = 'Master curator finished. Your selection is up to date.';
@@ -129,9 +129,13 @@
 		return found && 'entries' in found ? found.entries.slice(0, sectionLimit[key] ?? found.entries.length) : [];
 	};
 	let editionIdentity = '';
-	const shownStories = $derived(entries('stories').slice(0, expandedStories ? sectionLimit.stories : storyLimit));
-	const shownReads = $derived(entries('reads').slice(0, expandedReads ? sectionLimit.reads : readLimit));
-	const shownMemes = $derived(entries('memes').slice(0, expandedMemes ? sectionLimit.memes : memeLimit));
+	const shownStories = $derived(entries('stories').slice(0, showing.stories));
+	const shownReads = $derived(entries('reads').slice(0, showing.reads));
+	const shownMemes = $derived(entries('memes').slice(0, showing.memes));
+	const remaining = (which: Part) => Math.max(0, entries(which).length - showing[which]);
+	const moreLabel = (which: Part, noun: string) => remaining(which) > 0
+		? `Show ${Math.min(steps[which], remaining(which))} more ${noun}`
+		: `Show fewer ${noun}`;
 	const research = $derived(section('research'));
 	const alerts = $derived(section('alerts'));
 	const hasContent = $derived(!!(entries('lead').length || entries('stories').length || entries('reads').length || entries('memes').length || (research && 'curators' in research && research.curators.length) || (alerts && 'count' in alerts && alerts.count)));
@@ -149,10 +153,9 @@
 	function sourceCount(entry: EditionEntry) { return Math.max(0, (entry.sources ?? 1) - 1); }
 	function articleRated(entry: EditionEntry, state: import('$lib/hub/types').ItemState) { entry.item.state = state; }
 	function supportsArticleFeedback(entry: EditionEntry) { return ['news', 'article', 'web'].includes(entry.item.type); }
-	function toggleSection(which: 'stories' | 'reads' | 'memes') {
-		if (which === 'stories') expandedStories = !expandedStories;
-		if (which === 'reads') expandedReads = !expandedReads;
-		if (which === 'memes') expandedMemes = !expandedMemes;
+	function toggleSection(which: Part) {
+		const total = entries(which).length;
+		showing[which] = showing[which] >= total ? initial[which] : Math.min(total, showing[which] + steps[which]);
 		void load();
 	}
 </script>
@@ -201,7 +204,7 @@
 						</StoryCard>
 					{/each}
 				</div>
-				{#if entries('stories').length > storyLimit}<button class="expand" use:focusable onclick={() => toggleSection('stories')} aria-expanded={expandedStories}>{expandedStories ? 'Show fewer stories' : `Show all ${entries('stories').length} stories`}</button>{/if}
+				{#if entries('stories').length > initial.stories}<button class="expand" use:focusable onclick={() => toggleSection('stories')} aria-expanded={showing.stories > initial.stories}>{moreLabel('stories', 'stories')}</button>{/if}
 			</section>
 		{/if}
 
@@ -216,7 +219,7 @@
 						</ReadCard>
 					{/each}
 				</div>
-				{#if entries('reads').length > readLimit}<button class="expand" use:focusable onclick={() => toggleSection('reads')} aria-expanded={expandedReads}>{expandedReads ? 'Show fewer reads' : `Show all ${entries('reads').length} reads`}</button>{/if}
+				{#if entries('reads').length > initial.reads}<button class="expand" use:focusable onclick={() => toggleSection('reads')} aria-expanded={showing.reads > initial.reads}>{moreLabel('reads', 'reads')}</button>{/if}
 			</section>
 		{/if}
 
@@ -231,7 +234,7 @@
 						</MemeTile>
 					{/each}
 				</div>
-				{#if entries('memes').length > memeLimit}<button class="expand" use:focusable onclick={() => toggleSection('memes')} aria-expanded={expandedMemes}>{expandedMemes ? 'Show fewer moments' : `Show all ${entries('memes').length} moments`}</button>{/if}
+				{#if entries('memes').length > initial.memes}<button class="expand" use:focusable onclick={() => toggleSection('memes')} aria-expanded={showing.memes > initial.memes}>{moreLabel('memes', 'moments')}</button>{/if}
 			</section>
 		{/if}
 

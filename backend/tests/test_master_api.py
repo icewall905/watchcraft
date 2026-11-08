@@ -309,23 +309,23 @@ def test_today_expands_existing_edition_from_kept_articles_without_losing_delive
     lead = add(story=new_story(), final=90)
     first = client.get('/api/hub/today').json()
     assert entries(first, 'lead') == [lead]
-    kept = {add(story=new_story(), tier='keep', title=f'Kept report {n}') for n in range(35)}
+    kept = {add(story=new_story(), tier='keep', title=f'Kept report {n}') for n in range(90)}
     expanded = client.get('/api/hub/today').json()
     assert entries(expanded, 'lead') == [lead]
-    assert len(entries(expanded, 'stories')) == 29
+    assert len(entries(expanded, 'stories')) == 79
     assert set(entries(expanded, 'stories')).issubset(kept)
     again = client.get('/api/hub/today').json()
     assert entries(again, 'stories') == entries(expanded, 'stories')
 
 
 def test_today_preview_does_not_consume_hidden_entries_until_expanded(client):
-    for n in range(35):
+    for n in range(90):
         add(story=new_story(), tier='keep', title=f'Preview story {n}')
     result = client.get('/api/hub/today?preview=true').json()
-    assert len(entries(result, 'stories')) == 29
+    assert len(entries(result, 'stories')) == 79
     initial = set(entries(result, 'lead') + entries(result, 'stories')[:8])
     with session() as s:
         assert set(s.exec(select(Edition)).one().shown_item_ids) == initial
-    expanded = client.get('/api/hub/today?preview=true&stories=29').json()
+    expanded = client.get('/api/hub/today?preview=true&stories=36').json()
     with session() as s:
-        assert set(s.exec(select(Edition)).one().shown_item_ids) == set(entries(expanded, 'lead') + entries(expanded, 'stories'))
+        assert set(s.exec(select(Edition)).one().shown_item_ids) == set(entries(expanded, 'lead') + entries(expanded, 'stories')[:36])

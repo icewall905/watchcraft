@@ -40,43 +40,50 @@ test('Today assembles the edition, citations, reasons and curator actions', asyn
 	await expect(page.getByRole('status').filter({ hasText: /^Kept in your edition\.$/ })).toBeVisible();
 });
 
-test('Today keeps a generous edition readable with bounded show all controls', async ({ page }) => {
+test('Today opens a long edition and grows it in steps', async ({ page }) => {
 	const data = edition();
 	const editionRequests: URL[] = [];
 	const makeEntry = (id: number, title: string, type = 'news') => ({ item_id: id, item: item(id, title, type), sources: 1, summary: `A brief overview of ${title}.` });
-	data.sections.find(s => s.key === 'stories')!.entries = Array.from({ length: 29 }, (_, i) => makeEntry(100 + i, `Story ${i + 1}`));
-	data.sections.find(s => s.key === 'reads')!.entries = Array.from({ length: 20 }, (_, i) => makeEntry(200 + i, `Read ${i + 1}`, 'article'));
-	data.sections.find(s => s.key === 'memes')!.entries = Array.from({ length: 10 }, (_, i) => ({ ...makeEntry(300 + i, `Moment ${i + 1}`, 'meme'), item: { ...item(300 + i, `Moment ${i + 1}`, 'meme'), meme: { spoiler: `Moment ${i + 1}`, sensitive: false, community: 'quiet-humor' } } }));
+	data.sections.find(s => s.key === 'stories')!.entries = Array.from({ length: 79 }, (_, i) => makeEntry(1000 + i, `Story ${i + 1}`));
+	data.sections.find(s => s.key === 'reads')!.entries = Array.from({ length: 20 }, (_, i) => makeEntry(2000 + i, `Read ${i + 1}`, 'article'));
+	data.sections.find(s => s.key === 'memes')!.entries = Array.from({ length: 10 }, (_, i) => ({ ...makeEntry(3000 + i, `Moment ${i + 1}`, 'meme'), item: { ...item(3000 + i, `Moment ${i + 1}`, 'meme'), meme: { spoiler: `Moment ${i + 1}`, sensitive: false, community: 'quiet-humor' } } }));
 	await page.route(/\/api\/hub\/today(?:\?.*)?$/, route => { editionRequests.push(new URL(route.request().url())); return route.fulfill({ json: data }); });
 	await page.setViewportSize({ width: 390, height: 844 });
 	await freshPage(page, '/today');
 	await expect.poll(() => editionRequests.length).toBeGreaterThan(0);
 	expect(editionRequests.at(-1)?.searchParams.get('preview')).toBe('true');
-	expect(editionRequests.at(-1)?.searchParams.get('stories')).toBe('8');
-	expect(editionRequests.at(-1)?.searchParams.get('reads')).toBe('6');
-	expect(editionRequests.at(-1)?.searchParams.get('memes')).toBe('4');
-	await expect(page.getByRole('heading', { name: 'Stories · 29' })).toBeVisible();
-	await expect(page.getByRole('link', { name: 'Story 8' })).toBeVisible();
-	await expect(page.getByRole('link', { name: 'Story 9' })).toHaveCount(0);
-	await page.getByRole('button', { name: 'Show all 29 stories' }).click();
-	await expect(page.getByRole('link', { name: 'Story 29' })).toBeVisible();
-	await expect.poll(() => editionRequests.at(-1)?.searchParams.get('stories')).toBe('29');
+	expect(editionRequests.at(-1)?.searchParams.get('stories')).toBe('16');
+	expect(editionRequests.at(-1)?.searchParams.get('reads')).toBe('9');
+	expect(editionRequests.at(-1)?.searchParams.get('memes')).toBe('6');
+	await expect(page.getByRole('heading', { name: 'Stories · 79' })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Story 16', exact: true })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Story 17', exact: true })).toHaveCount(0);
+	// Each click adds a step and tells the server only what is now rendered.
+	await page.getByRole('button', { name: 'Show 20 more stories' }).click();
+	await expect(page.getByRole('link', { name: 'Story 36', exact: true })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Story 37', exact: true })).toHaveCount(0);
+	await expect.poll(() => editionRequests.at(-1)?.searchParams.get('stories')).toBe('36');
+	await page.getByRole('button', { name: 'Show 20 more stories' }).click();
+	await page.getByRole('button', { name: 'Show 20 more stories' }).click();
+	await page.getByRole('button', { name: 'Show 3 more stories' }).click();
+	await expect(page.getByRole('link', { name: 'Story 79', exact: true })).toBeVisible();
 	await expect(page.getByRole('link', { name: 'Explore news' })).toHaveAttribute('href', '/news');
 	await expect(page.getByRole('heading', { name: 'Worth your time · 20' })).toBeVisible();
-	await expect(page.getByRole('link', { name: 'Read 7' })).toHaveCount(0);
-	await page.getByRole('button', { name: 'Show all 20 reads' }).click();
-	await expect(page.getByRole('link', { name: 'Read 20' })).toBeVisible();
-	await expect(page.getByRole('link', { name: 'Moment 5' })).toHaveCount(0);
-	await page.getByRole('button', { name: 'Show all 10 moments' }).click();
-	await expect(page.getByRole('link', { name: 'Moment 10' })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Read 10', exact: true })).toHaveCount(0);
+	await page.getByRole('button', { name: 'Show 9 more reads' }).click();
+	await page.getByRole('button', { name: 'Show 2 more reads' }).click();
+	await expect(page.getByRole('link', { name: 'Read 20', exact: true })).toBeVisible();
+	await expect(page.getByRole('link', { name: /^Moment 7 / })).toHaveCount(0);
+	await page.getByRole('button', { name: 'Show 4 more moments' }).click();
+	await expect(page.getByRole('link', { name: /^Moment 10 / })).toBeVisible();
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 	await page.setViewportSize({ width: 1440, height: 1000 });
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 	await page.screenshot({ path: '/tmp/watchcraft-today-expanded-1440.png', fullPage: true });
 	await page.setViewportSize({ width: 390, height: 844 });
-	await page.screenshot({ path: '/tmp/watchcraft-today-expanded-390.png', fullPage: true });
 	await page.getByRole('button', { name: 'Show fewer stories' }).click();
-	await expect(page.getByRole('link', { name: 'Story 29' })).toHaveCount(0);
+	await expect(page.getByRole('link', { name: 'Story 17', exact: true })).toHaveCount(0);
+	await expect(page.getByRole('link', { name: 'Story 16', exact: true })).toBeVisible();
 });
 
 test('Today degrades calmly when no introduction or sections are ready', async ({ page }) => {

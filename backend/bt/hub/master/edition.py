@@ -28,8 +28,11 @@ STORY_TYPES = ('news', 'article')
 # Today is a substantial daily edition, while the curator's separate feature limits
 # continue to control what gets the strongest verdict. Approved "keep" items
 # provide depth after the featured pool.
-SECTIONS = [('lead', 'Today\'s story', 1), ('stories', 'Stories', 29), ('reads', 'Worth reading', 20),
-            ('memes', 'Something light', 10)]
+# Sized for a long morning scroll: the page reveals these in steps, and only what is
+# actually rendered counts as delivered (see master_api.today preview limits).
+SECTIONS = [('lead', 'Today\'s story', 1), ('stories', 'Stories', 79), ('reads', 'Worth reading', 40),
+            ('memes', 'Something light', 16)]
+SECTION_SIZES = {key: size for key, _, size in SECTIONS}
 INTRO_WORDS = 60
 STORY_SUMMARIES = 4  # model-written story summaries per morning
 
