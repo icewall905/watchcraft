@@ -6,9 +6,10 @@ from sqlmodel import Session, select
 
 from ..access import hub_allowed
 from .article_cleanup import VERSION as CLEANUP_VERSION
-from .models import (ArticleText, CaptureJob, ContentItem, Curator, CuratorDiscovery,
+from .models import (ArticleText, CaptureJob, ContentItem, CuratorDiscovery,
                      ItemState, ItemVerdict, StoryItem, Topic)
-from .news_supply import CANDIDATE_TARGET, TARGET, snapshot as news_snapshot
+from .news_supply import (CANDIDATE_TARGET, DAILY_FRESH_TARGET, TARGET, interest_decision,
+                          interest_plan, news_curators)
 
 WINDOW_SECONDS = 7 * 86400
 FRESH_SECONDS = 86400
@@ -20,6 +21,7 @@ def _empty(now: float, reason: str) -> dict:
         'as_of': now,
         'articles': {'ready': 0, 'target': TARGET, 'fresh_24h': 0, 'publishers': 0,
                      'stories': 0, 'oldest_ready_at': None, 'needs_refill': True,
+                     'unseen_ready': 0, 'new_24h': 0, 'daily_target': DAILY_FRESH_TARGET,
                      'interests': [], 'reason': reason},
     }
 
@@ -94,13 +96,16 @@ def snapshot(s: Session, pid: int, now: float | None = None) -> dict:
     for curator_id, item_id in discovery_rows:
         by_curator.setdefault(curator_id, set()).add(item_id)
 
-    curators = s.exec(select(Curator).where(Curator.profile_id == pid, Curator.kind == 'watch',
-                                             Curator.enabled.is_(True), Curator.interval_hours > 0)
-                       .order_by(Curator.id)).all()
-    curators = [c for c in curators if not c.content_types or set(c.content_types).intersection(ARTICLE_TYPES)]
+    # One bounded per-profile pass gives each interest's unseen/new/pending counts and
+    # the same boost decision the scheduler uses (news_supply.interest_decision).
+    plan = interest_plan(s, pid, now)
+    curators = news_curators(s, pid)
     per_interest_target = min(20, max(5, TARGET // max(1, len(curators))))
     interests = []
     interest_deficit = False
+    from .article_upgrade import coverage as article_coverage
+    # Why an interest yields no articles (e.g. only web-type sources), from the capture worker's audit.
+    coverage_reasons = {row['id']: row['reason'] for row in article_coverage(s, pid)['curators']}
     for curator in curators:
         item_ids = by_curator.get(curator.id, set())
         # A story discovered from several URLs only occupies one slot for this interest.
@@ -119,8 +124,11 @@ def snapshot(s: Session, pid: int, now: float | None = None) -> dict:
         count = len(story_rows)
         minimum_fresh = min(3, per_interest_target)
         minimum_publishers = min(3, count)
+        counts = plan['interests'].get(curator.id, {})
+        decision = interest_decision(s, curator, now, plan=plan)
         needs_refill = (count < per_interest_target or len(fresh_story_ids) < minimum_fresh
-                        or (count >= 5 and len(publishers) < minimum_publishers))
+                        or (count >= 5 and len(publishers) < minimum_publishers)
+                        or decision['state'] == 'underserved')
         interest_deficit |= needs_refill
         interests.append({
             'id': curator.id,
@@ -132,11 +140,29 @@ def snapshot(s: Session, pid: int, now: float | None = None) -> dict:
             'needs_refill': needs_refill,
             'last_success': curator.last_success,
             'next_run': curator.next_run,
+            # Distinct items (not stories), matching what News lists for this interest.
+            'ready_items': counts.get('ready', 0),
+            'unseen_ready': counts.get('unseen_ready', 0),
+            'unseen_target': plan['unseen_share'],
+            'new_24h': counts.get('new_24h', 0),
+            'daily_target': plan['daily_share'],
+            'pending_review': counts.get('pending_review', 0),
+            'pending_capture': counts.get('pending_capture', 0),
+            'state': decision['state'],
+            'saturated': decision['state'] == 'saturated',
+            'boost': decision['boost'],
+            'boost_reason': decision['reason'],
+            'quiet': decision['quiet'],
+            'quiet_runs': decision['quiet_runs'],
+            'backoff_seconds': decision['backoff_seconds'],
+            'quiet_reason': decision['quiet_reason'],
+            'coverage_reason': coverage_reasons.get(curator.id, ''),
         })
 
     # ready_count intentionally comes from the established supply counter, so
     # the headline number stays identical to the News page's strict readiness.
-    supply = news_snapshot(s, pid, now)
+    supply = plan['supply']
+    totals = plan['totals']
     overall_ready = int(supply.get('ready_count', 0))
     story_ids = {entry['story_id'] for entry in ready_rows.values()}
     fresh_items = [entry for entry in ready_rows.values()
@@ -149,6 +175,8 @@ def snapshot(s: Session, pid: int, now: float | None = None) -> dict:
         reason = f'{TARGET - overall_ready} more ready articles needed.'
     elif not supply.get('candidate_buffer_met', supply.get('met', False)):
         reason = f'{max(0, CANDIDATE_TARGET - int(supply.get("candidate_count", 0)))} more approved candidates needed.'
+    elif totals['unseen_ready'] < plan['unseen_target']:
+        reason = f'Only {totals["unseen_ready"]} ready articles have not been shown yet.'
     elif interest_deficit:
         reason = 'One or more interests need fresher or more varied articles.'
     else:
@@ -163,6 +191,9 @@ def snapshot(s: Session, pid: int, now: float | None = None) -> dict:
             'stories': len(story_ids),
             'oldest_ready_at': oldest,
             'needs_refill': needs_refill,
+            'unseen_ready': totals['unseen_ready'],
+            'new_24h': totals['new_24h'],
+            'daily_target': DAILY_FRESH_TARGET,
             'interests': interests,
             'reason': reason,
         },

@@ -49,7 +49,7 @@ def _claim(now: float) -> bool:
 
 
 def maintain(now: float | None = None) -> dict:
-    """Bring at most three low-interest collectors forward per profile per check.
+    """Bring at most three underserved-interest collectors forward per profile per check.
 
     No external work runs here. Existing leases, slots, backoff, manual schedules,
     disabled agents and user quality decisions remain authoritative.
@@ -69,6 +69,8 @@ def maintain(now: float | None = None) -> dict:
             # The overall ready/candidate buffer can need work even with healthy interests.
             if inventory['needs_refill'] and not low:
                 low = {r['id']: r for r in inventory['interests']}
+            # Saturated interests never get nudged; quiet ones keep their backed-off spacing.
+            low = {cid: r for cid, r in low.items() if r.get('boost', True)}
             candidates = []
             for cid, interest in low.items():
                 c = s.get(Curator, cid)
@@ -77,9 +79,13 @@ def maintain(now: float | None = None) -> dict:
                     continue
                 # Recheck the live row before changing any schedule. In-flight claims
                 # are protected by the conditional UPDATE below as well.
-                if c.last_run is not None and c.last_run > now - MIN_COLLECTOR_INTERVAL:
+                spacing = max(MIN_COLLECTOR_INTERVAL, interest.get('backoff_seconds') or 0)
+                if c.last_run is not None and c.last_run > now - spacing:
                     continue
-                candidates.append((interest['ready'] / max(1, interest['target']), c.last_run or 0, c))
+                # Most starved first: unseen stock against its share, then daily intake.
+                fill = (interest.get('unseen_ready', interest['ready'])
+                        / max(1, interest.get('unseen_target', interest['target'])))
+                candidates.append((fill, c.last_run or 0, c))
             advanced = []
             for _, _, c in sorted(candidates, key=lambda row: row[:2]):
                 if len(advanced) >= MAX_ADVANCED:

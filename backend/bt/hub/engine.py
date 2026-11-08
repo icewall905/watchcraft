@@ -427,23 +427,35 @@ def fresh_candidates(scored, known: set[str], limit: int, nonarticle_limit: int 
 
 
 def news_run_budget(s: Session, curator: Curator, trigger: str = 'schedule', now: float | None = None) -> tuple[int, int | None]:
-    """Raise scheduled article collectors to a bounded batch while short.
+    """Raise scheduled article collectors to a bounded batch while their interest is short.
 
-    Mixed-content scouts can use the extra slots for articles; other content stays
-    within the curator's configured budget. Manual runs, disabled curators, and
-    configurations already above the floor retain their requested limit (capped
-    at the public API's 200-item maximum).
+    The decision is per interest (news_supply.interest_decision): an underserved interest is
+    raised even when the profile total is met, a saturated one never is. Mixed-content scouts
+    can use the extra slots for articles; other content stays within the curator's configured
+    budget. Manual runs, disabled curators, and configurations already above the floor retain
+    their requested limit (capped at the public API's 200-item maximum).
     """
     configured = max(1, min(NEWS_RUN_CAP, int(curator.max_per_run or 1)))
-    types = set(curator.content_types or [])
-    if (trigger != 'schedule' or not curator.enabled or curator.kind != 'watch'
-            or not types.intersection({'news', 'article'})):
+    if trigger != 'schedule' or not _news_collector(curator):
         return configured, None
-    from .news_supply import snapshot
-    supply = snapshot(s, curator.profile_id, now)
-    if supply['met']:
+    if not _news_boost(s, curator, now)['boost']:
         return configured, None
     return max(configured, NEWS_RUN_FLOOR), configured
+
+
+def _news_collector(curator: Curator) -> bool:
+    return (curator.enabled and curator.kind == 'watch'
+            and bool(set(curator.content_types or []).intersection({'news', 'article'})))
+
+
+def _news_boost(s, curator: Curator, now: float | None) -> dict:
+    """Per-interest boost decision; an unsaved curator has no interest accounting and
+    falls back to the profile-wide supply."""
+    from . import news_supply
+    if curator.id is None:
+        return {'boost': not news_supply.snapshot(s, curator.profile_id, now)['met'],
+                'backoff_seconds': news_supply.CATCH_UP}
+    return news_supply.interest_decision(s, curator, now, cache=True)
 
 
 def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
@@ -783,21 +795,20 @@ def schedule_after(interval_hours: int) -> float:
 
 
 def next_run_after(s, curator: Curator, now: float) -> float:
-    """Revisit existing news curators hourly while article supply is below target.
+    """Revisit news curators hourly while their own interest is short.
 
     The configured interval stays untouched. Normal scheduler slots and curator leases
-    still bound work; scheduled news-only runs get a bounded screening batch while
-    supply is short. Supply requires both 100 locally ready articles and a 300-item
-    quality-approved candidate buffer; after both are full, the configured interval
-    resumes after the next successful run.
+    still bound work. A curator is boosted when its interest lacks unseen ready articles
+    or daily intake (even if other interests fill the profile), never when its interest is
+    saturated, and otherwise only while the profile-wide supply is short. Interests whose
+    recent scheduled runs found nothing back off exponentially up to the configured interval.
     """
     interval = curator.interval_hours
     scheduled = now + interval * 3600 if interval else 1e12
-    if (curator.enabled and curator.kind == 'watch' and curator.last_status == 'ok' and interval > 1
-            and set(curator.content_types or []).intersection({'news', 'article'})):
-        from .news_supply import snapshot
-        if not snapshot(s, curator.profile_id, now)['met']:
-            scheduled = min(scheduled, now + 3600)
+    if curator.last_status == 'ok' and interval > 1 and _news_collector(curator):
+        decision = _news_boost(s, curator, now)
+        if decision['boost']:
+            scheduled = min(scheduled, now + max(3600, decision['backoff_seconds'] or 3600))
     return scheduled
 
 
