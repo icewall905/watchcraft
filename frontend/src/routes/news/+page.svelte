@@ -27,7 +27,17 @@
 	let following = $state(false);
 	let topicError = $state('');
 	const step = 20;
+	const PAGE = 30; // stories per server page
+	const RESTORE_PAGES = 10; // pages refetched at most to return to a saved place
 	let shown = $state(step);
+	let nextCursor = $state<string | null>(null);
+	let totalStories = $state<number | null>(null);
+	let totalArticles = $state<number | null>(null);
+	let totalCapped = $state(false);
+	let loadingMore = $state(false);
+	let moreError = $state('');
+	let autoPages = 5; // background page loads allowed while client filters hide most loaded stories
+	let moreController: AbortController | null = null;
 	let newCount = $state(0);
 	let restoreScroll: number | null = null;
 	// A visit is one sitting: coming back from an article keeps the same mix and place;
@@ -56,29 +66,65 @@
 			controller?.abort(); groups = []; topics = []; open = {}; topic = null; publisher = '';
 			weeklyProgress = null; loading = false; error = ''; return;
 		}
-		controller?.abort();
+		// A cursor belongs to the list that issued it: never page a new filter (or a failed load) with an old one.
+		controller?.abort(); moreController?.abort(); loadingMore = false; moreError = ''; nextCursor = null;
 		controller = new AbortController();
 		const signal = controller.signal;
 		if (profileId !== loadedProfileId || version !== loadedProfileVersion) {
 			groups = []; topics = []; open = {}; publisher = ''; topic = null; topicError = ''; shown = step;
+			nextCursor = null; totalStories = null; totalArticles = null; totalCapped = false;
 			pendingSeen.clear(); sentSeen.clear();
 		}
 		visit = currentVisit();
 		loading = true; error = '';
 		try {
-			const r = await hub.news({ days, topic: topic ?? undefined, mode, seed: visit.seed, visit_at: visit.at }, signal);
-			if (id !== seq || profileId !== session.profileId || version !== session.version || session.profile?.pin_locked || session.needsLogin) return;
-			groups = r.groups; topics = r.topics;
+			const params = { days, topic: topic ?? undefined, mode, seed: visit.seed, visit_at: visit.at, limit: PAGE };
+			const stale = () => id !== seq || profileId !== session.profileId || version !== session.version || !!session.profile?.pin_locked || session.needsLogin;
+			const r = await hub.news(params, signal);
+			if (stale()) return;
+			let loaded = r.groups, cursor = r.next_cursor ?? null;
+			// Returning to a saved place: refetch (bounded) enough pages to cover what was shown.
+			const wanted = Math.max(step, visit.shown ?? step);
+			for (let n = 0; cursor && loaded.length < wanted && n < RESTORE_PAGES; n++) {
+				const more = await hub.news({ ...params, cursor }, signal);
+				if (stale()) return;
+				loaded = appendGroups(loaded, more.groups); cursor = more.next_cursor ?? null;
+			}
+			groups = loaded; topics = r.topics; nextCursor = cursor;
+			totalStories = r.total_stories ?? null; totalArticles = r.total_articles ?? null; totalCapped = !!r.total_capped;
 			weeklyProgress = r.supply ?? null;
 			loadedProfileId = profileId; loadedProfileVersion = version;
 			newCount = r.new_count ?? 0;
 			shown = Math.max(step, visit.shown ?? step);
+			autoPages = 5;
 			restoreScroll = visit.scroll ?? null;
 		} catch (e) { if (id === seq && !signal.aborted && profileId === session.profileId && version === session.version && !session.profile?.pin_locked && !session.needsLogin) error = errMsg(e); }
 		finally { if (id === seq && profileId === session.profileId && version === session.version) { loading = false; controller = null; } }
 	}
 	$effect(() => { session.profileId; session.version; session.profile?.pin_locked; session.needsLogin; untrack(() => { void load(); }); });
-	onDestroy(() => controller?.abort());
+	onDestroy(() => { controller?.abort(); moreController?.abort(); });
+	function appendGroups(have: NewsGroup[], more: NewsGroup[]) {
+		// Pages of one visit never overlap; the guard keeps a story from rendering twice if data shifted.
+		const keys = new Set(have.map((g) => g.key));
+		return [...have, ...more.filter((g) => !keys.has(g.key))];
+	}
+	async function loadMore() {
+		if (!nextCursor || loadingMore || loading) return;
+		const id = seq, profileId = session.profileId, version = session.version, cursor = nextCursor;
+		moreController = new AbortController();
+		const signal = moreController.signal;
+		loadingMore = true; moreError = '';
+		try {
+			const r = await hub.news({ days, topic: topic ?? undefined, mode, seed: visit.seed, visit_at: visit.at, limit: PAGE, cursor }, signal);
+			if (id !== seq || profileId !== session.profileId || version !== session.version || session.profile?.pin_locked || session.needsLogin || cursor !== nextCursor) return;
+			const before = visible.length;
+			groups = appendGroups(groups, r.groups);
+			nextCursor = r.next_cursor ?? null;
+			// Only pages that add visible stories renew the background budget; a filter matching nothing stops.
+			if (visible.length > before) autoPages = 5;
+		} catch (e) { if (id === seq && !signal.aborted && profileId === session.profileId) moreError = errMsg(e); }
+		finally { if (id === seq) { loadingMore = false; moreController = null; rearm(); } }
+	}
 	function resetPlace() { shown = step; visit.scroll = 0; visit.shown = step; store.set(visit); }
 	function pick(d: 1 | 7 | 30) { days = d; resetPlace(); load(); }
 	function pickMode(m: 'foryou' | 'latest') { if (mode === m) return; mode = m; resetPlace(); load(); }
@@ -121,7 +167,7 @@
 					for (const id of ((e.target as HTMLElement).dataset.seen ?? '').split(',').map(Number).filter(Boolean)) pendingSeen.add(id);
 				}
 			}, { threshold: 0.6 });
-			moreObserver = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) showMore(); }, { rootMargin: '600px 0px' });
+			moreObserver = new IntersectionObserver((entries) => { if (entries.some((e) => e.isIntersecting)) showMore(false); }, { rootMargin: '600px 0px' });
 		}
 		flushTimer = setInterval(() => void flushSeen(), 4000);
 		document.addEventListener('visibilitychange', onHide);
@@ -148,20 +194,45 @@
 		g.items.some((i) => (!publisher || i.publisher === publisher) && matches(i))
 	));
 	const pageGroups = $derived(visible.slice(0, shown));
+	const filtering = $derived(!!publisher || terms.length > 0);
+	const storyTotal = $derived(filtering || totalStories == null ? visible.length : Math.max(totalStories, visible.length));
+	const articleTotal = $derived(filtering || totalArticles == null ? null : totalArticles);
+	const DISCUSSION = new Set(['hackernews', 'lemmy', 'mastodon', 'mastodon_trends', 'lobsters', 'reddit']);
+	const isDiscussion = (i: Item) => DISCUSSION.has((i.provider ?? '').toLowerCase()) || (i.provider ?? '').toLowerCase().startsWith('reddit');
+	function coverageLabel(items: Item[]) {
+		// Outlets, not raw article count: syndicated copies from one publisher count once; threads are discussions.
+		const talk = items.filter(isDiscussion).length;
+		const outlets = new Set(items.filter((i) => !isDiscussion(i)).map((i) => (i.publisher || i.provider || '').trim().toLowerCase()).filter(Boolean)).size;
+		const parts = [];
+		if (outlets) parts.push(`${outlets} outlet${outlets === 1 ? '' : 's'}`);
+		if (talk) parts.push(`${talk} discussion${talk === 1 ? '' : 's'}`);
+		return parts.join(' · ') || `${items.length} article${items.length === 1 ? '' : 's'}`;
+	}
 	const visibleArticleCount = $derived(visible.reduce((n, { g }) => n + g.items.filter((i) => matches(i) && (!publisher || i.publisher === publisher)).length, 0));
 	let previousFilterKey = '';
 	$effect(() => {
 		const key = `${days}|${mode}|${topic ?? ''}|${publisher}|${page.url.searchParams.get('q') ?? ''}`;
-		if (previousFilterKey && previousFilterKey !== key) shown = step;
+		if (previousFilterKey && previousFilterKey !== key) { shown = step; autoPages = 5; }
 		previousFilterKey = key;
 	});
 	let moreNode: HTMLElement | null = null;
-	function showMore() {
-		if (shown >= visible.length) return;
-		shown += step;
-		// Re-arm the sentinel: if it is still on screen after growing, load the next batch too.
-		void tick().then(() => { if (moreNode && moreObserver) { moreObserver.unobserve(moreNode); moreObserver.observe(moreNode); } });
+	function showMore(byUser = true) {
+		if (shown >= visible.length && !nextCursor) return;
+		shown = Math.min(shown, visible.length) + step;
+		if (byUser) autoPages = 5;
+		// Fetch the next server page before the reader reaches the end of what is loaded; the sentinel
+		// alone spends the bounded budget, so a filter that matches nothing cannot walk every page.
+		if (nextCursor && visible.length < shown + step && (byUser || autoPages-- > 0)) void loadMore();
+		rearm();
 	}
+	// Re-arm the sentinel: if it is still on screen after growing, load the next batch too.
+	function rearm() { void tick().then(() => { if (moreNode && moreObserver) { moreObserver.unobserve(moreNode); moreObserver.observe(moreNode); } }); }
+	// Client filters can hide most loaded stories: fetch a few more pages in the background (bounded).
+	$effect(() => {
+		if (loading || loadingMore || !nextCursor || moreError || visible.length >= shown || autoPages <= 0) return;
+		autoPages -= 1;
+		untrack(() => { void loadMore(); });
+	});
 	// Returning from an article puts the reader back where they were in this visit's mix.
 	$effect(() => {
 		if (loading || restoreScroll == null || !pageGroups.length) return;
@@ -218,10 +289,10 @@
 	</div>
 	</div>
 
-	<LiveFilter placeholder="Filter stories by words or tags…" label="Filter news" count={loading ? null : visible.length} />
+	<LiveFilter placeholder="Filter stories by words or tags…" label="Filter news" count={loading ? null : storyTotal} />
 	{#if !loading && !error && (visible.length || (days === 7 && weeklyProgress))}
 		<div class="edition-count" aria-live="polite">
-			<p><strong>{visibleArticleCount}</strong> articles across <strong>{visible.length}</strong> stories{#if mode === 'foryou' && newCount}{' · '}<strong class="new-count">{newCount}</strong> new since your last visit{/if}</p>
+			<p><strong>{articleTotal ?? visibleArticleCount}</strong> articles across <strong>{storyTotal}{totalCapped && !filtering ? '+' : ''}</strong> stories{#if mode === 'foryou' && newCount}{' · '}<strong class="new-count">{newCount}</strong> new since your last visit{/if}</p>
 			<span>{days === 7 && weeklyProgress
 				? `${weeklyProgress.available} approved this week · ${weeklyProgress.available >= weeklyProgress.target ? `${weeklyProgress.target}+ goal met` : `goal: ${weeklyProgress.target}`}${weeklyProgress.pending_review ? ` · ${weeklyProgress.pending_review} in review` : ''}`
 				: days === 7 ? 'Weekly curation goal: at least 100 articles' : days === 1 ? 'Today’s coverage' : 'Monthly coverage'}</span>
@@ -285,7 +356,7 @@
 							{#snippet why()}{#if ['news', 'article', 'web'].includes(lead.type)}<ArticleFeedback itemId={lead.id} title={lead.title} rating={lead.state.rating} onchanged={(state) => { lead.state = state; }} />{/if}{/snippet}
 						</StoryCard>
 					{/if}
-					<p class="story-meta">{#if g.new}<span class="new-badge">New</span>{' · '}{/if}{selectedItems.length} source{selectedItems.length === 1 ? '' : 's'} · Updated {ago(g.latest)}</p>
+					<p class="story-meta">{#if g.new}<span class="new-badge">New</span>{' · '}{/if}{coverageLabel(selectedItems)} · Updated {ago(g.latest)}</p>
 					{#if rest > 0}
 						<button class="btn ghost" aria-expanded={!!open[g.key]} use:focusable onclick={() => (open[g.key] = !open[g.key])}>
 							{open[g.key] ? 'Hide sources' : `${rest} more source${rest === 1 ? '' : 's'}`}
@@ -302,10 +373,12 @@
 			{/each}
 		</div>
 		<nav class="pages bottom-pages" aria-label="More stories">
-			<span aria-live="polite">Showing {Math.min(shown, visible.length)} of {visible.length} stories</span>
-			{#if shown < visible.length}
+			<span aria-live="polite">Showing {Math.min(shown, visible.length)} of {storyTotal}{nextCursor && (filtering || totalCapped) ? '+' : ''} stories</span>
+			{#if moreError}
+				<button class="btn ghost" use:focusable onclick={() => { moreError = ''; void loadMore(); }}>Couldn't load more — retry</button>
+			{:else if shown < visible.length || nextCursor}
 				<div use:observeMore class="more-sentinel"></div>
-				<button class="btn ghost" use:focusable onclick={showMore}>Show more stories</button>
+				<button class="btn ghost" use:focusable onclick={() => showMore(true)} disabled={loadingMore && shown >= visible.length}>{loadingMore && shown >= visible.length ? 'Loading more stories…' : 'Show more stories'}</button>
 			{:else}
 				<button class="btn ghost" use:focusable onclick={freshMix}>You're through this mix — get a fresh one</button>
 			{/if}

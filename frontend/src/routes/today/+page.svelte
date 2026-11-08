@@ -160,6 +160,7 @@
 <svelte:head><title>Today · WatchCraft</title><meta name="description" content="A quiet, curated overview of what matters today." /></svelte:head>
 
 <div class="today page" data-area="hub">
+	<div class="top">
 	<header class="masthead">
 		<p class="date">{today}</p>
 		<h1>{greeting}</h1>
@@ -170,7 +171,8 @@
 			<p class="plain-greeting">A little of what you follow, gathered in one place.</p>
 		{/if}
 	</header>
-	<ShelfStatus />
+	<aside class="shelf-side" aria-label="Shelf health"><ShelfStatus /></aside>
+	</div>
 
 	{#if error}
 		<div class="load-error" role="alert"><p>Today could not be loaded. {error}</p><button class="btn" use:focusable onclick={() => (revision++)}>Try again</button></div>
@@ -248,7 +250,13 @@
 
 <style>
 	.today { max-width: 76rem; margin-inline: auto; padding-top: clamp(2rem, 5vw, 4.5rem); padding-bottom: 5rem; color: var(--ink); }
-	.masthead { padding: 0 0 clamp(1.8rem, 4vw, 3rem); border-bottom: 1px solid var(--rule); margin-bottom: clamp(1.5rem, 3vw, 2.5rem); }
+	.top { border-bottom: 1px solid var(--rule); margin-bottom: clamp(1.5rem, 3vw, 2.5rem); padding-bottom: clamp(1.8rem, 4vw, 3rem); }
+	.masthead { padding: 0; }
+	.shelf-side { margin-top: 1.25rem; }
+	@media (min-width: 1000px) {
+		.top { display: grid; grid-template-columns: minmax(0, 1fr) 18.5rem; gap: clamp(1.5rem, 3vw, 3rem); align-items: start; }
+		.shelf-side { margin-top: 0; }
+	}
 	.date { margin-bottom: .6rem; color: var(--faint); font-size: var(--fs-sm); }
 	h1 { margin-bottom: 1.2rem; font: 520 clamp(2.4rem, 6vw, 4.5rem) / 1.02 var(--font-display); letter-spacing: -.025em; }
 	:global(.masthead .cited) { font-size: var(--fs-md); line-height: 1.7; }

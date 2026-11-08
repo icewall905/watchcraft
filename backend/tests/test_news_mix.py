@@ -100,3 +100,31 @@ def test_visit_at_must_be_finite(client):
     assert client.get('/api/hub/news', params={'mode': 'foryou', 'visit_at': 'nan'}).status_code == 422
     r = client.post('/api/hub/news/seen', content='{"item_ids": [1], "visit_at": NaN}', headers={'Content-Type': 'application/json'})
     assert r.status_code == 422
+
+
+def test_one_interest_cannot_fill_the_top_while_others_have_stories():
+    now = time.time()
+    big = [{'key': f'g{n}', 'latest': now - n * 60, 'items': [{'id': n, 'publisher': f'P{n}', 'curator_ids': [1],
+            'first_seen': now - n * 60, 'state': {}}]} for n in range(30)]
+    small = [{'key': f's{n}', 'latest': now - 6 * 3600 - n * 60, 'items': [{'id': 100 + n, 'publisher': f'Q{n}',
+              'curator_ids': [2 + n % 2], 'first_seen': now - 6 * 3600, 'state': {}}]} for n in range(8)]
+    out = news_mix.rank(big + small, seen={}, seed='q', visit_at=now, previous_visit=None)
+    assert len(out) == 38
+    big_one = [g['items'][0]['curator_ids'] == [1] for g in out]
+    last_other = max(k for k, b in enumerate(big_one) if not b)
+    assert last_other < 16  # the older stories of the quiet interests are pulled up, not left at the end
+    for start in range(0, last_other + 2 - news_mix.INTEREST_WINDOW):
+        assert sum(big_one[start:start + news_mix.INTEREST_WINDOW]) <= news_mix.INTEREST_QUOTA
+    # Once the other interests run out, the big one fills the rest.
+    assert all(g['items'][0]['curator_ids'] == [1] for g in out[-10:])
+
+
+def test_rank_is_deterministic_and_scales_to_a_full_window():
+    now = time.time()
+    groups = [{'key': f'k{n}', 'latest': now - n * 30, 'items': [{'id': n, 'publisher': f'P{n % 50}',
+               'curator_ids': [n % 5], 'first_seen': now - n * 30, 'state': {}}]} for n in range(3000)]
+    started = time.perf_counter()
+    first = news_mix.rank(groups, seen={}, seed='x', visit_at=now, previous_visit=None)
+    assert time.perf_counter() - started < 3
+    again = news_mix.rank(list(reversed(groups)), seen={}, seed='x', visit_at=now, previous_visit=None)
+    assert [g['key'] for g in first] == [g['key'] for g in again] and len({g['key'] for g in first}) == 3000

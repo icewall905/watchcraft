@@ -8,6 +8,10 @@
 	let loading = $state(false);
 	let failed = $state(false);
 	let expanded = $state(false);
+	// Folded by default so Today leads with the edition; the reader's choice is remembered on this device.
+	const OPEN_KEY = 'watchcraft:shelf-open';
+	let open = $state((() => { try { return localStorage.getItem(OPEN_KEY) === '1'; } catch { return false; } })());
+	function toggle() { open = !open; try { localStorage.setItem(OPEN_KEY, open ? '1' : '0'); } catch { /* storage unavailable */ } }
 	let refreshKey = $state(0);
 	let loadToken = 0;
 	let lastIdentity = '';
@@ -68,14 +72,16 @@
 </script>
 
 {#if allowed()}
-	<section class="shelf" aria-labelledby="shelf-title" aria-busy={loading}>
+	<section class="shelf" class:open aria-labelledby="shelf-title" aria-busy={loading}>
 		<div class="heading">
-			<div><p class="eyebrow">Shelf health</p><h2 id="shelf-title">Your shelf</h2></div>
+			<div><p class="eyebrow">Shelf health</p><h2 id="shelf-title"><button class="toggle" aria-expanded={open} aria-controls="shelf-body" use:focusable onclick={toggle}>Your shelf <span class="chev" aria-hidden="true">⌄</span></button></h2>
+				{#if snapshot && !open}<p class="glance">{snapshot.articles.ready} articles · {snapshot.videos.ready} videos</p>{/if}</div>
 			{#if queued}<span class="activity" aria-label="Collection jobs are queued"><i aria-hidden="true"></i>Refilling</span>
 			{:else if snapshot?.articles.needs_refill || snapshot?.videos.needs_refill || articlesGap || videosGap}<span class="activity quiet">A little more would help</span>
 		{:else if snapshot}<span class="activity quiet">Ready for you</span>{/if}
 		</div>
 
+		<div id="shelf-body" hidden={!open}>
 		{#if snapshot}
 			<div class="shelves">
 				<article class="measure">
@@ -98,7 +104,7 @@
 				<div class="detail-grid">
 					<div><h3>Article interests</h3>
 						{#if snapshot.articles.interests.length}
-							{#each snapshot.articles.interests as interest (interest.id)}<p class="interest-row"><span><strong>{interest.name}</strong><small>{interest.fresh_24h} new · {interest.publishers} publishers</small></span><span class="progress-label">{interest.ready}/{interest.target}</span></p>{/each}
+							{#each snapshot.articles.interests as interest (interest.id)}<p class="interest-row"><span><strong>{interest.name}</strong><small>{interest.fresh_24h} new · {interest.publishers} publishers{#if interest.unseen_ready !== undefined} · {interest.unseen_ready} unseen{/if}</small>{#if interest.coverage_reason || interest.quiet_reason}<small class="why">{interest.coverage_reason || interest.quiet_reason}</small>{/if}</span><span class="progress-label">{interest.ready}/{interest.target}</span></p>{/each}
 						{:else}<p class="muted">Your interests will appear here as they are set up.</p>{/if}
 					</div>
 					<div><h3>Video categories</h3>
@@ -113,19 +119,26 @@
 			<div class="unavailable"><span>The shelf overview is unavailable right now.</span><button class="retry" onclick={() => (refreshKey++)}>Try again</button></div>
 		{:else}<p class="loading" role="status">Loading shelf overview…</p>{/if}
 		<nav class="links" aria-label="Shelf sections"><a href="/team" use:focusable>Collection activity <span aria-hidden="true">↗</span></a><a href="/" use:focusable>Home videos <span aria-hidden="true">↗</span></a></nav>
+		</div>
 	</section>
 {/if}
 
 <style>
-	.shelf { margin: 0 var(--gutter) 1.5rem; padding: 1rem 1.15rem .85rem; border: 1px solid var(--rule); border-radius: var(--r-md); background: color-mix(in srgb, var(--surface) 82%, var(--accent) 3%); }
+	.shelf { margin: 0; padding: .8rem 1rem; border: 1px solid var(--rule); border-radius: var(--r-md); background: color-mix(in srgb, var(--surface) 82%, var(--accent) 3%); }
 	.heading, .measure-head, .counts, .interest-row, .links { display: flex; align-items: center; }
-	.heading { justify-content: space-between; gap: .75rem; margin-bottom: .8rem; }
+	.heading { justify-content: space-between; align-items: flex-start; gap: .75rem; }
+	.open .heading { margin-bottom: .8rem; }
+	.toggle { display: inline-flex; align-items: center; gap: .35rem; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+	.chev { color: var(--muted); font-size: .9rem; transition: transform .15s; }
+	.open .chev { transform: rotate(180deg); }
+	.glance { margin: .2rem 0 0; color: var(--muted); font-size: .8rem; font-variant-numeric: tabular-nums; }
+	.shelf :global([hidden]) { display: none; }
 	.eyebrow { margin: 0 0 .15rem; color: var(--muted); font-size: .72rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 	h2 { margin: 0; font-size: 1.15rem; }
 	.activity { display: inline-flex; align-items: center; gap: .4rem; border-radius: 999px; padding: .35rem .65rem; background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--accent); font-size: .8rem; font-weight: 700; }
 	.activity i { width: .45rem; height: .45rem; border-radius: 50%; background: currentColor; }
 	.activity.quiet { color: var(--muted); background: transparent; font-weight: 600; }
-	.shelves { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; }
+	.shelves { display: grid; grid-template-columns: 1fr; gap: .6rem; }
 	.measure { min-width: 0; padding: .85rem; border: 1px solid var(--rule); border-radius: var(--r-sm, .65rem); background: var(--surface); }
 	.measure-head { gap: .5rem; }
 	.icon { color: var(--accent); }
@@ -140,7 +153,7 @@
 	.note { margin: .55rem 0 0; color: var(--ink); }
 	.details { margin-top: .7rem; border-top: 1px solid var(--rule); padding-top: .6rem; }
 	summary { width: fit-content; cursor: pointer; color: var(--accent); font-size: .85rem; font-weight: 650; }
-	.detail-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1rem; padding-top: .6rem; }
+	.detail-grid { display: grid; grid-template-columns: 1fr; gap: .4rem; padding-top: .6rem; }
 	h3 { margin: .2rem 0 .35rem; font-size: .86rem; }
 	.interest-row { justify-content: space-between; gap: .6rem; margin: 0; padding: .35rem 0; border-bottom: 1px solid var(--rule); font-size: .82rem; }
 	.interest-row > span:first-child { min-width: 0; overflow-wrap: anywhere; }
@@ -152,5 +165,5 @@
 	.unavailable { display: flex; justify-content: space-between; align-items: center; gap: .6rem; color: var(--muted); font-size: .85rem; }
 	.retry { border: 0; background: none; color: var(--accent); font: inherit; cursor: pointer; }
 	.loading { margin: .4rem 0; color: var(--muted); font-size: .85rem; }
-	@media (max-width: 560px) { .shelf { padding: .85rem; } .shelves { grid-template-columns: 1fr; } .detail-grid { grid-template-columns: 1fr; gap: .4rem; } .measure { padding: .75rem; } }
+	@media (max-width: 560px) { .measure { padding: .75rem; } }
 </style>

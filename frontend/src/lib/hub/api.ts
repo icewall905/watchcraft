@@ -6,7 +6,8 @@ import type {
 	MemeExplain, MemeFormat, MemeTrend, TodayEdition, Verdict, HubLesson
 } from './types';
 
-export type ShelfInterest = { id: number; name: string; ready: number; target: number; fresh_24h: number; publishers: number; needs_refill: boolean; last_success: number | null; next_run: number };
+export type ShelfInterest = { id: number; name: string; ready: number; target: number; fresh_24h: number; publishers: number; needs_refill: boolean; last_success: number | null; next_run: number;
+	unseen_ready?: number; unseen_target?: number; new_24h?: number; daily_target?: number; state?: 'underserved' | 'ok' | 'saturated'; quiet?: boolean; quiet_reason?: string; coverage_reason?: string };
 export type ShelfCategory = { id: number; name: string; emoji: string; kind: string; ready: number; target: number; fresh_7d: number; creators: number; pending: number; failed?: number; needs_refill: boolean };
 export type ShelfStatus = {
 	as_of: number;
@@ -47,7 +48,7 @@ export const hub = {
 			`${H}/items/${id}/curator-feedback`,
 			{ method: 'POST', body: { curator_id, verdict, ...(terms?.length ? { terms } : {}) }, toast: false }),
 	importUrl: (url: string) => send<Item>('POST', '/items/import', { url }),
-	news: (params: Params, signal?: AbortSignal) => get<{ groups: NewsGroup[]; topics: Topic[]; mode?: 'foryou' | 'latest'; previous_visit?: number | null; new_count?: number; article_count?: number; story_count?: number; supply?: { target: number; window_days: number; available: number; shortfall: number; met: boolean; pending_review: number; as_of: number; ready_count?: number; ready_target?: number; ready_shortfall?: number; candidate_count?: number; candidate_target?: number } }>('/news' + qs(params), signal),
+	news: (params: Params, signal?: AbortSignal) => get<{ groups: NewsGroup[]; topics: Topic[]; mode?: 'foryou' | 'latest'; previous_visit?: number | null; new_count?: number; article_count?: number; story_count?: number; next_cursor?: string | null; total_stories?: number; total_articles?: number; total_capped?: boolean; limit?: number; seed?: string; visit_at?: number; supply?: { target: number; window_days: number; available: number; shortfall: number; met: boolean; pending_review: number; as_of: number; ready_count?: number; ready_target?: number; ready_shortfall?: number; candidate_count?: number; candidate_target?: number } }>('/news' + qs(params), signal),
 
 	captureStatus: () => get<{ counts: Record<string, number>; asset_bytes: number; asset_limit: number; enabled: boolean; asset_max_mb: number; rescue: boolean }>('/capture/status'),
 	setCaptureSettings: (enabled: boolean, asset_max_mb: number, rescue: boolean) =>
