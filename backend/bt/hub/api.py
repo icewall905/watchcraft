@@ -1,6 +1,7 @@
 """/api/hub — WatchCraft Hub endpoints. Contract: docs/HUB.md. All data is profile-scoped."""
 import hashlib
 import json
+import math
 import re
 import time
 from typing import Literal
@@ -652,9 +653,18 @@ def import_url(body: UrlIn, pid: int = Depends(profile_id)):
 
 
 @router.get('/news')
-def news(days: int = 7, topic: int | None = None, curation: str = 'curated',
-         pid: int = Depends(profile_id)):
-    """Recent articles grouped by the curator's stored stories, with title fallback."""
+def news(days: int = 7, topic: int | None = None, curation: str = 'curated', mode: str = 'latest',
+         seed: str = '', visit_at: float | None = None, pid: int = Depends(profile_id)):
+    """Recent articles grouped by the curator's stored stories, with title fallback.
+
+    mode=foryou orders the same stories for one visit (seed + visit_at): unseen, fresh and
+    varied first, so each visit surfaces different reporting. latest stays chronological."""
+    if mode not in ('latest', 'foryou'):
+        raise HTTPException(422, 'mode must be latest or foryou')
+    now = time.time()
+    if visit_at is not None and not math.isfinite(visit_at):
+        raise HTTPException(422, 'visit_at must be a finite timestamp')
+    visit_at = min(visit_at or now, now)
     since = time.time() - max(1, min(days, 90)) * 86400
     with session() as s:
         if topic is not None:
@@ -708,11 +718,32 @@ def news(days: int = 7, topic: int | None = None, curation: str = 'curated',
                         'latest': its[0].published_at or its[0].first_seen})
         # Recent stories lead; duplicate coverage must not bury newer independent reporting.
         out.sort(key=lambda g: (-g['latest'], g['key']))
+        previous_visit = None
+        if mode == 'foryou':
+            from . import news_mix
+            seen, previous_visit = news_mix.prior(s, pid, list(rows_by_id), visit_at)
+            out = news_mix.rank(out, seen=seen, seed=seed or str(visit_at), visit_at=visit_at, previous_visit=previous_visit)
         selected = out[:300]
         from .news_supply import snapshot as news_supply
-        return {'groups': selected, 'topics': [topic_dict(s, t) for t in topics],
+        return {'groups': selected, 'topics': [topic_dict(s, t) for t in topics], 'mode': mode,
+                'previous_visit': previous_visit, 'new_count': sum(1 for g in selected if g.get('new')),
                 'target_articles': 100, 'article_count': sum(len(g['items']) for g in selected),
                 'story_count': len(selected), 'supply': news_supply(s, pid)}
+
+
+class NewsSeenIn(BaseModel):
+    item_ids: list[int] = Input(max_length=300)
+    visit_at: float
+
+
+@router.post('/news/seen')
+def news_seen(body: NewsSeenIn, pid: int = Depends(profile_id)):
+    """Record which News articles this visit showed, so the next visit leads with others."""
+    if not math.isfinite(body.visit_at):
+        raise HTTPException(422, 'visit_at must be a finite timestamp')
+    from . import news_mix
+    with session() as s:
+        return {'recorded': news_mix.record(s, pid, body.item_ids, body.visit_at)}
 
 
 # ---------- collections

@@ -525,3 +525,13 @@ class ArticleText(SQLModel, table=True):
     removed: int = 0
     reviewed_at: float = 0
     backfill: bool = False
+
+
+class NewsImpression(SQLModel, table=True):
+    """When a profile's News feed last showed an article; drives a fresh For you mix per visit."""
+    profile_id: int = Field(primary_key=True)
+    item_id: int = Field(primary_key=True)
+    first_shown: float = Field(default_factory=time.time)
+    last_shown: float = Field(default_factory=time.time, index=True)
+    prev_shown: float = 0  # last_shown before the current visit touched it, keeping that visit's order stable
+    visits: int = 1  # distinct visits that showed it, so repeat exposure sinks gradually

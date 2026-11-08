@@ -47,7 +47,7 @@ export const hub = {
 			`${H}/items/${id}/curator-feedback`,
 			{ method: 'POST', body: { curator_id, verdict, ...(terms?.length ? { terms } : {}) }, toast: false }),
 	importUrl: (url: string) => send<Item>('POST', '/items/import', { url }),
-	news: (params: Params, signal?: AbortSignal) => get<{ groups: NewsGroup[]; topics: Topic[]; article_count?: number; story_count?: number; supply?: { target: number; window_days: number; available: number; shortfall: number; met: boolean; pending_review: number; as_of: number; ready_count?: number; ready_target?: number; ready_shortfall?: number; candidate_count?: number; candidate_target?: number } }>('/news' + qs(params), signal),
+	news: (params: Params, signal?: AbortSignal) => get<{ groups: NewsGroup[]; topics: Topic[]; mode?: 'foryou' | 'latest'; previous_visit?: number | null; new_count?: number; article_count?: number; story_count?: number; supply?: { target: number; window_days: number; available: number; shortfall: number; met: boolean; pending_review: number; as_of: number; ready_count?: number; ready_target?: number; ready_shortfall?: number; candidate_count?: number; candidate_target?: number } }>('/news' + qs(params), signal),
 
 	captureStatus: () => get<{ counts: Record<string, number>; asset_bytes: number; asset_limit: number; enabled: boolean; asset_max_mb: number; rescue: boolean }>('/capture/status'),
 	setCaptureSettings: (enabled: boolean, asset_max_mb: number, rescue: boolean) =>
@@ -105,6 +105,8 @@ export const hub = {
 	report: (id: number) => send<Curator>('POST', `/curators/${id}/report`),
 	exportCurator: (id: number) => request<Record<string, unknown>>(`${H}/curators/${id}/export`),
 
+	newsSeen: (item_ids: number[], visit_at: number, profileId: number, keepalive = false) =>
+		request<{ recorded: number }>(H + '/news/seen', { method: 'POST', body: { item_ids, visit_at }, keepalive, toast: false, profileId: String(profileId) }),
 	topics: (kind?: 'knowledge' | 'news') => get<Topic[]>('/topics' + qs({ kind })),
 	topic: (id: number) => get<TopicDetail>(`/topics/${id}`),
 	createTopic: (body: Partial<Topic>) => send<Topic>('POST', '/topics', body),

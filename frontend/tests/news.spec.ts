@@ -37,38 +37,45 @@ test('news is story first and opens the profile story view', async ({ page }) =>
     await page.screenshot({ path: '/tmp/watchcraft-news-archive.png', fullPage: true });
 });
 
-test('news is a finite weekly edition with 20 stories per page and local source links', async ({ page }) => {
+test('news is a scrolling weekly mix that loads more stories and records what was seen', async ({ page }) => {
 	const groups = Array.from({ length: 100 }, (_, index) => ({
-		key: `week-${index + 1}`, title: `Weekly story ${index + 1}`, latest: 1783000000 - index,
+		key: `week-${index + 1}`, title: `Weekly story ${index + 1}`, latest: 1783000000 - index, new: index < 3,
 		items: [{ id: index + 1, title: `Weekly story ${index + 1}`, summary: `Short overview ${index + 1}`,
 			provider: 'feed', publisher: 'Local', local_image: false, state: {}, url: `https://example.test/${index + 1}` }]
 	}));
-	await page.route('**/api/hub/news*', (route) => route.fulfill({ json: {
-		groups, topics: [], supply: { target: 100, window_days: 7, available: 100, shortfall: 0, met: true, pending_review: 0, as_of: 1783000000 },
+	const requests: URL[] = [];
+	const seen: { item_ids: number[]; visit_at: number }[] = [];
+	await page.route('**/api/hub/news/seen', (route) => { seen.push(route.request().postDataJSON()); return route.fulfill({ json: { recorded: 1 } }); });
+	await page.route('**/api/hub/news?*', (route) => { requests.push(new URL(route.request().url())); return route.fulfill({ json: {
+		groups, topics: [], mode: 'foryou', new_count: 3, supply: { target: 100, window_days: 7, available: 100, shortfall: 0, met: true, pending_review: 0, as_of: 1783000000 },
 		article_count: 100, story_count: 100
-	} }));
+	} }); });
 	await freshPage(page, '/news');
+	await expect(page.getByRole('tab', { name: 'For you' })).toHaveAttribute('aria-selected', 'true');
 	await expect(page.getByRole('tab', { name: 'This week' })).toHaveAttribute('aria-selected', 'true');
-	await expect(page.getByText('100 articles across 100 stories')).toBeVisible();
-	await expect(page.getByText('100 approved this week · 100+ goal met')).toBeVisible();
-	await expect(page.getByRole('heading', { name: 'Weekly story 1', exact: true })).toBeVisible();
+	await expect(page.getByText('100 articles across 100 stories · 3 new since your last visit')).toBeVisible();
+	const first = requests.at(-1)!;
+	expect(first.searchParams.get('mode')).toBe('foryou');
+	expect(first.searchParams.get('seed')).toBeTruthy();
 	await expect(page.getByRole('heading', { name: 'Weekly story 20', exact: true })).toBeVisible();
-	await expect(page.getByRole('heading', { name: 'Weekly story 21', exact: true })).toHaveCount(0);
-	await expect(page.getByText('Stories 1–20 of 100').first()).toBeVisible();
+	await expect(page.getByText('Showing 20 of 100 stories')).toBeVisible();
 	await page.screenshot({ path: '/tmp/watchcraft-news-week-1280.png' });
-	await page.getByRole('button', { name: 'Next' }).first().click();
-	await expect(page.getByText('Page 2 of 5').first()).toBeVisible();
-	await expect(page.getByRole('heading', { name: 'Weekly story 21', exact: true })).toBeVisible();
-	await expect(page.getByRole('heading', { name: 'Weekly story 40', exact: true })).toBeVisible();
-	await expect(page.getByRole('heading', { name: 'Weekly story 41', exact: true })).toHaveCount(0);
-	await page.getByRole('button', { name: 'Next' }).first().click();
-	await page.getByRole('button', { name: 'Next' }).first().click();
-	await page.getByRole('button', { name: 'Next' }).first().click();
-	await expect(page.getByText('Page 5 of 5').first()).toBeVisible();
-	await expect(page.getByRole('heading', { name: 'Weekly story 100', exact: true })).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Next' }).first()).toBeDisabled();
+	await page.getByRole('heading', { name: 'Weekly story 20', exact: true }).scrollIntoViewIfNeeded();
+	await expect(page.getByRole('heading', { name: 'Weekly story 40', exact: true })).toBeAttached();
+	await page.getByRole('button', { name: 'Show more stories' }).click();
+	await expect.poll(() => seen.flatMap((s) => s.item_ids).length, { timeout: 10_000 }).toBeGreaterThan(0);
+	expect(seen[0].visit_at).toBe(Number(first.searchParams.get('visit_at')));
+	// Same visit after a reload keeps the order; Fresh mix starts a new visit.
+	await page.reload();
+	await expect(page.getByText('Showing', { exact: false })).toBeVisible();
+	expect(requests.at(-1)!.searchParams.get('seed')).toBe(first.searchParams.get('seed'));
+	await page.evaluate(() => window.scrollTo(0, 0));
+	await page.getByRole('button', { name: 'Fresh mix' }).click();
+	await expect.poll(() => requests.at(-1)!.searchParams.get('seed')).not.toBe(first.searchParams.get('seed'));
+	await page.getByRole('tab', { name: 'Latest' }).click();
+	await expect.poll(() => requests.at(-1)!.searchParams.get('mode')).toBe('latest');
 	await page.getByRole('searchbox', { name: 'Filter news' }).fill('Weekly story');
-	await expect(page.getByText('Page 1 of 5').first()).toBeVisible();
+	await expect(page.getByText('Showing 20 of 100 stories')).toBeVisible();
 	await page.setViewportSize({ width: 390, height: 844 });
 	await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 	await page.evaluate(() => window.scrollTo(0, 0));

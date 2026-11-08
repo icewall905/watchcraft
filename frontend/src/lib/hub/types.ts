@@ -113,7 +113,7 @@ export type TopicDetail = Topic & { items: Item[]; recent: Item[]; curators: { i
 export type Briefing = { id: number; name: string; curator_ids: number[]; topic_ids: number[]; frequency: 'manual' | 'daily' | 'weekly'; length: 'concise' | 'detailed'; last_generated: number | null; next_run: number | null };
 export type Issue = { id: number; created_at: number; content: string; item_ids: number[]; ai: boolean };
 export type Alert = { id: number; severity: string; state: string; title: string; reason: string; curator_id: number | null; item: Item; created_at: number; snooze_until?: number | null };
-export type NewsGroup = { key: string; story_id?: number | null; title: string; items: Item[]; latest: number };
+export type NewsGroup = { key: string; story_id?: number | null; title: string; items: Item[]; latest: number; seen?: boolean; new?: boolean };
 export type SearchResult = Page<Item> & {
 	videos: { id: string; title: string; channel_name: string; thumbnail: string }[];
 	curators: { id: number; name: string; kind: string }[];
