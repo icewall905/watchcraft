@@ -1,6 +1,18 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — longer Today edition (`6688115`, 2026-11-08)
+
+- Today holds up to 80 stories / 40 reads / 16 moments (was 30/20/10), opens with 16/9/6 and grows in steps; only
+  rendered entries count as delivered. No schema change.
+- Backup `/root/compose/watchcraft-backups/20261108-today-6688115` (online DB quick_check ok, config hashes,
+  previous source); rollback images `watchcraft:rollback-20261108-today-api`/`-worker`, `rollback.sh`. rsync changed
+  exactly the 7 files of `4cd898e..6688115`.
+- Network-isolated copy: profile 2 edition rebuilt to lead 1 / stories 79 / reads 40 / memes 9 in 0.1 s.
+- Image `sha256:c79d34e62ab48e6ec20ff4886fe0e2598a31621e8df27494b80bb0212cdd8c71`; `bt-api`/`bt-worker` recreated,
+  zero restarts, no tracebacks; health 200 local/public; `/today`, `/news`, `/` 200; new bundle present;
+  quick_check ok; profiles/PINs and `.env`/`compose.host.yaml` unchanged.
+
 ## Deployment record — News paging, per-interest refill, article upgrade, folded shelf (`1935ec2..4cd898e`, 2026-11-08)
 
 - T-120 `1935ec2`: the capture lane re-reads recent `web` captures of news curators (one per 120 s, only when no
