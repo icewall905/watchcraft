@@ -1932,3 +1932,34 @@ in the local `todo.md` (which is intentionally ignored by Git).
   both from prior `0f465c9`. Previous images already understand article learning; no quarantine is required for
   this rollback. Downstream services stay running. Conditional interrupted-job recovery found no owned active
   jobs needing recovery at the final rollout. The new maintenance state is additive Setting data.
+
+## Deployment record — news coverage diagnostic and capture identity (`aec1a22..dffedb9`, 2026-11-08)
+
+- Added a standard-library read-only SQLite coverage report for per-profile/curator article discovery,
+  readiness, preparation blockers, provider/publisher coverage and publication/discovery clocks. Explicit
+  scan truncation and reference targets prevent partial counts from appearing complete. Free-form
+  instructions, profile names, article bodies and private application settings are omitted from output.
+- Successful direct HTML capture now promotes generic web findings only when extraction identifies a
+  structured article/news page, fills absent author/publisher/publication metadata, and queues normal
+  master curation for eligible owning profiles. Existing metadata, specific types, concurrent edits and
+  social-post identity are preserved. Already captured generic pages are not automatically relabeled.
+- Both commits pushed to `origin/codex/android-app`. Full backend validation: 1044 passed, six skipped;
+  final focused capture/report suites: 35 passed; frontend check/build passed (three existing CSS warnings),
+  and both News browser regressions passed. Independent implementation and release-gate reviews approved.
+- Exact release image initialized a private restored database twice with integrity, all table counts and
+  protected profile/settings/curator/source/channel hashes preserved. API and worker each started twice
+  with networking disabled and production media read-only. A disposable structured-HTML capture fixture
+  passed extraction, metadata preservation, master queueing and actual News selection; no test records,
+  feedback, playback history or PIN changes were written to production.
+- API and worker deployed with `compose.host.yaml` and `--no-deps`; production marker `dffedb9`, image
+  `sha256:2d7f4cd863688b4ac869ecaef79aac2c2f804773c1934a61e36d7b3c3709fb8c`.
+  API healthy and worker running, both zero restarts. Downloader/subtitle images and start times unchanged.
+  Local/public health, News/Today/Home routes, database integrity, exact profiles/PINs and private config
+  hashes passed. Production saved-video decode passed; HTTP Range returned 206 on the disposable clone,
+  avoiding production playback timestamp changes. This verifies deployment, not sustained per-interest
+  freshness or human acceptance of curator relevance.
+- Backup `/root/compose/watchcraft-backups/20261108-news-dffedb9` retains online and final pre-rollout DB
+  snapshots, previous source, build/validation/rollout logs and `rollback.sh`. Previous revision `2eeb9f4`;
+  rollback API/worker tags `watchcraft:rollback-20261108-news-api` and
+  `watchcraft:rollback-20261108-news-worker`. Rollback stops API/worker, retains a fresh DB backup and
+  restarts their prior images without restoring old data or recreating downloader/subtitles.
