@@ -58,6 +58,46 @@ def _captured_page_identity(item_type, author, publisher, published_at, page, fe
     return new_type, new_author, new_publisher, new_published, promoted
 
 
+def merge_page_identity(s, item, page_identity, *, social_post=False, source='capture'):
+    """Merge a page's identity into a freshly loaded item; return True when it was promoted.
+
+    Existing type, author, publisher and date win. A generic web item that was
+    checked records the result, so the historical upgrade pass does not refetch it.
+    """
+    page_type, page_author, page_publisher, page_published, _ = page_identity
+    was_type = item.type
+    if not social_post and item.type == 'web' and page_type in ('article', 'news'):
+        item.type = page_type
+    item.author = item.author or page_author
+    item.publisher = item.publisher or page_publisher
+    if item.published_at is None:
+        item.published_at = page_published
+    promoted = was_type == 'web' and item.type in ('article', 'news')
+    if was_type == 'web' and not social_post:
+        item.meta = {**(item.meta or {}), 'article_probe': {
+            'at': time.time(), 'by': source, 'result': item.type if promoted else 'not_article'}}
+    s.add(item)
+    return promoted
+
+
+def promotion_profiles(s, iid):
+    """Adult, hub-allowed profiles that can see an item whose type was just promoted."""
+    pids = set(s.exec(select(CuratorDiscovery.profile_id).where(CuratorDiscovery.item_id == iid)).all())
+    pids.update(s.exec(select(ItemState.profile_id).where(ItemState.item_id == iid)).all())
+    return sorted(pid for pid in pids if (profile := s.get(Profile, pid))
+                  and profile.role in ('adult', 'admin') and hub_allowed(s, pid))
+
+
+def queue_master(pids, iid):
+    """Queue the normal profile-scoped master pass; it rejudges without touching manual verdicts."""
+    try:
+        from .master import schedule as master
+        for pid in pids:
+            master.mark(pid)
+    except Exception:  # noqa: BLE001 — capture success must survive queue issues
+        log.exception('could not queue master curator after article promotion for %s', iid)
+
+
 def validate_video(data, mime):
     if len(data) > VIDEO_MAX_BYTES:
         raise ValueError('Meme video exceeds the 25 MB limit.')
@@ -358,23 +398,9 @@ def run(pid, iid, lease):
         if page_identity:
             # Merge into the freshly loaded row: another scout/profile may have
             # learned identity while this worker was fetching the page.
-            page_type, page_author, page_publisher, page_published, _ = page_identity
-            was_type = item.type
-            if not social_post and item.type == 'web' and page_type in ('article', 'news'):
-                item.type = page_type
-            item.author = item.author or page_author
-            item.publisher = item.publisher or page_publisher
-            if item.published_at is None:
-                item.published_at = page_published
-            promoted = was_type == 'web' and item.type in ('article', 'news')
+            promoted = merge_page_identity(s, item, page_identity, social_post=social_post)
             if promoted:
-                promote_profiles = set(s.exec(select(CuratorDiscovery.profile_id).where(
-                    CuratorDiscovery.item_id == iid)).all())
-                promote_profiles.update(s.exec(select(ItemState.profile_id).where(
-                    ItemState.item_id == iid)).all())
-                promote_profiles = [profile_id for profile_id in promote_profiles
-                                    if (profile := s.get(Profile, profile_id))
-                                    and profile.role in ('adult', 'admin') and hub_allowed(s, profile_id)]
+                promote_profiles = promotion_profiles(s, iid)
         if body:
             item.body = body
             if linked_url: item.meta = {**item.meta, 'post_body': post_body}
@@ -388,18 +414,14 @@ def run(pid, iid, lease):
             job.status, job.next_run = ('partial' if errors and (body or has_document or typ == 'video') else 'failed') if errors else 'complete', 0
         s.add(job); s.commit()
     if promoted:
-        # Queue the normal profile-scoped master pass after the item commit. It
-        # rejudges the promoted item without touching manual verdicts.
-        try:
-            from .master import schedule as master
-            for profile_id in promote_profiles:
-                master.mark(profile_id)
-        except Exception:  # noqa: BLE001 — capture success must survive queue issues
-            log.exception('could not queue master curator after article promotion for %s', iid)
+        # Queue the normal profile-scoped master pass after the item commit.
+        queue_master(promote_profiles, iid)
 
 
 def dispatch():
     """Claim one job across processes; a lost worker's lease becomes due again."""
+    from . import article_upgrade
+    article_upgrade.audit_tick()  # local counts only; independent of the capture switch
     if not get_settings()['local_library'].get('enabled', True): return False
     refill()
     now = time.time()
@@ -441,7 +463,10 @@ def dispatch():
         job = s.exec(select(CaptureJob).where(((CaptureJob.status == 'queued') & (CaptureJob.next_run <= now)) |
                      ((CaptureJob.status == 'running') & (CaptureJob.lease <= now)))
                      .order_by(CaptureJob.next_run, CaptureJob.updated_at).limit(1)).first()
-        if not job: return False
+        if not job:
+            s.rollback()
+            # An idle capture lane may re-check one historical web capture.
+            return article_upgrade.probe_tick()
         if not hub_allowed(s, job.profile_id) or not visible(s, job.profile_id, job.item_id):
             job.status, job.error = 'failed', 'Profile no longer has access to this item.'
             s.add(job); s.commit(); return False
