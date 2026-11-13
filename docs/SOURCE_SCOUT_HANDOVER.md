@@ -1,6 +1,22 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — endless News, deeper curators, social sources (`fa472b2`, 2026-11-13)
+
+- News Refresh/pull-to-refresh (`POST /api/hub/news/refresh`), dates/day headers, caught-up card; curator
+  `max_per_run` default 500 (schema v5 lifted all 6 article curators from <500 to 500), 30-day article age guard,
+  newest-first runs; providers `subreddit`, `bing_news`, `bluesky`, `tiktok` (clips via yt-dlp, allow-listed to
+  tiktok.com, `^TikTok$` extractor only); Seen it/Dismiss bulk state. Additive migration only.
+- Backup `/root/compose/watchcraft-backups/20261113-feeds-fa472b2` (online DB quick_check ok, schema 4, config
+  hashes, previous source); rollback images `watchcraft:rollback-20261113-feeds-api`/`-worker`, `rollback.sh`
+  (the old image ignores the raised budgets; restore the DB copy only if v5 itself must be undone). rsync
+  (checksum, no `--delete`) changed exactly the 25 files of `6688115..fa472b2`.
+- Image `sha256:a02d97842d9bf42902c6afe8b052ee5472357c752fdc64c6e7f760a2dbe1438a`; recreated `bt-api`/`bt-worker`
+  only, zero restarts, no tracebacks. Health 200 local/public; `/news`, `/today`, `/memes`, `/` 200; quick_check ok;
+  schema 5; `.env`/`compose.host.yaml` unchanged. From the prod container TikTok listing and Reddit RSS answered.
+- Afterwards all 6 idle enabled curators were set due for a full refresh (one was already running).
+  Acceptance: V-082.
+
 ## Deployment record — longer Today edition (`6688115`, 2026-11-08)
 
 - Today holds up to 80 stories / 40 reads / 16 moments (was 30/20/10), opens with 16/9/6 and grows in steps; only
