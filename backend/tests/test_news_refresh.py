@@ -225,3 +225,75 @@ def test_ytdlp_clip_capture_is_host_allowlisted_and_bounded(monkeypatch):
     assert data[4:8] == b'ftyp'
     assert seen['max_filesize'] == capture.VIDEO_MAX_BYTES and seen['noplaylist'] is True
     assert seen['allowed_extractors'] == ['^TikTok$']
+
+
+def test_youtube_shorts_search_lists_clips_as_local_moments(monkeypatch):
+    from bt import ytdl
+    from bt.hub.providers import PROVIDERS
+    asked = []
+    monkeypatch.setattr(ytdl, 'search_shorts', lambda q, n, origin: asked.append((q, n, origin)) or [
+        # what ytdl._shorts_entry really yields: id, title and views; no channel, length or date
+        {'id': 'abcdefghijk', 'title': 'Robot dog dances', 'channel_name': '', 'duration_s': 0,
+         'view_count': 9000, 'published_at': None, 'is_live': False},
+        {'id': 'livestream1', 'title': 'Live', 'channel_name': '', 'duration_s': 0, 'is_live': True},
+        {'id': 'bad id', 'title': 'Broken'}])
+    assert PROVIDERS['youtube_shorts'].run('', '') == [] and asked == []
+    items = PROVIDERS['youtube_shorts'].run('', 'robot dogs')
+    assert asked == [('robot dogs', 10, 'worker')] and len(items) == 1
+    clip = items[0]
+    assert clip['type'] == 'meme' and clip['provider'] == 'youtube_shorts'
+    assert clip['url'] == 'https://www.youtube.com/shorts/abcdefghijk' and clip['external_id'] == 'youtube:abcdefghijk'
+    assert clip['meta']['media'] == {'type': 'video', 'via': 'yt-dlp', 'url': clip['url']}
+    assert clip['publisher'] == 'YouTube' and clip['published_at'] is None
+
+    def blocked(*a):
+        raise ytdl.YtBlocked('Sign in to confirm you are not a bot')
+    monkeypatch.setattr(ytdl, 'search_shorts', blocked)
+    import pytest
+    with pytest.raises(ValueError, match='Shorts search failed'):
+        PROVIDERS['youtube_shorts'].run('', 'robot dogs')
+
+
+def test_youtube_short_clip_uses_the_app_youtube_options(monkeypatch):
+    import pytest
+    import yt_dlp
+    from bt import ytdl
+    from bt.hub import capture
+    for bad in ('https://www.youtube.com/watch?v=abcdefghijk', 'https://www.youtube.com/shorts/x',
+                'http://www.youtube.com/shorts/abcdefghijk', 'https://youtube.evil.example/shorts/abcdefghijk'):
+        with pytest.raises(ValueError):
+            capture.fetch_ytdlp_clip(bad)
+    seen = {}
+
+    class FakeYDL:
+        def __init__(self, opts): seen.update(opts)
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def download(self, urls):
+            with open(seen['outtmpl'].replace('%(ext)s', 'mp4'), 'wb') as fh:
+                fh.write(b'\0\0\0\x18ftypmp42' + b'\0' * 32)
+    monkeypatch.setattr(yt_dlp, 'YoutubeDL', FakeYDL)
+    monkeypatch.setattr(ytdl, 'yt_proxy', lambda: 'socks5h://proxy:1080')
+    monkeypatch.setattr(capture, '_yt_clips', [])
+    monkeypatch.setattr(capture, '_yt_clip_block', [0.0])
+    data = capture.fetch_ytdlp_clip('https://www.youtube.com/shorts/abcdefghijk')
+    assert data[4:8] == b'ftyp' and seen['allowed_extractors'] == ['^Youtube$']
+    assert seen['proxy'] == 'socks5h://proxy:1080' and seen['skip_download'] is False and 'extractor_args' in seen
+    assert seen['max_filesize'] == capture.VIDEO_MAX_BYTES and seen['format'] == ytdl.download_format(1280)
+
+    # the hourly budget, then a bot check, make clips wait
+    monkeypatch.setattr(capture, 'YT_CLIPS_PER_HOUR', 1)
+    with pytest.raises(ValueError, match='budget'):
+        capture.fetch_ytdlp_clip('https://www.youtube.com/shorts/abcdefghijk')
+    monkeypatch.setattr(capture, 'YT_CLIPS_PER_HOUR', 40)
+
+    class Blocked(FakeYDL):
+        def download(self, urls):
+            raise yt_dlp.utils.DownloadError("Sign in to confirm you're not a bot")
+    monkeypatch.setattr(yt_dlp, 'YoutubeDL', Blocked)
+    with pytest.raises(ValueError, match='failed'):
+        capture.fetch_ytdlp_clip('https://www.youtube.com/shorts/abcdefghijk')
+    monkeypatch.setattr(yt_dlp, 'YoutubeDL', FakeYDL)
+    with pytest.raises(ValueError, match='slow down'):
+        capture.fetch_ytdlp_clip('https://www.youtube.com/shorts/abcdefghijk')
+    assert 'youtube_shorts' in capture.YTDLP_PROVIDERS

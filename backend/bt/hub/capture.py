@@ -177,36 +177,86 @@ def _valid_asset(kind, mime, data):
 
 
 YTDLP_CLIP_HOSTS = ('tiktok.com', 'www.tiktok.com')
+YOUTUBE_CLIP_HOSTS = ('www.youtube.com', 'youtube.com', 'm.youtube.com')
+YTDLP_PROVIDERS = ('tiktok', 'youtube_shorts')  # only these providers' clips may use yt-dlp
+YT_CLIPS_PER_HOUR = 40     # YouTube Shorts saved per hour: clips share the downloader's cookies and address
+YT_CLIP_BLOCK_S = 3600     # after a bot check, clips rest as long as the downloader does
+_yt_clips: list[float] = []
+_yt_clip_block = [0.0]
+
+
+def _youtube_clip_gate() -> None:
+    """Refuse a YouTube clip while YouTube asked us to slow down (downloader backoff or our own bot check)
+    or the hourly clip budget is spent. The capture job fails softly and is retried later."""
+    from datetime import datetime, timezone
+    from ..db import get_agent_state
+    now_t = time.time()
+    until = get_agent_state().get('backoff_until')
+    try:
+        backoff = datetime.fromisoformat(str(until).replace('Z', '+00:00')).timestamp() if until else 0
+    except ValueError:
+        backoff = 0
+    if max(backoff, _yt_clip_block[0]) > now_t:
+        raise ValueError('YouTube asked us to slow down; the clip will be saved later.')
+    _yt_clips[:] = [t for t in _yt_clips if now_t - t < 3600]
+    if len(_yt_clips) >= YT_CLIPS_PER_HOUR:
+        raise ValueError('Hourly YouTube clip budget reached; the clip will be saved later.')
+    _yt_clips.append(now_t)
 
 
 def fetch_ytdlp_clip(url: str) -> bytes:
-    """Download one short clip (TikTok) through yt-dlp as a single mp4, within the meme limits.
+    """Download one short clip (TikTok, YouTube Short) through yt-dlp as a single mp4, within the meme limits.
 
-    Only allow-listed hosts: yt-dlp follows its own redirects outside curation.fetch's checks."""
+    Only allow-listed hosts: yt-dlp follows its own redirects outside curation.fetch's checks. YouTube goes
+    through the downloader's options (cookies, proxy, PO tokens, H.264 mp4), capped at 720p to fit the size limit."""
+    import re as _re
     import tempfile
     import yt_dlp
     from pathlib import Path
     parts = urlsplit(url)
-    if parts.scheme != 'https' or (parts.hostname or '').lower() not in YTDLP_CLIP_HOSTS:
+    host = (parts.hostname or '').lower()
+    youtube = host in YOUTUBE_CLIP_HOSTS
+    if parts.scheme != 'https' or not (host in YTDLP_CLIP_HOSTS or youtube):
         raise ValueError('Clip host is not supported.')
+    if youtube and not _re.fullmatch(r'/shorts/[A-Za-z0-9_-]{11}', parts.path):
+        raise ValueError('Only YouTube Shorts are saved as clips.')
     with tempfile.TemporaryDirectory(prefix='wc-clip-') as tmp:
-        opts = {'quiet': True, 'no_warnings': True, 'noprogress': True, 'noplaylist': True,
-                'socket_timeout': 30, 'retries': 2,
-                'allowed_extractors': ['^TikTok$'],  # never the generic extractor, which follows embeds anywhere
-                'outtmpl': f'{tmp}/clip.%(ext)s', 'format': 'b[ext=mp4][height<=1080]/b[ext=mp4]/bv*[ext=mp4]+ba/b',
-                'merge_output_format': 'mp4', 'max_filesize': VIDEO_MAX_BYTES,
-                'match_filter': yt_dlp.utils.match_filter_func(f'duration <=? {VIDEO_MAX_SECONDS}')}
+        limits = {'max_filesize': VIDEO_MAX_BYTES,
+                  'match_filter': yt_dlp.utils.match_filter_func(f'duration <=? {VIDEO_MAX_SECONDS}')}
+        if youtube:
+            from .. import ytdl
+            _youtube_clip_gate()
+            # The downloader's own options: PO tokens, cookies, proxy, H.264/AAC mp4 (plays on every TV).
+            # 1280 tall is 720p for a vertical Short (yt-dlp reports the real pixel height).
+            opts = {**ytdl.download_opts(tmp, 1280), **limits, 'outtmpl': f'{tmp}/clip.%(ext)s',
+                    'allowed_extractors': ['^Youtube$'], 'continuedl': False}
+        else:
+            opts = {'quiet': True, 'no_warnings': True, 'noprogress': True, 'noplaylist': True,
+                    'socket_timeout': 30, 'retries': 2,
+                    'allowed_extractors': ['^TikTok$'],  # never the generic extractor, which follows embeds anywhere
+                    'outtmpl': f'{tmp}/clip.%(ext)s', 'format': 'b[ext=mp4][height<=1080]/b[ext=mp4]/bv*[ext=mp4]+ba/b',
+                    'merge_output_format': 'mp4', **limits}
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 ydl.download([url])
         except Exception as e:  # noqa: BLE001
+            if youtube:
+                from .. import ytdl
+                from ..db import log_yt_request
+                err = ytdl.classify(e)
+                if isinstance(err, ytdl.YtBlocked):
+                    _yt_clip_block[0] = time.time() + YT_CLIP_BLOCK_S
+                log_yt_request('download', 'worker', False, f'hub clip {url}: {type(err).__name__}: {str(e)[:300]}')
             raise ValueError(f'Clip download failed: {str(e)[:160]}') from e
-        files = [p for p in Path(tmp).iterdir() if p.suffix == '.mp4' and p.is_file()]
-        if not files:
+        clip = Path(tmp) / 'clip.mp4'  # the merged file; a lone video part (audio failed) is not a clip
+        if not clip.is_file():
             raise ValueError('Clip was too long, too large or unavailable.')
-        if files[0].stat().st_size > VIDEO_MAX_BYTES:
+        if clip.stat().st_size > VIDEO_MAX_BYTES:
             raise ValueError('Meme video exceeds the 25 MB limit.')
-        return files[0].read_bytes()
+        if youtube:
+            from ..db import log_yt_request
+            log_yt_request('download', 'worker', True, f'hub clip {url}')
+        return clip.read_bytes()
 
 
 def save_asset(pid, iid, kind, url, data, mime):
@@ -275,7 +325,8 @@ def run(pid, iid, lease):
             return
         url, typ, title, image, body = item.url, item.type, item.title, item.image, item.body
         video_id = str(item.meta.get('video_id', ''))
-        social_post = item.provider in ('mastodon', 'mastodon_trends', 'lemmy') and bool(item.meta.get('social_post', item.provider == 'mastodon'))
+        social_post = (item.provider in ('mastodon', 'mastodon_trends', 'lemmy') and bool(item.meta.get('social_post', item.provider == 'mastodon'))) \
+            or item.provider in YTDLP_PROVIDERS  # the clip is the content: no page fetch (YouTube would see our address)
         linked_url = item.meta.get('article_url', '') if item.provider == 'lemmy' and typ in ('news', 'article') else ''
         linked_url = linked_url if isinstance(linked_url, str) and linked_url and linked_url != url else ''
         post_body = item.meta.get('post_body', body) if linked_url else ''
@@ -284,7 +335,7 @@ def run(pid, iid, lease):
         review_only = bool(prior_review and prior_review.backfill and body)
         capture_url = linked_url or url
         meme_media = item.meta.get('media', {}) if typ == 'meme' or social_post else {}
-        clip_via_ytdlp = item.provider == 'tiktok'  # only this provider's clips may use yt-dlp
+        clip_via_ytdlp = item.provider in YTDLP_PROVIDERS
         if isinstance(meme_media, dict) and meme_media.get('type') == 'image' and meme_media.get('url'):
             image = meme_media['url']
         # The feed that found this item may carry the whole article even when the page will not.

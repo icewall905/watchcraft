@@ -509,6 +509,42 @@ def tiktok(url: str, _q: str = '') -> list[dict]:
     return out
 
 
+YT_SHORTS_PER_QUERY = 10  # each clip is downloaded (<=25 MB), so a query brings a handful, not a page
+
+
+def youtube_shorts(_url: str, q: str = '') -> list[dict]:
+    """YouTube Shorts for one curator query, through the app's YouTube client (cookies, proxy, PO tokens).
+
+    Like TikTok clips they become Moments (type meme) and capture saves each one locally. Longer videos stay
+    with the video categories, which download and play them as full videos."""
+    from .. import ytdl
+    if not q.strip():
+        return []
+    try:
+        found = ytdl.search_shorts(q.strip()[:200], YT_SHORTS_PER_QUERY, 'worker')
+    except Exception as e:  # noqa: BLE001 — YtBlocked / YtError carry no secrets; keep them short
+        raise ValueError(f'YouTube Shorts search failed: {str(e)[:160]}') from e
+    out = []
+    for e in found:
+        vid = e.get('id') or ''
+        if not re.fullmatch(r'[A-Za-z0-9_-]{11}', vid) or e.get('is_live'):
+            continue
+        # Shorts search gives id, title and views only; length and channel are checked when the clip is saved.
+        link = f'https://www.youtube.com/shorts/{vid}'
+        published = e.get('published_at')
+        out.append({'url': link, 'title': clean(e.get('title') or '', 500) or 'YouTube Short', 'type': 'meme',
+                    'provider': 'youtube_shorts', 'publisher': clean(e.get('channel_name') or 'YouTube', 100),
+                    'author': clean(e.get('channel_name') or '', 100), 'summary': '',
+                    'image': f'https://i.ytimg.com/vi/{vid}/hqdefault.jpg',
+                    'published_at': published.timestamp() if published else None,
+                    'external_id': f'youtube:{vid}',
+                    'meta': {'platform': 'youtube', 'social_post': True, 'community': 'YouTube Shorts',
+                             'discussion_url': link, 'video_id': vid,
+                             'media': {'type': 'video', 'via': 'yt-dlp', 'url': link},
+                             'duration': e.get('duration_s') or None, 'views': e.get('view_count') or None}})
+    return out
+
+
 def rss(url: str, _q: str = '') -> list[dict]:
     return parse_feed(curation.fetch(url), url)
 
@@ -827,6 +863,8 @@ PROVIDERS = {p.key: p for p in [
              ['feed', 'structured-metadata'], needs_url=True, default_type='news'),
     Provider('tiktok', 'TikTok account', 'feed', 'Recent clips (up to 3 minutes) from one public account, saved locally so they play here. Use https://www.tiktok.com/@bbcnews. Hashtags and search need a login and are not supported.', tiktok,
              ['feed', 'community-scoped'], needs_url=True, default_type='meme'),
+    Provider('youtube_shorts', 'YouTube Shorts search', 'query', 'Shorts for each curator query, saved locally so they play here as Moments (up to 3 minutes). Longer videos belong in a video category.', youtube_shorts,
+             ['keyword-search', 'community-scoped'], default_type='meme'),
     Provider('lobsters', 'Lobste.rs stories', 'feed', 'Stories from the Lobste.rs technology community. Use https://lobste.rs/hottest.json or /newest.json.', lobsters,
              ['feed', 'structured-metadata'], needs_url=True, default_type='news'),
 ]}

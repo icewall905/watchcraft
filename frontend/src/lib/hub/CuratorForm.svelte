@@ -74,6 +74,7 @@
 				{ url: 'https://bsky.app/profile/arstechnica.com', label: 'Ars Technica' },
 				{ url: 'https://bsky.app/profile/did:plc:kkf4naxqmweop7dv4l2iqqf5/feed/verified-news', label: 'Verified news feed' }
 			] },
+		{ title: 'YouTube Shorts search', keys: ['youtube_shorts'], note: 'Searches Shorts for each of this curator’s queries; clips are saved locally and show up as Moments. Use a curator that collects memes.' },
 		{ title: 'TikTok', keys: ['tiktok'], add: 'tiktok', addHint: 'https://www.tiktok.com/@bbcnews', addLabel: 'Add account',
 			note: 'Recent clips up to 3 minutes are saved locally and show up as Moments. Use a curator that collects memes.',
 			presets: [
