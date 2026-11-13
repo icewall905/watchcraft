@@ -240,3 +240,57 @@ test('a failed auto-sync says why and stops', async ({ page }) => {
 	await page.waitForTimeout(3500);
 	expect(calls).toBe(1); // no silent retry loop
 });
+
+test('the remote stays inside the party deck and Back leaves it', async ({ page }) => {
+	await page.setViewportSize({ width: 1920, height: 1080 });
+	await fixture(page);
+	await freshPage(page, '/music');
+	await page.getByRole('button', { name: 'Play Titanium by David Guetta' }).first().click();
+	const deck = page.getByRole('region', { name: 'Music player' });
+	await deck.getByRole('button', { name: /Party mode/ }).click();
+	await deck.getByRole('button', { name: 'Play', exact: true }).focus();
+	for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowLeft');
+	await page.keyboard.press('ArrowUp');
+	// Page buttons hidden behind the deck used to take the focus here.
+	expect(await page.evaluate(() => !!document.activeElement?.closest('.deck'))).toBe(true);
+	await page.keyboard.press('Escape');
+	await expect(deck.getByRole('button', { name: /Party mode/ })).toBeVisible();
+});
+
+test('full screen fills the screen with the video and Back returns', async ({ page }) => {
+	await fixture(page);
+	await freshPage(page, '/music');
+	await page.getByRole('button', { name: 'Play Titanium by David Guetta' }).first().click();
+	const deck = page.getByRole('region', { name: 'Music player' });
+	await deck.getByRole('button', { name: 'Full screen' }).click();
+	await expect(deck).toHaveClass(/full/);
+	const box = await deck.locator('.screen').boundingBox();
+	const view = page.viewportSize()!;
+	expect(box!.width).toBeGreaterThan(view.width - 2);
+	await deck.getByRole('button', { name: 'Exit full screen' }).focus();
+	await page.keyboard.press('Escape');
+	await expect(deck).not.toHaveClass(/full/);
+	await expect(deck.getByRole('button', { name: 'Full screen' })).toBeVisible();
+	// Stopping from full screen leaves it: the next song opens in the docked player.
+	await deck.getByRole('button', { name: 'Full screen' }).click();
+	await deck.getByRole('button', { name: 'Stop and close player' }).click();
+	await expect(deck).toHaveCount(0);
+	await page.getByRole('button', { name: 'Play Halo by Beyoncé' }).first().click();
+	await expect(deck).not.toHaveClass(/full/);
+});
+
+test('lyrics appear after a failed first lookup without toggling karaoke', async ({ page }) => {
+	await fixture(page);
+	await page.addInitScript(() => Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', { get: () => 12, set: () => {}, configurable: true }));
+	const lines = [{ t: 5000, text: 'First line of the song' }, { t: 10000, text: 'Second line we sing now' }];
+	let calls = 0;
+	await page.route('**/api/music/lyrics/freshtrack1', (r) => (++calls === 1
+		? r.fulfill({ status: 502, json: { detail: 'upstream' } })
+		: r.fulfill({ json: { video_id: 'freshtrack1', status: 'found', source: 'lrclib', synced: true, lines, plain: '', offset_ms: 0, offset_source: '', duration: 200 } })));
+	await freshPage(page, '/music');
+	await page.getByRole('button', { name: 'Play Titanium by David Guetta' }).first().click();
+	const deck = page.getByRole('region', { name: 'Music player' });
+	await deck.getByTitle('Lyrics (karaoke)').click();
+	await expect(deck.locator('.line.now')).toHaveText('Second line we sing now', { timeout: 10_000 });
+	expect(calls).toBeGreaterThanOrEqual(2);
+});
