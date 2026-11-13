@@ -1,6 +1,21 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — YouTube Shorts source + social sources attached (`9d12545`, 2026-11-13)
+
+- New `youtube_shorts` query provider: Shorts per curator query via `ytdl.search_shorts`, clips saved locally at
+  720x1280 as Moments (downloader options, honours downloader backoff, 1 h rest after a bot check, 40 clips/h,
+  logged as YouTube requests; no page fetch). Code only; no schema change.
+- Backup `/root/compose/watchcraft-backups/20261113-shorts-9d12545` (online DB quick_check ok, config hashes,
+  previous source, `attach.py`); rollback images `watchcraft:rollback-20261113-shorts-api`/`-worker`, `rollback.sh`.
+  rsync (checksum) changed exactly the 4 files of `5fe06dc..9d12545`.
+- Image `sha256:fea319e7341207c8393ec840281503093ba4909825ec7adabd11816bdb63d814`; recreated `bt-api`/`bt-worker`,
+  zero restarts, no tracebacks; health 200 local/public; `/music`, `/news`, `/memes`, `/` 200; config unchanged.
+- Data (user-approved): `attach.py` attached Reddit (worldnews, news, europe, Denmark, MachineLearning, LocalLLaMA,
+  homeassistant, netsec, cybersecurity), Bing News, Bluesky (Reuters, AP, BBC, Guardian) to the matching curators,
+  YouTube Shorts to Meme Tracker, and created curator 9 "Video Moments" (profile 2, memes only, 6 h, 60/run:
+  YouTube Shorts + TikTok bbcnews/reuters/washingtonpost/nytimes/nasa/natgeo). All enabled curators set due.
+
 ## Deployment record — Music Videos Dislike/Less + DJ offline picks (`b50327d`, 2026-11-13)
 
 - 👎 Dislike song / 🔉 Less <artist> (new `MusicFavorite` kinds `dislike`/`less`, no schema change) filter the DJ,
