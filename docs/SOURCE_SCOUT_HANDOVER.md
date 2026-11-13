@@ -1,6 +1,22 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — Meme Tracker real memes (`7356cd5`, 2026-11-13)
+
+- New `reddit_memes` provider (direct image posts, NSFW/spoiler-tagged skipped), Lemmy `item_type: meme` keeps
+  picture posts only, Mastodon meme queries no longer widen to generic tags, meme-community pictures/clips pass the
+  keyword gate, Mastodon autopilot leaves curators with other meme sources alone, one shared 60 s Reddit pace
+  (10 min rest after 429, capped 1 h). Code only; no schema change.
+- Backup `/root/compose/watchcraft-backups/20261113-memes-7356cd5` (online DB quick_check ok, config hashes,
+  previous source, `memes.py`); rollback images `watchcraft:rollback-20261113-memes-api`/`-worker`, `rollback.sh`.
+  rsync (checksum) changed exactly the 12 files of `0b01869..7356cd5`.
+- Image `sha256:4580e4443c0bafeec08173cc7b70645a537118dc12444bfb59656a79a35261d2`; recreated `bt-api`/`bt-worker`,
+  zero restarts, no tracebacks; health 200 local/public; `/memes`, `/news`, `/` 200; config unchanged.
+- Data (user-approved, `memes.py`): Meme Tracker detached 2 mastodon_trends + 5 Lemmy news communities (still on
+  other curators), attached Reddit memes (memes, dankmemes, me_irl, wholesomememes, ProgrammerHumor, linuxmemes)
+  and Lemmy meme communities (lemmy.world memes/lemmyshitpost/linuxmemes, programming.dev programmer_humor,
+  lemmy.ml memes; Hot, 30), max_per_run 30 -> 150. First run: 97 new, every Reddit sub read without a 429.
+
 ## Deployment record — YouTube Shorts source + social sources attached (`9d12545`, 2026-11-13)
 
 - New `youtube_shorts` query provider: Shorts per curator query via `ytdl.search_shorts`, clips saved locally at
