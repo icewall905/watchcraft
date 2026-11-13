@@ -6,6 +6,7 @@ priority order, so the downloader can queue, order and protect it from eviction.
 """
 from __future__ import annotations
 
+import threading
 import time
 
 from sqlalchemy import func
@@ -18,12 +19,15 @@ MAX_WANTED = 800          # ~50 GB at 1080p: favourites first, so the cap trims 
 RECENT_PLAYS_S = 30 * 86400
 MIXES = 25                # newest mixes per profile that are kept offline
 FOR_YOU_KEY = 'music_for_you:'
+DJ_KEY = 'music_dj:'      # the songs the live DJ lined up lately, per profile
+DJ_KEEP = 64
+_dj_lock = threading.Lock()
 HAND_DELETED = 'deleted by hand'  # Download.error marker set by DELETE /api/downloads
 
 
 def wanted_ids(s: Session, limit: int = MAX_WANTED) -> list[str]:
     """Every profile's music to keep offline, most important first:
-    favourite tracks, For-you shelves, mixes (newest first, in play order), songs played to the end."""
+    favourite tracks, what the live DJ lined up, For-you shelves, mixes (newest first, in play order), songs played to the end."""
     out: dict[str, None] = {}
 
     def add(ids):
@@ -34,6 +38,8 @@ def wanted_ids(s: Session, limit: int = MAX_WANTED) -> list[str]:
 
     add(s.exec(select(MusicFavorite.ref).where(MusicFavorite.kind == 'track')
                .order_by(MusicFavorite.created_at.desc())).all())
+    for row in s.exec(select(Setting).where(col(Setting.key).startswith(DJ_KEY))).all():
+        add((row.value or {}).get('ids') or [])
     for row in s.exec(select(Setting).where(col(Setting.key).startswith(FOR_YOU_KEY))).all():
         add((row.value or {}).get('ids') or [])
     kept = _kept_mixes()
@@ -64,8 +70,8 @@ def is_wanted(s: Session, video_id: str) -> bool:
     if s.exec(select(MusicPlay.id).where(MusicPlay.video_id == video_id, MusicPlay.skipped == False,  # noqa: E712
                                          MusicPlay.played_at > time.time() - RECENT_PLAYS_S)).first():
         return True
-    return any(video_id in ((row.value or {}).get('ids') or [])
-               for row in s.exec(select(Setting).where(col(Setting.key).startswith(FOR_YOU_KEY))).all())
+    lists = select(Setting).where(col(Setting.key).startswith(FOR_YOU_KEY) | col(Setting.key).startswith(DJ_KEY))
+    return any(video_id in ((row.value or {}).get('ids') or []) for row in s.exec(lists).all())
 
 
 def queue(s: Session) -> int:
@@ -105,6 +111,27 @@ def queue(s: Session) -> int:
 def save_for_you(s: Session, pid: int, ids: list[str]) -> None:
     from ..db import save_setting
     save_setting(f'{FOR_YOU_KEY}{pid}', {'ids': ids[:64], 'at': time.time()}, s)
+
+
+def save_dj(s: Session, pid: int, ids: list[str]) -> None:
+    """Remember what the DJ lined up (newest first), so the downloader stores it like a mix."""
+    from ..db import save_setting
+    with _dj_lock:  # a top-up and a guest request can land together
+        s.expire_all()
+        row = s.get(Setting, f'{DJ_KEY}{pid}')
+        old = (row.value or {}).get('ids') or [] if row else []
+        save_setting(f'{DJ_KEY}{pid}', {'ids': list(dict.fromkeys([*ids, *old]))[:DJ_KEEP], 'at': time.time()}, s)
+
+
+def forget(s: Session, pid: int, video_id: str) -> None:
+    """A disliked song leaves the profile's DJ and For-you lists, so it is no longer kept offline for them."""
+    from ..db import save_setting
+    with _dj_lock:
+        for key in (f'{DJ_KEY}{pid}', f'{FOR_YOU_KEY}{pid}'):
+            row = s.get(Setting, key)
+            ids = (row.value or {}).get('ids') or [] if row else []
+            if video_id in ids:
+                save_setting(key, {**row.value, 'ids': [v for v in ids if v != video_id]}, s)
 
 
 def offline_status(s: Session, ids: list[str]) -> dict[str, str]:

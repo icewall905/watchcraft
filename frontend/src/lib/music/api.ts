@@ -4,13 +4,15 @@ import { request } from '$lib/api';
 export type Track = {
 	video_id: string; title: string; artist: string; artist_id: string; views: number; duration_s: number; thumbnail: string;
 	fav?: boolean; fav_artist?: boolean; reason?: string;
+	/** Taught away: the DJ, radio, For you and mixes skip this song / play this artist less. */
+	disliked?: boolean; less_artist?: boolean;
 	/** Stored on this server: plays from disk, no YouTube needed. */
 	offline?: boolean;
 	/** Client-only: what the DJ said when it queued this track. */
 	dj_line?: string;
 };
 export type FavArtist = { name: string; artist_id: string; key: string };
-export type Favorites = { tracks: Track[]; artists: FavArtist[] };
+export type Favorites = { tracks: Track[]; artists: FavArtist[]; disliked?: string[]; less?: FavArtist[] };
 export type Curator = { key: string; name: string; emoji: string; color: string; taste: string };
 export type Mix = {
 	id: number; name: string; kind: 'seed' | 'curator' | 'manual'; emoji: string; description: string; curator: string;
@@ -46,6 +48,8 @@ export const music = {
 	favorites: () => get<Favorites>('/favorites'),
 	favTrack: (t: Track, on: boolean) => send<Favorites>('POST', '/favorites', { kind: 'track', on, track: slim(t) }),
 	favArtist: (name: string, on: boolean, artistId = '') => send<Favorites>('POST', '/favorites', { kind: 'artist', on, artist: name, artist_id: artistId }),
+	dislike: (t: Track, on: boolean) => send<Favorites>('POST', '/favorites', { kind: 'dislike', on, track: slim(t) }),
+	lessArtist: (name: string, on: boolean, artistId = '') => send<Favorites>('POST', '/favorites', { kind: 'less', on, artist: name, artist_id: artistId }),
 	play: (videoId: string, skipped: boolean) => send<{ ok: boolean }>('POST', '/plays', { video_id: videoId, skipped }, false),
 	mixes: () => get<{ mixes: Mix[] }>('/mixes'),
 	mix: (id: number) => get<Mix>(`/mixes/${id}`),

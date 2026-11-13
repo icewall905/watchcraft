@@ -395,6 +395,8 @@
 			<button class="btn" use:focusable onclick={() => player.toggleFav(t)}>{player.isFav(t) ? '💔 Remove from favourites' : '❤️ Favourite song'}</button>
 			<button class="btn" use:focusable onclick={() => player.toggleFavArtist(t.artist, t.artist_id)}>{player.isFavArtist(t.artist) ? '☆ Unfavourite artist' : `⭐ Favourite ${t.artist}`}</button>
 			<button class="btn" use:focusable onclick={() => showArtist(t.artist)}>🎤 More from {t.artist}</button>
+			<button class="btn" use:focusable onclick={() => { const playing = player.current?.video_id === t.video_id; void player.toggleDislike(t); if (playing) sheet = null; }}>{player.isDisliked(t) ? '↩️ Undo dislike' : '👎 Dislike song'}</button>
+			<button class="btn" use:focusable onclick={() => player.toggleLessArtist(t.artist, t.artist_id)}>{player.isLessArtist(t.artist) ? `🔊 Normal amount of ${t.artist}` : `🔉 Less ${t.artist}`}</button>
 			{#if manualMixes.length}
 				<p class="muted small">Add to a mix</p>
 				<div class="addto">
@@ -458,6 +460,7 @@
 		<div class="mixview">
 			<div class="acts">
 				<button class="btn" class:primary={!player.isFavArtist(a.name)} use:focusable onclick={() => player.toggleFavArtist(a.name, a.tracks[0]?.artist_id ?? '')}>{player.isFavArtist(a.name) ? '⭐ Favourite artist' : '☆ Favourite artist'}</button>
+				<button class="btn" use:focusable onclick={() => player.toggleLessArtist(a.name, a.tracks[0]?.artist_id ?? '')}>{player.isLessArtist(a.name) ? '🔊 Normal amount' : '🔉 Less of them'}</button>
 				{#if a.tracks.length}
 					<button class="btn" use:focusable onclick={() => { player.play(a.tracks, 0, { source: a.name }); setParams({ artist: null }); }}>▶ Play all</button>
 					<button class="btn" use:focusable onclick={() => { player.shuffleAll(a.tracks, a.name); setParams({ artist: null }); }}>🔀 Shuffle</button>

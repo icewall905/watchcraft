@@ -1,7 +1,8 @@
 import pytest
 
 from test_curation import client  # noqa: F401  (fixture)
-from bt.music import dj, service, yt
+from bt.music import dj, lyrics, offline, service, sync, yt
+from bt import subtitle_jobs
 
 
 def _t(vid: str, title: str, artist: str, **kw) -> dict:
@@ -15,6 +16,12 @@ RADIO = [SEED, _t('BBBBBBBBBBB', 'Titanium', 'David Guetta'), _t('CCCCCCCCCCC', 
 SEARCH = {'abba': [SEED, RADIO[4]], 'beyonce halo': [RADIO[2]], 'a-ha take on me': [RADIO[3]]}
 
 
+@pytest.fixture(autouse=True)
+def _no_lrclib(monkeypatch):
+    """The DJ prewarms lyrics; this module never reaches LRCLIB (test_music_lyrics fakes it its own way)."""
+    monkeypatch.setattr(lyrics, 'lookup', lambda *a: None)
+
+
 @pytest.fixture
 def music(client, monkeypatch):  # noqa: F811
     calls = []
@@ -24,6 +31,7 @@ def music(client, monkeypatch):  # noqa: F811
     monkeypatch.setattr(yt, 'prepare', lambda vid: calls.append(('prepare', vid)))
     monkeypatch.setattr(service, 'spawn', lambda fn, *a: fn(*a))
     monkeypatch.setattr(dj.ai, 'enabled', lambda: False)
+    monkeypatch.setattr(subtitle_jobs, 'enabled', lambda cfg=None: False)  # DJ prewarm: no speech-to-text
     service._for_you.clear()
     client.calls = calls
     return client
@@ -295,3 +303,120 @@ def test_listing_refreshes_one_stale_curator_mix_at_a_time(music):
     music.calls.clear()
     music.get('/api/music/mixes')
     assert len([c for c in music.calls if c == ('search', 'abba')]) == 1
+
+
+# ---------- teaching the picks: dislike a song, less of an artist
+
+def test_dislike_and_less_round_trip_and_cancel_their_opposites(music):
+    music.post('/api/music/favorites', json={'kind': 'track', 'track': SEED})
+    music.post('/api/music/favorites', json={'kind': 'artist', 'artist': 'ABBA'})
+    r = music.post('/api/music/favorites', json={'kind': 'dislike', 'track': SEED}).json()
+    assert r['disliked'] == [SEED['video_id']] and r['tracks'] == []  # a dislike drops the heart
+    r = music.post('/api/music/favorites', json={'kind': 'less', 'artist': 'ABBA'}).json()
+    assert r['less'] == [{'name': 'ABBA', 'artist_id': '', 'key': 'abba'}] and r['artists'] == []
+    hits = music.get('/api/music/search', params={'q': 'abba'}).json()['tracks']
+    assert hits[0]['disliked'] and hits[0]['less_artist'] and not hits[1]['disliked']
+    r = music.post('/api/music/favorites', json={'kind': 'track', 'track': SEED}).json()
+    assert r['disliked'] == [] and [t['video_id'] for t in r['tracks']] == [SEED['video_id']]
+    r = music.post('/api/music/favorites', json={'kind': 'less', 'artist': 'ABBA', 'on': False}).json()
+    assert r['less'] == []
+
+
+def test_dj_never_picks_disliked_songs_or_less_artists(music):
+    music.post('/api/music/favorites', json={'kind': 'dislike', 'track': RADIO[1]})
+    music.post('/api/music/favorites', json={'kind': 'less', 'artist': 'ABBA'})
+    music.get('/api/music/search', params={'q': 'abba'})  # stores SEED so the DJ plays its radio
+    for _ in range(4):
+        r = music.post('/api/music/dj', json={'played': [SEED['video_id']], 'n': 3}).json()
+        assert {t['video_id'] for t in r['tracks']} == {'CCCCCCCCCCC', 'DDDDDDDDDDD'}
+
+
+def test_dj_less_artist_matches_featured_credits_but_a_request_still_plays(music):
+    music.post('/api/music/favorites', json={'kind': 'less', 'artist': 'Beyoncé'})
+    assert service.is_less('Beyoncé, Jay-Z', {'beyonc'}) and not service.is_less('Beyonce2', {'beyonce'})
+    r = music.post('/api/music/dj', json={'request': 'beyonce halo', 'n': 1}).json()
+    assert r['tracks'][0]['video_id'] == 'CCCCCCCCCCC'
+
+
+def test_dj_tells_the_model_what_the_crowd_dislikes(music, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(dj.ai, 'enabled', lambda: True)
+
+    def call(system, user, *a, **kw):
+        seen['system'], seen['user'] = system, user
+        return {'line': 'Go!', 'picks': [{'artist': 'ABBA', 'title': 'Dancing Queen', 'why': 'x'},
+                                         {'artist': 'a-ha', 'title': 'Take On Me', 'why': 'y'}]}
+    monkeypatch.setattr(dj.ai, '_call', call)
+    music.post('/api/music/favorites', json={'kind': 'less', 'artist': 'ABBA'})
+    music.post('/api/music/favorites', json={'kind': 'dislike', 'track': RADIO[1]})
+    r = music.post('/api/music/dj', json={'n': 2}).json()
+    assert 'crowd_dislikes' in seen['user'] and 'ABBA' in seen['user'] and 'Titanium' in seen['user']
+    assert 'crowd_dislikes' in seen['system']
+    assert all(t['artist'] != 'ABBA' and t['video_id'] != 'BBBBBBBBBBB' for t in r['tracks'])
+
+
+def test_radio_for_you_and_mixes_learn_from_dislikes(music):
+    music.post('/api/music/favorites', json={'kind': 'track', 'track': RADIO[3]})
+    music.post('/api/music/favorites', json={'kind': 'dislike', 'track': RADIO[2]})
+    music.post('/api/music/favorites', json={'kind': 'less', 'artist': 'David Guetta'})
+    radio = [t['video_id'] for t in music.get(f'/api/music/radio/{SEED["video_id"]}').json()['tracks']]
+    assert radio[0] == SEED['video_id'] and 'CCCCCCCCCCC' not in radio and radio[-1] == 'BBBBBBBBBBB'
+    fy = music.get('/api/music/for-you').json()
+    assert 'CCCCCCCCCCC' not in [t['video_id'] for t in fy['fresh'] + fy['loved']]
+    m = music.post('/api/music/mixes', json={'kind': 'seed', 'seed': SEED}).json()
+    got = [t['video_id'] for t in music.get(f'/api/music/mixes/{m["id"]}').json()['tracks']]
+    assert 'CCCCCCCCCCC' not in got and got[-1] == 'BBBBBBBBBBB'
+
+
+def test_bad_taste_kind_is_rejected(music):
+    assert music.post('/api/music/favorites', json={'kind': 'hate', 'artist': 'ABBA'}).status_code == 422
+
+
+# ---------- the DJ's picks are stored offline and their lyrics made ready
+
+def test_dj_picks_join_the_offline_set_newest_first(music):
+    from bt.db import session
+    first = [t['video_id'] for t in music.post('/api/music/dj', json={'n': 1}).json()['tracks']]
+    second = [t['video_id'] for t in music.post('/api/music/dj', json={'n': 1, 'queue': first}).json()['tracks']]
+    with session() as s:
+        wanted = offline.wanted_ids(s)
+        assert wanted[:2] == second + first and all(offline.is_wanted(s, v) for v in first + second)
+
+
+def test_prewarm_looks_up_lyrics_and_syncs_or_transcribes_the_next_song(music, monkeypatch):
+    from bt.db import session
+    from bt.music.models import MusicLyrics
+    looked, synced, queued = [], [], []
+    timed = {'source': 'lrclib', 'source_id': 1, 'synced': True, 'lines': [{'t': 0, 'text': 'hi'}], 'plain': 'hi',
+             'duration': 200}
+    monkeypatch.setattr(lyrics, 'lookup', lambda artist, title, d: (looked.append(title), timed if title == 'Halo' else None)[1])
+    monkeypatch.setattr(subtitle_jobs, 'enabled', lambda cfg=None: True)
+    monkeypatch.setattr(subtitle_jobs, 'enqueue', lambda vid, pid, *a, **kw: queued.append(vid))
+    monkeypatch.setattr(sync, 'start', lambda vid: synced.append(vid) or {})
+    music.get('/api/music/search', params={'q': 'x'})  # stores Titanium and Halo
+    service.prewarm(1, ['CCCCCCCCCCC', 'BBBBBBBBBBB'])
+    assert looked == ['Halo', 'Titanium'] and synced == ['CCCCCCCCCCC'] and queued == []
+    service.prewarm(1, ['CCCCCCCCCCC'])  # the first try failed (no offset saved): not tried on every pick
+    assert synced == ['CCCCCCCCCCC']
+    service.prewarm(1, ['BBBBBBBBBBB'])
+    assert queued == ['BBBBBBBBBBB']
+    with session() as s:  # once the timing is fixed it is left alone
+        row = s.get(MusicLyrics, 'CCCCCCCCCCC')
+        row.offset_source = 'auto'
+        s.add(row)
+        s.commit()
+    service.prewarm(1, ['CCCCCCCCCCC'])
+    assert synced == ['CCCCCCCCCCC']
+
+
+def test_a_disliked_dj_pick_leaves_the_offline_set_and_the_flow(music, monkeypatch):
+    from bt.db import session
+    music.get('/api/music/search', params={'q': 'abba'})
+    first = music.post('/api/music/dj', json={'n': 1}).json()['tracks'][0]
+    music.post('/api/music/favorites', json={'kind': 'dislike', 'track': first})
+    with session() as s:
+        assert first['video_id'] not in offline.wanted_ids(s) and not offline.is_wanted(s, first['video_id'])
+    seeds = []
+    monkeypatch.setattr(yt, 'radio', lambda vid, origin='user': (seeds.append(vid), list(RADIO))[1])
+    music.post('/api/music/dj', json={'played': [SEED['video_id'], first['video_id']], 'n': 1})
+    assert seeds == [SEED['video_id']]  # the radio seeds from the last song not disliked

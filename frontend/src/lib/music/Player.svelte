@@ -376,6 +376,7 @@
 					<button class="artist-link" use:focusable onclick={() => onArtist(cur.artist)}>{cur.artist}{cur.offline ? ' · 💾 saved' : ''}</button>
 				</div>
 				<button class="heart" class:on={player.isFav(cur)} use:focusable aria-label={player.isFav(cur) ? 'Remove from favourites' : 'Add to favourites'} onclick={() => player.toggleFav(cur)}>{player.isFav(cur) ? '❤️' : '🤍'}</button>
+				<button class="heart" class:on={player.isDisliked(cur)} use:focusable aria-label={player.isDisliked(cur) ? 'Undo dislike' : 'Dislike: skip and never pick again'} title="Dislike" onclick={() => player.toggleDislike(cur)}>👎</button>
 				<button class="mini" use:focusable aria-label="More actions" onclick={() => onMore(cur)}>⋯</button>
 			</div>
 			<div class="controls">

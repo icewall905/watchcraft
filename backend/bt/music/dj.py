@@ -72,18 +72,20 @@ def fallback_line(track: dict | None, request: str = '') -> str:
     return random.choice(FALLBACK_LINES).format(artist=track.get('artist') or 'this one')
 
 
-def pick_next(recent: list[dict], loved: list[str], vibe: str, request: str, n: int) -> dict | None:
+def pick_next(recent: list[dict], loved: list[str], vibe: str, request: str, n: int,
+              avoid: list[str] | None = None) -> dict | None:
     """Ask the model for the next `n` songs. None when no model is configured or it fails."""
     if not ai.enabled():
         return None
     data = json.dumps({'just_played': [_label(t) for t in recent[-8:]], 'crowd_loves': loved[:15],
-                       'vibe': vibe[:120], 'request': request[:200]}, ensure_ascii=False)
+                       'crowd_dislikes': (avoid or [])[:25], 'vibe': vibe[:120], 'request': request[:200]}, ensure_ascii=False)
     try:
         out = ai._call(
             'You are a fun, upbeat party DJ playing official music videos from YouTube. Pick the next songs: '
             'real, well-known released songs that have an official music video. Flow from what just played, '
             'match the vibe, honour a guest request first when there is one, never repeat a song that just '
             'played, avoid the same artist twice in a row and mix familiar favourites with fresh discoveries. '
+            'Never pick a song listed in `crowd_dislikes`, and avoid its artists unless the guest request asks for them. '
             '`line` is what you say on the mic before the next song: one short, warm, playful sentence '
             '(max 20 words, no hashtags). `why` is a few words per pick.',
             f'Pick {n} songs.\n<data>\n{ai._esc(data)}\n</data>', PICKS_SCHEMA, max_tokens=700, role='worker')

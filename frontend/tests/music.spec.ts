@@ -294,3 +294,26 @@ test('lyrics appear after a failed first lookup without toggling karaoke', async
 	await expect(deck.locator('.line.now')).toHaveText('Second line we sing now', { timeout: 10_000 });
 	expect(calls).toBeGreaterThanOrEqual(2);
 });
+
+test('dislike skips the song and Less of an artist teaches the picks', async ({ page }) => {
+	await fixture(page);
+	const taught: Record<string, unknown>[] = [];
+	await page.route('**/api/music/favorites', (r) => {
+		const body = r.request().postDataJSON();
+		taught.push(body);
+		return r.fulfill({ json: { tracks: [], artists: [], disliked: ['djtrack0001'], less: body.kind === 'less' ? [{ name: 'The Killers', artist_id: '', key: 'the killers' }] : [] } });
+	});
+	await page.route('**/api/music/dj', (r) => r.fulfill({ json: { line: 'Go!', source: 'radio', tracks: DJ } }));
+	await freshPage(page, '/music');
+	await page.getByRole('button', { name: /Party/ }).first().click();
+	const deck = page.getByRole('region', { name: 'Music player' });
+	await expect(deck.getByRole('heading', { name: 'Take On Me' })).toBeVisible();
+	await deck.getByRole('button', { name: 'Dislike: skip and never pick again' }).click();
+	await expect(deck.getByRole('heading', { name: 'Mr. Brightside' })).toBeVisible();
+	expect(taught[0]).toMatchObject({ kind: 'dislike', on: true, track: { video_id: 'djtrack0001' } });
+	await expect(deck.locator('.upnext li').first()).toContainText('Kiss');
+
+	await deck.getByRole('button', { name: 'More actions' }).click();
+	await page.getByRole('button', { name: '🔉 Less The Killers' }).click();
+	expect(taught.at(-1)).toMatchObject({ kind: 'less', on: true, artist: 'The Killers' });
+});

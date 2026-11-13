@@ -30,7 +30,7 @@ class TrackIn(BaseModel):
 
 
 class FavoriteIn(BaseModel):
-    kind: str = Field(pattern='^(track|artist)$')
+    kind: str = Field(pattern='^(track|artist|dislike|less)$')
     on: bool = True
     track: TrackIn | None = None
     artist: str = Field('', max_length=200)
@@ -116,7 +116,9 @@ def radio(video_id: str, pid: int = Depends(require_hub)):
     if not yt.VID_RE.match(video_id):
         raise HTTPException(404, 'bad video id')
     with _yt_errors(), session() as s:
-        return {'tracks': service.decorate(s, pid, yt.radio(video_id))}
+        disliked, less = service.taste(s, pid)
+        tracks = yt.radio(video_id)
+        return {'tracks': service.decorate(s, pid, tracks[:1] + service.prune(tracks[1:], disliked, less))}
 
 
 @router.get('/for-you')
