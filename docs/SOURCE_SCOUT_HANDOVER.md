@@ -1,6 +1,19 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — Music Videos Dislike/Less + DJ offline picks (`b50327d`, 2026-11-13)
+
+- 👎 Dislike song / 🔉 Less <artist> (new `MusicFavorite` kinds `dislike`/`less`, no schema change) filter the DJ,
+  radio, For you and mixes and reach the AI DJ prompt. DJ picks are saved per profile (`music_dj:<pid>` setting) into
+  the offline wanted set after favourites; lyrics prewarm per pick, one background auto-sync/transcribe of the next
+  song per 30 days (`music_prewarm_synced` setting).
+- Backup `/root/compose/watchcraft-backups/20261113-musictaste-b50327d` (online DB quick_check ok, config hashes,
+  previous source); rollback images `watchcraft:rollback-20261113-musictaste-api`/`-worker`, `rollback.sh`.
+  rsync (checksum) changed exactly the 12 files of `21a8e81..b50327d`.
+- Image `sha256:aafb0845e7f4e57ce0ac2c16ac9c4319f78e875940494fdbee3a2cfd14632240`; recreated `bt-api`/`bt-worker`,
+  zero restarts, no tracebacks; health 200 local/public; `/music`, `/news`, `/` 200; new bundle present;
+  `.env`/`compose.host.yaml` unchanged. TV acceptance: V-084.
+
 ## Deployment record — Music Videos on a TV remote (`21a8e81`, 2026-11-13)
 
 - Party/full-screen deck holds a nav scope (remote no longer lands on page buttons hidden behind it), new Full
