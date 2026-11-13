@@ -1,6 +1,17 @@
 # Source Scout handover — 2026-10-30
 
 
+## Deployment record — Music Videos on a TV remote (`21a8e81`, 2026-11-13)
+
+- Party/full-screen deck holds a nav scope (remote no longer lands on page buttons hidden behind it), new Full
+  screen mode with idle-fading controls, lyrics retry after a failed first lookup. Frontend only; no data change.
+- Backup `/root/compose/watchcraft-backups/20261113-music-21a8e81` (previous source, config hashes; no DB copy as
+  nothing touches data); rollback images `watchcraft:rollback-20261113-music-api`/`-worker`, `rollback.sh`.
+  rsync (checksum) changed exactly the 4 files of `fa472b2..21a8e81`.
+- Image `sha256:7cebd08f072923011a55bc28f67d07083dd90dd0f8926d46fe0635a5c97f4b9c`; recreated `bt-api`/`bt-worker`,
+  zero restarts, no tracebacks; health 200 local/public; `/music`, `/news`, `/` 200; new bundle present;
+  `.env`/`compose.host.yaml` unchanged. TV acceptance: V-083.
+
 ## Deployment record — endless News, deeper curators, social sources (`fa472b2`, 2026-11-13)
 
 - News Refresh/pull-to-refresh (`POST /api/hub/news/refresh`), dates/day headers, caught-up card; curator
