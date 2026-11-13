@@ -1,6 +1,13 @@
 # Source Scout handover — 2026-10-30
 
 
+## Data change — text-only Mastodon "memes" hidden (2026-11-13, user-approved)
+
+- Removed 1,335 `CuratorDiscovery` rows of meme curators 4/9 whose item is a `mastodon` meme without media
+  (saved/favourited kept); findings 3,164 -> 1,829. Not dismissed, so profile taste words and publisher scores
+  are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
+  (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
+
 ## Deployment record — Meme Tracker real memes (`7356cd5`, 2026-11-13)
 
 - New `reddit_memes` provider (direct image posts, NSFW/spoiler-tagged skipped), Lemmy `item_type: meme` keeps
