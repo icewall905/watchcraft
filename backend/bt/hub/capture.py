@@ -326,7 +326,7 @@ def run(pid, iid, lease):
         url, typ, title, image, body = item.url, item.type, item.title, item.image, item.body
         video_id = str(item.meta.get('video_id', ''))
         social_post = (item.provider in ('mastodon', 'mastodon_trends', 'lemmy') and bool(item.meta.get('social_post', item.provider == 'mastodon'))) \
-            or item.provider in YTDLP_PROVIDERS  # the clip is the content: no page fetch (YouTube would see our address)
+            or item.provider in (*YTDLP_PROVIDERS, 'reddit_memes')  # the media is the content: no page fetch (YouTube would see our address)
         linked_url = item.meta.get('article_url', '') if item.provider == 'lemmy' and typ in ('news', 'article') else ''
         linked_url = linked_url if isinstance(linked_url, str) and linked_url and linked_url != url else ''
         post_body = item.meta.get('post_body', body) if linked_url else ''

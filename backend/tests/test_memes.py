@@ -108,7 +108,9 @@ def test_mastodon_status_mapping_skips_replies_and_keeps_observed_counts():
 
 def test_mastodon_tags_from_query_only_reshapes_words():
     tags = _mastodon_tags('linux meme')
-    assert tags[0] == 'linuxmeme' and 'linux' in tags and 'meme' in tags
+    # a meme word keeps the generic word out: #linux is mostly news and chat
+    assert tags == ['linuxmeme', 'meme']
+    assert _mastodon_tags('linux kernel')[:3] == ['linuxkernel', 'linux', 'kernel']
     assert _mastodon_tags('!!') == []
 
 
@@ -480,3 +482,26 @@ def test_an_image_meme_is_analyzed_as_soon_as_its_image_lands(client):
     capture.save_asset(1, iid, 'image', 'https://cdn.test/inline.jpg', img, 'image/jpeg')
     with session() as s:
         assert s.get(MemeExample, iid) is not None
+
+
+def test_reddit_memes_reach_a_keyword_meme_curator_and_keep_the_autopilot_away(client, monkeypatch):
+    """Meme captions rarely carry the curator's keywords; a community's picture still counts, and a
+    curator fed by Reddit memes gets no Mastodon source pushed onto it."""
+    from bt.hub import engine, memes, providers
+    pic = {'url': 'https://www.reddit.com/r/memes/comments/a1/me_when/', 'title': 'me when the build passes',
+           'type': 'meme', 'provider': 'reddit_memes', 'publisher': 'r/memes', 'image': 'https://i.redd.it/a.jpg',
+           'summary': '', 'external_id': 'reddit:a1',
+           'meta': {'platform': 'reddit', 'social_post': True, 'community': 'r/memes',
+                    'media': {'type': 'image', 'url': 'https://i.redd.it/a.jpg'}}}
+    text = {**pic, 'url': 'https://www.reddit.com/r/memes/comments/a2/', 'external_id': 'reddit:a2',
+            'title': 'a caption only', 'meta': {**pic['meta'], 'media': {}}}
+    monkeypatch.setattr(providers.PROVIDERS['reddit_memes'], 'fetch', lambda url, q='': [dict(pic), dict(text)])
+    probed = []
+    monkeypatch.setattr(memes, '_working_instance', lambda *a: probed.append(a) or 'mastodon.world')
+    src = client.post('/api/hub/sources', json={'provider': 'reddit_memes', 'url': 'r/memes'}, headers=H).json()
+    cur = client.post('/api/hub/curators', json={'name': 'Meme Tracker', 'queries': ['memes'], 'keywords': ['linux', 'programming'],
+                                                 'content_types': ['meme'], 'source_ids': [src['id']], 'interval_hours': 12},
+                      headers=H).json()
+    r = engine.run(cur['id'], 'manual')
+    assert r.new_items == 1  # the picture, not the caption-only post
+    assert probed == [] and memes.ensure_source(type('C', (), {'id': cur['id']})) == ''

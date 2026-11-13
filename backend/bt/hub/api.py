@@ -1030,7 +1030,7 @@ def _norm_source(provider: str, url: str) -> str:
         if provider == 'lemmy':
             from .lemmy import normalize_source_url
             return normalize_source_url(url.strip())
-        if provider == 'subreddit':
+        if provider in ('subreddit', 'reddit_memes'):
             from .providers import reddit_feed
             reddit_feed(url)  # validates; "r/news" style input becomes a full URL below
             url = url if '://' in url else 'https://www.reddit.com/r/' + url.strip().removeprefix('/').removeprefix('r/')

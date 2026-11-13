@@ -95,6 +95,16 @@
 				{ url: 'https://www.reddit.com/r/europe', label: 'r/europe' },
 				{ url: 'https://www.reddit.com/r/Denmark', label: 'r/Denmark' }
 			] },
+		{ title: 'Reddit memes', keys: ['reddit_memes'], add: 'reddit_memes', addHint: 'https://www.reddit.com/r/memes', addLabel: 'Add meme subreddit',
+			note: 'Picture posts from the top of the day, shown as memes. Use a curator that collects memes.',
+			presets: [
+				{ url: 'https://www.reddit.com/r/memes', label: 'r/memes' },
+				{ url: 'https://www.reddit.com/r/dankmemes', label: 'r/dankmemes' },
+				{ url: 'https://www.reddit.com/r/me_irl', label: 'r/me_irl' },
+				{ url: 'https://www.reddit.com/r/wholesomememes', label: 'r/wholesomememes' },
+				{ url: 'https://www.reddit.com/r/ProgrammerHumor', label: 'r/ProgrammerHumor' },
+				{ url: 'https://www.reddit.com/r/linuxmemes', label: 'r/linuxmemes' }
+			] },
 		{ title: 'Mastodon trends', keys: ['mastodon_trends'], add: 'mastodon_trends', addHint: 'https://mastodon.social/api/v1/trends/links', addLabel: 'Add trend feed',
 			presets: [
 				{ url: 'https://mastodon.social/api/v1/trends/links', label: 'mastodon.social · links' },

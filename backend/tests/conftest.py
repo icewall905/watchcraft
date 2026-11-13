@@ -48,3 +48,11 @@ def _no_article_age_guard(monkeypatch):
     moves. Tests of the guard switch it back on."""
     from bt.hub import engine
     monkeypatch.setattr(engine, 'NEWS_MAX_AGE', None)
+
+
+@pytest.fixture(autouse=True)
+def _no_reddit_pace(monkeypatch):
+    """Reddit feed reads are paced 60 s apart in production; tests read fixtures back to back."""
+    from bt.hub import providers
+    monkeypatch.setattr(providers, 'REDDIT_GAP_S', 0.0)
+    monkeypatch.setattr(providers, '_reddit_blocked_until', 0.0)

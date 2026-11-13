@@ -273,6 +273,9 @@ def _taste_nudge(data: dict, score: float, reason: str, liked: list[str], dislik
     return score, reason
 
 
+MEME_COMMUNITY_PROVIDERS = ('reddit_memes', 'lemmy', 'tiktok', 'youtube_shorts')
+
+
 def keyword_score(c: Curator, data: dict) -> tuple[float | None, str]:
     """Deterministic relevance without AI. None = excluded."""
     hay = f"{data.get('title', '')} {data.get('summary', '')} {data.get('meta', {}).get('product', '')} {data.get('meta', {}).get('vendor', '')}".lower()
@@ -570,6 +573,11 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         up_words, down_words = (article_liked, article_disliked) if d.get("type") in {"news", "article", "web"} else (liked, disliked)
         if score > 0 and (up_words or down_words):
             score, reason = _taste_nudge(d, score, reason, up_words, down_words)
+        # A picture or clip from a meme community is already chosen by that community; captions rarely
+        # carry the curator's keywords ("me when…"), so they are not held to them.
+        if score == 0 and d.get('type') == 'meme' and src.provider in MEME_COMMUNITY_PROVIDERS \
+                and ((d.get('meta') or {}).get('media') or {}).get('url'):
+            score, reason = 50.0, 'Picked by a meme community'
         # Feeds are unfiltered firehoses: with keywords set, keep matches only. Query results already match a query.
         if score == 0 and (PROVIDERS[src.provider].mode != 'query' or _feed_needs_keywords(src.provider)):
             continue

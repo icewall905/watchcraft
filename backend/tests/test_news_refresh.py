@@ -297,3 +297,83 @@ def test_youtube_short_clip_uses_the_app_youtube_options(monkeypatch):
     with pytest.raises(ValueError, match='slow down'):
         capture.fetch_ytdlp_clip('https://www.youtube.com/shorts/abcdefghijk')
     assert 'youtube_shorts' in capture.YTDLP_PROVIDERS
+
+
+def test_reddit_memes_keeps_direct_image_posts_only(monkeypatch):
+    from bt import curation
+    from bt.hub.providers import PROVIDERS
+
+    def entry(n, link, kind='link'):
+        return (f'<entry><author><name>/u/user{n}</name></author><title>Meme {n}</title>'
+                f'<link href="https://www.reddit.com/r/memes/comments/abc{n}/meme_{n}/"/>'
+                f'<published>2026-11-13T10:00:00+00:00</published>'
+                f'<content type="html">&lt;a href="{link}"&gt;[{kind}]&lt;/a&gt;</content></entry>')
+    feed = ('<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">'
+            + entry(1, 'https://i.redd.it/funny.jpeg')
+            + entry(2, 'https://www.reddit.com/gallery/xyz')
+            + entry(3, 'https://v.redd.it/clip')
+            + entry(4, 'https://i.imgur.com/cat.gifv')
+            + entry(5, 'https://i.imgur.com/cat.png')
+            + entry(6, 'https://evil.example/x.jpg') + '</feed>')
+    asked = []
+    monkeypatch.setattr(curation, 'fetch', lambda url, **kw: asked.append(url) or feed.encode())
+    items = PROVIDERS['reddit_memes'].run('r/memes')
+    assert asked == ['https://www.reddit.com/r/memes/top/.rss?t=day&limit=50']
+    assert [i['image'] for i in items] == ['https://i.redd.it/funny.jpeg', 'https://i.imgur.com/cat.png']
+    m = items[0]
+    assert m['type'] == 'meme' and m['provider'] == 'reddit_memes' and m['publisher'] == 'r/memes'
+    assert m['url'] == 'https://www.reddit.com/r/memes/comments/abc1/meme_1/' and m['author'] == 'user1'
+    assert m['meta']['media']['type'] == 'image' and m['meta']['media']['url'] == m['image']
+
+
+def test_reddit_reads_share_one_pace_and_rest_after_a_429(monkeypatch):
+    import pytest
+    from bt import curation
+    from bt.hub import providers
+    slept, calls = [], []
+    monkeypatch.setattr(providers, "REDDIT_GAP_S", 60.0)
+    monkeypatch.setattr(providers, '_reddit_last', 0.0)
+    monkeypatch.setattr(providers.time, 'sleep', lambda s: slept.append(s))
+    feed = b'<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom"></feed>'
+    monkeypatch.setattr(curation, 'fetch', lambda url, **kw: calls.append(url) or feed)
+    providers.PROVIDERS['subreddit'].run('r/news')
+    providers.PROVIDERS['reddit_memes'].run('r/memes')
+    assert len(calls) == 2 and len(slept) == 1 and 55 < slept[0] <= 60  # the second read waited its turn
+
+    def limited(url, **kw):
+        calls.append(url)
+        raise curation.FetchError(429, 'soon')
+    monkeypatch.setattr(curation, 'fetch', limited)
+    with pytest.raises(providers.RateLimited):
+        providers.PROVIDERS['reddit_memes'].run('r/dankmemes')
+    with pytest.raises(providers.RateLimited, match='slow down'):
+        providers.PROVIDERS['subreddit'].run('r/europe')
+    assert len(calls) == 3  # resting: no request at all
+
+
+def test_reddit_memes_skip_nsfw_and_busy_queues_fail_fast(monkeypatch):
+    import pytest
+    from bt import curation
+    from bt.hub import providers
+    feed = ('<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom">'
+            '<entry><title>Spicy [NSFW]</title><link href="https://www.reddit.com/r/memes/comments/n1/x/"/>'
+            '<content type="html">&lt;a href="https://i.redd.it/n.jpg"&gt;[link]&lt;/a&gt;</content></entry>'
+            '<entry><title>Fine one</title><link href="https://www.reddit.com/r/memes/comments/n2/x/"/>'
+            '<content type="html">&lt;a href="https://i.redd.it/f.jpg"&gt;[link]&lt;/a&gt;</content></entry></feed>')
+    monkeypatch.setattr(curation, 'fetch', lambda url, **kw: feed.encode())
+    assert [i['title'] for i in providers.PROVIDERS['reddit_memes'].run('r/memes')] == ['Fine one']
+    # a read queued further back than REDDIT_MAX_WAIT_S fails fast instead of holding a request
+    monkeypatch.setattr(providers, 'REDDIT_GAP_S', 60.0)
+    monkeypatch.setattr(providers, '_reddit_last', providers.time.monotonic() + providers.REDDIT_MAX_WAIT_S)
+    with pytest.raises(providers.RateLimited, match='busy'):
+        providers.PROVIDERS['reddit_memes'].run('r/memes')
+    # a huge Retry-After is capped at an hour
+    monkeypatch.setattr(providers, '_reddit_last', 0.0)
+    monkeypatch.setattr(providers, 'REDDIT_GAP_S', 0.0)
+
+    def limited(url, **kw):
+        raise curation.FetchError(429, '999999')
+    monkeypatch.setattr(curation, 'fetch', limited)
+    with pytest.raises(providers.RateLimited):
+        providers.PROVIDERS['reddit_memes'].run('r/memes')
+    assert providers._reddit_blocked_until - providers.time.monotonic() <= 3600

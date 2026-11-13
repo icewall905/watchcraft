@@ -193,8 +193,14 @@ def _mastodon_tags(q: str) -> list[str]:
         return []
     joined = ''.join(words)
     out = [joined] if len(joined) >= 3 else []
+    if len(words) > 1 and any(w in MEME_WORDS for w in words):
+        # "linux memes" means #linuxmemes or #memes, never all of #linux: that tag is mostly news and chat.
+        return (out + [w for w in words if w in MEME_WORDS and w not in out])[:3]
     out += [w for w in words if w not in out]
     return out[:3]
+
+
+MEME_WORDS = {'meme', 'memes', 'humor', 'humour', 'funny', 'jokes', 'joke', 'shitpost', 'shitposting', 'comics', 'lol'}
 
 
 _PLAIN_LINK = re.compile(r'<a\b(?![^>]*class="[^"]*(?:mention|hashtag))[^>]*>.*?</a>', re.I | re.S)
@@ -315,6 +321,42 @@ _REDDIT_LINK = re.compile(r'<a href="([^"]+)">\[link\]</a>')
 REDDIT_HOSTS = ('reddit.com', 'redd.it', 'redditmedia.com')
 
 
+# Reddit answers anonymous feed reads in quick succession with 429. Every subreddit source (news and
+# memes, all curators) goes through one pace (60 s), and after a 429 Reddit rests until the window passes.
+REDDIT_GAP_S = 60.0
+REDDIT_BLOCK_S = 600
+_reddit_lock = threading.Lock()
+_reddit_last = 0.0
+_reddit_blocked_until = 0.0
+
+
+REDDIT_MAX_WAIT_S = 600  # a read further back in the queue than this fails fast and retries next run
+
+
+def _reddit_get(feed: str) -> bytes:
+    """One paced Reddit read. Each caller reserves the next free slot, then sleeps outside the lock."""
+    global _reddit_last, _reddit_blocked_until
+    with _reddit_lock:
+        now = time.monotonic()
+        if now < _reddit_blocked_until:
+            raise RateLimited(f'Reddit asked us to slow down; trying again in {int(_reddit_blocked_until - now)}s.')
+        slot = max(now, _reddit_last + REDDIT_GAP_S)
+        if slot - now > REDDIT_MAX_WAIT_S:
+            raise RateLimited(f'Reddit is busy with other sources; trying again in {int(slot - now)}s.')
+        _reddit_last = slot
+    if slot > now:
+        time.sleep(slot - now)
+    try:
+        return curation.fetch(feed, headers={'User-Agent': 'WatchCraft/1.0 (self-hosted news reader)'})
+    except curation.FetchError as e:
+        if e.status == 429:
+            hint = int(e.retry_after) if e.retry_after.isdigit() else 0
+            with _reddit_lock:
+                _reddit_blocked_until = max(_reddit_blocked_until, time.monotonic() + min(max(REDDIT_BLOCK_S, hint), 3600))
+            raise RateLimited('Reddit asked us to slow down; trying again later.') from e
+        raise
+
+
 def reddit_feed(source: str) -> str:
     """r/news, news, or a reddit.com/r/<sub>[/hot|new|rising|top][?t=day] URL -> its public RSS feed."""
     raw = source.strip()
@@ -340,7 +382,7 @@ def reddit(url: str, _q: str = '') -> list[dict]:
     as the discussion link. Votes are popularity, never verification."""
     feed = reddit_feed(url)
     sub = feed.split('/r/', 1)[1].split('/', 1)[0]
-    root = _xml(curation.fetch(feed, headers={'User-Agent': 'WatchCraft/1.0 (self-hosted news reader)'}))
+    root = _xml(_reddit_get(feed))
     out = []
     for entry in root.iter():
         if _local(entry.tag) != 'entry':
@@ -366,6 +408,52 @@ def reddit(url: str, _q: str = '') -> list[dict]:
                     'summary': '', 'external_id': link,
                     'meta': {'platform': 'reddit', 'community': f'r/{sub}', 'discussion': thread,
                              'discussion_url': thread, 'observed_at': time.time()}})
+        if len(out) >= 50:
+            break
+    return out
+
+
+REDDIT_IMAGE_HOSTS = ('i.redd.it', 'i.imgur.com')
+_IMAGE_PATH = re.compile(r'\.(?:jpe?g|png|webp|gif)$', re.I)
+
+
+def reddit_memes(url: str, _q: str = '') -> list[dict]:
+    """Image posts from a meme subreddit (top of the day by default) as memes, picture first.
+
+    Only direct images (i.redd.it, i.imgur.com) are kept: galleries, videos, text and link posts are
+    skipped. The thread is the item; votes are popularity only."""
+    feed = reddit_feed(url)
+    sub = feed.split('/r/', 1)[1].split('/', 1)[0]
+    root = _xml(_reddit_get(feed))
+    out = []
+    for entry in root.iter():
+        if _local(entry.tag) != 'entry':
+            continue
+        title = thread = html = author = ''
+        published = None
+        for c in entry:
+            tag = _local(c.tag)
+            if tag == 'title': title = clean(''.join(c.itertext()), 500)
+            elif tag == 'link': thread = (c.get('href') or '').strip()
+            elif tag == 'content': html = ''.join(c.itertext())
+            elif tag == 'published': published = ts(''.join(c.itertext())) or published
+            elif tag == 'author': author = clean(''.join(c.itertext()), 100)
+        m = _REDDIT_LINK.search(html)
+        link = unescape_html(m.group(1)) if m else ''
+        parts = urlsplit(link)
+        if (not title or not thread.startswith('https://www.reddit.com/') or parts.scheme != 'https'
+                or (parts.hostname or '').lower() not in REDDIT_IMAGE_HOSTS or not _IMAGE_PATH.search(parts.path)):
+            continue
+        image = safe_image(link)
+        # Reddit's feed carries no over_18 flag: posts that call themselves NSFW or spoilers are skipped.
+        if not image or re.search(r'\b(nsfw|nsfl|spoiler)\b', title, re.I):
+            continue
+        out.append({'url': thread, 'title': title, 'type': 'meme', 'provider': 'reddit_memes',
+                    'publisher': f'r/{sub}', 'author': author.removeprefix('/u/'), 'published_at': published,
+                    'image': image, 'summary': '', 'external_id': f'reddit:{thread}',
+                    'meta': {'platform': 'reddit', 'social_post': True, 'community': f'r/{sub}',
+                             'discussion_url': thread, 'observed_at': time.time(),
+                             'media': {'type': 'image', 'url': image, 'preview_url': image, 'alt': title}}})
         if len(out) >= 50:
             break
     return out
@@ -857,6 +945,8 @@ PROVIDERS = {p.key: p for p in [
              ['keyword-search', 'structured-metadata'], default_type='article'),
     Provider('subreddit', 'Reddit subreddit', 'feed', 'Articles linked from one subreddit, top of the day by default. Use r/worldnews or https://www.reddit.com/r/worldnews/new/. Self posts are skipped; votes are popularity, not verification.', reddit,
              ['feed', 'community-scoped'], needs_url=True, default_type='news'),
+    Provider('reddit_memes', 'Reddit memes', 'feed', 'Image posts from a meme subreddit, top of the day by default (r/memes, r/ProgrammerHumor, …/hot/). Galleries, videos and text posts are skipped.', reddit_memes,
+             ['feed', 'community-scoped'], needs_url=True, default_type='meme'),
     Provider('bing_news', 'Bing News search', 'query', 'Current reporting from many outlets for each curator query (Bing News RSS, personal use).', bing_news,
              ['keyword-search', 'feed'], default_type='news'),
     Provider('bluesky', 'Bluesky account or feed', 'feed', 'Articles linked by one Bluesky account (https://bsky.app/profile/reuters.com) or custom feed (…/feed/<name>). Posts without a link are skipped.', bluesky,
