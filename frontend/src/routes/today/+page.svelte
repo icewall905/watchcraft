@@ -16,6 +16,7 @@
 	import EditionActions from '$lib/hub/calm/EditionActions.svelte';
 	import EmptyCalm from '$lib/hub/calm/EmptyCalm.svelte';
 	import ArticleFeedback from '$lib/hub/ArticleFeedback.svelte';
+	import SeenDismiss from '$lib/hub/SeenDismiss.svelte';
 	import ShelfStatus from '$lib/hub/ShelfStatus.svelte';
 
 	let edition = $state<TodayEdition | null>(null);
@@ -188,7 +189,7 @@
 			<section class="lead-section" aria-label="Today's lead" data-nav-row>
 				<StoryCard href={itemHref(lead)} title={lead.item.title} source={lead.item.publisher || lead.item.author || undefined} summary={cardSummary(lead)} summaryLabel={summaryLabel(lead)} more={sourceCount(lead)} mediaAvailable={hasLocalImage(lead)}>
 					{#snippet image()}{#if hasLocalImage(lead)}<LocalImage id={lead.item_id} alt={lead.item.title} />{/if}{/snippet}
-					{#snippet why()}<WhyPopover reasons={lead.item.verdict?.reasons ?? []} /><EditionActions entry={lead} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} />{#if supportsArticleFeedback(lead)}<ArticleFeedback itemId={lead.item_id} title={lead.item.title} rating={lead.item.state.rating} onchanged={(state) => articleRated(lead, state)} />{/if}{/snippet}
+					{#snippet why()}<WhyPopover reasons={lead.item.verdict?.reasons ?? []} /><EditionActions entry={lead} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} /><SeenDismiss itemIds={[lead.item_id]} title={lead.item.title} onchanged={() => { notice = 'Removed from today.'; revision++; }} />{#if supportsArticleFeedback(lead)}<ArticleFeedback itemId={lead.item_id} title={lead.item.title} rating={lead.item.state.rating} onchanged={(state) => articleRated(lead, state)} />{/if}{/snippet}
 				</StoryCard>
 			</section>
 		{/if}
@@ -200,7 +201,7 @@
 					{#each shownStories as entry (entry.item_id)}
 						<StoryCard href={itemHref(entry)} title={entry.item.title} source={entry.item.publisher || entry.item.author || undefined} summary={cardSummary(entry)} summaryLabel={summaryLabel(entry)} more={sourceCount(entry)} mediaAvailable={hasLocalImage(entry)}>
 							{#snippet image()}{#if hasLocalImage(entry)}<LocalImage id={entry.item_id} alt={entry.item.title} />{/if}{/snippet}
-							{#snippet why()}<WhyPopover reasons={entry.item.verdict?.reasons ?? []} /><EditionActions entry={entry} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} />{#if supportsArticleFeedback(entry)}<ArticleFeedback itemId={entry.item_id} title={entry.item.title} rating={entry.item.state.rating} onchanged={(state) => articleRated(entry, state)} />{/if}{/snippet}
+							{#snippet why()}<WhyPopover reasons={entry.item.verdict?.reasons ?? []} /><EditionActions entry={entry} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} /><SeenDismiss itemIds={[entry.item_id]} title={entry.item.title} onchanged={() => { notice = 'Removed from today.'; revision++; }} />{#if supportsArticleFeedback(entry)}<ArticleFeedback itemId={entry.item_id} title={entry.item.title} rating={entry.item.state.rating} onchanged={(state) => articleRated(entry, state)} />{/if}{/snippet}
 						</StoryCard>
 					{/each}
 				</div>
@@ -215,7 +216,7 @@
 					{#each shownReads as entry (entry.item_id)}
 						<ReadCard href={itemHref(entry)} title={entry.item.title} source={entry.item.publisher || entry.item.author || undefined} summary={cardSummary(entry)} summaryLabel={summaryLabel(entry)} mediaAvailable={hasLocalImage(entry)}>
 							{#snippet image()}{#if hasLocalImage(entry)}<LocalImage id={entry.item_id} alt={entry.item.title} />{/if}{/snippet}
-							{#snippet why()}<WhyPopover reasons={entry.item.verdict?.reasons ?? []} /><EditionActions entry={entry} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} />{#if supportsArticleFeedback(entry)}<ArticleFeedback itemId={entry.item_id} title={entry.item.title} rating={entry.item.state.rating} onchanged={(state) => articleRated(entry, state)} />{/if}{/snippet}
+							{#snippet why()}<WhyPopover reasons={entry.item.verdict?.reasons ?? []} /><EditionActions entry={entry} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} /><SeenDismiss itemIds={[entry.item_id]} title={entry.item.title} onchanged={() => { notice = 'Removed from today.'; revision++; }} />{#if supportsArticleFeedback(entry)}<ArticleFeedback itemId={entry.item_id} title={entry.item.title} rating={entry.item.state.rating} onchanged={(state) => articleRated(entry, state)} />{/if}{/snippet}
 						</ReadCard>
 					{/each}
 				</div>
@@ -246,6 +247,7 @@
 		{/if}
 		<div class="edition-end">
 			<SetAsideLink count={edition.set_aside} href="/today/set-aside" />
+			<a class="expand keep-going" href="/news" use:focusable>Keep scrolling: your endless News feed →</a>
 			{#if hasContent}<EmptyCalm />{:else}<EmptyCalm title={edition.curated ? "That's everything for today" : 'Your first edition is taking shape'} detail={edition.curated ? undefined : 'As your curators finish a pass, the stories that fit will gather here.'} />{/if}
 		</div>
 	{/if}
@@ -279,6 +281,7 @@
 	.notice { padding: .5rem 0; color: var(--ink-soft); font-size: var(--fs-sm); }
 	.expand { display: block; margin: 1rem auto 0; padding: .7rem 1rem; border: 1px solid var(--rule); border-radius: 999px; color: var(--ink-soft); background: var(--bg-2); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
 	.expand:hover, .expand:focus-visible { border-color: var(--accent); color: var(--ink); }
+	.keep-going { width: fit-content; margin-bottom: 1.5rem; text-decoration: none; }
 	@media (max-width: 760px) { .story-list { grid-template-columns: 1fr; } .reads { grid-template-columns: repeat(2, minmax(0, 1fr)); } .memes { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 	@media (max-width: 440px) { .reads { grid-template-columns: 1fr; } .memes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>

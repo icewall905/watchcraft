@@ -70,7 +70,7 @@ test('news is a scrolling weekly mix that loads more stories and records what wa
 	await expect(page.getByText('Showing', { exact: false })).toBeVisible();
 	expect(requests.at(-1)!.searchParams.get('seed')).toBe(first.searchParams.get('seed'));
 	await page.evaluate(() => window.scrollTo(0, 0));
-	await page.getByRole('button', { name: 'Fresh mix' }).click();
+	await page.getByRole('button', { name: 'Refresh feed' }).first().click();
 	await expect.poll(() => requests.at(-1)!.searchParams.get('seed')).not.toBe(first.searchParams.get('seed'));
 	await page.getByRole('tab', { name: 'Latest' }).click();
 	await expect.poll(() => requests.at(-1)!.searchParams.get('mode')).toBe('latest');
@@ -123,7 +123,7 @@ test('news pages stories from the server, keeps the place and counts outlets hon
 		return page.getByRole('heading', { name: 'Paged story 45', exact: true }).count();
 	}).toBe(1);
 	await expect(page.getByText(`Showing ${total} of ${total} stories`)).toBeVisible();
-	await expect(page.getByRole('button', { name: "You're through this mix — get a fresh one" })).toBeVisible();
+	await expect(page.getByRole('heading', { name: "You're all caught up" })).toBeVisible();
 	expect(new Set(await page.locator('section.story').evaluateAll((els) => els.map((e) => e.getAttribute('aria-label')))).size).toBe(total);
 	// Back from an article restores the place, refetching the pages it needs.
 	await page.getByRole('heading', { name: 'Paged story 40', exact: true }).scrollIntoViewIfNeeded();
@@ -180,4 +180,24 @@ test('a client filter that matches nothing does not walk every server page, and 
 	await expect.poll(() => requests.some((r) => r.searchParams.get('topic') === '7' && r.searchParams.get('cursor') === 'c30')).toBe(true);
 	const topicPages = requests.filter((r) => r.searchParams.get('topic') === '7' && r.searchParams.get('cursor'));
 	expect(topicPages.every((r) => Number(r.searchParams.get('cursor')!.slice(1)) % 30 === 0)).toBe(true);
+});
+
+test('a story can be marked seen or dismissed from its card', async ({ page }) => {
+	const posts: unknown[] = [];
+	await page.route('**/api/hub/news*', (route) => route.fulfill({ json: { topics: [], groups: [{
+		key: '51', story_id: 51, title: 'Harbour plan advances', latest: 1783000000,
+		items: [{ id: 51, title: 'Harbour plan advances', summary: 'Council votes today', provider: 'feed', publisher: 'Local',
+			local_image: false, state: {}, url: 'https://example.test/a' },
+		{ id: 52, title: 'More on the harbour vote', publisher: 'Daily', provider: 'feed', state: {}, url: 'https://example.test/b' }]
+	}] } }));
+	await page.route('**/api/hub/items/state', async (route) => {
+		posts.push(route.request().postDataJSON());
+		await route.fulfill({ json: { updated: 2 } });
+	});
+	await freshPage(page, '/news');
+	await expect(page.getByRole('heading', { name: 'Harbour plan advances' })).toBeVisible();
+	// Both sources of the story are marked, so the whole story leaves the mix.
+	await page.getByRole('button', { name: 'Seen it: Harbour plan advances' }).click();
+	await expect(page.getByRole('heading', { name: 'Harbour plan advances' })).toHaveCount(0);
+	expect(posts).toEqual([{ read: true, item_ids: [51, 52] }]);
 });

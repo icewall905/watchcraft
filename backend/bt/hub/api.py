@@ -580,23 +580,47 @@ class StateIn(BaseModel):
     rating: int | None = Input(default=None, ge=-1, le=1)
 
 
+def _apply_state(s: Session, pid: int, iid: int, data: dict) -> ItemState:
+    st = s.get(ItemState, (pid, iid)) or ItemState(profile_id=pid, item_id=iid)
+    if 'read' in data:
+        st.read_at = (st.read_at or time.time()) if data.pop('read') else None
+    if data.get('saved') and not st.saved:
+        st.saved_at = time.time()
+    if 'tags' in data:
+        data['tags'] = list(dict.fromkeys(t.strip().lower()[:40] for t in data['tags'] if t.strip()))[:30]
+    for k, v in data.items():
+        setattr(st, k, v)
+    s.add(st)
+    return st
+
+
 @router.post('/items/{iid}/state')
 def set_state(iid: int, body: StateIn, pid: int = Depends(profile_id)):
     with session() as s:
         if not s.get(ContentItem, iid) or not can_see(s, pid, iid):
             raise HTTPException(404, 'Item not found')
-        st = s.get(ItemState, (pid, iid)) or ItemState(profile_id=pid, item_id=iid)
-        data = body.model_dump(exclude_none=True)
-        if 'read' in data:
-            st.read_at = (st.read_at or time.time()) if data.pop('read') else None
-        if data.get('saved') and not st.saved:
-            st.saved_at = time.time()
-        if 'tags' in data:
-            data['tags'] = list(dict.fromkeys(t.strip().lower()[:40] for t in data['tags'] if t.strip()))[:30]
-        for k, v in data.items():
-            setattr(st, k, v)
-        s.add(st); s.commit(); s.refresh(st)
+        st = _apply_state(s, pid, iid, body.model_dump(exclude_none=True))
+        s.commit(); s.refresh(st)
         return state_dict(st)
+
+
+class BulkStateIn(StateIn):
+    item_ids: list[int] = Input(min_length=1, max_length=200)
+
+
+@router.post('/items/state')
+def set_state_many(body: BulkStateIn, pid: int = Depends(profile_id)):
+    """Apply one state change to several items, e.g. every source of one story."""
+    data = body.model_dump(exclude_none=True)
+    ids = list(dict.fromkeys(data.pop('item_ids')))
+    with session() as s:
+        allowed = [i for i in ids if s.get(ContentItem, i) and can_see(s, pid, i)]
+        if not allowed:
+            raise HTTPException(404, 'Item not found')
+        for iid in allowed:
+            _apply_state(s, pid, iid, dict(data))
+        s.commit()
+        return {'updated': len(allowed)}
 
 
 class ArticleFeedbackIn(BaseModel):
@@ -856,6 +880,35 @@ def news(days: int = 7, topic: int | None = None, curation: str = 'curated', mod
         return body
 
 
+NEWS_REFRESH_COOLDOWN = 15 * 60  # a curator that ran this recently has nothing new to find yet
+
+
+@router.post('/news/refresh')
+def news_refresh(pid: int = Depends(profile_id)):
+    """Pull to refresh: send every article collector that has not run lately out for more now.
+
+    Runs start in the background (the next_run lease prevents overlap); the reader's feed reloads
+    at once and the new stories land as each run finishes. Returns how many collectors went out."""
+    from .news_supply import news_curators
+    now = time.time()
+    with session() as s:
+        started, busy, fresh = [], 0, 0
+        for c in news_curators(s, pid):
+            if c.last_status in ('running', 'queued') and c.next_run > now:
+                busy += 1
+            elif c.last_run and now - c.last_run < NEWS_REFRESH_COOLDOWN:
+                fresh += 1
+            else:
+                c.next_run, c.last_status = 0, 'queued'
+                s.add(c)
+                started.append(c.id)
+        s.commit()
+    for cid in started:
+        engine.start(cid)
+    return {'started': len(started), 'running': busy, 'recent': fresh,
+            'next_at': None if started or busy or not fresh else now + NEWS_REFRESH_COOLDOWN}
+
+
 class NewsSeenIn(BaseModel):
     item_ids: list[int] = Input(max_length=300)
     visit_at: float
@@ -977,6 +1030,17 @@ def _norm_source(provider: str, url: str) -> str:
         if provider == 'lemmy':
             from .lemmy import normalize_source_url
             return normalize_source_url(url.strip())
+        if provider == 'subreddit':
+            from .providers import reddit_feed
+            reddit_feed(url)  # validates; "r/news" style input becomes a full URL below
+            url = url if '://' in url else 'https://www.reddit.com/r/' + url.strip().removeprefix('/').removeprefix('r/')
+        if provider == 'tiktok':
+            from .providers import tiktok_handle
+            return f'https://www.tiktok.com/@{tiktok_handle(url)}'
+        if provider == 'bluesky':
+            from .providers import bluesky_source
+            bluesky_source(url)
+            url = url if '://' in url else 'https://bsky.app/profile/' + url.strip().lstrip('@')
         if provider == 'mastodon_trends':
             from .social_trends import _source
             _source(url.strip())
@@ -1643,7 +1707,7 @@ class CuratorIn(BaseModel):
     enabled: bool | None = None
     ai_enabled: bool | None = None
     min_score: int | None = Input(default=None, ge=0, le=100)
-    max_per_run: int | None = Input(default=None, ge=1, le=200)
+    max_per_run: int | None = Input(default=None, ge=1, le=1000)
     collection_id: int | None = None
     topic_id: int | None = None
     alert_enabled: bool | None = None

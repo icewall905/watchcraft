@@ -10,7 +10,7 @@ from sqlmodel import SQLModel
 from bt import db
 from bt.db import init_db, session
 from bt.hub import news_supply
-from bt.hub.engine import next_run_after, news_run_budget
+from bt.hub.engine import NEWS_RUN_FLOOR, next_run_after, news_run_budget
 from bt.hub.models import (ArticleText, CaptureJob, ContentItem, Curator, CuratorDiscovery, CuratorRun,
                            ItemState, ItemVerdict, NewsImpression, Topic)
 from bt.hub.news_supply import interest_decision, interest_plan
@@ -85,7 +85,7 @@ def test_saturated_interest_cannot_starve_an_empty_one_even_when_profile_is_full
         s.commit()
         assert news_supply.snapshot(s, 1, NOW)['met'] is True
 
-        assert news_run_budget(s, niche, 'schedule', NOW) == (100, 30)
+        assert news_run_budget(s, niche, 'schedule', NOW) == (NEWS_RUN_FLOOR, 30)
         assert next_run_after(s, niche, NOW) == NOW + 3600
         assert news_run_budget(s, general, 'schedule', NOW) == (30, None)
         assert next_run_after(s, general, NOW) == NOW + 6 * 3600
@@ -100,7 +100,7 @@ def test_saturated_interest_is_not_boosted_while_profile_total_is_short():
         assert news_supply.snapshot(s, 1, NOW)['met'] is False
         assert interest_decision(s, general, NOW)['state'] == 'saturated'
         assert news_run_budget(s, general, 'schedule', NOW) == (30, None)
-        assert news_run_budget(s, niche, 'schedule', NOW) == (100, 30)
+        assert news_run_budget(s, niche, 'schedule', NOW) == (NEWS_RUN_FLOOR, 30)
 
 
 def test_seen_stock_makes_an_interest_underserved_again():
@@ -268,3 +268,4 @@ def test_shelf_shows_why_an_interest_finds_no_articles(monkeypatch):
         rows = {i['id']: i for i in shelf_snapshot(s, 1, NOW)['articles']['interests']}
     assert rows[2]['coverage_reason'].startswith('No article-type sources')
     assert rows[1]['coverage_reason'] == ''
+

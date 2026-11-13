@@ -176,6 +176,39 @@ def _valid_asset(kind, mime, data):
             (mime == 'image/webp' and data.startswith(b'RIFF') and data[8:12] == b'WEBP'))
 
 
+YTDLP_CLIP_HOSTS = ('tiktok.com', 'www.tiktok.com')
+
+
+def fetch_ytdlp_clip(url: str) -> bytes:
+    """Download one short clip (TikTok) through yt-dlp as a single mp4, within the meme limits.
+
+    Only allow-listed hosts: yt-dlp follows its own redirects outside curation.fetch's checks."""
+    import tempfile
+    import yt_dlp
+    from pathlib import Path
+    parts = urlsplit(url)
+    if parts.scheme != 'https' or (parts.hostname or '').lower() not in YTDLP_CLIP_HOSTS:
+        raise ValueError('Clip host is not supported.')
+    with tempfile.TemporaryDirectory(prefix='wc-clip-') as tmp:
+        opts = {'quiet': True, 'no_warnings': True, 'noprogress': True, 'noplaylist': True,
+                'socket_timeout': 30, 'retries': 2,
+                'allowed_extractors': ['^TikTok$'],  # never the generic extractor, which follows embeds anywhere
+                'outtmpl': f'{tmp}/clip.%(ext)s', 'format': 'b[ext=mp4][height<=1080]/b[ext=mp4]/bv*[ext=mp4]+ba/b',
+                'merge_output_format': 'mp4', 'max_filesize': VIDEO_MAX_BYTES,
+                'match_filter': yt_dlp.utils.match_filter_func(f'duration <=? {VIDEO_MAX_SECONDS}')}
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.download([url])
+        except Exception as e:  # noqa: BLE001
+            raise ValueError(f'Clip download failed: {str(e)[:160]}') from e
+        files = [p for p in Path(tmp).iterdir() if p.suffix == '.mp4' and p.is_file()]
+        if not files:
+            raise ValueError('Clip was too long, too large or unavailable.')
+        if files[0].stat().st_size > VIDEO_MAX_BYTES:
+            raise ValueError('Meme video exceeds the 25 MB limit.')
+        return files[0].read_bytes()
+
+
 def save_asset(pid, iid, kind, url, data, mime):
     if not _valid_asset(kind, mime, data): raise ValueError('Asset does not match its advertised format.')
     with session() as s:
@@ -251,6 +284,7 @@ def run(pid, iid, lease):
         review_only = bool(prior_review and prior_review.backfill and body)
         capture_url = linked_url or url
         meme_media = item.meta.get('media', {}) if typ == 'meme' or social_post else {}
+        clip_via_ytdlp = item.provider == 'tiktok'  # only this provider's clips may use yt-dlp
         if isinstance(meme_media, dict) and meme_media.get('type') == 'image' and meme_media.get('url'):
             image = meme_media['url']
         # The feed that found this item may carry the whole article even when the page will not.
@@ -355,9 +389,13 @@ def run(pid, iid, lease):
         try:
             with session() as s: exists = s.get(CapturedAsset, (iid, 'video')) is not None
             if not exists:
-                data, final, meta = curation.fetch(meme_media['url'], kinds=VIDEO_TYPES,
-                                                   limit=VIDEO_MAX_BYTES, with_metadata=True)
-                save_asset(pid, iid, 'video', final, data, meta['content_type'])
+                if meme_media.get('via') == 'yt-dlp' and clip_via_ytdlp:
+                    data = fetch_ytdlp_clip(meme_media['url'])
+                    save_asset(pid, iid, 'video', meme_media['url'], data, 'video/mp4')
+                else:
+                    data, final, meta = curation.fetch(meme_media['url'], kinds=VIDEO_TYPES,
+                                                       limit=VIDEO_MAX_BYTES, with_metadata=True)
+                    save_asset(pid, iid, 'video', final, data, meta['content_type'])
         except Exception as e:  # noqa: BLE001 — poster and original remain available on failure
             errors.append('Video: ' + _safe_error(e))
     raw_body = body

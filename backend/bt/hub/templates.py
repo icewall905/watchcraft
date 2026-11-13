@@ -1,6 +1,6 @@
 """Starter curator templates. Each creates an ordinary, fully editable curator."""
 
-def T(key, name, description, icon, queries, keywords, providers, types, hours=24, kind='watch', max_per_run=30):
+def T(key, name, description, icon, queries, keywords, providers, types, hours=24, kind='watch', max_per_run=500):
     return {'key': key, 'name': name, 'description': description, 'icon': icon, 'kind': kind, 'queries': queries,
             'keywords': keywords, 'provider_keys': providers, 'content_types': types, 'interval_hours': hours, 'max_per_run': max_per_run}
 

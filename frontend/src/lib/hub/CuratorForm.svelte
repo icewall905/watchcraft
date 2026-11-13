@@ -61,6 +61,39 @@
 				{ url: 'https://programming.dev/c/programming', label: 'programming.dev · programming' },
 				{ url: 'https://sh.itjust.works/c/asklemmy', label: 'sh.itjust.works · asklemmy' }
 			] },
+		{ title: 'Bing News search', keys: ['bing_news'], note: 'Searches current reporting for each of this curator’s queries.' },
+		{ title: 'Bluesky', keys: ['bluesky'], add: 'bluesky', addHint: 'https://bsky.app/profile/reuters.com', addLabel: 'Add account or feed',
+			note: 'Collects the articles an account or custom feed links to.',
+			presets: [
+				{ url: 'https://bsky.app/profile/reuters.com', label: 'Reuters' },
+				{ url: 'https://bsky.app/profile/apnews.com', label: 'AP News' },
+				{ url: 'https://bsky.app/profile/bbcnews.bsky.social', label: 'BBC News' },
+				{ url: 'https://bsky.app/profile/theguardian.com', label: 'The Guardian' },
+				{ url: 'https://bsky.app/profile/npr.org', label: 'NPR' },
+				{ url: 'https://bsky.app/profile/theverge.com', label: 'The Verge' },
+				{ url: 'https://bsky.app/profile/arstechnica.com', label: 'Ars Technica' },
+				{ url: 'https://bsky.app/profile/did:plc:kkf4naxqmweop7dv4l2iqqf5/feed/verified-news', label: 'Verified news feed' }
+			] },
+		{ title: 'TikTok', keys: ['tiktok'], add: 'tiktok', addHint: 'https://www.tiktok.com/@bbcnews', addLabel: 'Add account',
+			note: 'Recent clips up to 3 minutes are saved locally and show up as Moments. Use a curator that collects memes.',
+			presets: [
+				{ url: 'https://www.tiktok.com/@bbcnews', label: '@bbcnews' },
+				{ url: 'https://www.tiktok.com/@washingtonpost', label: '@washingtonpost' },
+				{ url: 'https://www.tiktok.com/@nytimes', label: '@nytimes' },
+				{ url: 'https://www.tiktok.com/@reuters', label: '@reuters' },
+				{ url: 'https://www.tiktok.com/@nasa', label: '@nasa' },
+				{ url: 'https://www.tiktok.com/@natgeo', label: '@natgeo' }
+			] },
+		{ title: 'Reddit', keys: ['subreddit'], add: 'subreddit', addHint: 'https://www.reddit.com/r/worldnews', addLabel: 'Add subreddit',
+			note: 'Collects the articles a subreddit links to (top of the day); the thread stays as the discussion link.',
+			presets: [
+				{ url: 'https://www.reddit.com/r/worldnews', label: 'r/worldnews' },
+				{ url: 'https://www.reddit.com/r/news', label: 'r/news' },
+				{ url: 'https://www.reddit.com/r/technology', label: 'r/technology' },
+				{ url: 'https://www.reddit.com/r/science', label: 'r/science' },
+				{ url: 'https://www.reddit.com/r/europe', label: 'r/europe' },
+				{ url: 'https://www.reddit.com/r/Denmark', label: 'r/Denmark' }
+			] },
 		{ title: 'Mastodon trends', keys: ['mastodon_trends'], add: 'mastodon_trends', addHint: 'https://mastodon.social/api/v1/trends/links', addLabel: 'Add trend feed',
 			presets: [
 				{ url: 'https://mastodon.social/api/v1/trends/links', label: 'mastodon.social · links' },
@@ -250,7 +283,7 @@
 		<legend>Intelligence</legend>
 		<Toggle label="Use AI to judge relevance" hint="Uses the configured AI model. Without it, keyword matching is used." bind:checked={f.ai_enabled} group="cf-ai" />
 		<Slider label="Minimum relevance score" min={0} max={100} step={5} bind:value={f.min_score} hint="Items scoring lower are not kept." group="cf-ai" />
-		<label class="field"><span class="label">Max new items per run</span><input class="input" type="number" min="1" max="200" bind:value={f.max_per_run} use:focusable /></label>
+		<label class="field"><span class="label">Max new items per run</span><input class="input" type="number" min="1" max="1000" bind:value={f.max_per_run} use:focusable /></label>
 		<ChipInput label="From 'more like this' feedback" hint="Title terms saved when you marked findings as more relevant. Edit freely." bind:values={f.tuned_up} group="cf-tune" />
 		<ChipInput label="From 'less like this' feedback" hint="Title terms saved when you marked findings as less relevant. Matching findings rank lower; nothing is excluded." bind:values={f.tuned_down} group="cf-tune" />
 	</fieldset>

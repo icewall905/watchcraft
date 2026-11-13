@@ -139,6 +139,8 @@ def news_curators(s: Session, pid: int) -> list[Curator]:
 def shares(interest_count: int) -> tuple[int, int]:
     """Per-interest (unseen ready share, daily new-article share)."""
     # Shares sum to (at least) the profile targets, so meeting every share meets the profile.
+    # Feed depth comes from each run's large budget (Curator.max_per_run), not from these
+    # shares: they only decide which interests get extra hourly runs.
     n = max(1, interest_count)
     return max(5, math.ceil(UNSEEN_TARGET / n)), max(3, math.ceil(DAILY_FRESH_TARGET / n))
 

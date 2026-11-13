@@ -138,11 +138,14 @@ def test_short_feed_counts_batch_queries_without_loading_video_payloads(tmp_path
         s.commit()
         pid = p.id
     statements, paths = [], []
-    original = core._readable_short_file
-    def readable(path):
+    original = core._short_file_present
+    def present(path):
         paths.append(path)
         return original(path)
-    monkeypatch.setattr(core, '_readable_short_file', readable)
+    monkeypatch.setattr(core, '_short_file_present', present)
+    def must_not_open(path):
+        raise AssertionError(f'feed counts must not open {path}')
+    monkeypatch.setattr(core, '_readable_short_file', must_not_open)
     def record(conn, cursor, statement, parameters, context, executemany):
         if statement.lstrip().upper().startswith('SELECT'):
             statements.append(statement)

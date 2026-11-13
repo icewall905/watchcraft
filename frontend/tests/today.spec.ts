@@ -291,3 +291,16 @@ test('manual curator rerun stays pending and refreshes after completion', async 
 	await expect(page.getByRole('button', { name: 'Rerun master curator' })).toBeEnabled();
 	await expect(page.getByRole('status').filter({ hasText: 'Master curator finished' })).toBeVisible();
 });
+
+test('an entry can be marked seen or dismissed from Today', async ({ page }) => {
+	const posts: unknown[] = [];
+	await page.route(/\/(?:api\/)?hub\/today(?:\?.*)?$/, (route) => route.fulfill({ json: edition() }));
+	await page.route('**/api/hub/items/state', async (route) => {
+		posts.push(route.request().postDataJSON());
+		await route.fulfill({ json: { updated: 1 } });
+	});
+	await freshPage(page, '/today');
+	await page.getByRole('button', { name: 'Dismiss A thoughtful lead' }).click();
+	await expect(page.getByText('Removed from today.')).toBeVisible();
+	expect(posts).toEqual([{ dismissed: true, item_ids: [1] }]);
+});

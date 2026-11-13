@@ -11,6 +11,7 @@
 	import LiveFilter from '$lib/hub/LiveFilter.svelte';
 	import { session } from '$lib/stores/session.svelte';
 	import ArticleFeedback from '$lib/hub/ArticleFeedback.svelte';
+	import SeenDismiss from '$lib/hub/SeenDismiss.svelte';
 
 	const ranges = [[1, 'Today'], [7, 'This week'], [30, 'Month']] as const;
 	const modes = [['foryou', 'For you'], ['latest', 'Latest']] as const;
@@ -63,7 +64,7 @@
 	async function load() {
 		const id = ++seq, profileId = session.profileId, version = session.version;
 		if (session.profile?.pin_locked || session.needsLogin || profileId == null) {
-			controller?.abort(); groups = []; topics = []; open = {}; topic = null; publisher = '';
+			controller?.abort(); clearRefreshState(); groups = []; topics = []; open = {}; topic = null; publisher = '';
 			weeklyProgress = null; loading = false; error = ''; return;
 		}
 		// A cursor belongs to the list that issued it: never page a new filter (or a failed load) with an old one.
@@ -71,7 +72,7 @@
 		controller = new AbortController();
 		const signal = controller.signal;
 		if (profileId !== loadedProfileId || version !== loadedProfileVersion) {
-			groups = []; topics = []; open = {}; publisher = ''; topic = null; topicError = ''; shown = step;
+			groups = []; topics = []; open = {}; publisher = ''; topic = null; topicError = ''; shown = step; clearRefreshState();
 			nextCursor = null; totalStories = null; totalArticles = null; totalCapped = false;
 			pendingSeen.clear(); sentSeen.clear();
 		}
@@ -132,9 +133,68 @@
 	async function freshMix() {
 		await flushSeen();
 		visit = startVisit(); mode = 'foryou'; shown = step;
-		window.scrollTo({ top: 0 });
+		window.scrollTo({ top: 0, behavior: 'smooth' });
 		await load();
 	}
+	// Refresh: a fresh mix now, and the curators sent out for more. New stories surface as a pill.
+	let refreshing = $state(false);
+	let hunting = $state('');
+	let freshWaiting = $state(false);
+	let watchTimer: ReturnType<typeof setTimeout> | null = null;
+	let newestAt = 0;
+	// Baseline from the same query the watcher polls, so the pill only means "newer than when you refreshed".
+	async function markNewest() {
+		try { newestAt = (await hub.news({ days, mode: 'latest', limit: 1 })).groups[0]?.latest ?? 0; } catch { newestAt = Date.now() / 1000; }
+	}
+	function clearRefreshState() { stopWatch(); hunting = ''; freshWaiting = false; }
+	function stopWatch() { if (watchTimer) clearTimeout(watchTimer); watchTimer = null; }
+	function watchForNew(tries = 8) {
+		stopWatch();
+		if (tries <= 0) { hunting = ''; return; }
+		const profileId = session.profileId, version = session.version;
+		watchTimer = setTimeout(async () => {
+			try {
+				const r = await hub.news({ days, mode: 'latest', limit: 1 });
+				if (profileId !== session.profileId || version !== session.version) return;
+				if ((r.groups[0]?.latest ?? 0) > newestAt) { freshWaiting = true; hunting = ''; return; }
+			} catch { /* best effort */ }
+			watchForNew(tries - 1);
+		}, 45_000);
+	}
+	async function refresh() {
+		if (refreshing || session.profile?.pin_locked || session.needsLogin) return;
+		const profileId = session.profileId, version = session.version;
+		refreshing = true; freshWaiting = false;
+		// Baseline first: a run that finishes quickly must still surface as new.
+		await markNewest();
+		const out = hub.newsRefresh().catch(() => null);
+		try { await freshMix(); } finally { refreshing = false; }
+		const r = await out;
+		if (!r || profileId !== session.profileId || version !== session.version) return;
+		const out_ = r.started + r.running;
+		hunting = out_ ? `${out_} curator${out_ === 1 ? '' : 's'} hunting for more — new stories will pop up here`
+			: r.recent ? 'Curators just ran — this is everything for now' : '';
+		if (out_) watchForNew();
+	}
+	async function showFresh() { clearRefreshState(); await freshMix(); }
+	onDestroy(stopWatch);
+	// Pull down at the top of the feed (touch) to refresh.
+	let pull = $state(0);
+	let pullStart: number | null = null;
+	const PULL_AT = 70;
+	function touchStart(e: TouchEvent) {
+		const inOverlay = (e.target as Element | null)?.closest?.('dialog, [role="dialog"], [aria-modal="true"], input, select, textarea');
+		pullStart = window.scrollY <= 0 && !refreshing && !inOverlay && e.touches.length === 1 ? e.touches[0].clientY : null;
+	}
+	// Our pull replaces the browser's own, which would otherwise reload the whole page too.
+	onMount(() => {
+		const root = document.documentElement, before = root.style.overscrollBehaviorY;
+		root.style.overscrollBehaviorY = 'contain';
+		return () => { root.style.overscrollBehaviorY = before; };
+	});
+	function touchMove(e: TouchEvent) { if (pullStart != null) pull = Math.max(0, Math.min(110, (e.touches[0].clientY - pullStart) * .5)); }
+	function touchEnd() { if (pull >= PULL_AT) void refresh(); pull = 0; pullStart = null; }
+
 	beforeNavigate(() => { if (!visit.seed) return; visit.scroll = window.scrollY; visit.shown = shown; visit.last = Date.now(); store.set(visit); });
 
 	// Impressions: a story counts as shown once most of it was on screen, so the next visit can lead with others.
@@ -194,6 +254,8 @@
 		g.items.some((i) => (!publisher || i.publisher === publisher) && matches(i))
 	));
 	const pageGroups = $derived(visible.slice(0, shown));
+	// A story the reader has dealt with leaves this visit's mix without a reload.
+	function removeGroup(key: string) { groups = groups.filter((g) => g.key !== key); }
 	const filtering = $derived(!!publisher || terms.length > 0);
 	const storyTotal = $derived(filtering || totalStories == null ? visible.length : Math.max(totalStories, visible.length));
 	const articleTotal = $derived(filtering || totalArticles == null ? null : totalArticles);
@@ -208,6 +270,22 @@
 		if (talk) parts.push(`${talk} discussion${talk === 1 ? '' : 's'}`);
 		return parts.join(' · ') || `${items.length} article${items.length === 1 ? '' : 's'}`;
 	}
+	// Every story carries its date; older ones say so plainly, and Latest groups stories by day.
+	const DAY = 86400;
+	const OLD_AFTER = 3 * DAY;
+	const dayStart = (t: number) => { const d = new Date(t * 1000); d.setHours(0, 0, 0, 0); return d.getTime() / 1000; };
+	function dayLabel(t: number) {
+		const today = dayStart(Date.now() / 1000), day = dayStart(t);
+		if (day >= today) return 'Today';
+		if (day >= today - DAY) return 'Yesterday';
+		return new Date(t * 1000).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' });
+	}
+	function stamp(t: number) {
+		if (!t) return '';
+		if (Date.now() / 1000 - t < DAY) return ago(t);
+		return `${new Date(t * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' })} · ${ago(t)}`;
+	}
+	const isOld = (t: number) => !!t && Date.now() / 1000 - t > OLD_AFTER;
 	const visibleArticleCount = $derived(visible.reduce((n, { g }) => n + g.items.filter((i) => matches(i) && (!publisher || i.publisher === publisher)).length, 0));
 	let previousFilterKey = '';
 	$effect(() => {
@@ -267,14 +345,19 @@
 
 <svelte:head><title>News · WatchCraft</title></svelte:head>
 
+<svelte:window ontouchstart={touchStart} ontouchmove={touchMove} ontouchend={touchEnd} />
+
 <div class="page">
+	<div class="pull" style:height={`${pull}px`} aria-hidden="true"><span class:ready={pull >= PULL_AT} style:transform={`rotate(${pull * 3}deg)`}>↻</span></div>
 	<header class="head">
-		<div><h1>News</h1><p class="muted">{mode === 'foryou' ? 'A fresh mix of the week’s reporting every visit, grouped by story.' : 'The week’s reporting, newest first, grouped by story.'}</p></div>
+		<div><h1>News</h1><p class="muted">{mode === 'foryou' ? 'Your endless mix, grouped by story. Refresh any time for more.' : 'Newest first, grouped by story.'}</p></div>
 		<div class="head-actions">
-			<button class="btn" use:focusable onclick={freshMix} disabled={loading}>Fresh mix</button>
-			<a class="btn primary" href="/briefings?new=1" use:focusable>Generate briefing</a>
+			<button class="btn primary refresh" class:spin={refreshing} use:focusable onclick={refresh} disabled={loading || refreshing} aria-label="Refresh feed"><span class="refresh-icon" aria-hidden="true">↻</span> Refresh</button>
+			<a class="btn ghost" href="/briefings?new=1" use:focusable>Briefing</a>
 		</div>
 	</header>
+	{#if hunting}<p class="hunting" role="status"><span class="dot" aria-hidden="true"></span>{hunting}</p>{/if}
+	{#if freshWaiting}<button class="fresh-pill" use:focusable onclick={showFresh}>↑ New stories</button>{/if}
 
 	<div class="controls">
 	<div class="tabs" role="tablist" aria-label="Feed order">
@@ -298,12 +381,12 @@
 				: days === 7 ? 'Weekly curation goal: at least 100 articles' : days === 1 ? 'Today’s coverage' : 'Monthly coverage'}</span>
 		</div>
 		{#if days === 7 && weeklyProgress?.ready_count !== undefined}
-			<p class="small muted" aria-label="Article supply">{weeklyProgress.ready_count} / {weeklyProgress.ready_target ?? 100} ready to read · Cleaned local text and AI summary · {weeklyProgress.candidate_count ?? weeklyProgress.available} / {weeklyProgress.candidate_target ?? 300} approved candidates for refills.</p>
+			<p class="small faint supply" aria-label="Article supply">{weeklyProgress.ready_count} / {weeklyProgress.ready_target ?? 100} ready to read · Cleaned local text and AI summary · {weeklyProgress.candidate_count ?? weeklyProgress.available} / {weeklyProgress.candidate_target ?? 300} approved candidates for refills.</p>
 		{/if}
 	{/if}
 
 	<section class="topics" aria-label="Followed topics">
-		<div class="hstack">
+		<div class="hstack topic-row">
 			{#each topics as t (t.id)}
 				<span class="tchip" class:muted-t={t.muted}>
 					<button class="chip" class:on={topic === t.id} aria-pressed={topic === t.id} use:focusable onclick={() => pickTopic(t.id)}>{t.name}{#if t.muted} (muted){/if}</button>
@@ -312,6 +395,8 @@
 			{/each}
 			{#if !topics.length && !loading}<span class="faint small">No followed topics yet.</span>{/if}
 		</div>
+		<details class="tools">
+		<summary use:focusable>Follow a topic or pick a publisher{#if publisher}<span class="tools-on"> · {publisher}</span>{/if}</summary>
 		<form class="hstack" onsubmit={addTopic}>
 			<input class="input follow" bind:value={follow} placeholder="Topic or keywords, comma separated" aria-label="Topic to follow" maxlength="100" />
 			<button class="btn" disabled={!follow.trim() || following} use:focusable>Follow topic</button>
@@ -322,6 +407,7 @@
 				</select>
 			{/if}
 		</form>
+		</details>
 		{#if topicError}<p class="err" role="alert">{topicError}</p>{/if}
 	</section>
 
@@ -337,7 +423,10 @@
 		</div>
 	{:else}
 		<div class="stories" aria-label="Curated stories">
-			{#each pageGroups as { g } (g.key)}
+			{#each pageGroups as { g }, i (g.key)}
+				{#if mode === 'latest' && g.latest && (i === 0 || dayStart(pageGroups[i - 1].g.latest) !== dayStart(g.latest))}
+					<h2 class="day">{dayLabel(g.latest)}</h2>
+				{/if}
 				{@const selectedItems = g.items.filter((i) => (!publisher || i.publisher === publisher) && matches(i))}
 				{@const rest = selectedItems.length - 1}
 				{@const lead = selectedItems[0] ?? g.items[0]}
@@ -348,15 +437,15 @@
 						<StoryCard {href} title={g.title} source={lead.publisher || lead.provider} {summary}
 							more={rest} moreSources={selectedItems.slice(1).map((i) => i.publisher || i.provider).filter(Boolean)}>
 							{#snippet image()}<LocalImage id={lead.id} alt={lead.title} />{/snippet}
-							{#snippet why()}{#if ['news', 'article', 'web'].includes(lead.type)}<ArticleFeedback itemId={lead.id} title={lead.title} rating={lead.state.rating} onchanged={(state) => { lead.state = state; }} />{/if}{/snippet}
+							{#snippet why()}<SeenDismiss itemIds={selectedItems.map((i) => i.id)} title={g.title} onchanged={() => removeGroup(g.key)} />{#if ['news', 'article', 'web'].includes(lead.type)}<ArticleFeedback itemId={lead.id} title={lead.title} rating={lead.state.rating} onchanged={(state) => { lead.state = state; }} />{/if}{/snippet}
 						</StoryCard>
 					{:else}
 						<StoryCard {href} title={g.title} source={lead.publisher || lead.provider} {summary}
 							more={rest} moreSources={selectedItems.slice(1).map((i) => i.publisher || i.provider).filter(Boolean)}>
-							{#snippet why()}{#if ['news', 'article', 'web'].includes(lead.type)}<ArticleFeedback itemId={lead.id} title={lead.title} rating={lead.state.rating} onchanged={(state) => { lead.state = state; }} />{/if}{/snippet}
+							{#snippet why()}<SeenDismiss itemIds={selectedItems.map((i) => i.id)} title={g.title} onchanged={() => removeGroup(g.key)} />{#if ['news', 'article', 'web'].includes(lead.type)}<ArticleFeedback itemId={lead.id} title={lead.title} rating={lead.state.rating} onchanged={(state) => { lead.state = state; }} />{/if}{/snippet}
 						</StoryCard>
 					{/if}
-					<p class="story-meta">{#if g.new}<span class="new-badge">New</span>{' · '}{/if}{coverageLabel(selectedItems)} · Updated {ago(g.latest)}</p>
+					<p class="story-meta">{#if g.new}<span class="new-badge">New</span>{' · '}{/if}{#if isOld(g.latest)}<span class="old-badge">Older</span>{' · '}{/if}{coverageLabel(selectedItems)} · <time datetime={new Date(g.latest * 1000).toISOString()} title={new Date(g.latest * 1000).toLocaleString()}>{stamp(g.latest)}</time></p>
 					{#if rest > 0}
 						<button class="btn ghost" aria-expanded={!!open[g.key]} use:focusable onclick={() => (open[g.key] = !open[g.key])}>
 							{open[g.key] ? 'Hide sources' : `${rest} more source${rest === 1 ? '' : 's'}`}
@@ -379,15 +468,54 @@
 			{:else if shown < visible.length || nextCursor}
 				<div use:observeMore class="more-sentinel"></div>
 				<button class="btn ghost" use:focusable onclick={() => showMore(true)} disabled={loadingMore && shown >= visible.length}>{loadingMore && shown >= visible.length ? 'Loading more stories…' : 'Show more stories'}</button>
-			{:else}
-				<button class="btn ghost" use:focusable onclick={freshMix}>You're through this mix — get a fresh one</button>
 			{/if}
 		</nav>
+		{#if !moreError && shown >= visible.length && !nextCursor}
+			<div class="caught-up">
+				<span class="big-emoji" aria-hidden="true">✨</span>
+				<h2>You're all caught up</h2>
+				<p class="muted">Refresh for a new mix — your curators go hunting for more while you read.</p>
+				<div class="hstack caught-actions">
+					<button class="btn primary" use:focusable onclick={refresh} disabled={refreshing}>Refresh feed</button>
+					{#if days < 30}<button class="btn ghost" use:focusable onclick={() => { pick(days === 1 ? 7 : 30); window.scrollTo({ top: 0 }); }}>Dig deeper: {days === 1 ? 'this week' : 'this month'}</button>{/if}
+				</div>
+			</div>
+		{/if}
 	{/if}
 </div>
 
 <style>
 	.page { display: grid; gap: var(--sp-5); align-content: start; }
+	.pull { display: grid; place-items: end center; overflow: hidden; margin-bottom: calc(-1 * var(--sp-5)); transition: height .15s ease-out; }
+	.pull span { font-size: 1.4rem; color: var(--faint); transition: color .15s; }
+	.pull span.ready { color: var(--accent, var(--ink)); }
+	.refresh-icon { display: inline-block; }
+	.refresh.spin .refresh-icon { animation: spin .8s linear infinite; }
+	@keyframes spin { to { transform: rotate(360deg); } }
+	.hunting { display: flex; align-items: center; gap: .5rem; margin: 0; color: var(--ink-soft); font-size: var(--fs-sm); }
+	.dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--accent, var(--ink)); animation: pulse 1.4s ease-in-out infinite; }
+	@keyframes pulse { 50% { opacity: .25; transform: scale(.7); } }
+	.fresh-pill { position: fixed; top: 4.5rem; left: 50%; transform: translateX(-50%); z-index: 30; border: 0; border-radius: var(--r-pill);
+		padding: .55rem 1.1rem; background: var(--accent, var(--ink)); color: var(--bg, #fff); font-weight: 600; cursor: pointer;
+		box-shadow: 0 6px 24px rgba(0, 0, 0, .35); animation: drop .3s ease-out; }
+	@keyframes drop { from { opacity: 0; transform: translate(-50%, -.8rem); } }
+	.tools { max-width: 62rem; }
+	.topic-row { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: .2rem; }
+	.topic-row > * { flex: none; }
+	.tools summary { cursor: pointer; color: var(--ink-soft); font-size: var(--fs-sm); padding: .3rem 0; }
+	.tools[open] summary { margin-bottom: .6rem; }
+	.tools-on { color: var(--accent, var(--ink)); }
+	.supply { margin: 0; }
+	.story { animation: rise .35s ease-out both; }
+	@keyframes rise { from { opacity: 0; transform: translateY(.6rem); } }
+	@media (prefers-reduced-motion: reduce) { .story, .fresh-pill, .dot, .refresh.spin .refresh-icon { animation: none; } }
+	.day { position: sticky; top: 3.5rem; z-index: 5; margin: 1.2rem 0 .2rem; padding: .35rem 0; background: var(--bg, transparent);
+		color: var(--ink-soft); font-size: var(--fs-sm); font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
+	.old-badge { color: var(--faint); font-weight: 600; }
+	.caught-up { display: grid; justify-items: center; gap: .5rem; max-width: 62rem; padding: 2.5rem 1rem; text-align: center; border-top: 1px solid var(--rule); }
+	.caught-up h2 { margin: 0; }
+	.caught-up p { margin: 0; }
+	.caught-actions { justify-content: center; gap: .5rem; flex-wrap: wrap; margin-top: .5rem; }
 	.head { display: flex; justify-content: space-between; align-items: end; gap: 1rem; flex-wrap: wrap; }
 	.head-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
 	.new-count { color: var(--accent, var(--ink)); }

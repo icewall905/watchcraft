@@ -65,6 +65,18 @@ def test_today_renders_the_edition_and_remembers_what_was_shown(client):
     assert entries(again, 'lead') == [lead] and entries(again, 'stories') == [better]
 
 
+def test_reading_or_dismissing_an_entry_removes_it_from_today(client):
+    keep = add(title='Still here')
+    read = add(title='Already read')
+    gone = add(title='Not interested')
+    shown = {e['item_id'] for sec in client.get('/api/hub/today').json()['sections'] for e in sec.get('entries', [])}
+    assert {keep, read, gone} <= shown
+    client.post(f'/api/hub/items/{read}/state', json={'read': True})
+    client.post(f'/api/hub/items/{gone}/state', json={'dismissed': True})
+    shown = {e['item_id'] for sec in client.get('/api/hub/today').json()['sections'] for e in sec.get('entries', [])}
+    assert keep in shown and read not in shown and gone not in shown
+
+
 def test_citations_resolve_only_to_items_the_profile_can_see(client):
     mine = add()
     pid, _ = other_profile(client)

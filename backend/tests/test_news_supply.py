@@ -207,18 +207,18 @@ def test_news_run_budget_only_grows_for_scheduled_enabled_article_collectors(mon
     with session() as s:
         curator = Curator(profile_id=1, name='News', interval_hours=6, enabled=True,
                           kind='watch', content_types=['news'], max_per_run=30)
-        assert news_run_budget(s, curator, 'schedule', NOW) == (100, 30)
+        assert news_run_budget(s, curator, 'schedule', NOW) == (500, 30)
         assert news_run_budget(s, curator, 'manual', NOW) == (30, None)
         curator.enabled = False
         assert news_run_budget(s, curator, 'schedule', NOW) == (30, None)
         curator.enabled = True
         curator.content_types = ['news', 'article', 'web', 'project']
-        assert news_run_budget(s, curator, 'schedule', NOW) == (100, 30)
+        assert news_run_budget(s, curator, 'schedule', NOW) == (500, 30)
         curator.content_types = ['article']
-        curator.max_per_run = 180
-        assert news_run_budget(s, curator, 'schedule', NOW) == (180, 180)
-        curator.max_per_run = 500  # Legacy values never get silently reduced below 150; API max is 200.
-        assert news_run_budget(s, curator, 'schedule', NOW) == (200, 200)
+        curator.max_per_run = 800
+        assert news_run_budget(s, curator, 'schedule', NOW) == (800, 800)
+        curator.max_per_run = 5000  # Legacy values above the API max are capped at it.
+        assert news_run_budget(s, curator, 'schedule', NOW) == (1000, 1000)
         monkeypatch.setattr(news_supply, 'snapshot', lambda *_: {'met': True})
         curator.max_per_run = 30
         assert news_run_budget(s, curator, 'schedule', NOW) == (30, None)

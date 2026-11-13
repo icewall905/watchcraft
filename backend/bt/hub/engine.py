@@ -21,8 +21,11 @@ from .research import identity_names, person_match
 
 log = logging.getLogger(__name__)
 LEASE_S = 900
-NEWS_RUN_FLOOR = 100
-NEWS_RUN_CAP = 200
+NEWS_RUN_FLOOR = 500
+NEWS_RUN_CAP = 1000
+# A deep run must not fill News with archives: watch curators skip articles older than News's
+# widest range (a month), which the feed could never show anyway. None disables the guard.
+NEWS_MAX_AGE: int | None = 30 * 86400
 SEVERITY = ['info', 'low', 'medium', 'high', 'critical']
 TYPE_BLOCKED = 'Content type not selected'
 TRACKING = re.compile(r'^(utm_[a-z]+|fbclid|gclid|mc_cid|mc_eid|ref|ref_src)$', re.I)
@@ -433,7 +436,7 @@ def news_run_budget(s: Session, curator: Curator, trigger: str = 'schedule', now
     raised even when the profile total is met, a saturated one never is. Mixed-content scouts
     can use the extra slots for articles; other content stays within the curator's configured
     budget. Manual runs, disabled curators, and configurations already above the floor retain
-    their requested limit (capped at the public API's 200-item maximum).
+    their requested limit (capped at the public API's 1000-item maximum).
     """
     configured = max(1, min(NEWS_RUN_CAP, int(curator.max_per_run or 1)))
     if trigger != 'schedule' or not _news_collector(curator):
@@ -542,8 +545,9 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
     with session() as s:
         liked, disliked = taste(s, c.profile_id)
         article_liked, article_disliked = taste(s, c.profile_id, article=True)
-    scored, type_blocked = [], 0
+    scored, type_blocked, too_old = [], 0, 0
     seen_urls = set()
+    oldest = time.time() - NEWS_MAX_AGE if NEWS_MAX_AGE else None
     for src, q, d in candidates:
         try:
             key = canonical_url(d['url'])
@@ -553,6 +557,10 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
             continue
         seen_urls.add(key)
         if not person_match(c, d):
+            continue
+        if (oldest and c.kind == 'watch' and d.get('type') in {'news', 'article'}
+                and isinstance(d.get('published_at'), (int, float)) and d['published_at'] < oldest):
+            too_old += 1
             continue
         score, reason = keyword_score(c, d)
         if score is None:
@@ -570,6 +578,11 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
     if not scored and type_blocked and type_blocked == len(seen_urls):
         errors.append({'source': 'Content types',
                        'message': f'No attached source can produce {", ".join(c.content_types)}; add one that can.'})
+    if too_old:
+        log.info('curator %s skipped %d articles older than %d days', cid, too_old, (NEWS_MAX_AGE or 0) // 86400)
+    # Newest first, so a capped run keeps current reporting (undated items count as new).
+    now_ts = time.time()
+    scored.sort(key=lambda x: -(x[2].get('published_at') if isinstance(x[2].get('published_at'), (int, float)) else now_ts))
     with session() as s:
         known = set(s.exec(select(ContentItem.url).join(CuratorDiscovery, CuratorDiscovery.item_id == ContentItem.id)
                                       .where(CuratorDiscovery.curator_id == cid)).all())

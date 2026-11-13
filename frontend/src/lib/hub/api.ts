@@ -38,6 +38,9 @@ export const hub = {
 	shareArticle: (id: number) => send<{ path: string | null }>('POST', `/items/${id}/share`),
 	revokeArticleShare: (id: number) => send<{ path: string | null }>('DELETE', `/items/${id}/share`),
 	setState: (id: number, patch: Partial<ItemState> & { read?: boolean }) => send<ItemState>('POST', `/items/${id}/state`, patch),
+	// One story can fold several sources; one request keeps them consistent.
+	setStateMany: (ids: number[], patch: Partial<ItemState> & { read?: boolean }) =>
+		send<{ updated: number }>('POST', '/items/state', { ...patch, item_ids: ids }),
 	articleFeedback: (id: number, body: { rating: -1 | 0 | 1 | 2; chips?: string[]; text?: string }) =>
 		request<{ state: ItemState; feedback: { rating: number; chips: string[]; text: string } }>(
 			`${H}/items/${id}/feedback`, { method: 'POST', body, toast: false }),
@@ -106,6 +109,8 @@ export const hub = {
 	report: (id: number) => send<Curator>('POST', `/curators/${id}/report`),
 	exportCurator: (id: number) => request<Record<string, unknown>>(`${H}/curators/${id}/export`),
 
+	// Sends the profile's article collectors out for more; stories land as the runs finish.
+	newsRefresh: () => send<{ started: number; running: number; recent: number; next_at: number | null }>('POST', '/news/refresh'),
 	newsSeen: (item_ids: number[], visit_at: number, profileId: number, keepalive = false) =>
 		request<{ recorded: number }>(H + '/news/seen', { method: 'POST', body: { item_ids, visit_at }, keepalive, toast: false, profileId: String(profileId) }),
 	topics: (kind?: 'knowledge' | 'news') => get<Topic[]>('/topics' + qs({ kind })),

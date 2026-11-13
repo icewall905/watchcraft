@@ -472,7 +472,18 @@ def _local_short_rows(s: Session, pid: int, cid: int):
     return ready
 
 
+def _short_file_present(relative):
+    """Presence and size only. Feed counts run on every poll, and opening each file costs an NFS
+    round trip that the attribute cache cannot absorb."""
+    path = abs_path(relative) if relative else None
+    try:
+        return bool(path and path.is_file() and path.stat().st_size > 0)
+    except OSError:
+        return False
+
+
 def _readable_short_file(relative):
+    """Presence plus a real read, for the list that is about to serve the file."""
     path = abs_path(relative) if relative else None
     try:
         if path and path.is_file() and path.stat().st_size > 0:
@@ -512,7 +523,7 @@ def shorts_feeds(pid: int = Depends(profile_id), s: Session = Depends(get_sessio
         if vid in watched:
             continue
         if status == 'done' and path not in readable:
-            readable[path] = _readable_short_file(path)
+            readable[path] = _short_file_present(path)
         key = ('error_count' if status == 'error' else
                'ready_count' if status == 'done' and readable[path] else 'pending_count')
         counts[cid][key] += 1

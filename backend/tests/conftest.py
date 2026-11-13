@@ -40,3 +40,11 @@ def _no_browser(monkeypatch):
     `rescue.tool_render` directly and are unaffected.
     """
     monkeypatch.setitem(rescue.TOOLS, 'render', ('disabled in tests', lambda ctx: ''))
+
+
+@pytest.fixture(autouse=True)
+def _no_article_age_guard(monkeypatch):
+    """Feed fixtures carry fixed publication dates; the age guard would retire them as the calendar
+    moves. Tests of the guard switch it back on."""
+    from bt.hub import engine
+    monkeypatch.setattr(engine, 'NEWS_MAX_AGE', None)
