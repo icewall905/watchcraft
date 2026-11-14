@@ -2088,3 +2088,12 @@ in the local `todo.md` (which is intentionally ignored by Git).
   rollback API/worker tags `watchcraft:rollback-20261108-news-api` and
   `watchcraft:rollback-20261108-news-worker`. Rollback stops API/worker, retains a fresh DB backup and
   restarts their prior images without restoring old data or recreating downloader/subtitles.
+
+
+### 2026-11-14 — music imports and clean Meme Radar
+
+- Deployed `2ed3c03` and `b1dfec1`, pushed to `origin/codex/android-app`. Music supports ordered YouTube/Music Assistant snapshot imports and seed-track mix creation. Meme Radar now requires captured humor, has separate humor judging and stable endless browsing.
+- Full backend: 1162 passed, six skipped; frontend check/build passed (three existing CSS warnings); music/meme browser checks: 29 passed. Exact release image `watchcraft:release-b1dfec1`, digest `sha256:d9640af6e3ca67b1e47b09f166c4e9a55437a9e8ff73f8e022a541b5942f2bd2`.
+- Backup `/root/compose/watchcraft-backups/20261114-music-memes` retains online SQLite backup, config/identity hashes, previous source and per-service rollback images/script. Isolated network-disabled restore preserved all table counts and profile/PIN fingerprint; init twice, media decode/range and master pass passed.
+- All four services deployed with host overlay; API/subtitles healthy, all zero restarts. Local/public health, affected routes, integrity and unchanged configuration/profile/PIN hashes passed. Live browser checked uncropped meme layout. Normal master rejudging queued.
+- Music Assistant URL/token are absent on production; actual provider/device acceptance remains in the external tracker.

@@ -14,9 +14,26 @@ def visible_recent(s: Session, pid: int, now: float) -> list[ContentItem]:
     """Hub items this profile's curators found (or it touched) recently. Videos have their own curator."""
     found = select(CuratorDiscovery.item_id).where(CuratorDiscovery.profile_id == pid)
     touched = select(ItemState.item_id).where(ItemState.profile_id == pid)
-    return list(s.exec(select(ContentItem).where((ContentItem.id.in_(found)) | (ContentItem.id.in_(touched)),
-                                                 ContentItem.first_seen >= now - WINDOW, ContentItem.type != 'video')
-                       .order_by(ContentItem.first_seen.desc()).limit(MAX_ITEMS)).all())
+    visible = ((ContentItem.id.in_(found)) | (ContentItem.id.in_(touched)))
+    recent = select(ContentItem).where(visible, ContentItem.first_seen >= now - WINDOW,
+                                       ContentItem.type != 'video')
+    # Reserve a third of the bounded pass for each reading family. A busy meme
+    # source must not prevent the article curators' finds from being judged.
+    # Spare places return to the newest pool, so quiet families waste no budget.
+    families = (ContentItem.type.in_(('news', 'article')),
+                ContentItem.type == 'meme',
+                ContentItem.type.not_in(('news', 'article', 'meme')))
+    chosen = {}
+    for family in families:
+        for item in s.exec(recent.where(family).order_by(ContentItem.first_seen.desc(), ContentItem.id.desc())
+                           .limit(MAX_ITEMS // len(families))).all():
+            chosen[item.id] = item
+    remaining = MAX_ITEMS - len(chosen)
+    if remaining:
+        fill = recent.where(ContentItem.id.not_in(list(chosen))) if chosen else recent
+        for item in s.exec(fill.order_by(ContentItem.first_seen.desc(), ContentItem.id.desc()).limit(remaining)).all():
+            chosen[item.id] = item
+    return sorted(chosen.values(), key=lambda item: (item.first_seen, item.id), reverse=True)
 
 
 def run(s: Session, pid: int, now: float | None = None) -> dict:

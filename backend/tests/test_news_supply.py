@@ -212,6 +212,8 @@ def test_news_run_budget_only_grows_for_scheduled_enabled_article_collectors(mon
         curator.enabled = False
         assert news_run_budget(s, curator, 'schedule', NOW) == (30, None)
         curator.enabled = True
+        curator.content_types = []
+        assert news_run_budget(s, curator, 'schedule', NOW) == (500, 30)
         curator.content_types = ['news', 'article', 'web', 'project']
         assert news_run_budget(s, curator, 'schedule', NOW) == (500, 30)
         curator.content_types = ['article']

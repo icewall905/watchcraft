@@ -18,7 +18,7 @@ export type Verdict = {
 };
 export type CitationRef = { n: number; item_id: number | null; title?: string; url?: string };
 export type EditionEntry = {
-	item_id: number; item: Item; story_id?: number; sources?: number; summary?: string; summary_refs?: CitationRef[];
+	item_id: number; item: Item; story_id?: number; sources?: number; summary?: string; summary_refs?: CitationRef[]; group_key?: string; group_title?: string;
 };
 export type EditionSection =
 	| { key: 'lead' | 'stories' | 'reads' | 'memes'; title: string; entries: EditionEntry[] }

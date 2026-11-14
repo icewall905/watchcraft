@@ -454,7 +454,7 @@ def news_run_budget(s: Session, curator: Curator, trigger: str = 'schedule', now
 
 def _news_collector(curator: Curator) -> bool:
     return (curator.enabled and curator.kind == 'watch'
-            and bool(set(curator.content_types or []).intersection({'news', 'article'})))
+            and (not curator.content_types or bool(set(curator.content_types).intersection({'news', 'article'}))))
 
 
 def _news_boost(s, curator: Curator, now: float | None) -> dict:

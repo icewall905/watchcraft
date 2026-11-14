@@ -304,3 +304,26 @@ test('an entry can be marked seen or dismissed from Today', async ({ page }) => 
 	await expect(page.getByText('Removed from today.')).toBeVisible();
 	expect(posts).toEqual([{ dismissed: true, item_ids: [1] }]);
 });
+
+
+test('Today offers a deeper edition and labels related story runs', async ({ page }) => {
+ const data = edition();
+ data.sections.find(s => s.key === 'stories')!.entries = Array.from({ length: 140 }, (_, i) => ({
+  item_id: 4000 + i, item: item(4000 + i, `Deep story ${i + 1}`),
+  group_key: i < 3 ? 'curator:1' : 'curator:3', group_title: i < 3 ? 'AI research' : 'Home Assistant'
+ }));
+ data.sections.find(s => s.key === 'reads')!.entries = Array.from({ length: 60 }, (_, i) => ({
+  item_id: 5000 + i, item: item(5000 + i, `Deep read ${i + 1}`, 'document')
+ }));
+ await page.route(/\/api\/hub\/today(?:\?.*)?$/, route => route.fulfill({ json: data }));
+ await freshPage(page, '/today');
+ await expect(page.getByRole('heading', { name: 'Stories · 140' })).toBeVisible();
+ await expect(page.getByRole('heading', { name: 'Worth your time · 60' })).toBeVisible();
+ await expect(page.getByRole('heading', { name: 'AI research', exact: true })).toHaveCount(1);
+ await expect(page.getByRole('heading', { name: 'Home Assistant', exact: true })).toHaveCount(1);
+ for (let i = 0; i < 4; i++) await page.getByRole('button', { name: 'Show 20 more stories' }).click();
+ await expect(page.getByRole('link', { name: 'Deep story 96', exact: true })).toBeVisible();
+ await expect(page.getByRole('link', { name: 'Deep story 97', exact: true })).toHaveCount(0);
+ await page.setViewportSize({ width: 390, height: 844 });
+ expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});

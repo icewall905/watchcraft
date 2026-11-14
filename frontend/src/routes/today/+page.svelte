@@ -32,7 +32,7 @@
 	let lastRefresh = 0;
 	let rerunning = $state(false);
 	// Today opens generously and grows in steps; only rendered entries count as delivered.
-	const sectionLimit: Record<string, number> = { stories: 79, reads: 40, memes: 16 };
+	const sectionLimit: Record<string, number> = { stories: 299, reads: 120, memes: 32 };
 	const initial = { stories: 16, reads: 9, memes: 6 } as const;
 	const steps = { stories: 20, reads: 9, memes: 6 } as const;
 	type Part = keyof typeof initial;
@@ -198,7 +198,8 @@
 			<section class="section" aria-label="Stories">
 				<SectionHeader title={`Stories · ${entries('stories').length}`} action={{ href: '/news', label: 'Explore news' }} />
 					<div class="story-list" data-nav-row>
-					{#each shownStories as entry (entry.item_id)}
+					{#each shownStories as entry, index (entry.item_id)}
+						{#if entry.group_title && entry.group_key !== shownStories[index - 1]?.group_key}<h3 class="group-heading">{entry.group_title}</h3>{/if}
 						<StoryCard href={itemHref(entry)} title={entry.item.title} source={entry.item.publisher || entry.item.author || undefined} summary={cardSummary(entry)} summaryLabel={summaryLabel(entry)} more={sourceCount(entry)} mediaAvailable={hasLocalImage(entry)}>
 							{#snippet image()}{#if hasLocalImage(entry)}<LocalImage id={entry.item_id} alt={entry.item.title} />{/if}{/snippet}
 							{#snippet why()}<WhyPopover reasons={entry.item.verdict?.reasons ?? []} /><EditionActions entry={entry} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} /><SeenDismiss itemIds={[entry.item_id]} title={entry.item.title} onchanged={() => { notice = 'Removed from today.'; revision++; }} />{#if supportsArticleFeedback(entry)}<ArticleFeedback itemId={entry.item_id} title={entry.item.title} rating={entry.item.state.rating} onchanged={(state) => articleRated(entry, state)} />{/if}{/snippet}
@@ -213,7 +214,8 @@
 			<section class="section">
 				<SectionHeader title={`Worth your time · ${entries('reads').length}`} action={{ href: '/discover', label: 'More discoveries' }} />
 				<div class="reads" data-nav-row>
-					{#each shownReads as entry (entry.item_id)}
+					{#each shownReads as entry, index (entry.item_id)}
+						{#if entry.group_title && entry.group_key !== shownReads[index - 1]?.group_key}<h3 class="group-heading">{entry.group_title}</h3>{/if}
 						<ReadCard href={itemHref(entry)} title={entry.item.title} source={entry.item.publisher || entry.item.author || undefined} summary={cardSummary(entry)} summaryLabel={summaryLabel(entry)} mediaAvailable={hasLocalImage(entry)}>
 							{#snippet image()}{#if hasLocalImage(entry)}<LocalImage id={entry.item_id} alt={entry.item.title} />{/if}{/snippet}
 							{#snippet why()}<WhyPopover reasons={entry.item.verdict?.reasons ?? []} /><EditionActions entry={entry} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} /><SeenDismiss itemIds={[entry.item_id]} title={entry.item.title} onchanged={() => { notice = 'Removed from today.'; revision++; }} />{#if supportsArticleFeedback(entry)}<ArticleFeedback itemId={entry.item_id} title={entry.item.title} rating={entry.item.state.rating} onchanged={(state) => articleRated(entry, state)} />{/if}{/snippet}
@@ -272,6 +274,7 @@
 	.section { margin-top: clamp(1.7rem, 4vw, 3rem); }
 	.story-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: clamp(1.5rem, 4vw, 4rem); }
 	.reads { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(1rem, 2.5vw, 2rem); }
+	.group-heading { grid-column: 1 / -1; margin: 1.2rem 0 0; padding-top: .8rem; border-top: 1px solid var(--rule); color: var(--ink-soft); font: 500 var(--fs-md) / 1.4 var(--font-display); overflow-wrap: anywhere; }
 	.memes { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: clamp(.7rem, 1.5vw, 1.25rem); }
 	.quiet-section { padding: 1rem 0; border-top: 1px solid var(--rule); }
 	.edition-end { display: grid; justify-items: center; border-top: 1px solid var(--rule); margin-top: 2rem; padding-top: 1rem; }
