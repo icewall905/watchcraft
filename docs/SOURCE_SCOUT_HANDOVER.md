@@ -2169,5 +2169,7 @@ in the local `todo.md` (which is intentionally ignored by Git).
   vision run and timeline were verified. Stricter theme re-review kept eight images visible and
   recoverably hid seven weak unsaved matches, preserving all image data and user-saved pins.
   Source URL, image fingerprint, board revision and idle lease were checked before applying review.
-- Android version advanced to 0.1.9/code 11 for a signed release incorporating these server fixes.
-  Physical-device/Obtainium acceptance remains tracked separately.
+- Android `android-v0.1.9` / code 11 published from `1c20fbc`; signed CI tests/lint/build passed.
+  Released APK checksum, package/version and original signing certificate independently verified.
+  Physical-device/Obtainium acceptance remains tracked separately. Disposable restore copies removed;
+  original online backups and rollback assets retained.
