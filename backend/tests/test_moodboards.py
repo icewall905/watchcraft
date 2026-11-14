@@ -346,7 +346,9 @@ def test_empty_run_result_cooldown_and_activity(client, monkeypatch):
 
 
 def test_planned_queries_web_candidates_and_visual_review(client,monkeypatch):
-    b=make(client,interests='Homelab racks',instructions='Creative setups and cool gear only')
+    b=make(client,name='Homelab setups',interests='Homelab racks, creative setups, cool gear',instructions='Creative setups and cool gear only')
+    with session() as s:
+        row=s.get(MoodBoard,b['id']);row.source_offset=30;s.add(row);s.commit()
     queries=[]
     web=dict(title='Real home server rack',source_url='https://example.org/homelab',image_url='https://images.example.org/rack.jpg',attribution='example.org',license='Rights retained')
     monkeypatch.setattr(moodboard_sources,'search',lambda q,**kw:queries.append(q) or [web])
@@ -361,7 +363,7 @@ def test_planned_queries_web_candidates_and_visual_review(client,monkeypatch):
     data=client.get(f"/api/hub/boards/{b['id']}").json()
     assert len(data['pins'])==1 and data['pins'][0]['source_url']==web['source_url']
     assert 'Added 1 images' in data['board']['last_result']
-    assert any('images' in kw and 'Creative setups' in user for user,kw in calls)
+    assert any('images' in kw and 'Creative setups' in user and 'Homelab setups' in user and 'Homelab racks' in user for user,kw in calls)
 
 
 def test_failed_run_short_retry_and_activity_deletion(client,monkeypatch):

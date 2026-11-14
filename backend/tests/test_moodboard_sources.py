@@ -190,3 +190,11 @@ def test_searx_oversized_or_wrong_response_is_not_empty_success(monkeypatch):
     monkeypatch.setattr(sources.httpx, 'stream', lambda *a, **kw: Stream(chunks=[b'x' * 1_000_001] * 2))
     with pytest.raises(ValueError, match='too large'):
         sources.searx_search('homelab')
+
+
+def test_stock_previews_do_not_enter_visual_boards(monkeypatch):
+    row={'url':'https://www.freepik.com/premium-ai-image/organized-lab-storage','img_src':'https://img.freepik.com/lab.jpg','title':'Organized lab gear'}
+    photo={**row,'url':'https://example.com/my-home-server-rack','title':'My home server rack'}
+    configure_searx(monkeypatch,{'results':[row,photo]})
+    results=sources.searx_search('homelab racks')
+    assert len(results)==1 and results[0]['source_url']==photo['url']

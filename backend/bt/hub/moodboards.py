@@ -304,8 +304,14 @@ def select_candidates(candidates, interests, instructions, progress=None):
             images = [vision_image(c['_captured'][0]) for c in batch]
             result = ai._call(
                 'Inspect the attached images in order, indexed from zero. Curate a personal visual mood board. '
-                'Accept an image only when its visible content positively satisfies ALL requested interests '
-                'and curator instructions. Specific restrictions such as heart patterns ONLY must be visibly '
+                'The board name and main interest define its subject. Broad phrases like creative setups or '
+                'cool gear are modifiers within that subject, not permission to include unrelated topics. '
+                'For example, homelab refers to computing, networking and home-server hardware, not chemistry '
+                'laboratory storage, unrelated gaming chairs or home-cinema marketing. '
+                'Accept an image only when its visible content matches that subject and satisfies ALL specific '
+                'curator restrictions. Reject generic stock previews, watermarked catalog assets and AI/SEO '
+                'illustrations when the board asks for real setups or projects. '
+                'Specific restrictions such as heart patterns ONLY must be visibly '
                 'present on the requested object, not inferred from its title. Sewing pattern requests need '
                 'an actual usable pattern or clearly relevant pattern instructions, not just a garment photo. '
                 'Reject uncertain, partly matching, unrelated, explicit adult, logo or news images. '
@@ -341,7 +347,8 @@ def discovery_queries(interest, instructions):
                 return phrases
     except Exception:
         pass
-    return [interest[:150]]
+    # If planning fails, keep a concrete primary topic rather than broad modifiers.
+    return [re.split(r'[,;\n]+', interest.split(' — ', 1)[-1])[0].strip()[:150]]
 
 
 def collect(bid, lease, revision):
@@ -353,6 +360,7 @@ def collect(bid, lease, revision):
             return
         interests = [v.strip()[:250] for v in re.split(r'[,;\n]+', board.interests) if v.strip()]
         instructions = board.instructions
+        context = board.name + ' — ' + board.interests
         offset = board.source_offset
         query = interests[(offset // 30) % len(interests)]
         page_offset = ((offset // (30 * len(interests))) * 30) % 300
@@ -366,7 +374,7 @@ def collect(bid, lease, revision):
     try:
         select_candidates([], query, instructions)  # Fail before fetching when vision is disabled.
         milestone('search', 'Planning image searches for ' + board.name + '.')
-        queries = discovery_queries(query, instructions)
+        queries = discovery_queries(context, instructions)
         seen_candidates = set()
         for search_query in queries:
             milestone('search', 'Searching images: ' + search_query, query=search_query)
@@ -396,7 +404,7 @@ def collect(bid, lease, revision):
         def progress(start, end):
             milestone('judge', f'Vision reviewing images {start + 1}–{end} of {len(captured)} against your instructions.',
                       reviewed=start, candidates=len(captured))
-        for item in select_candidates(captured, query, instructions, progress):
+        for item in select_candidates(captured, context, instructions, progress):
             if len(existing) >= MAX_PINS:
                 break
             data, mime, width, height = item['_captured']

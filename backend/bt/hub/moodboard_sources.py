@@ -18,6 +18,9 @@ API = 'https://commons.wikimedia.org/w/api.php'
 MAX_RESPONSE_BYTES = 2_000_000
 MAX_GIF_BYTES = 5_000_000
 MIMES = {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}
+STOCK_PREVIEW_HOSTS = ('freepik.com', 'shutterstock.com', 'gettyimages.com', 'istockphoto.com',
+                       'dreamstime.com', 'alamy.com', 'stock.adobe.com', 'vecteezy.com',
+                       '123rf.com', 'depositphotos.com')
 EXPLICIT = re.compile(r'\b(?:nud(?:e|es|ity)|porn(?:ography|ographic)?|eroti(?:c|ca)|sex(?:ual|ually)?|'
                       r'genitals?|genitalia|penis|penises|vagina|vulva|masturbat\w*|'
                       r'fetish(?:ism)?|intercourse|topless|naked)\b', re.I)
@@ -219,6 +222,9 @@ def searx_search(query, limit=30, offset=0):
         if not isinstance(row, dict):
             continue
         source, image = valid_candidate({'source_url': row.get('url'), 'image_url': row.get('img_src')})
+        host = urlsplit(source).hostname or ''
+        if any(host == stock or host.endswith('.' + stock) for stock in STOCK_PREVIEW_HOSTS):
+            continue
         title, description = _text(row.get('title'), 500), _text(row.get('content'))
         if not source or source in seen or not title or EXPLICIT.search(title + ' ' + description):
             continue
