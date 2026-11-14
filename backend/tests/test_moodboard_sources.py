@@ -9,6 +9,8 @@ from bt.hub import moodboard_sources as sources
 @pytest.fixture(autouse=True)
 def no_configured_provider(monkeypatch):
     monkeypatch.setattr(sources, 'get_settings', lambda: {'search': {'provider': 'none', 'searxng_url': ''}})
+    # Web search behaviour only; social sources are covered by test_moodboard_social_sources.
+    monkeypatch.setattr(sources, 'source_settings', lambda: {'web': True, 'source_timeout_s': 20})
 
 
 def page(**changes):
@@ -177,7 +179,8 @@ def test_candidate_rejects_non_public_lexical_urls(url):
 
 def test_searx_empty_falls_back_to_commons(monkeypatch):
     configure_searx(monkeypatch, {'results': []})
-    expected = [{'title': 'Commons image'}]
+    expected = [{'title': 'Commons image', 'source_url': 'https://commons.wikimedia.org/wiki/File:A.jpg',
+                 'image_url': 'https://upload.wikimedia.org/wikipedia/commons/a/a.jpg'}]
     monkeypatch.setattr(sources, 'commons_search', lambda *a, **kw: expected)
     assert sources.search('garden') == expected
 
