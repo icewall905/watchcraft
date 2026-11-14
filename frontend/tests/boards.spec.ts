@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { freshPage } from './helpers';
-const board=(id:number,name:string)=>({id,name,interests:'Japanese gardens, bonsai',instructions:'',enabled:true,interval_hours:12,pin_count:3,last_status:'ok',error:'',retry_after:0,last_result:''});
+const board=(id:number,name:string)=>({id,name,interests:'Japanese gardens, bonsai',instructions:'',enabled:true,interval_hours:12,target_images:100,reference_url:null as string|null,reference_name:'',pin_count:3,last_status:'ok',error:'',retry_after:0,last_result:''});
 const pin=(id:number,title:string,bid=1,gif=false)=>({id,board_id:bid,title,image_url:`/api/hub/boards/${bid}/pins/${id}/media`,source_url:`https://commons.wikimedia.org/wiki/File:Garden${id}.jpg`,media_type:gif?'gif':'image',attribution:'Garden photographer',license:'CC BY-SA 4.0',saved:false});
 async function setup(page:Page,empty=false){
  let boards=empty?[]:[board(1,'Garden inspiration'),board(2,'Pottery ideas')];
@@ -15,6 +15,8 @@ async function setup(page:Page,empty=false){
   if(path==='/api/hub/boards'){if(method==='POST'){const made={...board(8,body.name),...body};boards.push(made);return route.fulfill({json:{board:made}});}return route.fulfill({json:{boards}});}
   const id=Number(path.split('/')[4]);
   if(path.endsWith('/pinterest')){if(method==='POST')importJob={id:1,board_id:id,status:'queued',imported:0,skipped:0,total:0,error:''};return route.fulfill({json:{import:importJob}});}
+  if(path.endsWith('/reference')){const b=boards.find(b=>b.id===id)!;if(method==='DELETE'){b.reference_url=null;b.reference_name='';return route.fulfill({json:{board:b}});}b.reference_url=`/api/hub/boards/${id}/reference/media?v=1`;b.reference_name=body.title||'Reference image';return route.fulfill({json:{board:b}});}
+  if(path.endsWith('/images')){const added=pin(9,body.title||'Uploaded image',id);added.saved=true;if(body.data_base64)added.source_url='upload:sha256:abc';pins=[added,...pins];return route.fulfill({json:{pin:added}});}
   if(path.endsWith('/refresh')){const b=boards.find(b=>b.id===id)!;Object.assign(b,{last_status:'no_matches',last_result:'No images met your instructions in the last search.',retry_after:3});return route.fulfill({json:{queued:false,status:'cooldown',retry_after:3,last_result:b.last_result,board:b}});}
   if(path.includes('/pins/')){const pid=Number(path.split('/').at(-1)),row=pins.find(p=>p.id===pid)!;Object.assign(row,body);row.image_url=`/api/hub/boards/${row.board_id}/pins/${row.id}/media`;if(body.hidden)pins=pins.filter(p=>p.id!==pid);return route.fulfill({json:{pin:row}});}
   if(method==='PATCH'){const b=boards.find(b=>b.id===id)!;Object.assign(b,body);return route.fulfill({json:{board:b}});}
@@ -30,12 +32,34 @@ test('create and edit a board with its own curator',async({page})=>{
  await page.getByLabel('Board name',{exact:true}).fill('Small gardens');
  await page.getByLabel('Interests and hobbies').fill('Japanese gardens, bonsai');
  await page.getByLabel('What should your curator look for?').fill('Quiet spaces with stone paths');
+ await page.getByLabel('Image target').fill('240');
  await page.getByRole('button',{name:'Create board',exact:true}).click();
  await expect(page.getByRole('heading',{name:'Small gardens',exact:true})).toBeVisible();
- expect(writes[0].body).toMatchObject({name:'Small gardens',interests:'Japanese gardens, bonsai',instructions:'Quiet spaces with stone paths',enabled:true,interval_hours:12});
+ expect(writes[0].body).toMatchObject({name:'Small gardens',interests:'Japanese gardens, bonsai',instructions:'Quiet spaces with stone paths',enabled:true,interval_hours:12,target_images:240});
  await page.getByRole('button',{name:'Edit Small gardens curator'}).click();
  await page.getByLabel('Find new images automatically').uncheck();await page.getByRole('button',{name:'Save changes'}).click();
  await expect(page.getByText('Automatic discovery paused.')).toBeVisible();
+});
+
+test('board target defaults to 100 and users can set a visual reference and add uploaded images',async({page})=>{
+ const writes=await setup(page);await freshPage(page,'/boards');
+ await expect(page.getByText('3 / 100 images')).toBeVisible();
+ await page.getByRole('button',{name:'Add inspiration image'}).click();
+ await page.getByLabel('Image URL').fill('https://example.com/mood.jpg');
+ await page.getByRole('button',{name:'Save inspiration'}).click();
+ await expect(page.getByRole('region',{name:'Mood board inspiration image'})).toContainText('Visual inspiration');
+ expect(writes.find(w=>w.path.endsWith('/reference')&&w.method==='POST')?.body).toEqual({url:'https://example.com/mood.jpg',title:undefined});
+ await page.getByRole('button',{name:'Add image',exact:true}).click();
+ await page.getByLabel('Image file').setInputFiles({name:'detail.webp',mimeType:'image/webp',buffer:Buffer.from('sample image')});
+ await page.getByLabel('Caption').fill('My uploaded reference');
+ await page.getByRole('button',{name:'Add image',exact:true}).last().click();
+ await expect(page.getByRole('button',{name:'View My uploaded reference'})).toBeVisible();
+ const upload=writes.find(w=>w.path.endsWith('/images'))?.body;
+ expect(upload?.title).toBe('My uploaded reference');expect(typeof upload?.data_base64).toBe('string');expect(upload?.url).toBeUndefined();
+ await expect(page.getByText('Image added to the board.')).toBeVisible();await expect(page.getByRole('dialog')).toHaveCount(0);await page.waitForTimeout(600);await page.getByRole('button',{name:'View My uploaded reference'}).click();
+ await expect(page.getByText('Uploaded image')).toBeVisible();await page.keyboard.press('Escape');
+ await page.getByRole('button',{name:'Remove inspiration'}).click();
+ await expect(page.getByRole('region',{name:'Mood board inspiration image'})).toHaveCount(0);
 });
 
 test('browse local pins save move hide and respect refresh cooldown',async({page})=>{

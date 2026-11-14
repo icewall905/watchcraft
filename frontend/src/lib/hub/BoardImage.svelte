@@ -17,7 +17,7 @@
  $effect(() => {
   const controller = new AbortController(); let objectUrl = ''; src = ''; failed = false;
   // Only this authenticated local media route is allowed; never load a provider URL.
-  if (!/^\/api\/hub\/boards\/\d+\/pins\/\d+\/media$/.test(url)) { failed = true; return; }
+  if (!/^\/api\/hub\/boards\/\d+\/(?:pins\/\d+\/media|reference\/media)(?:\?v=\d+)?$/.test(url)) { failed = true; return; }
   if (!visible || (animated && reduced && !play)) return;
   const profile = currentProfileId();
   fetch(url, {credentials: 'same-origin', headers: profile ? {'X-Profile-Id': profile} : {}, signal: controller.signal})

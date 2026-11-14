@@ -554,6 +554,7 @@ class MoodBoard(SQLModel, table=True):
     build_started: float = 0
     revision: int = 0
     source_offset: int = 0
+    target_images: int = 100
     created_at: float = Field(default_factory=time.time)
 
 
@@ -598,3 +599,11 @@ class MoodImport(SQLModel, table=True):
     lease: str = ''
     lease_until: float = 0
     created_at: float = Field(default_factory=time.time)
+
+
+class MoodReference(SQLModel, table=True):
+    """One locally stored inspiration image per board, scoped through its owner."""
+    board_id: int = Field(primary_key=True)
+    name: str = ''
+    mime: str
+    data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))

@@ -74,7 +74,7 @@ def test_collect_dedup_no_content_pipeline_and_advances(client, monkeypatch):
     assert mb.dispatch_due()
     detail = client.get(f"/api/hub/boards/{b['id']}").json()
     assert detail['pins'][0]['media_type'] == 'gif'
-    assert detail['board']['last_status'] == 'ok'
+    assert detail['board']['last_status'] == 'queued'  # below the 100-image target: keep filling
     assert not client.post(f"/api/hub/boards/{b['id']}/refresh").json()['queued']
     with session() as s:
         board = s.get(MoodBoard, b['id'])
@@ -377,3 +377,96 @@ def test_failed_run_short_retry_and_activity_deletion(client,monkeypatch):
     client.delete(f"/api/hub/boards/{b['id']}")
     with session() as s:
         assert not s.exec(select(AgentEvent).where(AgentEvent.payload['board_id'].as_integer()==b['id'])).all()
+
+
+def image_upload():
+    import base64
+    out = BytesIO()
+    Image.new('RGB', (12, 8), 'purple').save(out, format='PNG')
+    return {'data_base64': base64.b64encode(out.getvalue()).decode(), 'title': 'Purple inspiration'}, out.getvalue()
+
+
+def test_target_defaults_validation_and_manual_additions(client):
+    b = make(client, enabled=False)
+    assert b['target_images'] == 100
+    for target in (0, 1001):
+        assert client.patch(f"/api/hub/boards/{b['id']}", json={'target_images': target}).status_code == 422
+    assert client.patch(f"/api/hub/boards/{b['id']}", json={'target_images': 1}).json()['board']['target_images'] == 1
+    upload, raw = image_upload()
+    added = client.post(f"/api/hub/boards/{b['id']}/images", json=upload)
+    assert added.status_code == 200, added.text
+    pin = added.json()['pin']
+    assert pin['saved'] and client.get(pin['image_url']).content == raw
+    assert client.post(f"/api/hub/boards/{b['id']}/images", json=upload).json()['pin']['id'] == pin['id']
+    assert client.get(f"/api/hub/boards/{b['id']}").json()['board']['pin_count'] == 1
+    assert client.post(f"/api/hub/boards/{b['id']}/images", json={'data_base64': 'not an image'}).status_code == 422
+
+
+def test_reference_local_media_lifecycle_and_ownership(client, monkeypatch):
+    b = make(client, enabled=False)
+    upload, raw = image_upload()
+    url = f"/api/hub/boards/{b['id']}/reference"
+    attached = client.post(url, json=upload)
+    assert attached.status_code == 200, attached.text
+    board = attached.json()['board']
+    assert board['reference_name'] == upload['title']
+    assert client.get(board['reference_url']).content == raw
+    assert board['pin_count'] == 0
+    assert client.post('/api/hub/boards/999999/reference', json=upload).status_code == 404
+    assert client.delete(url).json()['board']['reference_url'] is None
+    assert client.get(board['reference_url']).status_code == 404
+    client.post(url, json=upload)
+    client.delete(f"/api/hub/boards/{b['id']}")
+    from bt.hub.models import MoodReference
+    with session() as s:
+        assert s.get(MoodReference, b['id']) is None
+
+
+def test_target_fill_stops_at_goal_and_can_resume(client, monkeypatch):
+    b = make(client, target_images=2)
+    monkeypatch.setattr(moodboard_sources, 'search', lambda *a, **kw: [candidate(88), candidate(89), candidate(90)])
+    monkeypatch.setattr(mb, 'capture_image', lambda url: (b'bytes', 'image/png', 1, 1))
+    assert mb.dispatch_due()
+    detail = client.get(f"/api/hub/boards/{b['id']}").json()
+    assert detail['board']['pin_count'] == 2
+    with session() as s:
+        board = s.get(MoodBoard, b['id']); board.next_run = 0; s.add(board); s.commit()
+    assert not mb.dispatch_due()
+    assert client.patch(f"/api/hub/boards/{b['id']}", json={'target_images': 3}).status_code == 200
+    assert mb.dispatch_due()
+    assert client.get(f"/api/hub/boards/{b['id']}").json()['board']['pin_count'] == 3
+
+
+def test_reference_pixels_guide_search_and_candidate_judgment(client, monkeypatch):
+    b = make(client, target_images=1)
+    upload, raw = image_upload()
+    client.post(f"/api/hub/boards/{b['id']}/reference", json=upload)
+    calls = []
+    def ai_call(system, user, schema, **kw):
+        calls.append((system, kw))
+        return {'queries': ['purple cottage garden']} if 'queries' in schema['properties'] else {'indices': [0]}
+    monkeypatch.setattr(mb.ai, '_call', ai_call)
+    monkeypatch.setattr(moodboard_sources, 'search', lambda *a, **kw: [candidate(99)])
+    monkeypatch.setattr(mb, 'capture_image', lambda url: (raw, 'image/png', 12, 8))
+    assert mb.dispatch_due()
+    assert len(calls) == 2
+    assert len(calls[0][1]['images']) == 1
+    assert len(calls[1][1]['images']) == 2
+    assert 'inspiration only' in calls[1][0]
+
+
+def test_manual_url_uses_safe_capture_and_rechecks_deleted_board(client, monkeypatch):
+    b = make(client, enabled=False)
+    upload, raw = image_upload()
+    calls = []
+    def fetch(url, **kw):
+        calls.append((url, kw)); return raw, url, {'content_type': 'image/png'}
+    monkeypatch.setattr(mb.curation, 'fetch', fetch)
+    response = client.post(f"/api/hub/boards/{b['id']}/images", json={'url': 'https://example.org/purple.png'})
+    assert response.status_code == 200
+    assert calls[0][1]['limit'] == 5_000_000
+    assert client.post(f"/api/hub/boards/{b['id']}/images", json={'url': 'file:///etc/passwd'}).status_code == 422
+    def deleted(url):
+        client.delete(f"/api/hub/boards/{b['id']}"); return raw, 'image/png', 12, 8
+    monkeypatch.setattr(mb, 'capture_image', deleted)
+    assert client.post(f"/api/hub/boards/{b['id']}/images", json={'url': 'https://example.org/other.png'}).status_code == 404
