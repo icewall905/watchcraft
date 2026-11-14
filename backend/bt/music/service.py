@@ -238,6 +238,19 @@ def claim_build(s: Session, m: MusicMix) -> bool:
     return True
 
 
+def create_mood(s: Session, pid: int, preset: str, description: str = '') -> MusicMix:
+    if preset == 'custom':
+        if not description.strip() or len(description) > 300:
+            raise ValueError('Describe your background mood in 1–300 characters.')
+        name, intent = 'Custom background', description.strip()
+    elif preset in dj.MOODS:
+        name, intent = dj.MOODS[preset]['name'], dj.MOODS[preset]['description']
+    else:
+        raise ValueError('Choose a background mood.')
+    return create_mix(s, pid, kind='mood', description=dj.BACKGROUND_INTENT + intent,
+                      curator=preset, name=name)
+
+
 def create_mix(s: Session, pid: int, *, kind: str, seed: dict | None = None, description: str = '',
                curator: str = '', name: str = '', tracks: list[dict] | None = None) -> MusicMix:
     count = s.exec(select(func.count()).select_from(MusicMix).where(MusicMix.profile_id == pid)).one()
@@ -250,6 +263,12 @@ def create_mix(s: Session, pid: int, *, kind: str, seed: dict | None = None, des
         m = MusicMix(profile_id=pid, kind='seed', seed_video_id=seed['video_id'], emoji='📻', status='building',
                      name=(name or f'{seed.get("title") or "Track"} radio')[:80],
                      blurb=f'Built around {seed.get("artist") or "this track"}.')
+    elif kind == 'mood':
+        if curator not in (*dj.MOODS, 'custom') or not description.strip():
+            raise ValueError('Choose a background mood.')
+        m = MusicMix(profile_id=pid, kind='mood', curator=curator, description=description[:500],
+                     emoji=dj.MOODS.get(curator, {}).get('emoji', '🎐'),
+                     status='building', name=(name or 'Background mix')[:80])
     elif kind == 'curator':
         if not description.strip():
             raise ValueError('describe the mix you want')
@@ -365,18 +384,21 @@ def build_mix(mid: int) -> None:
             tracks = prune(yt.radio(seed, origin='worker'), disliked, less)[:MIX_SIZE]
             extra = {}
         else:
-            plan = dj.curate(description, curator)
+            plan = (dj.curate(description, curator, background=True) if kind == 'mood'
+                    else dj.curate(description, curator))
             named = resolve_all(plan['picks'])
             found = []
             for q in plan['queries'][:6]:
                 try:
-                    found.append(yt.search(q, origin='worker')[:12])
+                    find = yt.background_search if kind == 'mood' else yt.search
+                    found.append(find(q, origin='worker')[:12])
                 except Exception as e:  # noqa: BLE001
                     log.info('music curator query %r failed: %s', q, e)
             tracks = prune(_interleave(named, *found), disliked, less)[:MIX_SIZE]
             extra = {'name': plan['name'], 'emoji': plan['emoji'], 'blurb': plan['blurb'], 'queries': plan['queries']}
         if not tracks:
-            raise RuntimeError('No official music videos matched. Try different words.')
+            raise RuntimeError('No background music matched. Try a different mood or description.' if kind == 'mood'
+                               else 'No official music videos matched. Try different words.')
     except Exception as e:  # noqa: BLE001
         with session() as s:
             if m := s.get(MusicMix, mid):

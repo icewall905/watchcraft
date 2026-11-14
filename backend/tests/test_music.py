@@ -28,6 +28,8 @@ def music(client, monkeypatch):  # noqa: F811
     monkeypatch.setattr(yt, 'radio', lambda vid, origin='user': (calls.append(('radio', vid)), list(RADIO))[1])
     monkeypatch.setattr(yt, 'search', lambda q, origin='user': (calls.append(('search', q)),
                                                                  list(SEARCH.get(q.lower(), RADIO[1:3])))[1])
+    monkeypatch.setattr(yt, 'background_search', lambda q, origin='user': (calls.append(('search', q)),
+                                                                          list(RADIO[1:3]))[1])
     monkeypatch.setattr(yt, 'prepare', lambda vid: calls.append(('prepare', vid)))
     monkeypatch.setattr(service, 'spawn', lambda fn, *a: fn(*a))
     monkeypatch.setattr(dj.ai, 'enabled', lambda: False)
@@ -575,3 +577,88 @@ def test_ma_old_or_unknown_version_does_not_fetch_playlist(monkeypatch):
         version[0] = v
         with pytest.raises(ValueError, match='2.11 or newer'):
             imports._ma_tracks('library://playlist/13')
+
+@pytest.mark.parametrize('preset', ['mellow', 'spooky', 'romantic', 'zen'])
+def test_background_presets_build_and_refresh(music, preset):
+    assert {m['key'] for m in music.get('/api/music/home').json()['moods']} == set(dj.MOODS)
+    response = music.post('/api/music/moods', json={'preset': preset})
+    assert response.status_code == 200
+    mid = response.json()['id']
+    got = music.get(f'/api/music/mixes/{mid}').json()
+    assert got['kind'] == 'mood' and got['status'] == 'ready' and got['tracks']
+    assert got['name'] == dj.MOODS[preset]['name']
+    assert got['description'].startswith(dj.BACKGROUND_INTENT)
+    assert [q for kind, q in music.calls if kind == 'search'] == dj.MOODS[preset]['queries']
+    music.post(f'/api/music/mixes/{mid}/refresh')
+    assert music.get(f'/api/music/mixes/{mid}').json()['kind'] == 'mood'
+
+
+def test_custom_background_validation_and_ownership(music):
+    for value in ['', '   ']:
+        assert music.post('/api/music/moods', json={'preset': 'custom', 'description': value}).status_code == 400
+    assert music.post('/api/music/moods', json={'preset': 'custom', 'description': 'x' * 301}).status_code == 422
+    assert music.post('/api/music/moods', json={'preset': 'unknown'}).status_code == 422
+    assert music.post('/api/music/mixes', json={'kind': 'mood'}).status_code == 422
+    made = music.post('/api/music/moods', json={'preset': 'custom', 'description': '  Rainy library  '}).json()
+    got = music.get(f'/api/music/mixes/{made["id"]}').json()
+    assert got['description'] == dj.BACKGROUND_INTENT + 'Rainy library'
+    assert [q for kind, q in music.calls if kind == 'search'] == [
+        'Rainy library instrumental ambient', 'Rainy library gentle background music']
+    guest = music.post('/api/profiles', json={'name': 'Guest', 'role': 'adult'}).json()['id']
+    headers = {'X-Profile-Id': str(guest)}
+    for method, suffix in [('get', ''), ('post', '/refresh'), ('delete', '')]:
+        assert getattr(music, method)(f'/api/music/mixes/{made["id"]}{suffix}', headers=headers).status_code == 404
+    assert music.get('/api/music/mixes', headers=headers).json()['mixes'] == []
+
+
+def test_background_build_is_queued(music, monkeypatch):
+    queued = []
+    monkeypatch.setattr(service, 'spawn', lambda fn, *args: queued.append((fn, args)))
+    got = music.post('/api/music/moods', json={'preset': 'zen'}).json()
+    assert got['status'] == 'building' and got['count'] == 0
+    assert queued == [(service.build_mix, (got['id'],))]
+    assert not music.calls
+
+
+def test_background_prompt_and_failure_fallback(monkeypatch):
+    seen = []
+    monkeypatch.setattr(dj.ai, 'enabled', lambda: True)
+    def failing(prompt, *args, **kwargs):
+        seen.append(prompt)
+        raise RuntimeError('offline')
+    monkeypatch.setattr(dj.ai, '_call', failing)
+    result = dj.curate(dj.BACKGROUND_INTENT + dj.MOODS['zen']['description'], 'zen', background=True)
+    assert result['queries'] == dj.MOODS['zen']['queries'] and result['ai'] is False
+    assert 'family-friendly' in seen[0] and 'strong percussion or lyrics' in seen[0]
+    assert 'Disco Dee' not in seen[0] and 'never invent tracks' in seen[0]
+
+
+def test_background_parser_allows_music_uploads_without_weakening_normal_search():
+    def item(vid, title, typ):
+        return _search_item(vid, title, typ, [_run('Ambient Artist'), _run(' • '), _run('4:07')])
+    response = {'contents': [
+        item('AAAAAAAAAAA', 'Gentle Piano', yt.OMV),
+        item('BBBBBBBBBBB', 'Soft Rain Visualizer', 'MUSIC_VIDEO_TYPE_UGC'),
+        item('CCCCCCCCCCC', 'Peaceful (Official Audio)', 'MUSIC_VIDEO_TYPE_ATV'),
+        item('DDDDDDDDDDD', 'Piano Cover', 'MUSIC_VIDEO_TYPE_UGC'),
+        item('EEEEEEEEEEE', 'Relaxing Lyrics', yt.OMV),
+        item('FFFFFFFFFFF', 'Calm Karaoke', 'MUSIC_VIDEO_TYPE_ATV'),
+        item('GGGGGGGGGGG', 'Ambient Reaction', 'MUSIC_VIDEO_TYPE_UGC'),
+        item('HHHHHHHHHHH', 'Unknown Music', 'unknown')]}
+    assert [t['video_id'] for t in yt.parse_search(response)] == ['AAAAAAAAAAA']
+    assert [t['video_id'] for t in yt.parse_search(response, background=True)] == [
+        'AAAAAAAAAAA', 'BBBBBBBBBBB', 'CCCCCCCCCCC']
+
+
+def test_background_search_has_separate_cache_and_broader_music_query(monkeypatch):
+    calls = []
+    response = {'contents': [_search_item('BBBBBBBBBBB', 'Soft Rain Visualizer',
+        'MUSIC_VIDEO_TYPE_UGC', [_run('Ambient Artist')])]}
+    monkeypatch.setattr(yt, '_cache', {})
+    monkeypatch.setattr(yt, '_call', lambda ep, query, detail, origin: (calls.append(query), response)[1])
+    assert yt.search('soft rain') == []
+    assert [t['video_id'] for t in yt.background_search('soft rain')] == ['BBBBBBBBBBB']
+    assert yt.background_search('  SOFT   RAIN  ')[0]['title'] == 'Soft Rain Visualizer'
+    assert len(calls) == 2
+    assert 'params' in calls[0] and calls[1] == {'query': 'soft rain'}
+    assert yt.search('soft rain') == []

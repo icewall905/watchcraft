@@ -380,3 +380,46 @@ test('Music Assistant import retains its form after an error and can retry', asy
 	await expect(page.getByRole('dialog', { name: /MA mix/ })).toBeVisible();
 	await expect(page.getByRole('status').filter({ hasText: 'Imported 2 tracks.' })).toContainText('300-track limit');
 });
+
+
+test('mood background presets and custom descriptions create saved mixes without autoplay', async ({ page }) => {
+ await fixture(page);
+ const requests: Record<string, unknown>[] = [];
+ const mix = {id: 88, name: 'Zen background', kind: 'mood', emoji: '🍃', description: 'Gentle instrumental background music', curator: 'zen', curator_name: '', color: '', blurb: '', seed_video_id: '', status: 'building', error: '', count: 0, created_at: 1, refreshed_at: 0, covers: [], tracks: []};
+ await page.route('**/api/music/moods', async route => {requests.push(route.request().postDataJSON()); await route.fulfill({json: mix});});
+ await page.route('**/api/music/mixes/88', route => route.fulfill({json: mix}));
+ await page.route('**/api/music/mixes', route => route.fulfill({json: {mixes: [mix]}}));
+ await freshPage(page, '/music');
+ const generator = page.getByRole('region', {name: 'Mood background generator'});
+ for (const name of ['Mellow background', 'Spooky background', 'Romantic background', 'Zen background', 'Custom mood']) await expect(generator.getByRole('button', {name: new RegExp(name)})).toBeVisible();
+ await generator.getByRole('button', {name: /Zen background/}).click();
+ await expect(page.getByRole('dialog').getByText(/family-friendly/)).toBeVisible();
+ await page.getByRole('button', {name: 'Generate background', exact: true}).click();
+ await expect.poll(() => requests.length).toBe(1);
+ expect(requests[0]).toEqual({preset: 'zen'});
+ await expect(page.getByRole('dialog', {name: /Zen background/})).toBeVisible();
+ await expect(page.getByRole('region', {name: 'Music player'})).toHaveCount(0);
+ await page.keyboard.press('Escape');
+ await generator.getByRole('button', {name: /Custom mood/}).click();
+ const submit = page.getByRole('button', {name: 'Generate background', exact: true});
+ await expect(submit).toBeDisabled();
+ await page.getByLabel('Describe your mood').fill('  Rainy bookshop with gentle piano  ');
+ await page.setViewportSize({width: 390, height: 844});
+ expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+ await page.screenshot({path: '/tmp/watchcraft-custom-mood-mobile.png'});
+ await submit.click();
+ await expect.poll(() => requests.length).toBe(2);
+ expect(requests[1]).toEqual({preset: 'custom', description: 'Rainy bookshop with gentle piano'});
+});
+
+test('mood generation keeps the custom text after a failed request', async ({ page }) => {
+ await fixture(page);
+ await page.route('**/api/music/moods', route => route.fulfill({status: 503, json: {detail: 'Try again shortly'}}));
+ await freshPage(page, '/music');
+ await page.getByRole('region', {name: 'Mood background generator'}).getByRole('button', {name: /Custom mood/}).click();
+ await page.getByLabel('Describe your mood').fill('Quiet winter cabin');
+ await page.getByRole('button', {name: 'Generate background', exact: true}).click();
+ await expect(page.getByRole('dialog').getByRole('alert')).toBeVisible();
+ await expect(page.getByLabel('Describe your mood')).toHaveValue('Quiet winter cabin');
+ await expect(page.getByRole('button', {name: 'Generate background', exact: true})).toBeEnabled();
+});

@@ -46,6 +46,11 @@ class MixIn(BaseModel):
     tracks: list[TrackIn] = Field(default_factory=list, max_length=300)
 
 
+class MoodIn(BaseModel):
+    preset: str = Field(pattern='^(mellow|spooky|romantic|zen|custom)$')
+    description: str = Field('', max_length=300)
+
+
 class MixPatch(BaseModel):
     name: str = Field(min_length=1, max_length=80)
 
@@ -101,7 +106,9 @@ def home(pid: int = Depends(require_hub)):
     with session() as s:
         return {'favorites': service.favorites(s, pid), 'mixes': service.list_mixes(s, pid),
                 'recent': service.recent(s, pid, 16), 'recent_mixes': service.recent_mixes(s, pid), 'ai': ai.enabled(), 'offline': service.offline_summary(s),
-                'curators': [{'key': k, **v} for k, v in dj.CURATORS.items()]}
+                'curators': [{'key': k, **v} for k, v in dj.CURATORS.items()],
+                'moods': [{'key': k, **{f: v[f] for f in ('name', 'emoji', 'description')}}
+                          for k, v in dj.MOODS.items()]}
 
 
 @router.get('/search')
@@ -173,6 +180,13 @@ def import_playlist(body: ImportIn, pid: int = Depends(require_hub)):
             m = service.create_mix(s, pid, kind='manual', name=body.name or result['name'], tracks=result['tracks'])
             return {'mix': service.mix_dict(s, m, pid, with_tracks=True), 'imported': len(result['tracks']),
                     'skipped': result['skipped'], 'duplicates': result['duplicates'], 'limited': result['limited']}
+
+
+@router.post('/moods')
+def create_mood(body: MoodIn, pid: int = Depends(require_hub)):
+    with _yt_errors(), session() as s:
+        m = service.create_mood(s, pid, body.preset, body.description)
+        return service.mix_dict(s, m, pid, with_tracks=True)
 
 
 @router.post('/mixes')

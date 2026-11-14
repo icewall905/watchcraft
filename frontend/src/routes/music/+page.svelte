@@ -5,7 +5,7 @@
 	import { focusable } from '$lib/nav';
 	import Modal from '$lib/components/Modal.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
-	import { music, type Curator, type FavArtist, type ForYou, type Mix, type OfflineSummary, type Track } from '$lib/music/api';
+	import { music, type Curator, type FavArtist, type ForYou, type Mix, type Mood, type OfflineSummary, type Track } from '$lib/music/api';
 	import { player, shuffled } from '$lib/music/player.svelte';
 	import TrackCard from '$lib/music/TrackCard.svelte';
 	import Player from '$lib/music/Player.svelte';
@@ -19,6 +19,33 @@
 	const mixId = $derived(Number(page.url.searchParams.get('mix')) || 0);
 	const artistName = $derived(page.url.searchParams.get('artist') ?? '');
 
+	const defaultMoods: Mood[] = [
+        {key: 'mellow', name: 'Mellow background', emoji: '🌙', description: 'Soft, unhurried music for an easy evening.'},
+        {key: 'spooky', name: 'Spooky background', emoji: '🎃', description: 'Eerie atmosphere without jump scares or sudden blasts.'},
+        {key: 'romantic', name: 'Romantic background', emoji: '🕯️', description: 'Warm, intimate music that leaves room for conversation.'},
+        {key: 'zen', name: 'Zen background', emoji: '🍃', description: 'Gentle, family-friendly music for winding down before bedtime.'}
+    ];
+    let moods = $state<Mood[]>(defaultMoods);
+    let moodOpen = $state(false);
+    let moodPreset = $state<Mood['key'] | 'custom'>('mellow');
+    let customMood = $state('');
+    let moodError = $state('');
+    let moodBusy = $state(false);
+    function openMood(preset: Mood['key'] | 'custom') {
+        moodPreset = preset; moodError = ''; moodOpen = true;
+    }
+    async function generateMood(e: Event) {
+        e.preventDefault();
+        if (moodBusy || (moodPreset === 'custom' && !customMood.trim())) return;
+        moodBusy = true; moodError = '';
+        try {
+            const mix = await music.createMood({preset: moodPreset, ...(moodPreset === 'custom' ? {description: customMood.trim()} : {})});
+            mixes = [mix, ...mixes.filter(m => m.id !== mix.id)];
+            moodOpen = false;
+            setParams({tab: 'mixes', mix: String(mix.id), artist: null, q: null});
+        } catch (e) { moodError = e instanceof Error ? e.message : 'Could not start your mood background.'; }
+        finally { moodBusy = false; }
+    }
 	let ai = $state(false);
 	let offline = $state<OfflineSummary | null>(null);
 	let curators = $state<Curator[]>([]);
@@ -113,6 +140,7 @@
 			ai = h.ai;
 			offline = h.offline;
 			curators = h.curators;
+			moods = h.moods?.length ? h.moods : defaultMoods;
 			recent = h.recent;
 			recentMixes = h.recent_mixes;
 			favTracks = h.favorites.tracks;
@@ -351,6 +379,16 @@
 		</div>
 	</section>
 
+    <section class="mood-background" aria-label="Mood background generator">
+        <header><div><h2>Mood background</h2><p class="muted">Set the atmosphere with a mix of music videos. Pick a mood or describe your own, then play when you’re ready.</p></div></header>
+        <div class="mood-grid">
+            {#each moods as mood (mood.key)}
+                <button class="mood-option" use:focusable onclick={() => openMood(mood.key)}><span aria-hidden="true">{mood.emoji}</span><strong>{mood.name}</strong><small>{mood.description}</small></button>
+            {/each}
+            <button class="mood-option" use:focusable onclick={() => openMood('custom')}><span aria-hidden="true">✨</span><strong>Custom mood</strong><small>A rainy bookshop, a quiet space station…</small></button>
+        </div>
+    </section>
+
 	{#if q}
 		<section class="shelf">
 			<header>
@@ -474,7 +512,7 @@
 
 {#if openMix}
 	{@const m = openMix}
-	<Modal portal title={`${m.emoji} ${m.name}`} subtitle={m.curator_name ? `Curated by ${m.curator_name}` : m.kind === 'seed' ? 'Track radio' : 'Your mix'} size="lg" onClose={() => setParams({ mix: null })}>
+	<Modal portal title={`${m.emoji} ${m.name}`} subtitle={m.kind === 'mood' ? 'Mood background' : m.curator_name ? `Curated by ${m.curator_name}` : m.kind === 'seed' ? 'Track radio' : 'Your mix'} size="lg" onClose={() => setParams({ mix: null })}>
 		<div class="mixview">
 			{#if m.blurb || m.description}
 				<p class="blurb">{m.blurb}{#if m.description}<br /><small class="muted">“{m.description}”</small>{/if}</p>
@@ -561,6 +599,24 @@
 			<button class="btn primary big" use:focusable disabled={busy || !importReference.trim() || (importSource === 'music_assistant' && !importStatus?.music_assistant_configured)}>{busy ? 'Importing and matching tracks…' : 'Import playlist'}</button>
 		</form>
 	</Modal>
+{/if}
+
+{#if moodOpen}
+    <Modal portal title="Mood background" subtitle="Generate a background music video mix" size="md" onClose={() => { if (!moodBusy) moodOpen = false; }}>
+        <form class="create" onsubmit={generateMood}>
+            <div class="ideas" role="group" aria-label="Background moods">
+                {#each moods as mood (mood.key)}<button type="button" class="chip" class:on={moodPreset === mood.key} aria-pressed={moodPreset === mood.key} disabled={moodBusy} use:focusable onclick={() => (moodPreset = mood.key)}>{mood.emoji} {mood.name}</button>{/each}
+                <button type="button" class="chip" class:on={moodPreset === 'custom'} aria-pressed={moodPreset === 'custom'} disabled={moodBusy} use:focusable onclick={() => (moodPreset = 'custom')}>✨ Custom mood</button>
+            </div>
+            {#if moodPreset === 'custom'}
+                <label for="custom-mood">Describe your mood</label>
+                <textarea id="custom-mood" class="input" rows="3" maxlength="300" bind:value={customMood} disabled={moodBusy} placeholder="e.g. Gentle piano and rain for reading on a winter evening" use:focusable></textarea>
+            {:else}<p>{moods.find(m => m.key === moodPreset)?.description}</p>{/if}
+            <p class="muted small">The curator picks mostly instrumental music with a steady atmosphere. Your mix is saved under Mixes; playback starts when you press Play.</p>
+            {#if moodError}<p class="err" role="alert">{moodError}</p>{/if}
+            <button class="btn primary big" use:focusable disabled={moodBusy || (moodPreset === 'custom' && !customMood.trim())}>{moodBusy ? 'Starting…' : 'Generate background'}</button>
+        </form>
+    </Modal>
 {/if}
 
 {#if creating}
@@ -685,6 +741,13 @@
 	.ic { background: none; border: 0; font-size: 1.1rem; padding: 0.35rem; border-radius: var(--r-sm); cursor: pointer; color: var(--text); }
 	.ic:focus-visible { outline: 2px solid var(--accent); }
 
+    .mood-background { margin: 1.5rem 0; padding: clamp(1rem, 3vw, 1.5rem); border: 1px solid var(--line-strong); border-radius: 18px; background: var(--surface-solid); }
+    .mood-background h2 { margin: 0 0 .4rem; }
+    .mood-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: .7rem; margin-top: 1rem; }
+    .mood-option { display: flex; flex-direction: column; align-items: flex-start; gap: .4rem; padding: 1rem; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface-solid); color: inherit; text-align: left; cursor: pointer; font: inherit; }
+    .mood-option:hover, .mood-option:focus-visible { border-color: var(--accent); }
+    .mood-option > span { font-size: 1.5rem; }
+    .mood-option small { color: var(--muted); line-height: 1.4; }
 	.seed-results { display: grid; gap: 0.4rem; max-height: 18rem; overflow-y: auto; }
 	.seed-results .btn { justify-content: flex-start; text-align: start; white-space: normal; }
 	.create { display: grid; gap: 0.8rem; }
