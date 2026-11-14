@@ -678,3 +678,107 @@ def test_background_search_byline_removes_type_prefix_only_with_separator(label)
     assert tracks[1]['artist'] == 'Song' and tracks[1]['artist_id'] == 'UCsong'
     # Strict search continues to use its existing byline format.
     assert [t['video_id'] for t in yt.parse_search(response)] == ['BBBBBBBBBBB']
+
+
+def test_mood_reuses_prepared_mix_and_reports_download_progress(music, tmp_path, monkeypatch):
+    from bt.db import session
+    from bt.models import Download
+    from bt.downloader import service as downloads
+    monkeypatch.setattr(downloads, 'MEDIA_DIR', tmp_path)
+    first = music.post('/api/music/moods', json={'preset': 'mellow'}).json()
+    second = music.post('/api/music/moods', json={'preset': 'mellow'}).json()
+    assert first['id'] == second['id']
+    got = music.get(f'/api/music/mixes/{first["id"]}').json()
+    assert got['offline']['saved'] == 0 and got['offline']['state'] == 'preparing'
+    with session() as s:
+        download = s.get(Download, got['tracks'][0]['video_id'])
+        assert download.status == 'queued'  # proactively queued as soon as curation finishes
+        download.status, download.path = 'done', 'saved.mp4'
+        (tmp_path / 'saved.mp4').write_bytes(b'video fixture')
+        s.add(download)
+        s.commit()
+    got = music.get(f'/api/music/mixes/{first["id"]}').json()
+    assert got['offline']['saved'] == 1
+    assert got['offline']['state'] == ('ready' if len(got['tracks']) == 1 else 'partial')
+
+
+def test_mood_maintenance_prepares_presets_without_page_visit(music):
+    from bt.db import session
+    from bt.music.models import MusicMix
+    from sqlmodel import select
+    for _ in dj.MOODS:
+        assert service.maintain_moods()
+    with session() as s:
+        rows = s.exec(select(MusicMix).where(MusicMix.kind == 'mood')).all()
+        assert {m.curator for m in rows} == set(dj.MOODS)
+    assert not service.maintain_moods()  # no rebuild/download loop while pending
+
+
+def test_old_mood_stays_in_download_set(music):
+    from bt.db import session
+    from bt.music.models import MusicMix
+    made = music.post('/api/music/moods', json={'preset': 'zen'}).json()
+    got = music.get(f'/api/music/mixes/{made["id"]}').json()
+    with session() as s:
+        for n in range(offline.MIXES + 1):
+            s.add(MusicMix(profile_id=1, kind='manual', name=f'new {n}'))
+        s.commit()
+        assert all(t['video_id'] in offline.wanted_ids(s) for t in got['tracks'])
+        assert all(offline.is_wanted(s, t['video_id']) for t in got['tracks'])
+
+
+def test_mood_done_rows_require_readable_nonempty_local_file(music, tmp_path, monkeypatch):
+    from bt.db import session
+    from bt.models import Download
+    from bt.downloader import service as downloads
+    monkeypatch.setattr(downloads, 'MEDIA_DIR', tmp_path)
+    made = music.post('/api/music/moods', json={'preset': 'zen'}).json()
+    got = music.get(f'/api/music/mixes/{made["id"]}').json()
+    vid = got['tracks'][0]['video_id']
+    for path in ('', 'missing.mp4', 'empty.mp4', '../outside.mp4'):
+        (tmp_path / 'empty.mp4').touch()
+        with session() as s:
+            row = s.get(Download, vid)
+            row.status, row.path = 'done', path
+            s.add(row)
+            s.commit()
+        got = music.get(f'/api/music/mixes/{made["id"]}').json()
+        assert got['offline']['saved'] == 0
+        assert all(not t['offline'] for t in got['tracks'])
+
+
+def test_prepared_moods_do_not_replace_their_downloaded_selection(music):
+    from sqlmodel import select
+    from bt.db import session
+    from bt.music.models import MusicMix
+    for _ in dj.MOODS:
+        service.maintain_moods()
+    with session() as s:
+        rows = s.exec(select(MusicMix).where(MusicMix.kind == 'mood')).all()
+        for row in rows:
+            row.refreshed_at = 1
+            s.add(row)
+        s.commit()
+    assert not service.maintain_moods()
+
+
+def test_mood_download_allowance_is_reported_and_missing_files_requeued(music, tmp_path, monkeypatch):
+    from bt.db import session
+    from bt.models import Download
+    from bt.downloader import service as downloads
+    monkeypatch.setattr(downloads, 'MEDIA_DIR', tmp_path)
+    made = music.post('/api/music/moods', json={'preset': 'zen'}).json()
+    got = music.get(f'/api/music/mixes/{made["id"]}').json()
+    vid = got['tracks'][0]['video_id']
+    with session() as s:
+        row = s.get(Download, vid)
+        row.status, row.path = 'done', 'gone.mp4'
+        s.add(row)
+        s.commit()
+    for _ in dj.MOODS:
+        service.maintain_moods()
+    with session() as s:
+        assert s.get(Download, vid).status == 'queued'
+    monkeypatch.setattr(offline, 'wanted_ids', lambda s: [])
+    got = music.get(f'/api/music/mixes/{made["id"]}').json()
+    assert got['offline']['blocked'] == len(got['tracks'])

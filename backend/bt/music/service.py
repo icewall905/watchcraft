@@ -1,6 +1,7 @@
 """Music section logic: track store, favorites, mixes, suggestions and the DJ's next picks."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import re
@@ -22,6 +23,7 @@ MIX_SIZE = 40
 MAX_MIX_TRACKS = 300
 MAX_MIXES = 60
 CURATOR_STALE_S = 24 * 3600
+MOOD_RETRY_S = 86400
 BUILD_TIMEOUT_S = 10 * 60  # a build this old died with its thread or process
 FOR_YOU_TTL = 2 * 3600
 COLD_START = ('party anthems', 'dance hits', 'feel good pop')
@@ -196,11 +198,22 @@ def mix_dict(s: Session, m: MusicMix, pid: int, with_tracks: bool = False) -> di
            'count': len(links), 'created_at': m.created_at, 'refreshed_at': m.refreshed_at,
            'last_played_at': m.last_played_at,
            'covers': [f'https://i.ytimg.com/vi/{lk.video_id}/mqdefault.jpg' for lk in links[:4]]}
+    if m.kind == 'mood':
+        states = offline.offline_status(s, [lk.video_id for lk in links])
+        local = offline.saved_ids(s, [lk.video_id for lk in links])
+        saved = len(local)
+        wanted = set(offline.wanted_ids(s))
+        blocked = sum(lk.video_id not in wanted and lk.video_id not in local for lk in links)
+        failed = sum(states.get(lk.video_id) == 'error' for lk in links)
+        out['offline'] = {'saved': saved, 'total': len(links), 'failed': failed, 'blocked': blocked,
+                          'state': 'ready' if links and saved == len(links) else
+                          'partial' if saved else 'preparing'}
     if with_tracks:
         known = tracks_by_id(s, [lk.video_id for lk in links])
         reasons = {lk.video_id: lk.reason for lk in links}
         tracks = decorate(s, pid, [known[lk.video_id] for lk in links if lk.video_id in known])
-        out['tracks'] = [{**t, 'reason': reasons.get(t['video_id'], '')} for t in tracks]
+        out['tracks'] = [{**t, 'reason': reasons.get(t['video_id'], ''),
+                          **({'offline': t['video_id'] in local} if m.kind == 'mood' else {})} for t in tracks]
     return out
 
 
@@ -247,8 +260,15 @@ def create_mood(s: Session, pid: int, preset: str, description: str = '') -> Mus
         name, intent = dj.MOODS[preset]['name'], dj.MOODS[preset]['description']
     else:
         raise ValueError('Choose a background mood.')
-    return create_mix(s, pid, kind='mood', description=dj.BACKGROUND_INTENT + intent,
-                      curator=preset, name=name)
+    # Presets are prepared ahead of visits; repeated requests reuse the same durable mix.
+    with _lock:
+        existing = s.exec(select(MusicMix).where(MusicMix.profile_id == pid, MusicMix.kind == 'mood',
+                         MusicMix.curator == preset,
+                         MusicMix.description == dj.BACKGROUND_INTENT + intent).order_by(MusicMix.id)).first()
+        if existing:
+            return existing
+        return create_mix(s, pid, kind='mood', description=dj.BACKGROUND_INTENT + intent,
+                          curator=preset, name=name)
 
 
 def create_mix(s: Session, pid: int, *, kind: str, seed: dict | None = None, description: str = '',
@@ -419,6 +439,57 @@ def build_mix(mid: int) -> None:
         m.status, m.error, m.refreshed_at = 'ready', '', time.time()
         s.add(m)
         s.commit()
+        if m.kind == 'mood':
+            offline.queue(s)
+
+
+def maintain_moods() -> bool:
+    """Prepare one preset/build per tick, without requiring a page visit.
+
+    Existing download caps and manual deletion decisions remain authoritative. Prepared
+    selections persist until an explicit refresh; failed curation retries daily.
+    """
+    from ..models import Profile
+    from ..access import hub_allowed
+    with session() as s:
+        for pid in s.exec(select(Profile.id).order_by(Profile.id)).all():
+            if not hub_allowed(s, pid):
+                continue
+            rows = s.exec(select(MusicMix).where(MusicMix.profile_id == pid, MusicMix.kind == 'mood')).all()
+            for preset in dj.MOODS:
+                if not any(m.curator == preset for m in rows):
+                    count = s.exec(select(func.count()).select_from(MusicMix).where(MusicMix.profile_id == pid)).one()
+                    if count < MAX_MIXES:
+                        create_mood(s, pid, preset)
+                        return True
+            for m in sorted(rows, key=lambda row: row.refreshed_at or row.created_at):
+                age = time.time() - (m.build_started or m.created_at)
+                dead = m.status == 'building' and age > BUILD_TIMEOUT_S
+                retry = m.status == 'error' and age > MOOD_RETRY_S
+                if (dead or retry) and claim_build(s, m):
+                    return True
+        # Recover externally removed local files through the normal bounded downloader.
+        from ..models import Download
+        wanted = set(offline.wanted_ids(s))
+        mood_ids = s.exec(select(MusicMixTrack.video_id).join(MusicMix, MusicMix.id == MusicMixTrack.mix_id)
+                         .where(MusicMix.kind == 'mood')).all()
+        saved = offline.saved_ids(s, mood_ids)
+        for row in s.exec(select(Download).where(Download.video_id.in_(mood_ids), Download.status == 'done')).all():
+            if row.video_id in wanted and row.video_id not in saved:
+                row.status = 'evicted'
+                s.add(row)
+        s.commit()
+        offline.queue(s)
+    return False
+
+
+async def mood_scheduler() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(maintain_moods)
+        except Exception:
+            log.exception('Mood background preparation failed')
+        await asyncio.sleep(60)
 
 
 def refresh_mix(s: Session, m: MusicMix) -> None:

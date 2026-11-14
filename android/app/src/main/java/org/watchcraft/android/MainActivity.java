@@ -248,10 +248,9 @@ public final class MainActivity extends ComponentActivity {
         bottom = row(); bottom.setBackground(outline(BG, 0)); bottom.setPadding(dp(4), dp(5), dp(4), dp(5));
         String[] shortcuts = shortcutPaths();
         String[][] tabs = new String[5][];
-        tabs[0] = new String[]{"TV ▴", "tv", "/"};
-        for (int i = 0; i < 3; i++) {
+        for (int i = 0; i < 4; i++) {
             Feature f = Navigation.feature(shortcuts[i]);
-            tabs[i + 1] = new String[]{f.title, f.icon, f.path};
+            tabs[i] = new String[]{f.path.equals("/") ? "TV ▴" : f.title, f.icon, f.path};
         }
         tabs[4] = new String[]{"More", "more", "more"};
         for (String[] tab : tabs) {
@@ -266,14 +265,19 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private String[] shortcutPaths() {
-        String[] saved = new String[3];
-        for (int i = 0; i < 3; i++) saved[i] = prefs.getString("navigation_slot_" + i, Navigation.DEFAULTS[i]);
+        String[] saved = new String[4];
+        if (!prefs.getBoolean("navigation_four_slots", false)) {
+            // Older releases fixed TV first and stored only the three middle choices.
+            saved[0] = "/";
+            for (int i = 0; i < 3; i++) saved[i + 1] = prefs.getString("navigation_slot_" + i, null);
+        } else for (int i = 0; i < 4; i++) saved[i] = prefs.getString("navigation_slot_" + i, Navigation.DEFAULTS[i]);
         return Navigation.restore(saved);
     }
 
     private void saveShortcuts(String[] paths) {
         SharedPreferences.Editor editor = prefs.edit();
-        for (int i = 0; i < 3; i++) editor.putString("navigation_slot_" + i, paths[i]);
+        editor.putBoolean("navigation_four_slots", true);
+        for (int i = 0; i < 4; i++) editor.putString("navigation_slot_" + i, paths[i]);
         editor.apply(); buildBottomBar(); updateLocation(server + currentPath);
     }
 
@@ -288,8 +292,8 @@ public final class MainActivity extends ComponentActivity {
 
     private void navigationSettings() {
         String[] paths = shortcutPaths();
-        String[] titles = new String[3];
-        for (int i = 0; i < 3; i++) titles[i] = "Button " + (i + 1) + ": " + Navigation.feature(paths[i]).title;
+        String[] titles = new String[4];
+        for (int i = 0; i < 4; i++) titles[i] = "Button " + (i + 1) + ": " + Navigation.feature(paths[i]).title;
         new AlertDialog.Builder(this).setTitle("Bottom bar shortcuts")
                 .setItems(titles, (dialog, slot) -> chooseShortcut(slot))
                 .setNeutralButton("Reset defaults", (dialog, which) -> { saveShortcuts(Navigation.DEFAULTS.clone()); navigationSettings(); })
@@ -322,10 +326,12 @@ public final class MainActivity extends ComponentActivity {
         currentPath = path + (Uri.parse(url).getEncodedQuery() == null ? "" : "?" + Uri.parse(url).getEncodedQuery());
         heading.setText(Feature.titleFor(path));
         boolean playlists = path.equals("/settings") && "categories".equals(Uri.parse(url).getQueryParameter("tab"));
-        int selected = playlists || path.equals("/") || path.equals("/tv") || path.startsWith("/watch/") || path.startsWith("/category/") || path.startsWith("/channel/") || path.startsWith("/shorts") || path.startsWith("/music") ? 0 : 4;
-        for (int i = 1; i <= 3; i++) {
+        int selected = 4;
+        for (int i = 0; i < 4; i++) {
             String destination = (String) bottom.getChildAt(i).getTag();
-            if (!playlists && Navigation.matches(destination, path)) selected = i;
+            boolean tvPage = playlists || path.equals("/") || path.equals("/tv") || path.startsWith("/watch/") || path.startsWith("/category/") || path.startsWith("/channel/") || path.equals("/shorts") || path.startsWith("/shorts/") || path.equals("/music") || path.startsWith("/music/");
+            if ((destination.equals("/") && tvPage && selected == 4) || (!destination.equals("/") && !playlists && Navigation.matches(destination, path))
+                    || (destination.equals("/news") && path.equals("/today"))) selected = i;
         }
         for (int i = 0; i < bottom.getChildCount(); i++) {
             LinearLayout tab = (LinearLayout)bottom.getChildAt(i); boolean on = i == selected;

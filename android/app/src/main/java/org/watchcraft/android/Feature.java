@@ -11,7 +11,6 @@ final class Feature {
         new Feature("Feeds", "/shorts", "play", "Watch"),
         new Feature("Music videos", "/music", "music", "Watch"),
         new Feature("Subscriptions", "/subscriptions", "list", "Watch"),
-        new Feature("Today", "/today", "today", "Explore"),
         new Feature("Discover", "/discover", "compass", "Explore"),
         new Feature("News", "/news", "news", "Explore"),
         new Feature("Meme Tracker", "/memes", "smile", "Explore"),
@@ -35,6 +34,7 @@ final class Feature {
         if (path.startsWith("/search") || path.startsWith("/find")) return "Search";
         if (path.startsWith("/category/") || path.startsWith("/channel/")) return "TV";
         if (path.equals("/tv")) return "TV";
+        if (path.equals("/today")) return "News";
         for (Feature f : ALL) if (path.equals(f.path) || (!f.path.equals("/") && path.startsWith(f.path + "/"))) return f.title;
         return "WatchCraft";
     }

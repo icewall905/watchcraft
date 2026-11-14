@@ -252,10 +252,26 @@ be turned off per household with the "Recover unreadable pages" toggle on the Te
 optional curator notes, collection cadence and enabled state. These curators collect Wikimedia Commons
 images/GIFs into local media with source attribution and license; pins never enter News or Memes.
 The masonry page supports saving, hiding, moving and paginating images. Reduced-motion users open
-animated GIFs explicitly. Advanced curator notes require an available configured AI model; ordinary
-interest search works without one. Collection is bounded to 50 boards/profile and 1,000 pins/board.
+animated GIFs explicitly. Curators require a configured vision-enabled AI model and inspect captured image pixels,
+applying specific instructions as strict requirements and excluding uncertain matches. Unavailable
+vision leaves existing pins intact and reports a clear error. Collection is bounded to 50 boards/profile and 1,000 pins/board.
 
 `/api/hub/boards` lists/creates boards; `/{id}` reads/edits/deletes a board, `/{id}/refresh` queues a
 bounded collection, and `/{id}/pins/{pin}` changes saved/hidden state or moves a pin. Pin media is served
 from `/{id}/pins/{pin}/media`. All routes require Hub access and ownership; original media URLs are
 never fetched directly by the browser. Board/profile deletion removes private archived image bytes.
+
+Public Pinterest boards can be imported into an existing board using `/{id}/pinterest` (POST a
+`url`, GET latest job status). Imports run in a durable queue and capture up to 25 latest feed pins
+locally, preserve Pinterest links, mark imported pins saved and skip duplicates. This is a snapshot
+of the public RSS feed, not full-board history; private boards and short links are unsupported.
+Original creators retain rights. Explicit imports do not undergo automatic curator screening.
+
+The combined `/news` page starts with the curated Today edition, followed by the browsable News
+feed; `/today` remains a compatibility entry point. Android 0.1.8 supports four configurable bottom
+shortcuts, retaining More and migrating previous preferences.
+
+Music background presets are prepared proactively for Hub profiles and queued through the existing
+bounded downloader. Custom moods are retained too. Mood mix readiness and track playback eligibility
+check readable, nonempty local files, with download/allowance progress shown in the mix dialog.
+Prepared selections persist until Fresh picks is requested. Manual Storage deletion stays respected.

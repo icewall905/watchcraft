@@ -3,7 +3,7 @@
  import { session } from '$lib/stores/session.svelte';
  import Modal from '$lib/components/Modal.svelte';
  import BoardImage from '$lib/hub/BoardImage.svelte';
- import { boardsApi, type MoodBoard, type BoardPin, type BoardInput } from '$lib/hub/boards';
+ import { boardsApi, type MoodBoard, type BoardPin, type BoardInput, type PinterestImport } from '$lib/hub/boards';
  let boards = $state<MoodBoard[]>([]), selected = $state<number | null>(null), pins = $state<BoardPin[]>([]);
  let loading = $state(false), more = $state(false), error = $state(''), notice = $state(''), savedOnly = $state(false);
  let sentinel = $state<HTMLDivElement>();
@@ -11,12 +11,13 @@
  let name = $state(''), interests = $state(''), instructions = $state(''), enabled = $state(true), interval = $state(12), saving = $state(false);
  let preview = $state<BoardPin | null>(null), moving = $state<number | null>(null), moveTo = $state(''), busy = $state<number | null>(null);
  let refreshing = $state(false);
+ let importing = $state(false), importOpen = $state(false), pinterestUrl = $state(''), importJob = $state<PinterestImport | null>(null);
  let controller: AbortController | null = null, generation = 0, identity = '', pollUntil = 0;
  const board = $derived(boards.find(b => b.id === selected));
  const allowed = () => session.hubAllowed && session.ready && !session.needsLogin && !session.choosing && !session.profile?.pin_locked;
  const stamp = () => `${session.profileId}:${session.version}`;
  const message = (e: unknown) => e instanceof Error ? e.message : 'Could not load your boards.';
- function clear() { controller?.abort(); generation++; boards = []; pins = []; selected = null; preview = null; editing = false; moving = null; saving = false; busy = null; deleteConfirm = false; notice = ''; error = ''; loading = false; more = false; hasMore = false; cursor = null; pollUntil = 0; refreshing = false; }
+ function clear() { importOpen = false; importing = false; importJob = null; pinterestUrl = ''; controller?.abort(); generation++; boards = []; pins = []; selected = null; preview = null; editing = false; moving = null; saving = false; busy = null; deleteConfirm = false; notice = ''; error = ''; loading = false; more = false; hasMore = false; cursor = null; pollUntil = 0; refreshing = false; }
  async function load(append = false, quiet = false) {
   if (!allowed() || (append && (loading || more || !hasMore || !selected))) return;
   controller?.abort(); controller = new AbortController(); const signal = controller.signal, token = ++generation, owner = stamp();
@@ -31,6 +32,10 @@
    const data = await boardsApi.detail(selected, {saved: savedOnly, cursor: append ? cursor ?? undefined : undefined}, signal);
    if (signal.aborted || token !== generation || owner !== stamp() || !allowed()) return;
    boards = boards.map(b => b.id === data.board.id ? data.board : b);
+   const imported = await boardsApi.pinterestStatus(selected, signal);
+   if (signal.aborted || token !== generation || owner !== stamp() || !allowed()) return;
+   importJob = imported.import;
+   if (importJob && ['queued', 'importing'].includes(importJob.status)) pollUntil = Date.now() + 180000;
    const seen = new Set(append ? pins.map(p => p.id) : []);
    const fresh = data.pins.filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
    pins = append ? [...pins, ...fresh] : fresh; cursor = data.next_cursor; hasMore = data.has_more;
@@ -49,7 +54,14 @@
   observer.observe(node);
   return () => observer.disconnect();
  });
- function choose(id: number) { selected = id; pins = []; preview = null; notice = ''; void load(); }
+ async function importPinterest(e: SubmitEvent) {
+  e.preventDefault(); if (!selected || !allowed() || importing) return;
+  importing = true; const id = selected, owner = stamp();
+  try { const result = await boardsApi.pinterest(id, pinterestUrl.trim()); if (owner !== stamp() || !allowed()) return; importJob = result.import; importOpen = false; pollUntil = Date.now() + 180000; notice = 'Pinterest import queued. Images will appear as they are saved.'; }
+  catch (e) { if (owner === stamp() && allowed()) error = message(e); }
+  finally { if (owner === stamp()) importing = false; }
+ }
+ function choose(id: number) { selected = id; importJob = null; pins = []; preview = null; notice = ''; void load(); }
  function edit(b?: MoodBoard) { editId = b?.id ?? null; name = b?.name ?? ''; interests = b?.interests ?? ''; instructions = b?.instructions ?? ''; enabled = b?.enabled ?? true; interval = b?.interval_hours ?? 12; error = ''; editing = true; }
  async function saveBoard(e: SubmitEvent) {
   e.preventDefault(); if (!allowed() || saving) return; saving = true; const owner = stamp();
@@ -77,9 +89,10 @@
   <nav class="board-rail" aria-label="Your mood boards">{#each boards as b}<button class="btn" class:chosen={selected === b.id} aria-pressed={selected === b.id} onclick={() => choose(b.id)}>{b.name}<span>{b.pin_count ?? 0}</span></button>{/each}</nav>
  {/if}
  {#if board}
-  <div class="board-heading"><div><h2>{board.name}</h2><p class="muted interests">{board.interests}</p></div><div class="tools"><button class="btn" class:chosen={savedOnly} aria-pressed={savedOnly} onclick={() => { savedOnly = !savedOnly; void load(); }}>Saved{savedOnly ? ' only' : ''}</button><button class="btn" disabled={refreshing} onclick={refresh}>{refreshing ? 'Starting…' : 'Find images'}</button><button class="btn" aria-label={`Edit ${board.name} curator`} onclick={() => edit(board)}>Edit curator</button></div></div>
+  <div class="board-heading"><div><h2>{board.name}</h2><p class="muted interests">{board.interests}</p></div><div class="tools"><button class="btn" onclick={() => { error = ''; importOpen = true; }}>Import Pinterest</button><button class="btn" class:chosen={savedOnly} aria-pressed={savedOnly} onclick={() => { savedOnly = !savedOnly; void load(); }}>Saved{savedOnly ? ' only' : ''}</button><button class="btn" disabled={refreshing} onclick={refresh}>{refreshing ? 'Starting…' : 'Find images'}</button><button class="btn" aria-label={`Edit ${board.name} curator`} onclick={() => edit(board)}>Edit curator</button></div></div>
   <p class="curator-note muted">{board.enabled ? `Curator checks every ${board.interval_hours} hours.` : 'Automatic discovery paused.'}{#if board.last_status}{' '}Last check: {board.last_status}
  .{/if}</p>{#if board.error}<p class="feedback error" role="status">{board.error}</p>{/if}
+  {#if importJob}<p class="feedback" role="status">Pinterest: {importJob.status === 'complete' ? 'import complete' : importJob.status}. {importJob.imported} imported, {importJob.skipped} skipped.{#if importJob.error} {importJob.error}{/if}{#if importJob.status === 'complete'} Latest feed pins only; Pinterest does not expose the whole board here.{/if}</p>{/if}
  {/if}
  {#if loading}<p class="empty" role="status">Gathering your images…</p>
  {:else if !boards.length}<div class="empty"><h2>What inspires you?</h2><p>Give a hobby, interest or idea its own board. Its curator will find images and GIFs for you to collect.</p><button class="btn primary" onclick={() => edit()}>Create your first board</button></div>
@@ -91,8 +104,9 @@
 </section>
 
 {#if editing}<Modal title={editId ? 'Edit board curator' : 'Create a mood board'} onClose={() => { if (!saving) editing = false; }}>
- <form onsubmit={saveBoard} class="board-form"><label>Board name<input required maxlength="100" bind:value={name} placeholder="My garden ideas" /></label><label>Interests and hobbies<input required maxlength="1000" bind:value={interests} placeholder="Cottage gardens, wildflowers, tiny greenhouses" /><small>Separate interests with commas.</small></label><label>What should your curator look for?<textarea rows="4" maxlength="2000" bind:value={instructions} placeholder="Colours, styles, ideas you love—and anything to avoid."></textarea></label><label class="check"><input type="checkbox" bind:checked={enabled} />Find new images automatically</label><label>Check every<select bind:value={interval}><option value={6}>6 hours</option><option value={12}>12 hours</option><option value={24}>day</option><option value={72}>3 days</option><option value={168}>week</option></select></label>{#if error}<p role="alert" class="error">{error}</p>{/if}<div class="form-actions">{#if editId}<button type="button" class="btn danger" onclick={() => { editing = false; deleteConfirm = true; }}>Delete board</button>{/if}<button class="btn" type="button" onclick={() => { editing = false; }}>Cancel</button><button class="btn primary" disabled={saving}>{saving ? 'Saving…' : editId ? 'Save changes' : 'Create board'}</button></div></form>
+ <form onsubmit={saveBoard} class="board-form"><label>Board name<input required maxlength="100" bind:value={name} placeholder="My garden ideas" /></label><label>Interests and hobbies<input required maxlength="1000" bind:value={interests} placeholder="Cottage gardens, wildflowers, tiny greenhouses" /><small>Separate interests with commas.</small></label><label>What should your curator look for?<textarea rows="4" maxlength="2000" bind:value={instructions} placeholder="Dresses with heart patterns only. Or: usable sewing patterns for a child’s hooded cape."></textarea><small>Your curator checks images with the configured vision model. Be specific: uncertain matches are excluded. Narrow requests may find fewer images.</small></label><label class="check"><input type="checkbox" bind:checked={enabled} />Find new images automatically</label><label>Check every<select bind:value={interval}><option value={6}>6 hours</option><option value={12}>12 hours</option><option value={24}>day</option><option value={72}>3 days</option><option value={168}>week</option></select></label>{#if error}<p role="alert" class="error">{error}</p>{/if}<div class="form-actions">{#if editId}<button type="button" class="btn danger" onclick={() => { editing = false; deleteConfirm = true; }}>Delete board</button>{/if}<button class="btn" type="button" onclick={() => { editing = false; }}>Cancel</button><button class="btn primary" disabled={saving}>{saving ? 'Saving…' : editId ? 'Save changes' : 'Create board'}</button></div></form>
  </Modal>{/if}
+{#if importOpen}<Modal title="Import a Pinterest board" onClose={() => { if (!importing) importOpen = false; }}><form class="board-form" onsubmit={importPinterest}><p>Import up to 25 of the latest pins exposed by a public board’s feed into this board. Images are saved locally with their original Pinterest links. Existing pins are skipped.</p><label>Public board link<input type="url" required maxlength="1000" bind:value={pinterestUrl} placeholder="https://www.pinterest.com/username/board-name/" /></label><small>Private boards, short links and full-history imports need a Pinterest connection and are not supported by this public feed import.</small>{#if error}<p class="error" role="alert">{error}</p>{/if}<div class="form-actions"><button type="button" class="btn" onclick={() => { importOpen = false; }}>Cancel</button><button class="btn primary" disabled={importing}>{importing ? 'Queuing…' : 'Import pins'}</button></div></form></Modal>{/if}
 {#if deleteConfirm}<Modal title="Delete this board?" onClose={() => { deleteConfirm = false; }}><p>This removes the board and its saved pins.</p><div class="form-actions"><button class="btn" onclick={() => { deleteConfirm = false; }}>Keep board</button><button class="btn danger" onclick={removeBoard}>Delete board</button></div></Modal>{/if}
 {#if preview}<Modal title={preview.title} size="lg" onClose={() => { preview = null; moving = null; }}><div class="preview-image"><BoardImage url={preview.image_url} alt={preview.title} animated={preview.media_type === 'gif'} eager /></div><p class="muted">{preview.attribution ?? ''}{#if preview.license} · {preview.license}{/if}</p><div class="preview-actions"><a href={preview.source_url} target="_blank" rel="noopener noreferrer">View original source</a><button class="btn" disabled={busy === preview.id} onclick={() => preview && pinAction(preview, {saved: !preview.saved})}>{preview.saved ? 'Unsave' : 'Save'}</button>{#if boards.length > 1}<button class="btn" onclick={() => { moving = preview?.id ?? null; moveTo = String(boards.find(b => b.id !== selected)?.id ?? ''); }}>Move to board</button>{/if}<button class="btn" disabled={busy === preview.id} onclick={() => preview && pinAction(preview, {hidden: true})}>Hide image</button></div>{#if moving}<div class="move-form"><label>Destination board<select bind:value={moveTo}>{#each boards.filter(b => b.id !== selected) as b}<option value={b.id}>{b.name}</option>{/each}</select></label><button class="btn" disabled={!moveTo || busy !== null} onclick={() => preview && pinAction(preview, {board_id: Number(moveTo)})}>Move image</button></div>{/if}</Modal>{/if}
 

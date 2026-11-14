@@ -8,7 +8,8 @@ public class FeatureTest {
     @Test public void allDestinationsAreUniqueAndLocal() {
         HashSet<String> paths = new HashSet<>();
         for (Feature f : Feature.ALL) { assertTrue(f.path.startsWith("/")); assertFalse(f.path.startsWith("//")); assertTrue(paths.add(f.path)); }
-        assertEquals(21, paths.size());
+        assertTrue(paths.contains("/news"));
+        assertFalse(paths.contains("/today"));
     }
     @Test public void detailPagesRetainFeatureTitles() {
         assertEquals("Reading", Feature.titleFor("/item/12"));

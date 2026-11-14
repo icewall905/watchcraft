@@ -10,7 +10,7 @@
  const working = $derived(team?.agents.filter(a => a.status === 'running' || a.status === 'waiting').slice(0, 3) ?? []);
  const findings = $derived((team?.agents.flatMap(a => (a.finds ?? []).map(f => ({ ...f, agent: a }))) ?? []).sort((a, b) => b.found_at - a.found_at).filter((f, i, all) => all.findIndex(x => x.id === f.id) === i).slice(0, 3));
  // The master curator and briefings have no curator page of their own.
- const agentHref = (a: TeamAgent) => a.kind === 'master' ? '/today' : a.kind === 'scout' ? '/sources' : a.kind === 'briefing' ? '/briefings' : a.role === 'research' ? `/research/${a.id}` : `/curators/${a.id}`;
+ const agentHref = (a: TeamAgent) => a.kind === 'master' ? '/news' : a.kind === 'scout' ? '/sources' : a.kind === 'briefing' ? '/briefings' : a.role === 'research' ? `/research/${a.id}` : `/curators/${a.id}`;
  $effect(() => {
   const profileId = session.profileId;
   const allowed = session.hubAllowed && session.profile?.prefs?.scouts_home === true;

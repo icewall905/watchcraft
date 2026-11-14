@@ -18,6 +18,7 @@ export type Mood = { key: 'mellow' | 'spooky' | 'romantic' | 'zen'; name: string
 export type Mix = {
 	id: number; name: string; kind: 'seed' | 'curator' | 'manual' | 'mood'; emoji: string; description: string; curator: string;
 	curator_name: string; color: string; blurb: string; seed_video_id: string; status: 'building' | 'ready' | 'error';
+	offline?: { saved: number; total: number; failed: number; blocked?: number; state: 'ready' | 'partial' | 'preparing' };
 	error: string; count: number; created_at: number; refreshed_at: number; last_played_at: number; covers: string[]; tracks?: Track[];
 };
 export type OfflineSummary = { wanted: number; saved: number; pending: number };

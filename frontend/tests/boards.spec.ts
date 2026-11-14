@@ -5,6 +5,7 @@ const pin=(id:number,title:string,bid=1,gif=false)=>({id,board_id:bid,title,imag
 async function setup(page:Page,empty=false){
  let boards=empty?[]:[board(1,'Garden inspiration'),board(2,'Pottery ideas')];
  let pins=[pin(3,'Quiet courtyard'),pin(2,'Bonsai detail',1,true),pin(1,'Stone garden path')];
+ let importJob:any=null;
  const writes:{method:string;path:string;body:Record<string,unknown>}[]=[];
  await page.route('**/api/hub/boards**',async route=>{
   const req=route.request(),url=new URL(req.url()),path=url.pathname,method=req.method();
@@ -13,6 +14,7 @@ async function setup(page:Page,empty=false){
   if(method!=='GET')writes.push({method,path,body});
   if(path==='/api/hub/boards'){if(method==='POST'){const made={...board(8,body.name),...body};boards.push(made);return route.fulfill({json:{board:made}});}return route.fulfill({json:{boards}});}
   const id=Number(path.split('/')[4]);
+  if(path.endsWith('/pinterest')){if(method==='POST')importJob={id:1,board_id:id,status:'queued',imported:0,skipped:0,total:0,error:''};return route.fulfill({json:{import:importJob}});}
   if(path.endsWith('/refresh'))return route.fulfill({json:{queued:false,status:'Try again in a few minutes'}});
   if(path.includes('/pins/')){const pid=Number(path.split('/').at(-1)),row=pins.find(p=>p.id===pid)!;Object.assign(row,body);row.image_url=`/api/hub/boards/${row.board_id}/pins/${row.id}/media`;if(body.hidden)pins=pins.filter(p=>p.id!==pid);return route.fulfill({json:{pin:row}});}
   if(method==='PATCH'){const b=boards.find(b=>b.id===id)!;Object.assign(b,body);return route.fulfill({json:{board:b}});}
@@ -75,3 +77,13 @@ test('a delayed board response cannot cross a profile switch',async({page,reques
   await expect(page.getByRole('heading',{name:'Private garden board'})).toHaveCount(0);
  }finally{release?.();await request.delete(`/api/profiles/${other.id}`);}
 });
+
+ test('import public Pinterest board shows scope and queued status',async({page})=>{
+ const writes=await setup(page);await freshPage(page,'/boards');
+ await page.getByRole('button',{name:'Import Pinterest',exact:true}).click();
+ await expect(page.getByText('Import up to 25', {exact:false})).toBeVisible();
+ await page.getByLabel('Public board link').fill('https://www.pinterest.com/contemporist/architecture/');
+ await page.getByRole('button',{name:'Import pins',exact:true}).click();
+ await expect(page.getByRole('status').filter({hasText:'Pinterest: queued'})).toBeVisible();
+ expect(writes.find(w=>w.path.endsWith('/pinterest'))?.body).toEqual({url:'https://www.pinterest.com/contemporist/architecture/'});
+ });

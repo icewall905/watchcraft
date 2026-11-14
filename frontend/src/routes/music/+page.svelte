@@ -197,7 +197,7 @@
 	});
 	// Mixes build in the background: poll while any is still building.
 	$effect(() => {
-		const building = mixes.some((m) => m.status === 'building') || openMix?.status === 'building';
+		const building = mixes.some((m) => m.status === 'building' || (m.kind === 'mood' && m.offline?.state !== 'ready')) || openMix?.status === 'building' || (openMix?.kind === 'mood' && openMix.offline?.state !== 'ready');
 		window.clearInterval(poll);
 		if (building) poll = window.setInterval(() => void refreshMixes().catch(() => {}), 2500);
 		return () => window.clearInterval(poll);
@@ -223,7 +223,8 @@
 
 	/** Play a mix and remember it for "Recent mixes". */
 	function playMix(m: Mix, how: 'play' | 'shuffle' | 'dj', start = 0) {
-		const tracks = m.tracks ?? [];
+		const tracks = (m.tracks ?? []).filter(t => m.kind !== 'mood' || t.offline);
+		if (m.kind === 'mood') start = Math.max(0, tracks.findIndex(t => t.video_id === m.tracks?.[start]?.video_id));
 		if (!tracks.length) return;
 		if (how === 'play') player.play(tracks, start, { source: m.name });
 		else if (how === 'shuffle') player.shuffleAll(tracks, m.name);
@@ -380,7 +381,7 @@
 	</section>
 
     <section class="mood-background" aria-label="Mood background generator">
-        <header><div><h2>Mood background</h2><p class="muted">Set the atmosphere with a mix of music videos. Pick a mood or describe your own, then play when you’re ready.</p></div></header>
+        <header><div><h2>Mood background</h2><p class="muted">Background mixes are curated ahead of time and downloaded for local playback. Pick a mood or describe your own.</p></div></header>
         <div class="mood-grid">
             {#each moods as mood (mood.key)}
                 <button class="mood-option" use:focusable onclick={() => openMood(mood.key)}><span aria-hidden="true">{mood.emoji}</span><strong>{mood.name}</strong><small>{mood.description}</small></button>
@@ -456,6 +457,7 @@
 					</div>
 					<strong>{m.emoji} {m.name}</strong>
 					<small>
+						{#if m.kind === 'mood' && m.offline}<span>{m.offline.saved}/{m.offline.total} downloaded · </span>{/if}
 						{#if m.status === 'building'}<span class="pulse">Curating…</span>
 						{:else if m.status === 'error'}⚠️ {m.error}
 						{:else}{m.count} videos{m.curator_name ? ` · by ${m.curator_name}` : m.kind === 'seed' ? ' · track radio' : ''}{/if}
@@ -518,16 +520,19 @@
 				<p class="blurb">{m.blurb}{#if m.description}<br /><small class="muted">“{m.description}”</small>{/if}</p>
 			{/if}
 			<div class="acts">
-				{#if m.tracks?.length}
+				{#if m.tracks?.length && (m.kind !== 'mood' || m.tracks.some(t => t.offline))}
 					<button class="btn primary" use:focusable onclick={() => { playMix(m, 'play'); setParams({ mix: null }); }}>▶ Play</button>
 					<button class="btn" use:focusable onclick={() => { playMix(m, 'shuffle'); setParams({ mix: null }); }}>🔀 Shuffle</button>
-					<button class="btn" use:focusable onclick={() => { setParams({ mix: null }); playMix(m, 'dj'); }}>🎧 DJ from this mix</button>
+					{#if m.kind !== 'mood'}<button class="btn" use:focusable onclick={() => { setParams({ mix: null }); playMix(m, 'dj'); }}>🎧 DJ from this mix</button>{/if}
 					{#if m.kind !== 'manual' && m.status === 'ready'}<button class="btn" use:focusable title="Keep these exact songs as your own mix" onclick={() => keepCopy(m)}>💾 Keep a copy</button>{/if}
 				{/if}
 				<button class="btn ghost" use:focusable onclick={() => renameMix(m)}>✏️ Rename</button>
 				{#if m.kind !== 'manual'}<button class="btn ghost" use:focusable disabled={m.status === 'building'} onclick={() => refreshMix(m)}>🔄 Fresh picks</button>{/if}
 				<button class="btn ghost danger" use:focusable onclick={() => removeMix(m)}>🗑 Delete</button>
 			</div>
+			{#if m.kind === 'mood' && m.offline}
+				<p role="status">{m.offline.saved} of {m.offline.total} videos downloaded. {m.offline.state === 'ready' ? 'Ready for local playback.' : m.offline.saved ? 'Play the downloaded selection while the rest prepares.' : 'Preparing your background; playback starts once videos are downloaded.'}{m.offline.failed ? ` ${m.offline.failed} downloads need retrying in Storage.` : ''}{m.offline.blocked ? ` ${m.offline.blocked} videos are waiting for space in the household download allowance.` : ''}</p>
+			{/if}
 			{#if m.status === 'building'}
 				<div class="building"><span class="disc small spinning"><span></span></span>{m.curator_name || 'The curator'} is digging through YouTube Music…</div>
 			{:else if m.status === 'error'}
@@ -537,7 +542,7 @@
 				<ol class="tracklist">
 					{#each m.tracks as t, i (t.video_id)}
 						<li class:now={player.current?.video_id === t.video_id}>
-							<button class="row" use:focusable onclick={() => playMix(m, 'play', i)}>
+							<button class="row" disabled={m.kind === 'mood' && !t.offline} use:focusable onclick={() => playMix(m, 'play', i)}>
 								<span class="n">{i + 1}</span>
 								<img src={t.thumbnail} alt="" loading="lazy" />
 								<span class="tt"><strong>{t.title}</strong><small>{t.offline ? '💾 ' : ''}{t.artist}{t.reason ? ` · ${t.reason}` : ''}</small></span>
@@ -602,7 +607,7 @@
 {/if}
 
 {#if moodOpen}
-    <Modal portal title="Mood background" subtitle="Generate a background music video mix" size="md" onClose={() => { if (!moodBusy) moodOpen = false; }}>
+    <Modal portal title="Mood background" subtitle="Prepare a downloaded background music video mix" size="md" onClose={() => { if (!moodBusy) moodOpen = false; }}>
         <form class="create" onsubmit={generateMood}>
             <div class="ideas" role="group" aria-label="Background moods">
                 {#each moods as mood (mood.key)}<button type="button" class="chip" class:on={moodPreset === mood.key} aria-pressed={moodPreset === mood.key} disabled={moodBusy} use:focusable onclick={() => (moodPreset = mood.key)}>{mood.emoji} {mood.name}</button>{/each}
@@ -614,7 +619,7 @@
             {:else}<p>{moods.find(m => m.key === moodPreset)?.description}</p>{/if}
             <p class="muted small">The curator picks mostly instrumental music with a steady atmosphere. Your mix is saved under Mixes; playback starts when you press Play.</p>
             {#if moodError}<p class="err" role="alert">{moodError}</p>{/if}
-            <button class="btn primary big" use:focusable disabled={moodBusy || (moodPreset === 'custom' && !customMood.trim())}>{moodBusy ? 'Starting…' : 'Generate background'}</button>
+            <button class="btn primary big" use:focusable disabled={moodBusy || (moodPreset === 'custom' && !customMood.trim())}>{moodBusy ? 'Starting…' : 'Prepare background'}</button>
         </form>
     </Modal>
 {/if}

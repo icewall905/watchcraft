@@ -394,14 +394,14 @@ test('mood background presets and custom descriptions create saved mixes without
  for (const name of ['Mellow background', 'Spooky background', 'Romantic background', 'Zen background', 'Custom mood']) await expect(generator.getByRole('button', {name: new RegExp(name)})).toBeVisible();
  await generator.getByRole('button', {name: /Zen background/}).click();
  await expect(page.getByRole('dialog').getByText(/family-friendly/)).toBeVisible();
- await page.getByRole('button', {name: 'Generate background', exact: true}).click();
+ await page.getByRole('button', {name: 'Prepare background', exact: true}).click();
  await expect.poll(() => requests.length).toBe(1);
  expect(requests[0]).toEqual({preset: 'zen'});
  await expect(page.getByRole('dialog', {name: /Zen background/})).toBeVisible();
  await expect(page.getByRole('region', {name: 'Music player'})).toHaveCount(0);
  await page.keyboard.press('Escape');
  await generator.getByRole('button', {name: /Custom mood/}).click();
- const submit = page.getByRole('button', {name: 'Generate background', exact: true});
+ const submit = page.getByRole('button', {name: 'Prepare background', exact: true});
  await expect(submit).toBeDisabled();
  await page.getByLabel('Describe your mood').fill('  Rainy bookshop with gentle piano  ');
  await page.setViewportSize({width: 390, height: 844});
@@ -418,8 +418,23 @@ test('mood generation keeps the custom text after a failed request', async ({ pa
  await freshPage(page, '/music');
  await page.getByRole('region', {name: 'Mood background generator'}).getByRole('button', {name: /Custom mood/}).click();
  await page.getByLabel('Describe your mood').fill('Quiet winter cabin');
- await page.getByRole('button', {name: 'Generate background', exact: true}).click();
+ await page.getByRole('button', {name: 'Prepare background', exact: true}).click();
  await expect(page.getByRole('dialog').getByRole('alert')).toBeVisible();
  await expect(page.getByLabel('Describe your mood')).toHaveValue('Quiet winter cabin');
- await expect(page.getByRole('button', {name: 'Generate background', exact: true})).toBeEnabled();
+ await expect(page.getByRole('button', {name: 'Prepare background', exact: true})).toBeEnabled();
+});
+
+
+test('mood background shows download progress and only plays saved videos', async ({ page }) => {
+ await fixture(page);
+ const mix = {id: 89, name: 'Mellow background', kind: 'mood', emoji: '🍃', description: '', curator: 'mellow', curator_name: '', color: '', blurb: '', seed_video_id: '', status: 'ready', error: '', count: 2, created_at: 1, refreshed_at: 1, covers: [], offline: {saved: 1, total: 2, failed: 0, state: 'partial'}, tracks: [t('savedtrack1', 'Saved calm', 'Piano', {offline: true}), t('pending0001', 'Pending calm', 'Piano', {offline: false})]};
+ await page.route('**/api/music/mixes/89', r => r.fulfill({json: mix}));
+ await page.route('**/api/music/mixes/89/played', r => r.fulfill({json: {ok: true}}));
+ await freshPage(page, '/music?mix=89');
+ const dialog = page.getByRole('dialog', {name: /Mellow background/});
+ await expect(dialog.getByRole('status')).toContainText('1 of 2 videos downloaded');
+ await expect(dialog.getByRole('button', {name: /Pending calm/})).toBeDisabled();
+ await expect(dialog.getByRole('button', {name: /DJ from this mix/})).toHaveCount(0);
+ await dialog.getByRole('button', {name: '▶ Play', exact: true}).click();
+ await expect(page.getByRole('region', {name: 'Music player'}).getByRole('heading', {name: 'Saved calm'})).toBeVisible();
 });

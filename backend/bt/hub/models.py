@@ -579,3 +579,22 @@ class MoodAsset(SQLModel, table=True):
     pin_id: int = Field(primary_key=True)
     mime: str
     data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+
+
+class MoodImport(SQLModel, table=True):
+    """Durable, profile-owned snapshot imports; no Pinterest credentials retained."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    board_id: int = Field(index=True)
+    profile_id: int = Field(index=True)
+    url: str
+    status: str = 'queued'
+    imported: int = 0
+    skipped: int = 0
+    total: int = 0
+    processed: list = J([])
+    candidates: list = J([])
+    fetched: bool = False
+    error: str = ''
+    lease: str = ''
+    lease_until: float = 0
+    created_at: float = Field(default_factory=time.time)

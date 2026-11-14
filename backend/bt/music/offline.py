@@ -40,6 +40,9 @@ def wanted_ids(s: Session, limit: int = MAX_WANTED) -> list[str]:
                .order_by(MusicFavorite.created_at.desc())).all())
     for row in s.exec(select(Setting).where(col(Setting.key).startswith(DJ_KEY))).all():
         add((row.value or {}).get('ids') or [])
+    # Background presets stay prepared even after newer hand-made mixes displace them.
+    add(s.exec(select(MusicMixTrack.video_id).join(MusicMix, MusicMix.id == MusicMixTrack.mix_id)
+               .where(MusicMix.kind == 'mood').order_by(MusicMixTrack.position, MusicMix.id)).all())
     for row in s.exec(select(Setting).where(col(Setting.key).startswith(FOR_YOU_KEY))).all():
         add((row.value or {}).get('ids') or [])
     kept = _kept_mixes()
@@ -62,6 +65,9 @@ def is_wanted(s: Session, video_id: str) -> bool:
     """Cheap single-video check for the downloader's frequent abort test. Close to wanted_ids
     (it ignores the overall cap), which is the safe side: it only ever keeps a copy."""
     if s.exec(select(MusicFavorite.ref).where(MusicFavorite.kind == 'track', MusicFavorite.ref == video_id)).first():
+        return True
+    if s.exec(select(MusicMixTrack.video_id).join(MusicMix, MusicMix.id == MusicMixTrack.mix_id)
+              .where(MusicMix.kind == 'mood', MusicMixTrack.video_id == video_id)).first():
         return True
     kept = _kept_mixes()
     if s.exec(select(MusicMixTrack.video_id).join(kept, kept.c.id == MusicMixTrack.mix_id)
@@ -139,3 +145,21 @@ def offline_status(s: Session, ids: list[str]) -> dict[str, str]:
     if not ids:
         return {}
     return dict(s.exec(select(Download.video_id, Download.status).where(col(Download.video_id).in_(ids))).all())
+
+
+def saved_ids(s: Session, ids: list[str]) -> set[str]:
+    """Readable, nonempty local files; a stale done row must never promise offline playback."""
+    from ..downloader.service import abs_path
+    if not ids:
+        return set()
+    saved = set()
+    for row in s.exec(select(Download).where(Download.video_id.in_(ids), Download.status == 'done')).all():
+        try:
+            path = abs_path(row.path)
+            if path and path.is_file():
+                with path.open('rb') as source:
+                    if source.read(1):
+                        saved.add(row.video_id)
+        except OSError:
+            continue
+    return saved

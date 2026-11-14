@@ -327,3 +327,22 @@ test('Today offers a deeper edition and labels related story runs', async ({ pag
  await page.setViewportSize({ width: 390, height: 844 });
  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
+
+
+test('News starts with Today and continues into the news feed on the same page', async ({ page }) => {
+	await page.route(/\/api\/hub\/today(?:\?.*)?$/, route => route.fulfill({ json: edition() }));
+	await page.route('**/api/hub/news?*', route => route.fulfill({ json: { topics: [], groups: [{
+		key: 'extra', title: 'Another news story', latest: 1783000000,
+		items: [item(900, 'Another news story')]
+	}] } }));
+	await freshPage(page, '/news');
+	await expect(page.getByRole('heading', { name: 'News', exact: true, level: 1 })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'A thoughtful lead' })).toBeVisible();
+	const today = page.getByRole('region', { name: 'Today', exact: true });
+	const feed = page.locator('#news-feed');
+	expect(await today.evaluate((node, next) => !!(node.compareDocumentPosition(document.querySelector(next)!) & Node.DOCUMENT_POSITION_FOLLOWING), '#news-feed')).toBe(true);
+	await page.getByRole('link', { name: 'Explore news' }).click();
+	await expect(page.getByRole('heading', { name: 'More news', exact: true })).toBeInViewport();
+	await expect(feed.getByRole('heading', { name: 'Another news story' })).toBeVisible();
+	await page.screenshot({ path: '/tmp/watchcraft-combined-news.png', fullPage: true });
+});

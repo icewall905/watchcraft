@@ -24,7 +24,7 @@
 </script>
 
 {#if session.hubAllowed && edition && (edition.curated || lead || count('stories') || count('reads') || count('memes'))}
-	<a class="today-card" href="/today" aria-label="Open Today" use:focusable={{ group: 'today-preview', id: 'today-preview' }}>
+	<a class="today-card" href="/news" aria-label="Open News" use:focusable={{ group: 'today-preview', id: 'today-preview' }}>
 		<span class="copy"><span class="label">A considered read for today</span>
 			{#if lead}<strong>{lead.item.title}</strong>{:else}<strong>Today, at your pace</strong>{/if}
 			<span class="counts">{count('stories')} stories · {count('reads')} reads · {count('memes')} lighter moments</span>
