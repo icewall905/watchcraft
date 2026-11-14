@@ -21,7 +21,7 @@ test('the phone gets a bottom bar and no desktop sidebar', async ({ page }) => {
 });
 
 test('pages do not scroll sideways on a phone', async ({ page }) => {
-	for (const url of ['/', '/today', '/today/set-aside', '/discover', '/memes', '/library', '/settings']) {
+	for (const url of ['/', '/today', '/today/set-aside', '/news', '/discover', '/memes', '/library', '/settings']) {
 		await freshPage(page, url);
 		const overflow = await page.evaluate(() => ({
 			scroll: document.documentElement.scrollWidth,

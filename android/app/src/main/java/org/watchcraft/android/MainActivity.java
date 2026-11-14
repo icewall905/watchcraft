@@ -330,8 +330,7 @@ public final class MainActivity extends ComponentActivity {
         for (int i = 0; i < 4; i++) {
             String destination = (String) bottom.getChildAt(i).getTag();
             boolean tvPage = playlists || path.equals("/") || path.equals("/tv") || path.startsWith("/watch/") || path.startsWith("/category/") || path.startsWith("/channel/") || path.equals("/shorts") || path.startsWith("/shorts/") || path.equals("/music") || path.startsWith("/music/");
-            if ((destination.equals("/") && tvPage && selected == 4) || (!destination.equals("/") && !playlists && Navigation.matches(destination, path))
-                    || (destination.equals("/news") && (path.equals("/today") || path.startsWith("/today/")))) selected = i;
+            if ((destination.equals("/") && tvPage && selected == 4) || (!destination.equals("/") && !playlists && Navigation.matches(destination, path))) selected = i;
         }
         for (int i = 0; i < bottom.getChildCount(); i++) {
             LinearLayout tab = (LinearLayout)bottom.getChildAt(i); boolean on = i == selected;

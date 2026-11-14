@@ -2,7 +2,7 @@ package org.watchcraft.android;
 
 /** Device-local shortcut choices; only known destinations can be loaded from preferences. */
 final class Navigation {
-    static final String[] DEFAULTS = {"/", "/news", "/memes", "/boards"};
+    static final String[] DEFAULTS = {"/", "/today", "/news", "/memes"};
     static Feature[] choices() {
         return java.util.Arrays.stream(Feature.ALL)
                 .filter(f -> !f.path.equals("/alerts"))
@@ -17,7 +17,6 @@ final class Navigation {
         java.util.HashSet<String> used = new java.util.HashSet<>();
         for (int i = 0; i < 4; i++) {
             String path = saved != null && i < saved.length ? saved[i] : null;
-            if ("/today".equals(path)) path = "/news";
             if (feature(path) != null && used.add(path)) result[i] = path;
         }
         for (int i = 0; i < 4; i++) if (result[i] == null) {

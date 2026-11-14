@@ -12,7 +12,6 @@
 	import { session } from '$lib/stores/session.svelte';
 	import ArticleFeedback from '$lib/hub/ArticleFeedback.svelte';
 	import SeenDismiss from '$lib/hub/SeenDismiss.svelte';
-	import TodayEdition from '$lib/hub/TodayEdition.svelte';
 
 	const ranges = [[1, 'Today'], [7, 'This week'], [30, 'Month']] as const;
 	const modes = [['foryou', 'For you'], ['latest', 'Latest']] as const;
@@ -23,7 +22,6 @@
 	let groups = $state<NewsGroup[]>([]);
 	let topics = $state<Topic[]>([]);
 	let loading = $state(true);
-	let todayLoading = $state(true);
 	let error = $state('');
 	let open = $state<Record<string, boolean>>({});
 	let follow = $state('');
@@ -313,19 +311,9 @@
 		autoPages -= 1;
 		untrack(() => { void loadMore(); });
 	});
-	// Wait for the edition's height before following a deep link into the feed.
-	let followedHash = '';
-	$effect(() => {
-		const key = page.url.pathname + page.url.hash;
-		if (!page.url.hash) { followedHash = ''; return; }
-		if (loading || todayLoading || page.url.hash !== '#news-feed' || followedHash === key) return;
-		followedHash = key;
-		void tick().then(() => document.getElementById('news-feed')?.scrollIntoView());
-	});
 	// Returning from an article puts the reader back where they were in this visit's mix.
 	$effect(() => {
-		if (loading || todayLoading || restoreScroll == null || !pageGroups.length) return;
-		if (page.url.hash) { restoreScroll = null; return; }
+		if (loading || restoreScroll == null || !pageGroups.length) return;
 		const y = restoreScroll; restoreScroll = null;
 		void tick().then(() => window.scrollTo({ top: y }));
 	});
@@ -359,15 +347,10 @@
 
 <svelte:window ontouchstart={touchStart} ontouchmove={touchMove} ontouchend={touchEnd} />
 
-<div class="news-overview">
-	<h1>News</h1>
-	<section aria-label="Today"><TodayEdition onloadingchange={(pending) => { todayLoading = pending; }} /></section>
-</div>
-
-<div class="page" id="news-feed">
+<div class="page">
 	<div class="pull" style:height={`${pull}px`} aria-hidden="true"><span class:ready={pull >= PULL_AT} style:transform={`rotate(${pull * 3}deg)`}>↻</span></div>
 	<header class="head">
-		<div><h2>More news</h2><p class="muted">{mode === 'foryou' ? 'Your endless mix, grouped by story. Refresh any time for more.' : 'Newest first, grouped by story.'}</p></div>
+		<div><h1>News</h1><p class="muted">{mode === 'foryou' ? 'Your endless mix, grouped by story. Refresh any time for more.' : 'Newest first, grouped by story.'}</p></div>
 		<div class="head-actions">
 			<button class="btn primary refresh" class:spin={refreshing} use:focusable onclick={refresh} disabled={loading || refreshing} aria-label="Refresh feed"><span class="refresh-icon" aria-hidden="true">↻</span> Refresh</button>
 			<a class="btn ghost" href="/briefings?new=1" use:focusable>Briefing</a>
@@ -502,9 +485,6 @@
 </div>
 
 <style>
-	.news-overview { display: grid; gap: var(--sp-5); margin-bottom: 3rem; }
-	.news-overview > h1 { margin-bottom: 0; }
-	#news-feed { scroll-margin-top: 5rem; border-top: 1px solid var(--rule); padding-top: 2rem; }
 	.page { display: grid; gap: var(--sp-5); align-content: start; }
 	.pull { display: grid; place-items: end center; overflow: hidden; margin-bottom: calc(-1 * var(--sp-5)); transition: height .15s ease-out; }
 	.pull span { font-size: 1.4rem; color: var(--faint); transition: color .15s; }

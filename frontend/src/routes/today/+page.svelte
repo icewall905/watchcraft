@@ -1,5 +1,7 @@
 <script lang="ts">
-	import NewsPage from '../news/+page.svelte';
+	import TodayEdition from '$lib/hub/TodayEdition.svelte';
 </script>
 
-<NewsPage />
+<svelte:head><title>Today · WatchCraft</title></svelte:head>
+
+<TodayEdition />

@@ -18,7 +18,7 @@ test('scouts shelf is opt-in and shows genuine findings', async ({ page, request
  await request.patch(`/api/profiles/${profile.id}`, { data: { prefs: profile.prefs } });
 });
 
-test('a queued master curator links to News, not a curator page', async ({ page, request }) => {
+test('a queued master curator links to Today, not a curator page', async ({ page, request }) => {
  const profile = (await (await request.get('/api/profiles')).json())[0];
  await request.patch(`/api/profiles/${profile.id}`, { data: { prefs: { ...profile.prefs, scouts_home: true } } });
  const curatorPages: string[] = [];
@@ -26,7 +26,7 @@ test('a queued master curator links to News, not a curator page', async ({ page,
  await page.route('**/api/hub/team', async route => route.fulfill({ json: { limit: 1, running: 0, waiting: 1, journal: [], agents: [{ key: 'master-1', kind: 'master', id: null, name: 'Master Curator', icon: '✧', color: '#fff', mission: 'Selects your daily edition.', status: 'waiting', since: null, next_run: Date.now()/1000 + 300 }] } }));
  await freshPage(page, '/');
  const card = page.getByRole('link', { name: /Master Curator/ });
- await expect(card).toHaveAttribute('href', '/news');
+ await expect(card).toHaveAttribute('href', '/today');
  await expect(card).toContainText('Selection queued');
  expect(curatorPages).toEqual([]);
  await request.patch(`/api/profiles/${profile.id}`, { data: { prefs: profile.prefs } });
@@ -40,7 +40,7 @@ test('Today preview respects the profile video-row position', async ({ page, req
   for (const position of ['top', 'bottom']) {
    await request.patch(`/api/profiles/${profile.id}`, { data: { prefs: { ...profile.prefs, scouts_home_position: position } } });
    await freshPage(page, '/');
-   await expect(page.getByRole('link', { name: 'Open News', exact: true })).toBeVisible();
+   await expect(page.getByRole('link', { name: 'Open Today', exact: true })).toBeVisible();
    await expect(page.getByRole('heading', { name: 'Placement video row' })).toBeVisible();
    const before = await page.locator('.today-card').evaluate(el => {
     const heading = [...document.querySelectorAll('h2')].find(h => h.textContent?.includes('Placement video row'))!;

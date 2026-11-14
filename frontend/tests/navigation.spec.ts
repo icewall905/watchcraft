@@ -5,8 +5,8 @@ test('desktop sidebar: sections, links, active state, compact toggle', async ({ 
 	await freshPage(page, '/stats');
 	const nav = page.getByRole('navigation', { name: 'Main', exact: true });
 	for (const h of ['Watch', 'Explore', 'Research', 'Workshop']) await expect(nav.getByRole('button', { name: h, exact: true })).toBeVisible();
-	await expect(nav.getByRole('link', { name: 'News', exact: true })).toHaveAttribute('href', '/news');
-	await expect(nav.getByRole('link', { name: 'Today', exact: true })).toHaveCount(0);
+	await expect(nav.getByRole('link', { name: 'Today' })).toHaveAttribute('href', '/today');
+	await expect(nav.getByRole('link', { name: 'News' })).toHaveAttribute('href', '/news');
 	await expect(nav.getByRole('link', { name: 'Mood Board' })).toHaveAttribute('href', '/boards');
 	await expect(nav.getByRole('link', { name: 'Research' })).toHaveAttribute('href', '/research');
 	await expect(nav.getByRole('link', { name: 'Statistics' })).toHaveAttribute('aria-current', 'page');
@@ -32,7 +32,7 @@ test('tv mode drawer lists only TV entries; /tv?mode=tv switches mode', async ({
 	await expect(page.getByRole('button', { name: 'Open navigation' })).toBeVisible();
 	await page.getByRole('button', { name: 'Open navigation' }).click();
 	const nav = page.getByRole('navigation', { name: 'Main', exact: true });
-	await expect(nav.getByRole('link')).toHaveText(['TV Home', 'Video search', 'Subscriptions', 'Music Videos', 'Playlists', 'News', 'Settings']);
+	await expect(nav.getByRole('link')).toHaveText(['TV Home', 'Video search', 'Subscriptions', 'Music Videos', 'Playlists', 'Hub', 'Settings']);
 	await nav.getByRole('link', { name: 'Music Videos' }).click();
 	await expect(page).toHaveURL(/\/music$/);
 	await expect(nav.getByRole('link', { name: 'News' })).toHaveCount(0);
@@ -43,7 +43,7 @@ test('mobile viewport shows bottom bar and More sheet', async ({ page }) => {
 	await freshPage(page, '/');
 	const bar = page.getByRole('navigation', { name: 'Primary' });
 	await expect(bar).toBeVisible();
-	await expect(bar.getByRole('link')).toHaveText(['TV', 'News', 'Library', 'Alerts']);
+	await expect(bar.getByRole('link')).toHaveText(['TV', 'Today', 'Library', 'Alerts']);
 	await expect(page.getByRole('navigation', { name: 'Main', exact: true })).toHaveCount(0);
 	await bar.getByRole('button', { name: 'More' }).click();
 	const sheet = page.getByRole('dialog', { name: 'More navigation' });

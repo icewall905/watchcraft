@@ -18,6 +18,7 @@
 	import ArticleFeedback from '$lib/hub/ArticleFeedback.svelte';
 	import SeenDismiss from '$lib/hub/SeenDismiss.svelte';
 	import ShelfStatus from '$lib/hub/ShelfStatus.svelte';
+	import TodayExtras from '$lib/hub/TodayExtras.svelte';
 
 	let { onloadingchange }: { onloadingchange?: (loading: boolean) => void } = $props();
 	let edition = $state<TodayEdition | null>(null);
@@ -32,17 +33,12 @@
 	let clock = $state(Date.now());
 	let lastRefresh = 0;
 	let rerunning = $state(false);
-	// Today opens generously and grows in steps; only rendered entries count as delivered.
-	const sectionLimit: Record<string, number> = { stories: 299, reads: 120, memes: 32 };
-	const initial = { stories: 16, reads: 9, memes: 6 } as const;
-	const steps = { stories: 20, reads: 9, memes: 6 } as const;
-	type Part = keyof typeof initial;
-	let showing = $state<Record<Part, number>>({ ...initial });
+	// Today is an overview: a few of each, with links to the full sections.
+	// Only rendered entries count as delivered (the server's preview limits).
+	const showing = { stories: 4, reads: 3, memes: 4 } as const;
 	const accessAllowed = () => session.ready && !session.needsLogin && !session.choosing && !session.profile?.pin_locked;
 	function clearEdition() {
 		edition = null;
-		// Field-wise reset: an unchanged value must not re-trigger the load effect.
-		showing.stories = initial.stories; showing.reads = initial.reads; showing.memes = initial.memes;
 	}
 	async function rerun() {
 		const pid = session.profileId, version = session.version;
@@ -76,11 +72,7 @@
 		onloadingchange?.(loading);
 		error = '';
 		try {
-			const result = await hub.today(signal, {
-				stories: showing.stories,
-				reads: showing.reads,
-				memes: showing.memes
-			});
+			const result = await hub.today(signal, { ...showing });
 			if (signal.aborted || token !== loadToken || profileVersion !== session.version || profileId !== session.profileId || !accessAllowed()) return;
 			if (edition?.rerun && edition.rerun.requested_at > edition.rerun.completed_at && result.rerun && result.rerun.completed_at >= result.rerun.requested_at) notice = 'Master curator finished. Your selection is up to date.';
 			edition = result;
@@ -131,16 +123,12 @@
 	const section = (key: string) => edition?.sections.find((s) => s.key === key);
 	const entries = (key: string): EditionEntry[] => {
 		const found = section(key);
-		return found && 'entries' in found ? found.entries.slice(0, sectionLimit[key] ?? found.entries.length) : [];
+		return found && 'entries' in found ? found.entries : [];
 	};
 	let editionIdentity = '';
 	const shownStories = $derived(entries('stories').slice(0, showing.stories));
 	const shownReads = $derived(entries('reads').slice(0, showing.reads));
 	const shownMemes = $derived(entries('memes').slice(0, showing.memes));
-	const remaining = (which: Part) => Math.max(0, entries(which).length - showing[which]);
-	const moreLabel = (which: Part, noun: string) => remaining(which) > 0
-		? `Show ${Math.min(steps[which], remaining(which))} more ${noun}`
-		: `Show fewer ${noun}`;
 	const research = $derived(section('research'));
 	const alerts = $derived(section('alerts'));
 	const hasContent = $derived(!!(entries('lead').length || entries('stories').length || entries('reads').length || entries('memes').length || (research && 'curators' in research && research.curators.length) || (alerts && 'count' in alerts && alerts.count)));
@@ -158,11 +146,6 @@
 	function sourceCount(entry: EditionEntry) { return Math.max(0, (entry.sources ?? 1) - 1); }
 	function articleRated(entry: EditionEntry, state: import('$lib/hub/types').ItemState) { entry.item.state = state; }
 	function supportsArticleFeedback(entry: EditionEntry) { return ['news', 'article', 'web'].includes(entry.item.type); }
-	function toggleSection(which: Part) {
-		const total = entries(which).length;
-		showing[which] = showing[which] >= total ? initial[which] : Math.min(total, showing[which] + steps[which]);
-		void load();
-	}
 </script>
 
 
@@ -171,7 +154,7 @@
 	<div class="top">
 	<header class="masthead">
 		<p class="date">Today · {today}</p>
-		<h2>{greeting}</h2>
+		<h1>{greeting}</h1>
 		<button class="btn" use:focusable disabled={rerunning || !!(edition?.rerun && edition.rerun.requested_at > edition.rerun.completed_at)} onclick={rerun}>{rerunning ? 'Queuing…' : edition?.rerun && edition.rerun.requested_at > edition.rerun.completed_at ? 'Curating…' : 'Rerun master curator'}</button>
 		{#if edition?.intro}
 			<Cited text={edition.intro} itemIds={edition.intro_refs.map((r) => r.item_id)} />
@@ -200,7 +183,7 @@
 
 		{#if entries('stories').length}
 			<section class="section" aria-label="Stories">
-				<SectionHeader title={`Stories · ${entries('stories').length}`} action={{ href: '/news#news-feed', label: 'Explore news' }} />
+				<SectionHeader title="Top stories" action={{ href: '/news', label: 'All news' }} />
 					<div class="story-list" data-nav-row>
 					{#each shownStories as entry, index (entry.item_id)}
 						{#if entry.group_title && entry.group_key !== shownStories[index - 1]?.group_key}<h3 class="group-heading">{entry.group_title}</h3>{/if}
@@ -210,13 +193,12 @@
 						</StoryCard>
 					{/each}
 				</div>
-				{#if entries('stories').length > initial.stories}<button class="expand" use:focusable onclick={() => toggleSection('stories')} aria-expanded={showing.stories > initial.stories}>{moreLabel('stories', 'stories')}</button>{/if}
 			</section>
 		{/if}
 
 		{#if entries('reads').length}
 			<section class="section">
-				<SectionHeader title={`Worth your time · ${entries('reads').length}`} action={{ href: '/discover', label: 'More discoveries' }} />
+				<SectionHeader title="Worth your time" action={{ href: '/discover', label: 'More discoveries' }} />
 				<div class="reads" data-nav-row>
 					{#each shownReads as entry, index (entry.item_id)}
 						{#if entry.group_title && entry.group_key !== shownReads[index - 1]?.group_key}<h3 class="group-heading">{entry.group_title}</h3>{/if}
@@ -226,13 +208,12 @@
 						</ReadCard>
 					{/each}
 				</div>
-				{#if entries('reads').length > initial.reads}<button class="expand" use:focusable onclick={() => toggleSection('reads')} aria-expanded={showing.reads > initial.reads}>{moreLabel('reads', 'reads')}</button>{/if}
 			</section>
 		{/if}
 
 		{#if entries('memes').length}
 			<section class="section meme-section">
-				<SectionHeader title={`A lighter moment · ${entries('memes').length}`} action={{ href: '/memes', label: 'Meme Radar' }} />
+				<SectionHeader title="A lighter moment" action={{ href: '/memes', label: 'Meme Radar' }} />
 				<div class="memes" data-nav-row>
 					{#each shownMemes as entry (entry.item_id)}
 						<MemeTile href={itemHref(entry)} caption={entry.item.meme?.spoiler || entry.item.title} meta={entry.item.publisher || entry.item.meme?.community || undefined} mediaAvailable={hasLocalImage(entry)} sensitive={!!entry.item.meme?.sensitive} video={!!entry.item.local_video}>
@@ -241,9 +222,10 @@
 						</MemeTile>
 					{/each}
 				</div>
-				{#if entries('memes').length > initial.memes}<button class="expand" use:focusable onclick={() => toggleSection('memes')} aria-expanded={showing.memes > initial.memes}>{moreLabel('memes', 'moments')}</button>{/if}
 			</section>
 		{/if}
+
+		<TodayExtras />
 
 		{#if research && 'curators' in research && research.curators.length}
 			<section class="quiet-section" data-nav-row><QuietLine text={`New research on ${research.curators.map((c) => c.subject || c.name).join(', ')}`} href={`/research/${research.curators[0].id}`} linkLabel="Read the report" /></section>
@@ -253,7 +235,6 @@
 		{/if}
 		<div class="edition-end">
 			<SetAsideLink count={edition.set_aside} href="/today/set-aside" />
-			<a class="expand keep-going" href="/news#news-feed" use:focusable>Keep scrolling: your endless News feed →</a>
 			{#if hasContent}<EmptyCalm />{:else}<EmptyCalm title={edition.curated ? "That's everything for today" : 'Your first edition is taking shape'} detail={edition.curated ? undefined : 'As your curators finish a pass, the stories that fit will gather here.'} />{/if}
 		</div>
 	{/if}
@@ -269,7 +250,7 @@
 		.shelf-side { margin-top: 0; }
 	}
 	.date { margin-bottom: .6rem; color: var(--faint); font-size: var(--fs-sm); }
-	.masthead h2 { margin-bottom: 1.2rem; font: 520 clamp(2.4rem, 6vw, 4.5rem) / 1.02 var(--font-display); letter-spacing: -.025em; }
+	.masthead h1 { margin-bottom: 1.2rem; font: 520 clamp(2rem, 6vw, 4.5rem) / 1.05 var(--font-display); letter-spacing: -.025em; overflow-wrap: anywhere; }
 	:global(.masthead .cited) { font-size: var(--fs-md); line-height: 1.7; }
 	.plain-greeting { color: var(--ink-soft); font-size: var(--fs-md); }
 	.lead-section { padding-bottom: clamp(1.5rem, 3vw, 2.5rem); }
@@ -279,16 +260,13 @@
 	.story-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: clamp(1.5rem, 4vw, 4rem); }
 	.reads { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(1rem, 2.5vw, 2rem); }
 	.group-heading { grid-column: 1 / -1; margin: 1.2rem 0 0; padding-top: .8rem; border-top: 1px solid var(--rule); color: var(--ink-soft); font: 500 var(--fs-md) / 1.4 var(--font-display); overflow-wrap: anywhere; }
-	.memes { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: clamp(.7rem, 1.5vw, 1.25rem); }
+	.memes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(.7rem, 1.5vw, 1.25rem); }
 	.quiet-section { padding: 1rem 0; border-top: 1px solid var(--rule); }
 	.edition-end { display: grid; justify-items: center; border-top: 1px solid var(--rule); margin-top: 2rem; padding-top: 1rem; }
 	.edition-end :global(.empty-calm) { padding-block: 2.3rem 1rem; }
 	.status { color: var(--ink-soft); padding: 2rem 0; }
 	.load-error { padding: 1.5rem; border-left: 2px solid var(--warn); background: var(--bg-2); }
 	.notice { padding: .5rem 0; color: var(--ink-soft); font-size: var(--fs-sm); }
-	.expand { display: block; margin: 1rem auto 0; padding: .7rem 1rem; border: 1px solid var(--rule); border-radius: 999px; color: var(--ink-soft); background: var(--bg-2); font: inherit; font-size: var(--fs-sm); cursor: pointer; }
-	.expand:hover, .expand:focus-visible { border-color: var(--accent); color: var(--ink); }
-	.keep-going { width: fit-content; margin-bottom: 1.5rem; text-decoration: none; }
-	@media (max-width: 760px) { .story-list { grid-template-columns: 1fr; } .reads { grid-template-columns: repeat(2, minmax(0, 1fr)); } .memes { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+	@media (max-width: 760px) { .story-list { grid-template-columns: 1fr; } .reads { grid-template-columns: repeat(2, minmax(0, 1fr)); } .memes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 	@media (max-width: 440px) { .reads { grid-template-columns: 1fr; } .memes { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 </style>
