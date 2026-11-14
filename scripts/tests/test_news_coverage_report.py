@@ -3,9 +3,9 @@ import importlib.util
 import json
 import sqlite3
 import sys
+import tempfile
+import unittest
 from pathlib import Path
-
-import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -251,9 +251,43 @@ def test_cleanup_version_is_kept_in_sync_with_application(tmp_path):
     assert reporter.CANDIDATE_TARGET == CANDIDATE_TARGET
 
 
-@pytest.mark.parametrize("limit", [0, 200001])
-def test_report_rejects_unsafe_limits(tmp_path, limit):
+def test_report_rejects_unsafe_limits(tmp_path):
     path = tmp_path / "empty.sqlite3"
     db = _db(path); _curator(db, 1); db.commit(); db.close()
-    with pytest.raises(ValueError, match="limit"):
-        reporter.report(path, now=NOW, limit=limit)
+    for limit in (0, 200001):
+        try:
+            reporter.report(path, now=NOW, limit=limit)
+        except ValueError as error:
+            assert "limit" in str(error)
+        else:
+            raise AssertionError(f"limit {limit} was accepted")
+
+
+class NewsCoverageReportTests(unittest.TestCase):
+    """Runs the checks above under plain unittest; CI's scripts job has no pytest."""
+
+    def _run(self, check):
+        with tempfile.TemporaryDirectory() as tmp:
+            check(Path(tmp))
+
+    def test_deduplicates_curators_and_separates_publication_from_discovery(self):
+        self._run(test_deduplicates_curators_and_separates_publication_from_discovery)
+
+    def test_profile_isolation_and_readiness_blockers_are_disjoint(self):
+        self._run(test_profile_isolation_and_readiness_blockers_are_disjoint)
+
+    def test_read_archive_mute_unknown_future_and_truncation(self):
+        self._run(test_read_archive_mute_unknown_future_and_truncation)
+
+    def test_default_output_is_metadata_only_and_report_is_read_only(self):
+        self._run(test_default_output_is_metadata_only_and_report_is_read_only)
+
+    def test_cleanup_version_is_kept_in_sync_with_application(self):
+        # Needs the backend's dependencies; the scripts job runs stdlib only.
+        try:
+            self._run(test_cleanup_version_is_kept_in_sync_with_application)
+        except ImportError as error:
+            self.skipTest(f"backend dependencies unavailable: {error}")
+
+    def test_report_rejects_unsafe_limits(self):
+        self._run(test_report_rejects_unsafe_limits)
