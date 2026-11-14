@@ -13,6 +13,7 @@ public class FeatureTest {
     }
     @Test public void detailPagesRetainFeatureTitles() {
         assertEquals("Reading", Feature.titleFor("/item/12"));
+        assertEquals("News", Feature.titleFor("/today/set-aside"));
         assertEquals("Now playing", Feature.titleFor("/watch/abc"));
         assertEquals("Curators", Feature.titleFor("/curators/7"));
         assertEquals("Mood Board", Feature.titleFor("/boards"));

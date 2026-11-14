@@ -331,7 +331,7 @@ public final class MainActivity extends ComponentActivity {
             String destination = (String) bottom.getChildAt(i).getTag();
             boolean tvPage = playlists || path.equals("/") || path.equals("/tv") || path.startsWith("/watch/") || path.startsWith("/category/") || path.startsWith("/channel/") || path.equals("/shorts") || path.startsWith("/shorts/") || path.equals("/music") || path.startsWith("/music/");
             if ((destination.equals("/") && tvPage && selected == 4) || (!destination.equals("/") && !playlists && Navigation.matches(destination, path))
-                    || (destination.equals("/news") && path.equals("/today"))) selected = i;
+                    || (destination.equals("/news") && (path.equals("/today") || path.startsWith("/today/")))) selected = i;
         }
         for (int i = 0; i < bottom.getChildCount(); i++) {
             LinearLayout tab = (LinearLayout)bottom.getChildAt(i); boolean on = i == selected;

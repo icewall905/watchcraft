@@ -34,7 +34,7 @@ final class Feature {
         if (path.startsWith("/search") || path.startsWith("/find")) return "Search";
         if (path.startsWith("/category/") || path.startsWith("/channel/")) return "TV";
         if (path.equals("/tv")) return "TV";
-        if (path.equals("/today")) return "News";
+        if (path.equals("/today") || path.startsWith("/today/")) return "News";
         for (Feature f : ALL) if (path.equals(f.path) || (!f.path.equals("/") && path.startsWith(f.path + "/"))) return f.title;
         return "WatchCraft";
     }

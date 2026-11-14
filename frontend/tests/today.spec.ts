@@ -67,7 +67,7 @@ test('Today opens a long edition and grows it in steps', async ({ page }) => {
 	await page.getByRole('button', { name: 'Show 20 more stories' }).click();
 	await page.getByRole('button', { name: 'Show 3 more stories' }).click();
 	await expect(page.getByRole('link', { name: 'Story 79', exact: true })).toBeVisible();
-	await expect(page.getByRole('link', { name: 'Explore news' })).toHaveAttribute('href', '/news');
+	await expect(page.getByRole('link', { name: 'Explore news' })).toHaveAttribute('href', '/news#news-feed');
 	await expect(page.getByRole('heading', { name: 'Worth your time · 20' })).toBeVisible();
 	await expect(page.getByRole('link', { name: 'Read 10', exact: true })).toHaveCount(0);
 	await page.getByRole('button', { name: 'Show 9 more reads' }).click();
@@ -223,12 +223,14 @@ test('profile identity clears the old edition before delayed session initializat
 	let stallCategories = false;
 	let categoriesHeld = false;
 	let releaseCategories: (() => void) | undefined;
+	const categoriesGate = new Promise<void>(resolve => { releaseCategories = resolve; });
 	let newEditionHeld = false;
 	let releaseEdition: (() => void) | undefined;
+	const editionGate = new Promise<void>(resolve => { releaseEdition = resolve; });
 	await page.route('**/api/categories', async route => {
 		if (stallCategories && route.request().headers()['x-profile-id'] === String(other.id)) {
 			categoriesHeld = true;
-			await new Promise<void>(resolve => { releaseCategories = resolve; });
+			await categoriesGate;
 		}
 		await route.continue();
 	});
@@ -238,7 +240,7 @@ test('profile identity clears the old edition before delayed session initializat
 		data.sections[0].entries![0].item.title = isOther ? 'New identity edition' : 'Private original edition';
 		if (isOther && stallCategories) {
 			newEditionHeld = true;
-			await new Promise<void>(resolve => { releaseEdition = resolve; });
+			await editionGate;
 		}
 		await route.fulfill({ json: data }).catch(() => {});
 	});

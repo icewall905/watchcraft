@@ -13,7 +13,7 @@ test('desktop sidebar: sections, links, active state, compact toggle', async ({ 
 	await expect(nav.getByRole('link', { name: 'TV' })).not.toHaveAttribute('aria-current', 'page');
 	await expect(page.getByText('Watching the Internet for you.')).toBeVisible();
 	await nav.getByRole('button', { name: 'Explore', exact: true }).click();
-	await expect(nav.getByRole('link', { name: 'News' })).toHaveAttribute('href', '/news');
+	await expect(nav.getByRole('link', { name: 'News' })).toHaveCount(0);
 	await page.getByRole('button', { name: 'Collapse sidebar' }).click();
 	await expect(page.getByText('Watching the Internet for you.')).toHaveCount(0);
 	await page.reload();
@@ -35,7 +35,7 @@ test('tv mode drawer lists only TV entries; /tv?mode=tv switches mode', async ({
 	await expect(nav.getByRole('link')).toHaveText(['TV Home', 'Video search', 'Subscriptions', 'Music Videos', 'Playlists', 'News', 'Settings']);
 	await nav.getByRole('link', { name: 'Music Videos' }).click();
 	await expect(page).toHaveURL(/\/music$/);
-	await expect(nav.getByRole('link', { name: 'News' })).toHaveAttribute('href', '/news');
+	await expect(nav.getByRole('link', { name: 'News' })).toHaveCount(0);
 });
 
 test('mobile viewport shows bottom bar and More sheet', async ({ page }) => {

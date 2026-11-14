@@ -436,5 +436,7 @@ test('mood background shows download progress and only plays saved videos', asyn
  await expect(dialog.getByRole('button', {name: /Pending calm/})).toBeDisabled();
  await expect(dialog.getByRole('button', {name: /DJ from this mix/})).toHaveCount(0);
  await dialog.getByRole('button', {name: '▶ Play', exact: true}).click();
- await expect(page.getByRole('region', {name: 'Music player'}).getByRole('heading', {name: 'Saved calm'})).toBeVisible();
+ const player = page.getByRole('region', {name: 'Music player'});
+ await expect(player.getByText('Saved calm', {exact: true})).toBeVisible();
+ await expect(player).not.toContainText('Pending calm');
 });
