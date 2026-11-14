@@ -2139,3 +2139,35 @@ in the local `todo.md` (which is intentionally ignored by Git).
   Downloader was active. Readiness uses real files and never labels the pending whole mix ready.
 - Android `android-v0.1.8` / code 10 built from `b2a5957`, with four configurable shortcut slots.
   Published APK checksum and original signing certificate verified.
+
+## Deployment record — Mood Board discovery and real activity repair (2026-11-14)
+
+- `b9ddda1` fixes B-066: configured SearXNG image discovery with Commons fallback, short planned
+  queries, safe local raster capture and strict vision review. Empty runs report `no_matches`;
+  the board shows last-result details and retry countdowns and follows active runs automatically.
+  Profile-owned board milestones/cards now appear in Agent Activity with real search/review counts.
+- Backup `/root/compose/watchcraft-backups/20261114-board-curation-fix` retains online DB, source,
+  configuration fingerprints and per-service rollback images/script. Network-isolated restore
+  preserved all 74 baseline table counts and profile/PIN identity; media, board activity, Pinterest
+  fixtures and repeated startup passed.
+- Final backend suite: 1,267 passed, 6 skipped. Frontend check/build passed (three existing warnings),
+  boards/team/home-shelf browser regressions 13 passed; final rebuilt board regressions 7 passed.
+- All four services run `sha256:6c5ed3dd6137b34415ad4311543f77f4f6743d22543d78a3f0f306f6c3d0f40f`,
+  zero restarts at verification; public health and configuration/profile fingerprints passed.
+
+## Deployment record — Board theme relevance and Android refresh (2026-11-14)
+
+- Server revision `1ec292b` anchors query planning and pixel review to the full board theme and
+  excludes stock-preview hosts. All four services run image
+  `sha256:1fddbb0ced98836365df79fb1d785cad52b577d1ed2523801c2b650232e1eba8`,
+  with zero restarts; public health and configuration/profile fingerprints passed.
+- Backup `/root/compose/watchcraft-backups/20261114-board-theme-fix` retains online DB, source,
+  configuration baselines and per-service rollback images/script. Isolated restored validation
+  preserved all 74 baseline table counts and identity; media/board/Pinterest/activity and repeated
+  startup passed. Final backend suite: 1,268 passed, 6 skipped.
+- The actual Homelab board search found 29 candidates and safely captured 25 previews. Its real
+  vision run and timeline were verified. Stricter theme re-review kept eight images visible and
+  recoverably hid seven weak unsaved matches, preserving all image data and user-saved pins.
+  Source URL, image fingerprint, board revision and idle lease were checked before applying review.
+- Android version advanced to 0.1.9/code 11 for a signed release incorporating these server fixes.
+  Physical-device/Obtainium acceptance remains tracked separately.
