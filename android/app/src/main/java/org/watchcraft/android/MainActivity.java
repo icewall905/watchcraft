@@ -50,6 +50,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
+import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -214,6 +215,7 @@ public final class MainActivity extends ComponentActivity {
         heading = text("WatchCraft", 17, TEXT, true);
         LinearLayout.LayoutParams title = new LinearLayout.LayoutParams(0, -2, 1); title.leftMargin = dp(10);
         header.addView(heading, title);
+        header.addView(iconButton("bell", "Notifications", v -> navigate("/alerts")));
         header.addView(iconButton("more", "Page options", v -> pageOptions()));
         shell.addView(header, new LinearLayout.LayoutParams(-1, dp(52)));
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal);
@@ -242,17 +244,66 @@ public final class MainActivity extends ComponentActivity {
     }
 
     private void buildBottomBar() {
+        if (bottom != null && bottom.getParent() == shell) shell.removeView(bottom);
         bottom = row(); bottom.setBackground(outline(BG, 0)); bottom.setPadding(dp(4), dp(5), dp(4), dp(5));
-        String[][] tabs = {{"TV", "tv", "/"}, {"Today", "today", "/today"}, {"Library", "library", "/library"}, {"Alerts", "bell", "/alerts"}, {"More", "more", "more"}};
+        String[] shortcuts = shortcutPaths();
+        String[][] tabs = new String[5][];
+        tabs[0] = new String[]{"TV ▴", "tv", "/"};
+        for (int i = 0; i < 3; i++) {
+            Feature f = Navigation.feature(shortcuts[i]);
+            tabs[i + 1] = new String[]{f.title, f.icon, f.path};
+        }
+        tabs[4] = new String[]{"More", "more", "more"};
         for (String[] tab : tabs) {
             LinearLayout item = column(); item.setGravity(Gravity.CENTER); item.setTag(tab[2]);
-            item.setBackground(ripple(round(BG, 18))); item.setContentDescription(tab[0]);
+            item.setBackground(ripple(round(BG, 18))); item.setContentDescription(tab[2].equals("/") ? "TV menu" : tab[0]);
             item.setFocusable(true); item.addView(icon(tab[1], MUTED, 23), new LinearLayout.LayoutParams(dp(24), dp(24)));
-            TextView label = text(tab[0], 11, MUTED, true); label.setGravity(Gravity.CENTER); item.addView(label);
-            item.setOnClickListener(v -> { v.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK); if (tab[2].equals("more")) showMenu(); else navigate(tab[2]); });
+            TextView label = text(tab[0], 11, MUTED, true); label.setGravity(Gravity.CENTER); label.setMaxLines(2); label.setEllipsize(android.text.TextUtils.TruncateAt.END); item.addView(label);
+            item.setOnClickListener(v -> { v.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK); if (tab[2].equals("more")) showMenu(); else if (tab[2].equals("/")) showTvMenu(v); else navigate(tab[2]); });
             bottom.addView(item, new LinearLayout.LayoutParams(0, dp(56), 1));
         }
         shell.addView(bottom, new LinearLayout.LayoutParams(-1, -2));
+    }
+
+    private String[] shortcutPaths() {
+        String[] saved = new String[3];
+        for (int i = 0; i < 3; i++) saved[i] = prefs.getString("navigation_slot_" + i, Navigation.DEFAULTS[i]);
+        return Navigation.restore(saved);
+    }
+
+    private void saveShortcuts(String[] paths) {
+        SharedPreferences.Editor editor = prefs.edit();
+        for (int i = 0; i < 3; i++) editor.putString("navigation_slot_" + i, paths[i]);
+        editor.apply(); buildBottomBar(); updateLocation(server + currentPath);
+    }
+
+    private void showTvMenu(View anchor) {
+        PopupMenu popup = new PopupMenu(this, anchor);
+        String[] titles = {"TV home", "Playlists", "Feeds", "Music videos"};
+        String[] paths = {"/", "/settings?tab=categories", "/shorts", "/music"};
+        for (int i = 0; i < titles.length; i++) popup.getMenu().add(0, i, i, titles[i]);
+        popup.setOnMenuItemClickListener(item -> { navigate(paths[item.getItemId()]); return true; });
+        popup.show();
+    }
+
+    private void navigationSettings() {
+        String[] paths = shortcutPaths();
+        String[] titles = new String[3];
+        for (int i = 0; i < 3; i++) titles[i] = "Button " + (i + 1) + ": " + Navigation.feature(paths[i]).title;
+        new AlertDialog.Builder(this).setTitle("Bottom bar shortcuts")
+                .setItems(titles, (dialog, slot) -> chooseShortcut(slot))
+                .setNeutralButton("Reset defaults", (dialog, which) -> { saveShortcuts(Navigation.DEFAULTS.clone()); navigationSettings(); })
+                .setPositiveButton("Done", null).show();
+    }
+
+    private void chooseShortcut(int slot) {
+        String[] paths = shortcutPaths();
+        Feature[] choices = Navigation.choices(); String[] names = new String[choices.length]; int selected = -1;
+        for (int i = 0; i < choices.length; i++) { names[i] = choices[i].title; if (choices[i].path.equals(paths[slot])) selected = i; }
+        new AlertDialog.Builder(this).setTitle("Choose button " + (slot + 1))
+                .setSingleChoiceItems(names, selected, (dialog, which) -> {
+                    Navigation.replace(paths, slot, choices[which].path); saveShortcuts(paths); dialog.dismiss(); navigationSettings();
+                }).setNegativeButton("Cancel", (dialog, which) -> navigationSettings()).show();
     }
 
     private void navigate(String path) {
@@ -270,8 +321,12 @@ public final class MainActivity extends ComponentActivity {
         String path = Uri.parse(url).getPath(); if (path == null) path = "/";
         currentPath = path + (Uri.parse(url).getEncodedQuery() == null ? "" : "?" + Uri.parse(url).getEncodedQuery());
         heading.setText(Feature.titleFor(path));
-        int selected = path.equals("/") || path.equals("/tv") || path.startsWith("/watch/") || path.startsWith("/category/") || path.startsWith("/channel/") ? 0
-                : path.startsWith("/today") ? 1 : path.startsWith("/library") ? 2 : path.startsWith("/alerts") ? 3 : 4;
+        boolean playlists = path.equals("/settings") && "categories".equals(Uri.parse(url).getQueryParameter("tab"));
+        int selected = playlists || path.equals("/") || path.equals("/tv") || path.startsWith("/watch/") || path.startsWith("/category/") || path.startsWith("/channel/") || path.startsWith("/shorts") || path.startsWith("/music") ? 0 : 4;
+        for (int i = 1; i <= 3; i++) {
+            String destination = (String) bottom.getChildAt(i).getTag();
+            if (!playlists && Navigation.matches(destination, path)) selected = i;
+        }
         for (int i = 0; i < bottom.getChildCount(); i++) {
             LinearLayout tab = (LinearLayout)bottom.getChildAt(i); boolean on = i == selected;
             tab.setSelected(on); tab.setBackground(ripple(round(on ? PANEL : BG, 18)));
@@ -415,7 +470,8 @@ public final class MainActivity extends ComponentActivity {
             item.setMinimumHeight(dp(52)); item.setContentDescription(f.title); item.setFocusable(true);
             item.setOnClickListener(v -> { menu.dismiss(); navigate(f.path); }); sheet.addView(item);
         }
-        gap(sheet, 24); Button connection = action("Server & app", false); connection.setOnClickListener(v -> { menu.dismiss(); connectionOptions(); }); sheet.addView(connection);
+        gap(sheet, 24); Button navigation = action("Customize bottom bar", false); navigation.setOnClickListener(v -> { menu.dismiss(); navigationSettings(); }); sheet.addView(navigation);
+        gap(sheet, 12); Button connection = action("Server & app", false); connection.setOnClickListener(v -> { menu.dismiss(); connectionOptions(); }); sheet.addView(connection);
         scroll.addView(sheet); menu.setContentView(scroll);
         Window w = menu.getWindow(); if (w != null) { w.setBackgroundDrawableResource(android.R.color.transparent); w.setGravity(Gravity.BOTTOM); w.setDimAmount(.55f); }
         menu.show(); if (w != null) w.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels, dp(560)), (int)(getResources().getDisplayMetrics().heightPixels * .86));
