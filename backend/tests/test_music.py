@@ -420,3 +420,158 @@ def test_a_disliked_dj_pick_leaves_the_offline_set_and_the_flow(music, monkeypat
     monkeypatch.setattr(yt, 'radio', lambda vid, origin='user': (seeds.append(vid), list(RADIO))[1])
     music.post('/api/music/dj', json={'played': [SEED['video_id'], first['video_id']], 'n': 1})
     assert seeds == [SEED['video_id']]  # the radio seeds from the last song not disliked
+
+
+# ---------- playlist imports
+
+def test_youtube_import_validates_host_before_fetch(music, monkeypatch):
+    from bt.music import imports
+    fetched = []
+    monkeypatch.setattr(imports.ytdl, '_extract', lambda *a, **kw: fetched.append(a))
+    for reference in ['https://evil.example/playlist?list=PLabcdefghij',
+                      'https://youtube.com.evil.example/?list=PLabcdefghij',
+                      'https://youtube.com/watch?v=AAAAAAAAAAA',
+                      'https://user@youtube.com/?list=PLabcdefghij']:
+        assert music.post('/api/music/import', json={'source': 'youtube', 'reference': reference}).status_code == 400
+    assert not fetched
+
+
+def test_youtube_import_keeps_order_deduplicates_and_owns_mix(music, monkeypatch):
+    from bt.music import imports
+    calls = []
+    def extract(url, *args, **kw):
+        calls.append((url, kw))
+        return {'title': 'My playlist', 'entries': [{'id': 'AAAAAAAAAAA', 'title': 'Audio track'}, None,
+                {'id': 'BBBBBBBBBBB', 'title': 'Music video'}, {'id': 'AAAAAAAAAAA', 'title': 'Duplicate'}]}
+    monkeypatch.setattr(imports.ytdl, '_extract', extract)
+    r = music.post('/api/music/import', json={'source': 'youtube', 'reference':
+                   'https://music.youtube.com/playlist?list=PLabcdefghij&untrusted=ignored'}).json()
+    assert (r['imported'], r['skipped'], r['duplicates'], r['limited']) == (2, 1, 1, False)
+    assert [t['video_id'] for t in r['mix']['tracks']] == ['AAAAAAAAAAA', 'BBBBBBBBBBB']
+    assert r['mix']['name'] == 'My playlist' and r['mix']['kind'] == 'manual'
+    assert calls[0][0] == 'https://www.youtube.com/playlist?list=PLabcdefghij'
+    assert calls[0][1]['playlistend'] == 301
+    pid2 = music.post('/api/profiles', json={'name': 'Guest', 'role': 'adult'}).json()['id']
+    assert music.get(f'/api/music/mixes/{r["mix"]["id"]}', headers={'X-Profile-Id': str(pid2)}).status_code == 404
+
+
+def test_music_assistant_requires_server_configuration_and_playlist_uri(music, monkeypatch):
+    monkeypatch.delenv('MUSIC_ASSISTANT_URL', raising=False)
+    monkeypatch.delenv('MUSIC_ASSISTANT_TOKEN', raising=False)
+    assert music.get('/api/music/import/status').json()['music_assistant_configured'] is False
+    r = music.post('/api/music/import', json={'source': 'music_assistant', 'reference': 'library://playlist/13'})
+    assert r.status_code == 400 and 'not connected' in r.json()['detail']
+    assert music.post('/api/music/import', json={'source': 'music_assistant',
+                      'reference': 'http://arbitrary.example/playlist'}).status_code == 400
+
+
+def test_music_assistant_http_contract_and_matching(music, monkeypatch):
+    from bt.music import imports
+    monkeypatch.setenv('MUSIC_ASSISTANT_URL', 'http://ma.local:8095')
+    monkeypatch.setenv('MUSIC_ASSISTANT_TOKEN', 'secret-test-token')
+    requests = []
+    entries = [{'name': 'Direct', 'artists': [{'name': 'Singer'}], 'provider_mappings':
+                [{'provider_domain': 'ytmusic', 'item_id': 'AAAAAAAAAAA'}]},
+               {'name': 'Halo', 'artists': [{'name': 'Beyoncé'}]},
+               {'name': 'Wrong song', 'artists': [{'name': 'ABBA'}]},
+               {'name': 'Podcast', 'media_type': 'podcast_episode'},
+               {'name': 'Direct again', 'provider': 'ytmusic', 'item_id': 'AAAAAAAAAAA'}]
+    class Client:
+        def __init__(self, **kw):
+            assert kw['follow_redirects'] is False and kw['trust_env'] is False
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def get(self, url):
+            return imports.httpx.Response(200, json={'server_version': '2.11.0'},
+                                          request=imports.httpx.Request('GET', url))
+        def stream(self, method, url, **kw):
+            from contextlib import nullcontext
+            requests.append((url, kw))
+            return nullcontext(imports.httpx.Response(200, json={'items': entries, 'total': 305},
+                                          request=imports.httpx.Request('POST', url)))
+    monkeypatch.setattr(imports.httpx, 'Client', Client)
+    r = music.post('/api/music/import', json={'source': 'music_assistant',
+                   'reference': 'library://playlist/13', 'name': 'Evening'}).json()
+    assert [t['video_id'] for t in r['mix']['tracks']] == ['AAAAAAAAAAA', 'CCCCCCCCCCC']
+    assert (r['skipped'], r['duplicates'], r['limited']) == (2, 1, True)
+    url, request = requests[0]
+    assert url == 'http://ma.local:8095/api'
+    assert request['headers']['Authorization'] == 'Bearer secret-test-token'
+    assert request['json']['args'] == {'item_id': '13', 'provider_instance_id_or_domain': 'library', 'limit': 301, 'offset': 0}
+    assert 'secret-test-token' not in str(r)
+
+
+def test_playlist_import_is_bounded_and_hub_gated(music, monkeypatch):
+    from bt.music import imports
+    monkeypatch.setattr(imports.ytdl, '_extract', lambda *a, **kw: {'entries':
+        [{'id': f'{i:011d}', 'title': 'Track'} for i in range(301)]})
+    r = music.post('/api/music/import', json={'source': 'youtube',
+                   'reference': 'https://youtube.com/playlist?list=PLabcdefghij'}).json()
+    assert r['imported'] == 300 and r['limited'] is True
+    from bt import access
+    monkeypatch.setattr(access, 'hub_allowed', lambda s, pid: False)
+    assert music.post('/api/music/import', json={'source': 'youtube', 'reference': 'x'}).status_code == 403
+
+
+def test_ma_legacy_paging_error_requires_upgrade_without_unbounded_retry(monkeypatch):
+    from bt.music import imports
+    from contextlib import nullcontext
+    monkeypatch.setenv('MUSIC_ASSISTANT_URL', 'http://ma.local:8095')
+    monkeypatch.setenv('MUSIC_ASSISTANT_TOKEN', 'test')
+    requests = []
+    statuses = [400]
+    class Client:
+        def __init__(self, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def get(self, url):
+            return imports.httpx.Response(200, json={'server_version': '2.11.0'},
+                                          request=imports.httpx.Request('GET', url))
+        def stream(self, method, url, **kw):
+            requests.append(kw['json']['args'])
+            status = statuses.pop(0)
+            return nullcontext(imports.httpx.Response(status, content=(
+                b'Invalid argument: unknown limit' if status == 400 else b'[]'),
+                request=imports.httpx.Request('POST', url)))
+    monkeypatch.setattr(imports.httpx, 'Client', Client)
+    with pytest.raises(ValueError, match='2.11 or newer'):
+        imports._ma_tracks('library://playlist/13')
+    assert len(requests) == 1 and 'limit' in requests[0]
+    statuses[:] = [401]
+    requests.clear()
+    with pytest.raises(ValueError, match='Could not read'):
+        imports._ma_tracks('library://playlist/13')
+    assert len(requests) == 1
+
+
+def test_ma_matching_rejects_substring_and_generic_song_names(monkeypatch):
+    from bt.music import imports
+    candidates = [_t('AAAAAAAAAAA', 'Someone (Official Video)', 'Singer'),
+                  _t('BBBBBBBBBBB', 'One More Time', 'Singer')]
+    monkeypatch.setattr(yt, 'search', lambda *a: candidates)
+    assert imports._resolve_ma({'name': 'One', 'artists': [{'name': 'Singer'}]}) is None
+    assert imports._resolve_ma({'name': 'Official Video', 'artists': [{'name': 'Singer'}]}) is None
+    candidates.append(_t('CCCCCCCCCCC', 'Singer - One (Official Music Video)', 'Singer'))
+    assert imports._resolve_ma({'name': 'One', 'artists': [{'name': 'Singer'}]})['video_id'] == 'CCCCCCCCCCC'
+
+
+def test_ma_old_or_unknown_version_does_not_fetch_playlist(monkeypatch):
+    from bt.music import imports
+    monkeypatch.setenv('MUSIC_ASSISTANT_URL', 'http://ma.local:8095')
+    monkeypatch.setenv('MUSIC_ASSISTANT_TOKEN', 'test')
+    version = ['2.10.9']
+    class Client:
+        def __init__(self, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def get(self, url):
+            assert url.endswith('/info')
+            return imports.httpx.Response(200, json={'server_version': version[0]},
+                                          request=imports.httpx.Request('GET', url))
+        def stream(self, *a, **kw):
+            pytest.fail('must not fetch playlist on unsupported servers')
+    monkeypatch.setattr(imports.httpx, 'Client', Client)
+    for v in ('2.10.9', '', 'unknown'):
+        version[0] = v
+        with pytest.raises(ValueError, match='2.11 or newer'):
+            imports._ma_tracks('library://playlist/13')

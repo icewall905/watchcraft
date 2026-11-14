@@ -43,8 +43,62 @@
 	let newDesc = $state('');
 	let newCurator = $state('disco');
 	let newName = $state('');
-	let newKind = $state<'curator' | 'manual'>('curator');
+	let newKind = $state<'curator' | 'manual' | 'seed'>('curator');
+	let seedQuery = $state('');
+	let seedResults = $state<Track[]>([]);
+	let seedTrack = $state<Track | null>(null);
+	let seedSearching = $state(false);
+	let seedError = $state('');
+	let seedSearchVersion = 0;
+
+	async function findSeed() {
+		const query = seedQuery.trim();
+		if (!query) return;
+		const version = ++seedSearchVersion;
+		seedSearching = true;
+		seedTrack = null;
+		seedResults = [];
+		seedError = '';
+		try {
+			const r = await music.search(query);
+			if (version === seedSearchVersion) seedResults = r.tracks;
+		} catch (e) {
+			if (version === seedSearchVersion) seedError = (e as Error).message;
+		} finally {
+			if (version === seedSearchVersion) seedSearching = false;
+		}
+	}
+	let importing = $state(false);
+	let importSource = $state<'youtube' | 'music_assistant'>('youtube');
+	let importReference = $state('');
+	let importName = $state('');
+	let importStatus = $state<{ music_assistant_configured: boolean; max_tracks: number } | null>(null);
+	let importError = $state('');
+	let importReport = $state('');
 	let busy = $state(false);
+
+	async function openImport() {
+		importing = true;
+		importError = '';
+		try { importStatus = await music.importStatus(); }
+		catch (e) { importError = (e as Error).message; }
+	}
+	async function importPlaylist(e: Event) {
+		e.preventDefault();
+		if (busy || !importReference.trim()) return;
+		busy = true;
+		importError = '';
+		try {
+			const r = await music.importPlaylist({ source: importSource, reference: importReference.trim(), name: importName.trim() });
+			mixes = [r.mix, ...mixes.filter((m) => m.id !== r.mix.id)];
+			importReport = `Imported ${r.imported} tracks. ${r.skipped} skipped; ${r.duplicates} duplicates removed.${r.limited ? ' The import reached its 300-track limit; more tracks may remain in the source.' : ''}`;
+			importing = false;
+			importReference = '';
+			importName = '';
+			setParams({ tab: 'mixes', mix: String(r.mix.id), artist: null });
+		} catch (e) { importError = (e as Error).message; }
+		finally { busy = false; }
+	}
 	let poll: number | undefined;
 
 	function setParams(patch: Record<string, string | null>) {
@@ -206,15 +260,21 @@
 	}
 	async function createMix(e: Event) {
 		e.preventDefault();
+		if (newKind === 'seed' && !seedTrack) return;
 		busy = true;
 		try {
 			const m = newKind === 'curator'
 				? await music.createMix({ kind: 'curator', description: newDesc, curator: newCurator })
-				: await music.createMix({ kind: 'manual', name: newName });
+				: newKind === 'seed'
+					? await music.createMix({ kind: 'seed', seed: seedTrack!, name: newName })
+					: await music.createMix({ kind: 'manual', name: newName });
 			mixes = [m, ...mixes];
 			creating = false;
 			newDesc = '';
 			newName = '';
+			seedTrack = null;
+			seedResults = [];
+			seedQuery = '';
 			setParams({ tab: 'mixes', mix: String(m.id) });
 		} catch { /* toast shown */ } finally {
 			busy = false;
@@ -306,6 +366,8 @@
 		</section>
 	{/if}
 
+	{#if importReport}<p class="hint" role="status">{importReport} <button class="btn small" onclick={() => (importReport = '')}>Dismiss</button></p>{/if}
+
 	<nav class="tabs" aria-label="Music sections">
 		{#each TABS as [key, label]}
 			<button class="tab" class:on={tab === key} use:focusable aria-current={tab === key ? 'page' : undefined} onclick={() => setParams({ tab: key === 'foryou' ? null : key })}>{label}</button>
@@ -346,8 +408,9 @@
 	{:else if tab === 'mixes'}
 		<div class="mixes">
 			<button class="mix new" use:focusable onclick={() => (creating = true)}>
-				<span class="plus">＋</span><strong>New mix</strong><small>Describe it — a curator builds it</small>
+				<span class="plus">＋</span><strong>New mix</strong><small>Describe it, choose a seed song, or build your own</small>
 			</button>
+			<button class="mix new" use:focusable onclick={openImport}><span class="plus">⇩</span><strong>Import playlist</strong><small>YouTube or Music Assistant</small></button>
 			{#each mixes as m (m.id)}
 				<button class="mix" use:focusable style:--mix={m.color || '#ff4fa3'} onclick={() => setParams({ mix: String(m.id) })}>
 					<div class="covers">
@@ -473,11 +536,39 @@
 	</Modal>
 {/if}
 
+
+{#if importing}
+	<Modal portal title="Import playlist" subtitle="Save a playlist as a mix in this profile" size="md" onClose={() => { if (!busy) importing = false; }}>
+		<form class="create" onsubmit={importPlaylist}>
+			<div class="kind">
+				<button type="button" class="chip" class:on={importSource === 'youtube'} disabled={busy} use:focusable onclick={() => { importSource = 'youtube'; importReference = ''; }}>YouTube / YouTube Music</button>
+				<button type="button" class="chip" class:on={importSource === 'music_assistant'} disabled={busy} use:focusable onclick={() => { importSource = 'music_assistant'; importReference = ''; }}>Music Assistant</button>
+			</div>
+			{#if importSource === 'youtube'}
+				<p class="muted">Paste a YouTube or YouTube Music playlist link. Private playlists need working YouTube cookies in Settings.</p>
+			{:else}
+				<p class="muted">Requires Music Assistant 2.11 or newer. Paste a playlist URI, such as library://playlist/13. Songs are matched to YouTube music videos; unavailable matches are skipped.</p>
+				{#if importStatus && !importStatus.music_assistant_configured}
+					<p class="hint">To connect, set MUSIC_ASSISTANT_URL and MUSIC_ASSISTANT_TOKEN on the WatchCraft server and restart it. Create a long-lived token in Music Assistant → Settings → Profile.</p>
+				{/if}
+			{/if}
+			<label for="playlist-reference">{importSource === 'youtube' ? 'Playlist link' : 'Playlist URI'}</label>
+			<input id="playlist-reference" class="input" required maxlength="1000" bind:value={importReference} disabled={busy} placeholder={importSource === 'youtube' ? 'https://music.youtube.com/playlist?list=…' : 'library://playlist/13'} use:focusable />
+			<label for="import-name">Mix name (optional)</label>
+			<input id="import-name" class="input" maxlength="80" bind:value={importName} disabled={busy} use:focusable />
+			<p class="muted small">Imports up to 300 tracks in order, without duplicates. This saves a copy; later source edits do not sync.</p>
+			{#if importError}<p class="err" role="alert">{importError}</p>{/if}
+			<button class="btn primary big" use:focusable disabled={busy || !importReference.trim() || (importSource === 'music_assistant' && !importStatus?.music_assistant_configured)}>{busy ? 'Importing and matching tracks…' : 'Import playlist'}</button>
+		</form>
+	</Modal>
+{/if}
+
 {#if creating}
-	<Modal portal title="New mix" subtitle="Describe the mood and pick a curator — or start an empty mix" size="md" onClose={() => (creating = false)}>
+	<Modal portal title="New mix" subtitle="Describe a mood, choose a seed song, or start an empty mix" size="md" onClose={() => (creating = false)}>
 		<form class="create" onsubmit={createMix}>
 			<div class="kind">
 				<button type="button" class="chip" class:on={newKind === 'curator'} use:focusable onclick={() => (newKind = 'curator')}>✨ Curated</button>
+				<button type="button" class="chip" class:on={newKind === 'seed'} use:focusable onclick={() => (newKind = 'seed')}>📻 From a seed track</button>
 				<button type="button" class="chip" class:on={newKind === 'manual'} use:focusable onclick={() => (newKind = 'manual')}>💿 Build it myself</button>
 			</div>
 			{#if newKind === 'curator'}
@@ -494,6 +585,23 @@
 					{/each}
 				</div>
 				<button class="btn primary big" use:focusable disabled={busy || !newDesc.trim()}>{busy ? 'Starting…' : `Ask ${curatorOf(newCurator)?.name ?? 'the curator'}`}</button>
+			{:else if newKind === 'seed'}
+				<p class="muted">Choose one song. YouTube Music radio finds related music videos, and saves them as a mix you can refresh.</p>
+				<label for="seed-search">Seed song</label>
+				<div class="acts">
+					<input id="seed-search" class="input" type="search" maxlength="200" bind:value={seedQuery} placeholder="Artist and song title" use:focusable onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void findSeed(); } }} />
+					<button type="button" class="btn" use:focusable disabled={seedSearching || !seedQuery.trim()} onclick={findSeed}>{seedSearching ? 'Searching…' : 'Find seed track'}</button>
+				</div>
+				{#if seedError}<p class="err" role="alert">{seedError}</p>{/if}
+				<div class="seed-results" aria-live="polite">
+					{#each seedResults as t (t.video_id)}
+						<button type="button" class="btn" class:primary={seedTrack?.video_id === t.video_id} aria-pressed={seedTrack?.video_id === t.video_id} use:focusable onclick={() => (seedTrack = t)}>{t.artist} — {t.title}</button>
+					{/each}
+				</div>
+				{#if seedTrack}<p>Seed: <strong>{seedTrack.artist} — {seedTrack.title}</strong></p>{/if}
+				<label for="seed-name">Mix name (optional)</label>
+				<input id="seed-name" class="input" maxlength="80" bind:value={newName} placeholder="Name this mix" use:focusable />
+				<button class="btn primary big" use:focusable disabled={busy || !seedTrack}>{busy ? 'Starting…' : 'Create mix from seed'}</button>
 			{:else}
 				<input class="input" maxlength="80" bind:value={newName} placeholder="Mix name" use:focusable />
 				<button class="btn primary big" use:focusable disabled={busy}>Create mix</button>
@@ -577,6 +685,8 @@
 	.ic { background: none; border: 0; font-size: 1.1rem; padding: 0.35rem; border-radius: var(--r-sm); cursor: pointer; color: var(--text); }
 	.ic:focus-visible { outline: 2px solid var(--accent); }
 
+	.seed-results { display: grid; gap: 0.4rem; max-height: 18rem; overflow-y: auto; }
+	.seed-results .btn { justify-content: flex-start; text-align: start; white-space: normal; }
 	.create { display: grid; gap: 0.8rem; }
 	.kind, .ideas { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 	.curators { display: grid; gap: 0.5rem; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); }

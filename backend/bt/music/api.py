@@ -13,7 +13,7 @@ from ..access import require_hub
 from ..db import session
 from ..hub import ai
 from .. import subtitle_jobs
-from . import dj, lyrics, service, sync, yt
+from . import dj, imports, lyrics, service, sync, yt
 from .models import MusicTrack
 
 router = APIRouter(prefix='/music', tags=['music'], dependencies=[Depends(require_hub)])
@@ -48,6 +48,12 @@ class MixIn(BaseModel):
 
 class MixPatch(BaseModel):
     name: str = Field(min_length=1, max_length=80)
+
+
+class ImportIn(BaseModel):
+    source: str = Field(pattern='^(youtube|music_assistant)$')
+    reference: str = Field(min_length=1, max_length=1000)
+    name: str = Field('', max_length=80)
 
 
 class CopyIn(BaseModel):
@@ -152,6 +158,21 @@ def play(body: PlayIn, pid: int = Depends(require_hub)):
 def mixes(pid: int = Depends(require_hub)):
     with session() as s:
         return {'mixes': service.list_mixes(s, pid)}
+
+
+@router.get('/import/status')
+def import_status(pid: int = Depends(require_hub)):
+    return {'music_assistant_configured': imports.configured(), 'max_tracks': imports.MAX_TRACKS}
+
+
+@router.post('/import')
+def import_playlist(body: ImportIn, pid: int = Depends(require_hub)):
+    with _yt_errors():
+        result = imports.playlist(body.source, body.reference)
+        with session() as s:
+            m = service.create_mix(s, pid, kind='manual', name=body.name or result['name'], tracks=result['tracks'])
+            return {'mix': service.mix_dict(s, m, pid, with_tracks=True), 'imported': len(result['tracks']),
+                    'skipped': result['skipped'], 'duplicates': result['duplicates'], 'limited': result['limited']}
 
 
 @router.post('/mixes')

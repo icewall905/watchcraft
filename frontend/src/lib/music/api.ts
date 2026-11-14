@@ -51,6 +51,9 @@ export const music = {
 	dislike: (t: Track, on: boolean) => send<Favorites>('POST', '/favorites', { kind: 'dislike', on, track: slim(t) }),
 	lessArtist: (name: string, on: boolean, artistId = '') => send<Favorites>('POST', '/favorites', { kind: 'less', on, artist: name, artist_id: artistId }),
 	play: (videoId: string, skipped: boolean) => send<{ ok: boolean }>('POST', '/plays', { video_id: videoId, skipped }, false),
+	importStatus: () => get<{ music_assistant_configured: boolean; max_tracks: number }>('/import/status'),
+	importPlaylist: (body: { source: 'youtube' | 'music_assistant'; reference: string; name?: string }) =>
+		send<{ mix: Mix; imported: number; skipped: number; duplicates: number; limited: boolean }>('POST', '/import', body),
 	mixes: () => get<{ mixes: Mix[] }>('/mixes'),
 	mix: (id: number) => get<Mix>(`/mixes/${id}`),
 	createMix: (body: { kind: Mix['kind']; seed?: Track; description?: string; curator?: string; name?: string; tracks?: Track[] }) =>
