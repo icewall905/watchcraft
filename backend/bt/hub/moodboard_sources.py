@@ -1,13 +1,17 @@
-"""Bounded, attributed Wikimedia Commons image discovery for Mood Board curators.
+"""Bounded image discovery through configured SearXNG, with Wikimedia Commons fallback.
 
-The Action API supplies the original file's license and description-page identity.
-GIF originals are kept because Commons thumbnails can flatten their animation.
+Search results keep their original source identity and attribution; captured raster pixels
+are judged by the board curator. Commons additionally supplies explicit license metadata.
 """
 import json
+import ipaddress
+import httpx
 import re
 from html.parser import HTMLParser
 from urllib.parse import urlencode, urlsplit
 
+from .. import curation
+from ..db import get_settings
 from . import social_fetch
 
 API = 'https://commons.wikimedia.org/w/api.php'
@@ -67,7 +71,7 @@ def _positive(value):
     return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else 0
 
 
-def search(query: str, limit: int = 30, offset: int = 0) -> list[dict]:
+def commons_search(query: str, limit: int = 30, offset: int = 0) -> list[dict]:
     """One public API request, at most 30 raster images, with safe plain attribution.
 
     Errors propagate to the board run so an unavailable source is distinguishable
@@ -145,3 +149,107 @@ def search(query: str, limit: int = 30, offset: int = 0) -> list[dict]:
         if len(results) >= limit:
             break
     return results
+
+
+def _public_url(value):
+    """Lexical gate only. Actual public DNS/redirect checks happen during local capture."""
+    if not isinstance(value, str) or len(value) > 4096 or any(c.isspace() or ord(c) < 32 for c in value):
+        return ''
+    try:
+        parsed = urlsplit(value)
+        if parsed.fragment or '\\' in value:
+            return ''
+        normalized = curation.canonical(value)
+        host = parsed.hostname.lower().rstrip('.')
+        if ('.' not in host or host in ('localhost', 'localhost.localdomain') or
+                host.endswith(('.localhost', '.local', '.internal', '.lan', '.home', '.test', '.invalid', '.onion'))):
+            return ''
+        try:
+            if not ipaddress.ip_address(host).is_global:
+                return ''
+        except ValueError:
+            # Bracketed non-IP hosts, malformed labels and numeric shorthand aren't public names.
+            if ':' in host or not re.fullmatch(r'[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?', host) or host.replace('.', '').isdigit():
+                return ''
+        return normalized
+    except (ValueError, AttributeError):
+        return ''
+
+
+def valid_candidate(item):
+    """Normalize source/image identity; public fetching separately pins and checks DNS."""
+    if not isinstance(item, dict):
+        return '', ''
+    source, image = _public_url(item.get('source_url')), _public_url(item.get('image_url'))
+    return (source, image) if source and image else ('', '')
+
+
+def _validate_search(query, limit, offset):
+    if not isinstance(query, str) or not query.strip() or len(query) > 300:
+        raise ValueError('Enter an interest or hobby of up to 300 characters.')
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit < 1:
+        raise ValueError('The image limit must be positive.')
+    if not isinstance(offset, int) or isinstance(offset, bool) or not 0 <= offset <= 10000:
+        raise ValueError('The image search offset is out of range.')
+    return min(limit, 30)
+
+
+def searx_search(query, limit=30, offset=0):
+    """Configured admin-trusted SearXNG may be on LAN; result media may not."""
+    limit = _validate_search(query, limit, offset)
+    cfg = get_settings()['search']
+    base = str(cfg.get('searxng_url') or '').rstrip('/')
+    if cfg.get('provider') != 'searxng' or not base:
+        raise ValueError('No image search provider is configured.')
+    params = {'q': query.strip(), 'format': 'json', 'categories': 'images',
+              'safesearch': 2, 'pageno': offset // 30 + 1}
+    raw = bytearray()
+    with httpx.stream('GET', base + '/search', params=params, timeout=25, follow_redirects=False,
+                      headers={'User-Agent': 'WatchCraft/0.2', 'Accept': 'application/json'}) as response:
+        response.raise_for_status()
+        for chunk in response.iter_bytes(65536):
+            if len(raw) + len(chunk) > MAX_RESPONSE_BYTES:
+                raise ValueError('Image search response too large.')
+            raw.extend(chunk)
+    payload = json.loads(raw)
+    if not isinstance(payload, dict) or payload.get('error') or not isinstance(payload.get('results'), list):
+        raise ValueError('Image search returned an unexpected response.')
+    results, seen = [], set()
+    for row in payload['results'][:300]:
+        if not isinstance(row, dict):
+            continue
+        source, image = valid_candidate({'source_url': row.get('url'), 'image_url': row.get('img_src')})
+        title, description = _text(row.get('title'), 500), _text(row.get('content'))
+        if not source or source in seen or not title or EXPLICIT.search(title + ' ' + description):
+            continue
+        results.append({'title': title, 'description': description, 'source_url': source, 'image_url': image,
+                        'media_type': 'gif' if urlsplit(image).path.lower().endswith('.gif') else 'image',
+                        'attribution': 'Source: ' + urlsplit(source).hostname,
+                        'license': 'Rights retained by original creators; reuse permission unknown'})
+        seen.add(source)
+        if len(results) >= limit:
+            break
+    return results
+
+
+def search(query: str, limit: int = 30, offset: int = 0) -> list[dict]:
+    """Search broad visual interests through configured image search, with Commons fallback."""
+    limit = _validate_search(query, limit, offset)
+    cfg = get_settings()['search']
+    error = None
+    if cfg.get('provider') == 'searxng' and cfg.get('searxng_url'):
+        try:
+            results = searx_search(query, limit, offset)
+            if results:
+                return results
+        except Exception as exc:
+            error = exc
+    try:
+        fallback = commons_search(query, limit, offset)
+    except Exception:
+        if error:
+            raise ValueError('Image search and Wikimedia Commons are unavailable. Try again later.') from None
+        raise
+    if error and not fallback:
+        raise ValueError('Image search is unavailable and Wikimedia Commons found no matching images. Try again later.') from None
+    return fallback

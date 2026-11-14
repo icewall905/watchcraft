@@ -249,12 +249,16 @@ be turned off per household with the "Recover unreadable pages" toggle on the Te
 ## Mood boards
 
 `/boards` keeps visual inspiration in profile-owned boards. Each board has independent interests,
-optional curator notes, collection cadence and enabled state. These curators collect Wikimedia Commons
-images/GIFs into local media with source attribution and license; pins never enter News or Memes.
+optional curator notes, collection cadence and enabled state. These curators use configured SearXNG image search with Wikimedia Commons fallback,
+then capture approved images/GIFs locally with original source and rights information; pins never enter News or Memes.
 The masonry page supports saving, hiding, moving and paginating images. Reduced-motion users open
 animated GIFs explicitly. Curators require a configured vision-enabled AI model and inspect captured image pixels,
 applying specific instructions as strict requirements and excluding uncertain matches. Unavailable
-vision leaves existing pins intact and reports a clear error. Collection is bounded to 50 boards/profile and 1,000 pins/board.
+vision leaves existing pins intact and reports a clear error. Short planned queries retrieve candidates;
+the full curator instructions are enforced by image review. Queued, running, empty and failed outcomes
+are visible on the board and in Agent Activity, including real search/review/add counts. The manual
+refresh response includes a retry countdown and last result instead of a generic cooldown message.
+Collection is bounded to 50 boards/profile and 1,000 pins/board.
 
 `/api/hub/boards` lists/creates boards; `/{id}` reads/edits/deletes a board, `/{id}/refresh` queues a
 bounded collection, and `/{id}/pins/{pin}` changes saved/hidden state or moves a pin. Pin media is served

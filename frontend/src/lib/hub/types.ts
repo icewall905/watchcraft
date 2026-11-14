@@ -126,10 +126,10 @@ export type SavedSearch = { id: number; name: string; query: string; filters: Re
 
 export type TeamStatus = 'running' | 'waiting' | 'idle' | 'attention' | 'paused';
 export type TeamAgent = {
-	key: string; kind: 'curator' | 'scout' | 'briefing' | 'master'; id: number | null; name: string; icon: string; color: string; mission: string;
+	key: string; kind: 'curator' | 'scout' | 'briefing' | 'master' | 'moodboard'; id: number | null; name: string; icon: string; color: string; mission: string;
 	tone?: ToneName;
 	status: TeamStatus; since: number | null; next_run: number | null; last_run?: number | null; doing?: string | null; query?: string;
-	role?: 'watch' | 'research'; error?: string; enabled?: boolean; found_today?: number; plans?: number;
+	role?: 'watch' | 'research' | 'visual'; pin_count?: number; error?: string; enabled?: boolean; found_today?: number; plans?: number;
 	finds?: { id: number; title: string; found_at: number; url?: string; summary?: string; publisher?: string;
 		type?: string; published_at?: number | null; source_name?: string; reason?: string; score?: number | null }[];
 	timeline?: { id?: number; step: string; message: string; at: number; detail?: string;
@@ -140,7 +140,7 @@ export type TeamAgent = {
 	last?: { status: string; new_items?: number; seen_items?: number; suggestions?: number; query?: string; error?: string; finished_at: number | null; started_at?: number | null; duration_s?: number | null } | null;
 };
 export type TeamEntry = {
-	at: number; agent: string; name: string; icon: string; kind: 'curator_run' | 'scout_run' | 'briefing'; status: string;
+	at: number; agent: string; name: string; icon: string; kind: 'curator_run' | 'scout_run' | 'briefing' | 'moodboard_run'; status: string;
 	new_items?: number; seen_items?: number; errors?: number; query?: string; suggestions?: number; title?: string; briefing_id?: number;
 };
 export type Team = { limit: number; running: number; waiting: number; agents: TeamAgent[]; journal: TeamEntry[] };

@@ -21,7 +21,7 @@ from ..models import AgentEvent, Download, Profile, Setting
 from . import activity, ai, engine, memes, polling, repair, scout, slots, watchers
 from .models import (Alert, Briefing, BriefingIssue, CaptureJob, CapturedAsset, CapturedPage, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
                      CuratorRun, CuratorSource, Edition, HubLesson, HubPreferenceCore, ItemState, ItemVerdict, MasterQueue, MemeExample, MemeFormat, MemeTrend, MemeTrendState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, ScoutReportConfig, ScoutReportIssue, SitemapEntry, Source, SourceCheck, Topic, TopicItem, WatcherRevision)
-from .models import StoryItem
+from .models import StoryItem, MoodBoard, MoodPin
 from .master import views as curation_views
 from .master.cluster import same_story, title_key
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
@@ -1402,6 +1402,32 @@ def team(pid: int = Depends(profile_id)):
             journal.append({'at': run.finished_at, 'agent': f'curator-{run.curator_id}', 'name': name, 'icon': icon,
                             'kind': 'curator_run', 'status': run.status, 'new_items': run.new_items,
                             'seen_items': run.seen_items, 'errors': len(run.errors)})
+
+        for board in s.exec(select(MoodBoard).where(MoodBoard.profile_id == pid).order_by(MoodBoard.id)).all():
+            timeline = activity.board_recent(s, pid, board.id)
+            active = bool(board.lease and board.build_started > time.time() - 1800)
+            interrupted = bool(board.lease and not active)
+            state = ('running' if active else 'attention' if interrupted or board.error else
+                     'waiting' if board.last_status == 'queued' else 'paused' if not board.enabled else 'idle')
+            pin_count = s.exec(select(func.count()).select_from(MoodPin).where(
+                MoodPin.board_id == board.id, MoodPin.profile_id == pid, MoodPin.hidden == False)).one()
+            found_today = s.exec(select(func.count()).select_from(MoodPin).where(
+                MoodPin.board_id == board.id, MoodPin.profile_id == pid,
+                MoodPin.hidden == False, MoodPin.created_at >= day)).one()
+            agents.append({'key': f'moodboard-{board.id}', 'kind': 'moodboard', 'id': board.id,
+                           'name': board.name, 'icon': '🖼️', 'color': '#d3a5d8',
+                           'mission': board.interests, 'role': 'visual', 'status': state,
+                           'since': board.build_started if active else None,
+                           'error': 'The previous collection was interrupted; awaiting retry.' if interrupted else board.error,
+                           'enabled': board.enabled, 'next_run': board.next_run if board.enabled else None,
+                           'last_run': board.last_run or None, 'pin_count': pin_count, 'found_today': found_today,
+                           'timeline': timeline, 'doing': timeline[-1]['message'] if timeline else None})
+            for event in timeline:
+                if event['step'] in ('complete', 'failed'):
+                    journal.append({'at': event['at'], 'agent': f'moodboard-{board.id}', 'name': board.name,
+                                    'icon': '🖼️', 'kind': 'moodboard_run',
+                                    'status': 'failed' if event['step'] == 'failed' else 'ok',
+                                    'new_items': event.get('added') or 0, 'title': event['message']})
 
         _expire_scout_runs(s); s.commit()
         runs = s.exec(select(ScoutRun).where(ScoutRun.profile_id == pid).order_by(ScoutRun.created_at.desc()).limit(6)).all()

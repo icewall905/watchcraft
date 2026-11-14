@@ -6,6 +6,11 @@ import pytest
 from bt.hub import moodboard_sources as sources
 
 
+@pytest.fixture(autouse=True)
+def no_configured_provider(monkeypatch):
+    monkeypatch.setattr(sources, 'get_settings', lambda: {'search': {'provider': 'none', 'searxng_url': ''}})
+
+
 def page(**changes):
     info = {'url': 'https://upload.wikimedia.org/wikipedia/commons/a/ab/Garden.jpg',
             'thumburl': 'https://upload.wikimedia.org/wikipedia/commons/thumb/a/ab/Garden.jpg/1000px-Garden.jpg',
@@ -123,3 +128,65 @@ def test_current_commons_thumbnail_host_and_tracking_queries(monkeypatch):
         thumburl='https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Garden.jpg/1280px-Garden.jpg?utm_campaign=imageinfo')])
     result = sources.search('gardens')[0]
     assert result['image_url'] == 'https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ab/Garden.jpg/1280px-Garden.jpg'
+
+
+class Stream:
+    def __init__(self, payload=None, chunks=None):
+        self.chunks = chunks if chunks is not None else [json.dumps(payload).encode()]
+    def __enter__(self):
+        return self
+    def __exit__(self, *args):
+        pass
+    def raise_for_status(self):
+        pass
+    def iter_bytes(self, size):
+        yield from self.chunks
+
+
+def configure_searx(monkeypatch, payload):
+    monkeypatch.setattr(sources, 'get_settings', lambda: {'search': {'provider': 'searxng', 'searxng_url': 'http://10.0.0.2:8080/'}})
+    calls = []
+    monkeypatch.setattr(sources.httpx, 'stream', lambda *a, **kw: calls.append((a, kw)) or Stream(payload))
+    return calls
+
+
+def test_configured_images_search_bounded_attributed_and_safe(monkeypatch):
+    row = {'url': 'https://example.com/homelab', 'img_src': 'https://images.example.com/rack.jpg',
+           'title': '<b>Homelab rack</b>', 'content': '<p>Small server cabinet</p>'}
+    calls = configure_searx(monkeypatch, {'results': [row, row, {**row, 'url': 'https://127.0.0.1/private'},
+                                                            {**row, 'url': 'https://example.com/other', 'img_src': 'http://example.com/a.jpg'}]})
+    monkeypatch.setattr(sources, 'commons_search', lambda *a, **kw: pytest.fail('unexpected fallback'))
+    result = sources.search('homelab rack', 100, 30)
+    assert len(result) == 1 and result[0]['title'] == 'Homelab rack'
+    assert result[0]['description'] == 'Small server cabinet'
+    assert result[0]['attribution'] == 'Source: example.com'
+    assert 'permission unknown' in result[0]['license']
+    assert calls[0][0] == ('GET', 'http://10.0.0.2:8080/search')
+    assert calls[0][1]['params'] == {'q': 'homelab rack', 'format': 'json', 'categories': 'images', 'safesearch': 2, 'pageno': 2}
+    assert calls[0][1]['follow_redirects'] is False
+
+
+@pytest.mark.parametrize('url', ['http://example.com/x', 'https://user@example.com/x', 'https://example.com:8443/x',
+    'https://127.0.0.1/x', 'https://192.168.1.1/x', 'https://169.254.169.254/x', 'https://[::1]/x',
+    'https://localhost/x', 'https://host.local/x', 'https://host.internal/x', 'https://example.com/x#fragment',
+    'https://example.com/white space', 'https://example.com/\\evil', 'data:image/png;base64,xx'])
+def test_candidate_rejects_non_public_lexical_urls(url):
+    assert sources.valid_candidate({'source_url': url, 'image_url': 'https://example.com/image.jpg'}) == ('', '')
+    assert sources.valid_candidate({'source_url': 'https://example.com/page', 'image_url': url}) == ('', '')
+
+
+def test_searx_empty_falls_back_to_commons(monkeypatch):
+    configure_searx(monkeypatch, {'results': []})
+    expected = [{'title': 'Commons image'}]
+    monkeypatch.setattr(sources, 'commons_search', lambda *a, **kw: expected)
+    assert sources.search('garden') == expected
+
+
+def test_searx_oversized_or_wrong_response_is_not_empty_success(monkeypatch):
+    configure_searx(monkeypatch, {'unexpected': []})
+    monkeypatch.setattr(sources, 'commons_search', lambda *a, **kw: [])
+    with pytest.raises(ValueError, match='unavailable'):
+        sources.search('homelab')
+    monkeypatch.setattr(sources.httpx, 'stream', lambda *a, **kw: Stream(chunks=[b'x' * 1_000_001] * 2))
+    with pytest.raises(ValueError, match='too large'):
+        sources.searx_search('homelab')

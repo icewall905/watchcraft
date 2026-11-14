@@ -106,7 +106,7 @@ def test_deleted_board_cannot_be_recreated_by_pending_collect(client, monkeypatc
 def test_collection_failure_and_disabled_manual_refresh(client, monkeypatch):
     b = make(client, enabled=False)
     assert not mb.dispatch_due()
-    assert client.post(f"/api/hub/boards/{b['id']}/refresh").json()['queued']
+    assert client.post(f"/api/hub/boards/{b['id']}/refresh").json()['status'] == 'queued'
     def fail(*args, **kwargs):
         raise ValueError('secret detail')
     monkeypatch.setattr(moodboard_sources, 'search', fail)
@@ -220,7 +220,7 @@ def test_disabling_curator_and_stale_lease_recovery(client, monkeypatch):
         s.add(board)
         s.commit()
     assert mb.dispatch_due()
-    assert client.get(f"/api/hub/boards/{b['id']}").json()['board']['last_status'] == 'ok'
+    assert client.get(f"/api/hub/boards/{b['id']}").json()['board']['last_status'] == 'no_matches'
 
 
 def test_notes_failure_keeps_existing_pins_and_reports_configuration(client, monkeypatch):
@@ -276,7 +276,7 @@ def test_collection_specific_search_and_rejected_pixels_not_stored(client, monke
     monkeypatch.setattr(mb, 'capture_image', lambda url: (b'pixels', 'image/png', 1, 1))
     monkeypatch.setattr(mb.ai, '_call', lambda *a, **kw: {'indices': []})
     assert mb.dispatch_due()
-    assert queries == ['dresses Heart patterns only']
+    assert queries == ['dresses']  # Notes constrain vision, not verbatim search syntax.
     assert client.get(f"/api/hub/boards/{board['id']}").json()['pins'] == []
 
 
@@ -327,3 +327,51 @@ def test_concurrent_import_cannot_push_curator_over_pin_limit(client, monkeypatc
         pins = s.exec(select(MoodPin).where(MoodPin.board_id == b['id'])).all()
         assert len(pins) == 2
         assert not any(p.source_url == candidate(99)['source_url'] for p in pins)
+
+
+def test_empty_run_result_cooldown_and_activity(client, monkeypatch):
+    b=make(client)
+    monkeypatch.setattr(moodboard_sources,'search',lambda *a,**kw:[])
+    assert client.post(f"/api/hub/boards/{b['id']}/refresh").json()['status'] == 'queued'
+    assert mb.dispatch_due()
+    data=client.get(f"/api/hub/boards/{b['id']}").json()['board']
+    assert data['last_status']=='no_matches' and 'No new images' in data['last_result']
+    assert 0 < data['retry_after'] <= 300
+    retry=client.post(f"/api/hub/boards/{b['id']}/refresh").json()
+    assert retry['status']=='cooldown' and retry['last_result']==data['last_result']
+    agent=next(a for a in client.get('/api/hub/team').json()['agents'] if a['key']==f"moodboard-{b['id']}")
+    assert agent['timeline'][-1]['step']=='complete' and 'No new images' in agent['doing']
+    client.patch(f"/api/hub/boards/{b['id']}",json={'instructions':'Only blue flowers'})
+    assert client.post(f"/api/hub/boards/{b['id']}/refresh").json()['status'] == 'queued'
+
+
+def test_planned_queries_web_candidates_and_visual_review(client,monkeypatch):
+    b=make(client,interests='Homelab racks',instructions='Creative setups and cool gear only')
+    queries=[]
+    web=dict(title='Real home server rack',source_url='https://example.org/homelab',image_url='https://images.example.org/rack.jpg',attribution='example.org',license='Rights retained')
+    monkeypatch.setattr(moodboard_sources,'search',lambda q,**kw:queries.append(q) or [web])
+    monkeypatch.setattr(mb,'capture_image',lambda url:(b'pixels','image/jpeg',100,100))
+    calls=[]
+    def judge(system,user,schema,**kw):
+        calls.append((user,kw))
+        return {'queries':['home server rack setup','creative homelab rack']} if 'queries' in schema['properties'] else {'indices':[0]}
+    monkeypatch.setattr(mb.ai,'_call',judge)
+    assert mb.dispatch_due()
+    assert queries==['home server rack setup','creative homelab rack']
+    data=client.get(f"/api/hub/boards/{b['id']}").json()
+    assert len(data['pins'])==1 and data['pins'][0]['source_url']==web['source_url']
+    assert 'Added 1 images' in data['board']['last_result']
+    assert any('images' in kw and 'Creative setups' in user for user,kw in calls)
+
+
+def test_failed_run_short_retry_and_activity_deletion(client,monkeypatch):
+    from bt.models import AgentEvent
+    b=make(client)
+    monkeypatch.setattr(mb.ai,'enabled',lambda:False)
+    assert mb.dispatch_due()
+    data=client.get(f"/api/hub/boards/{b['id']}").json()['board']
+    assert data['last_status']=='error' and 0 < data['retry_after'] <= 30
+    assert 'vision' in data['last_result']
+    client.delete(f"/api/hub/boards/{b['id']}")
+    with session() as s:
+        assert not s.exec(select(AgentEvent).where(AgentEvent.payload['board_id'].as_integer()==b['id'])).all()

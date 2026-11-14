@@ -3,6 +3,7 @@ import { qs } from './api';
 export interface MoodBoard {
  id: number; name: string; interests: string; instructions: string; enabled: boolean; interval_hours: number;
  pin_count: number; last_run?: number | null; last_status?: string; error?: string;
+ retry_after?: number; last_result?: string;
 }
 export interface BoardPin {
  id: number; board_id: number; title: string; image_url: string; source_url: string;
@@ -19,7 +20,7 @@ export const boardsApi = {
  detail: (id: number, params: {cursor?: string; saved?: boolean} = {}, signal?: AbortSignal) => request<BoardPage>(`${base}/${id}${qs(params)}`, {signal, toast: false}),
  create: (body: BoardInput) => request<{board: MoodBoard}>(base, {method: 'POST', body, toast: false}),
  update: (id: number, body: BoardInput) => request<{board: MoodBoard}>(`${base}/${id}`, {method: 'PATCH', body, toast: false}),
- refresh: (id: number) => request<{status?: string; queued?: boolean}>(`${base}/${id}/refresh`, {method: 'POST', body: {}, toast: false}),
+ refresh: (id: number) => request<{status: 'queued' | 'collecting' | 'cooldown'; queued: boolean; retry_after: number; last_result: string; board: MoodBoard}>(`${base}/${id}/refresh`, {method: 'POST', body: {}, toast: false}),
  pin: (id: number, pin: number, body: {saved?: boolean; hidden?: boolean; board_id?: number}) => request<{pin: BoardPin}>(`${base}/${id}/pins/${pin}`, {method: 'PATCH', body, toast: false}),
  remove: (id: number) => request<unknown>(`${base}/${id}`, {method: 'DELETE', toast: false})
 };

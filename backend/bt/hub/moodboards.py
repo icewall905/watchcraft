@@ -5,6 +5,8 @@ import json
 import secrets
 import re
 import time
+import math
+import logging
 from io import BytesIO
 from urllib.parse import urlsplit
 
@@ -17,13 +19,37 @@ from sqlmodel import select
 from .. import curation
 from ..access import hub_allowed, require_hub
 from ..db import get_settings, session
-from . import ai
+from . import ai, activity
+from ..models import AgentEvent
 from .models import MoodAsset, MoodBoard, MoodPin, MoodImport
 
 router = APIRouter(prefix='/hub/boards', tags=['Mood boards'])
 IMAGE_TYPES = ('image/jpeg', 'image/png', 'image/gif', 'image/webp')
 PAGE_SIZE = 40
 MAX_PINS = 1000
+log = logging.getLogger(__name__)
+
+
+def retry_after(board):
+    if board.lease or board.last_status == 'queued' or not board.last_run:
+        return 0
+    delay = 30 if board.last_status == 'error' else 300
+    return max(0, math.ceil(delay - (time.time() - board.last_run)))
+
+
+def last_result(s, board, pin_count):
+    event = s.exec(select(AgentEvent).where(AgentEvent.kind == activity.KIND,
+        AgentEvent.profile_id == board.profile_id,
+        AgentEvent.payload['board_id'].as_integer() == board.id,
+        AgentEvent.payload['step'].as_string().in_(['complete', 'failed']))
+        .order_by(AgentEvent.id.desc()).limit(1)).first()
+    if event:
+        return event.message
+    if board.error:
+        return board.error
+    if board.last_run and not pin_count:
+        return 'The last check finished without adding any images.'
+    return 'No detailed result recorded yet.' if board.last_run else 'Not checked yet.'
 
 
 class NotesUnavailable(ValueError):
@@ -63,6 +89,8 @@ def board_json(s, board):
     result = board.model_dump(exclude={'lease', 'build_started', 'revision', 'source_offset'})
     result['pin_count'] = s.exec(select(func.count()).select_from(MoodPin).where(
         MoodPin.board_id == board.id, MoodPin.hidden == False)).one()
+    result['retry_after'] = retry_after(board)
+    result['last_result'] = last_result(s, board, result['pin_count'])
     result['cover_url'] = None
     pin = s.exec(select(MoodPin).where(MoodPin.board_id == board.id, MoodPin.hidden == False)
                  .order_by(MoodPin.id.desc()).limit(1)).first()
@@ -95,10 +123,14 @@ def create(data: BoardCreate, pid: int = Depends(require_hub)):
         if s.exec(select(func.count()).select_from(MoodBoard).where(MoodBoard.profile_id == pid)).one() >= 50:
             raise HTTPException(409, 'Keep up to 50 boards per profile')
         board = MoodBoard(profile_id=pid, **values)
+        board.last_status = 'queued' if board.enabled else ''
         s.add(board)
         s.commit()
         s.refresh(board)
-        return {'board': board_json(s, board)}
+        data = board_json(s, board)
+    if board.enabled:
+        activity.emit_board(board, 'queued-' + secrets.token_hex(8), 'queued', 'First image search queued for ' + board.name + '.')
+    return {'board': data}
 
 
 @router.get('/{bid}')
@@ -137,6 +169,9 @@ def edit(bid: int, data: BoardEdit, pid: int = Depends(require_hub)):
         board.lease = ''
         board.build_started = 0
         board.next_run = 0
+        board.last_status = 'queued' if board.enabled else ''
+        board.last_run = None
+        board.error = ''
         s.add(board)
         s.commit()
         return {'board': board_json(s, board)}
@@ -148,6 +183,8 @@ def delete_profile(s, pid):
     s.exec(delete(MoodAsset).where(MoodAsset.pin_id.in_(ids)))
     s.exec(delete(MoodPin).where(MoodPin.profile_id == pid))
     s.exec(delete(MoodImport).where(MoodImport.profile_id == pid))
+    s.exec(delete(AgentEvent).where(AgentEvent.kind == activity.KIND, AgentEvent.profile_id == pid,
+                                  AgentEvent.payload['board_id'].as_integer() != None))
     s.exec(delete(MoodBoard).where(MoodBoard.profile_id == pid))
 
 
@@ -159,6 +196,8 @@ def remove(bid: int, pid: int = Depends(require_hub)):
         s.exec(delete(MoodAsset).where(MoodAsset.pin_id.in_(ids)))
         s.exec(delete(MoodPin).where(MoodPin.board_id == bid))
         s.exec(delete(MoodImport).where(MoodImport.board_id == bid))
+        s.exec(delete(AgentEvent).where(AgentEvent.kind == activity.KIND, AgentEvent.profile_id == pid,
+                                      AgentEvent.payload['board_id'].as_integer() == bid))
         s.exec(delete(MoodBoard).where(MoodBoard.id == bid))
         s.commit()
     return {'ok': True}
@@ -167,14 +206,20 @@ def remove(bid: int, pid: int = Depends(require_hub)):
 @router.post('/{bid}/refresh')
 def refresh(bid: int, pid: int = Depends(require_hub)):
     with session() as s:
+        s.connection().exec_driver_sql('BEGIN IMMEDIATE')
         board = owned(s, pid, bid)
-        if board.lease or (board.last_run and time.time() - board.last_run < 300):
-            return {'queued': False, 'status': 'Collecting' if board.lease else 'Try again in a few minutes'}
+        wait = retry_after(board)
+        if board.lease or board.last_status == 'queued' or wait:
+            data = board_json(s, board)
+            return {'queued': False, 'status': 'collecting' if board.lease else 'queued' if board.last_status == 'queued' else 'cooldown',
+                    'retry_after': wait, 'last_result': data['last_result'], 'board': data}
         board.next_run = 0
         board.last_status = 'queued'
         s.add(board)
         s.commit()
-    return {'queued': True, 'status': 'queued'}
+        data = board_json(s, board)
+    activity.emit_board(board, 'queued-' + secrets.token_hex(8), 'queued', 'Image search queued for ' + board.name + '.')
+    return {'queued': True, 'status': 'queued', 'retry_after': 0, 'last_result': data['last_result'], 'board': data}
 
 
 @router.patch('/{bid}/pins/{pin_id}')
@@ -241,13 +286,15 @@ def vision_image(data):
     return 'data:image/jpeg;base64,' + base64.b64encode(output.getvalue()).decode('ascii')
 
 
-def select_candidates(candidates, interests, instructions):
+def select_candidates(candidates, interests, instructions, progress=None):
     """Judge captured pixels, in small batches, against every requested constraint."""
     if not ai.enabled() or not get_settings()['llm'].get('vision'):
         raise NotesUnavailable('Vision model unavailable')
     chosen = []
     for start in range(0, min(len(candidates), 30), 5):
         batch = candidates[start:start + 5]
+        if progress:
+            progress(start, min(start + len(batch), len(candidates)))
         schema = {'type': 'object', 'properties': {'indices': {'type': 'array', 'maxItems': len(batch),
                   'items': {'type': 'integer', 'minimum': 0, 'maximum': len(batch)-1}}},
                   'required': ['indices'], 'additionalProperties': False}
@@ -276,6 +323,27 @@ def select_candidates(candidates, interests, instructions):
     return chosen
 
 
+def discovery_queries(interest, instructions):
+    """Search phrases retrieve possibilities; vision enforces the full instructions."""
+    schema = {'type': 'object', 'properties': {'queries': {'type': 'array', 'maxItems': 3,
+              'items': {'type': 'string', 'maxLength': 150}}}, 'required': ['queries'], 'additionalProperties': False}
+    try:
+        out = ai._call('Write up to three short image-search phrases for this visual mood board. '
+                       'Use concrete objects and useful synonyms (homelab racks -> home server rack setup). '
+                       'Include specific requested patterns or objects, but never paste full instructions '
+                       'or combine every interest into one over-constrained query. Return search phrases only.',
+                       '<data>Interest: ' + ai._esc(interest) + '\nInstructions: ' + ai._esc(instructions) + '</data>',
+                       schema, max_tokens=250, role='worker')
+        phrases = out.get('queries')
+        if isinstance(phrases, list):
+            phrases = list(dict.fromkeys(v.strip()[:150] for v in phrases[:3] if isinstance(v, str) and v.strip()))
+            if phrases:
+                return phrases
+    except Exception:
+        pass
+    return [interest[:150]]
+
+
 def collect(bid, lease, revision):
     """Network work stays outside transactions; lease+revision guards final writes."""
     from . import moodboard_sources
@@ -291,21 +359,32 @@ def collect(bid, lease, revision):
         existing = set(s.exec(select(MoodPin.source_url).where(MoodPin.board_id == bid)).all())
     results, failures = [], 0
     error = ''
+    candidates, captured = [], []
+    searched = 0
+    def milestone(step, message, **details):
+        activity.emit_board(board, lease, step, message, **details)
     try:
         select_candidates([], query, instructions)  # Fail before fetching when vision is disabled.
-        # Specific requests guide retrieval as well as the stricter visual acceptance step.
-        search_query = (query + ' ' + instructions).strip()[:300]
-        candidates = moodboard_sources.search(search_query, limit=30, offset=page_offset)
-        captured = []
+        milestone('search', 'Planning image searches for ' + board.name + '.')
+        queries = discovery_queries(query, instructions)
+        seen_candidates = set()
+        for search_query in queries:
+            milestone('search', 'Searching images: ' + search_query, query=search_query)
+            found = moodboard_sources.search(search_query, limit=max(1, 30 // len(queries)), offset=page_offset)
+            searched += 1
+            for item in found:
+                key = item.get('source_url')
+                if key and key not in seen_candidates and len(candidates) < 30:
+                    seen_candidates.add(key)
+                    candidates.append(item)
+        milestone('capture', f'Found {len(candidates)} candidates; downloading image previews for visual review.', candidates=len(candidates))
         for item in candidates[:30]:
             if len(existing) >= MAX_PINS:
                 break
             if item['source_url'] in existing:
                 continue
             # Provider links remain constrained even if a future provider regresses.
-            source = moodboard_sources._url(item['source_url'], 'commons.wikimedia.org', '/wiki/File:')
-            image = (moodboard_sources._url(item['image_url'], 'upload.wikimedia.org', '/wikipedia/commons/')
-                     or moodboard_sources._url(item['image_url'], 'thumb.wikimedia.org', '/wikipedia/commons/thumb/'))
+            source, image = moodboard_sources.valid_candidate(item)
             if not source or not image:
                 continue
             item = {**item, 'source_url': source, 'image_url': image}
@@ -314,15 +393,20 @@ def collect(bid, lease, revision):
                 captured.append({**item, '_captured': (data, mime, width, height)})
             except Exception:
                 failures += 1
-        for item in select_candidates(captured, query, instructions):
+        def progress(start, end):
+            milestone('judge', f'Vision reviewing images {start + 1}–{end} of {len(captured)} against your instructions.',
+                      reviewed=start, candidates=len(captured))
+        for item in select_candidates(captured, query, instructions, progress):
             if len(existing) >= MAX_PINS:
                 break
             data, mime, width, height = item['_captured']
             results.append((item, data, mime, width, height))
             existing.add(item['source_url'])
     except Exception as exc:
+        log.warning('Mood Board %s collection failed at search/vision: %s', bid, type(exc).__name__)
         error = ('Visual curation needs an available vision-capable AI model with vision enabled. No unverified images were added.'
                  if isinstance(exc, NotesUnavailable) else 'Image source unavailable. Please try again later.')
+    added = 0
     with session() as s:
         # Acquire SQLite writer lock before checking lease, preventing deletion/edit races.
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
@@ -343,15 +427,25 @@ def collect(bid, lease, revision):
             s.flush()
             s.add(MoodAsset(pin_id=pin.id, mime=mime, data=data))
             count += 1
+            added += 1
         if not error:
             board.source_offset = (offset + 30) % (300 * len(interests))
-        board.last_status = 'error' if error else ('partial' if failures else 'ok')
+        board.last_status = 'error' if error else 'partial' if failures else 'ok' if added else 'no_matches'
         board.error = error or ('This board has reached its 1,000-image limit. Move images to another board to make room.'
                                if count >= MAX_PINS else (f'{failures} images could not be captured.' if failures else ''))
         board.lease = ''
         board.build_started = 0
         s.add(board)
         s.commit()
+        # Load fields while the session is still open for the activity owner guard.
+        s.refresh(board)
+    summary = (error if error else f'Added {added} images after reviewing {len(captured)} previews from {len(candidates)} search candidates.'
+               if added else 'No new images matched your instructions. ' +
+               (f'Vision reviewed {len(captured)} previews from {len(candidates)} candidates.' if captured else
+                f'Search returned {len(candidates)} candidates; {failures} previews could not be downloaded.' if failures else
+                'No new downloadable candidates were available. Try a more concrete interest or another search.'))
+    milestone('failed' if error else 'complete', summary, added=added, candidates=len(candidates), reviewed=len(captured),
+              capture_failures=failures, searches=searched)
 
 
 def dispatch_due():
@@ -375,6 +469,8 @@ def dispatch_due():
         s.add(board)
         s.commit()
         bid, revision = board.id, board.revision
+        s.refresh(board)
+    activity.emit_board(board, lease, 'started', 'Starting visual curation for ' + board.name + '.')
     collect(bid, lease, revision)
     return True
 
@@ -384,5 +480,6 @@ async def scheduler():
         try:
             worked = await asyncio.to_thread(dispatch_due)
         except Exception:
+            log.exception('Mood Board scheduler tick failed')
             worked = False
         await asyncio.sleep(2 if worked else 30)

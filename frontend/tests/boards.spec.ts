@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { freshPage } from './helpers';
-const board=(id:number,name:string)=>({id,name,interests:'Japanese gardens, bonsai',instructions:'',enabled:true,interval_hours:12,pin_count:3,last_status:'ok',error:''});
+const board=(id:number,name:string)=>({id,name,interests:'Japanese gardens, bonsai',instructions:'',enabled:true,interval_hours:12,pin_count:3,last_status:'ok',error:'',retry_after:0,last_result:''});
 const pin=(id:number,title:string,bid=1,gif=false)=>({id,board_id:bid,title,image_url:`/api/hub/boards/${bid}/pins/${id}/media`,source_url:`https://commons.wikimedia.org/wiki/File:Garden${id}.jpg`,media_type:gif?'gif':'image',attribution:'Garden photographer',license:'CC BY-SA 4.0',saved:false});
 async function setup(page:Page,empty=false){
  let boards=empty?[]:[board(1,'Garden inspiration'),board(2,'Pottery ideas')];
@@ -15,7 +15,7 @@ async function setup(page:Page,empty=false){
   if(path==='/api/hub/boards'){if(method==='POST'){const made={...board(8,body.name),...body};boards.push(made);return route.fulfill({json:{board:made}});}return route.fulfill({json:{boards}});}
   const id=Number(path.split('/')[4]);
   if(path.endsWith('/pinterest')){if(method==='POST')importJob={id:1,board_id:id,status:'queued',imported:0,skipped:0,total:0,error:''};return route.fulfill({json:{import:importJob}});}
-  if(path.endsWith('/refresh'))return route.fulfill({json:{queued:false,status:'Try again in a few minutes'}});
+  if(path.endsWith('/refresh')){const b=boards.find(b=>b.id===id)!;Object.assign(b,{last_status:'no_matches',last_result:'No images met your instructions in the last search.',retry_after:3});return route.fulfill({json:{queued:false,status:'cooldown',retry_after:3,last_result:b.last_result,board:b}});}
   if(path.includes('/pins/')){const pid=Number(path.split('/').at(-1)),row=pins.find(p=>p.id===pid)!;Object.assign(row,body);row.image_url=`/api/hub/boards/${row.board_id}/pins/${row.id}/media`;if(body.hidden)pins=pins.filter(p=>p.id!==pid);return route.fulfill({json:{pin:row}});}
   if(method==='PATCH'){const b=boards.find(b=>b.id===id)!;Object.assign(b,body);return route.fulfill({json:{board:b}});}
   if(method==='DELETE'){boards=boards.filter(b=>b.id!==id);return route.fulfill({json:{ok:true}});}
@@ -50,7 +50,11 @@ test('browse local pins save move hide and respect refresh cooldown',async({page
  await expect(view).toHaveCount(0);expect(writes.some(w=>w.body.board_id===2)).toBe(true);
  await page.getByRole('button',{name:'View Stone garden path',exact:true}).click();await page.getByRole('button',{name:'Hide image',exact:true}).click();
  await expect(page.getByRole('button',{name:'View Stone garden path',exact:true})).toHaveCount(0);
- await page.getByRole('button',{name:'Find images',exact:true}).click();await expect(page.getByRole('status').filter({hasText:'Try again in a few minutes'})).toBeVisible();
+ await page.getByRole('button',{name:'Find images',exact:true}).click();
+ const activity=page.getByRole('region',{name:'Board curator activity'});
+ await expect(activity).toContainText('No images met your instructions in the last search.');
+ await expect(page.getByRole('button',{name:/Find images \(\d+s\)/})).toBeDisabled();
+ await expect(page.getByRole('button',{name:'Find images',exact:true})).toBeEnabled({timeout:6000});
 });
 
 test('responsive masonry and reduced-motion GIF preview',async({page})=>{
@@ -87,3 +91,46 @@ test('a delayed board response cannot cross a profile switch',async({page,reques
  await expect(page.getByRole('status').filter({hasText:'Pinterest: queued'})).toBeVisible();
  expect(writes.find(w=>w.path.endsWith('/pinterest'))?.body).toEqual({url:'https://www.pinterest.com/contemporist/architecture/'});
  });
+
+
+test('an already collecting board resumes polling and explains an empty result and cooldown',async({page})=>{
+ let state={...board(1,'Precise sewing patterns'),pin_count:0,last_status:'collecting',last_result:'',retry_after:0};
+ let details=0;
+ await page.route('**/api/hub/boards**',route=>{
+  const path=new URL(route.request().url()).pathname;
+  if(path==='/api/hub/boards')return route.fulfill({json:{boards:[state]}});
+  if(path.endsWith('/pinterest'))return route.fulfill({json:{import:null}});
+  details++;return route.fulfill({json:{board:state,pins:[],next_cursor:null,has_more:false}});
+ });
+ await freshPage(page,'/boards');
+ const activity=page.getByRole('region',{name:'Board curator activity'});
+ await expect(activity).toContainText('Curator is checking images');
+ await expect(page.getByRole('button',{name:'Finding images…'}).first()).toBeDisabled();
+ const before=details;
+ state={...state,last_status:'no_matches',last_result:'Checked 12 images with vision. None met your instructions.',retry_after:2};
+ await expect.poll(()=>details,{timeout:12000}).toBeGreaterThan(before);
+ await expect(activity).toContainText('No matching images this time');
+ await expect(activity).toContainText('Checked 12 images with vision. None met your instructions.');
+ await expect(page.getByRole('button',{name:/Find images \(\d+s\)/}).first()).toBeDisabled();
+ await expect(page.getByRole('button',{name:'Find images',exact:true}).first()).toBeEnabled({timeout:6000});
+ await expect(page.getByText('Try again in a few minutes')).toHaveCount(0);
+ await page.screenshot({path:'/tmp/watchcraft-board-curator-result.png',fullPage:true});
+});
+
+test('queued and failed curator searches stay visible without reporting a successful search as an error',async({page})=>{
+ let state={...board(1,'Heart dresses'),pin_count:0,last_status:'queued',last_result:'',retry_after:0};
+ await page.route('**/api/hub/boards**',route=>{
+  const path=new URL(route.request().url()).pathname;
+  if(path==='/api/hub/boards')return route.fulfill({json:{boards:[state]}});
+  if(path.endsWith('/pinterest'))return route.fulfill({json:{import:null}});
+  return route.fulfill({json:{board:state,pins:[],next_cursor:null,has_more:false}});
+ });
+ await freshPage(page,'/boards');
+ const activity=page.getByRole('region',{name:'Board curator activity'});
+ await expect(activity).toContainText('Curator queued');
+ await expect(page.getByRole('button',{name:'Queued…'}).first()).toBeDisabled();
+ state={...state,last_status:'error',error:'The vision model is unavailable. No unverified images were added.',last_result:'The search could not finish.'};
+ await expect(activity).toContainText('Curator needs attention',{timeout:12000});
+ await expect(activity).toContainText('The vision model is unavailable. No unverified images were added.');
+ await expect(page.getByRole('button',{name:'Find images',exact:true}).first()).toBeEnabled();
+});

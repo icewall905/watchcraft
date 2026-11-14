@@ -10,14 +10,26 @@
  let cursor = $state<string | null>(null), hasMore = $state(false), editing = $state(false), editId = $state<number | null>(null);
  let name = $state(''), interests = $state(''), instructions = $state(''), enabled = $state(true), interval = $state(12), saving = $state(false);
  let preview = $state<BoardPin | null>(null), moving = $state<number | null>(null), moveTo = $state(''), busy = $state<number | null>(null);
- let refreshing = $state(false);
+ let refreshing = $state(false), clock = $state(Date.now());
+ let retryDeadlines = $state<Record<number, number>>({});
+ const active = (status?: string) => status === 'queued' || status === 'collecting';
+ function rememberRetry(rows: MoodBoard[]) {
+  const now = Date.now(); clock = now;
+  for (const row of rows) if (typeof row.retry_after === 'number') retryDeadlines[row.id] = now + Math.max(0, row.retry_after) * 1000;
+ }
+ const activityTitles: Record<string, string> = {queued: 'Curator queued', collecting: 'Curator is checking images', no_matches: 'No matching images this time', error: 'Curator needs attention', partial: 'Search finished with some problems', ok: 'Last search complete'};
+ const activityTitle = (status?: string) => activityTitles[status ?? ''] ?? 'Ready to find images';
  let importing = $state(false), importOpen = $state(false), pinterestUrl = $state(''), importJob = $state<PinterestImport | null>(null);
  let controller: AbortController | null = null, generation = 0, identity = '', pollUntil = 0;
  const board = $derived(boards.find(b => b.id === selected));
+ const curatorActive = $derived(active(board?.last_status));
+ const retrySeconds = $derived(Math.max(0, Math.ceil((((selected ? retryDeadlines[selected] : 0) ?? 0) - clock) / 1000)));
+ const findDisabled = $derived(refreshing || curatorActive || retrySeconds > 0);
+ const findLabel = $derived(refreshing ? 'Starting…' : board?.last_status === 'queued' ? 'Queued…' : board?.last_status === 'collecting' ? 'Finding images…' : retrySeconds > 0 ? `Find images (${retrySeconds}s)` : 'Find images');
  const allowed = () => session.hubAllowed && session.ready && !session.needsLogin && !session.choosing && !session.profile?.pin_locked;
  const stamp = () => `${session.profileId}:${session.version}`;
  const message = (e: unknown) => e instanceof Error ? e.message : 'Could not load your boards.';
- function clear() { importOpen = false; importing = false; importJob = null; pinterestUrl = ''; controller?.abort(); generation++; boards = []; pins = []; selected = null; preview = null; editing = false; moving = null; saving = false; busy = null; deleteConfirm = false; notice = ''; error = ''; loading = false; more = false; hasMore = false; cursor = null; pollUntil = 0; refreshing = false; }
+ function clear() { importOpen = false; importing = false; importJob = null; pinterestUrl = ''; controller?.abort(); controller = null; generation++; boards = []; pins = []; selected = null; preview = null; editing = false; moving = null; saving = false; busy = null; deleteConfirm = false; notice = ''; error = ''; loading = false; more = false; hasMore = false; cursor = null; pollUntil = 0; refreshing = false; retryDeadlines = {}; }
  async function load(append = false, quiet = false) {
   if (!allowed() || (append && (loading || more || !hasMore || !selected))) return;
   controller?.abort(); controller = new AbortController(); const signal = controller.signal, token = ++generation, owner = stamp();
@@ -26,12 +38,12 @@
   try {
    const list = await boardsApi.list(signal);
    if (signal.aborted || token !== generation || owner !== stamp() || !allowed()) return;
-   boards = list.boards;
+   boards = list.boards; rememberRetry(boards);
    if (!boards.some(b => b.id === selected)) selected = boards[0]?.id ?? null;
    if (!selected) { pins = []; hasMore = false; return; }
    const data = await boardsApi.detail(selected, {saved: savedOnly, cursor: append ? cursor ?? undefined : undefined}, signal);
    if (signal.aborted || token !== generation || owner !== stamp() || !allowed()) return;
-   boards = boards.map(b => b.id === data.board.id ? data.board : b);
+   boards = boards.map(b => b.id === data.board.id ? data.board : b); rememberRetry([data.board]);
    const imported = await boardsApi.pinterestStatus(selected, signal);
    if (signal.aborted || token !== generation || owner !== stamp() || !allowed()) return;
    importJob = imported.import;
@@ -40,13 +52,22 @@
    const fresh = data.pins.filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
    pins = append ? [...pins, ...fresh] : fresh; cursor = data.next_cursor; hasMore = data.has_more;
   } catch (e) { if (!signal.aborted && token === generation && owner === stamp() && allowed()) error = message(e); }
-  finally { if (token === generation && owner === stamp()) { loading = false; more = false; } }
+  finally { if (token === generation && owner === stamp()) { loading = false; more = false; controller = null; } }
  }
  $effect(() => {
   const key = `${session.profileId}:${session.version}:${session.profile?.pin_locked}:${session.needsLogin}:${session.choosing}:${session.ready}:${session.hubAllowed}`;
   if (key !== identity) { identity = key; untrack(() => { clear(); if (allowed()) void load(); }); }
  });
- onMount(() => { const timer = window.setInterval(() => { if (allowed() && Date.now() < pollUntil && document.visibilityState !== 'hidden' && !loading && !more) void load(false, true); }, 10000); return () => { window.clearInterval(timer); controller?.abort(); }; });
+ onMount(() => {
+  let lastPoll = 0;
+  const timer = window.setInterval(() => {
+   clock = Date.now();
+   if (allowed() && (active(board?.last_status) || clock < pollUntil) && clock - lastPoll >= 5000 && document.visibilityState !== 'hidden' && !loading && !more && !controller) { lastPoll = clock; void load(false, true); }
+  }, 1000);
+  const wake = () => { clock = Date.now(); if (document.visibilityState !== 'hidden' && allowed() && (active(board?.last_status) || clock < pollUntil) && !loading && !more && !controller) void load(false, true); };
+  document.addEventListener('visibilitychange', wake);
+  return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', wake); controller?.abort(); };
+ });
  $effect(() => {
   const node = sentinel;
   if (!node || !hasMore || loading || more) return;
@@ -66,11 +87,24 @@
  async function saveBoard(e: SubmitEvent) {
   e.preventDefault(); if (!allowed() || saving) return; saving = true; const owner = stamp();
   const body: BoardInput = {name: name.trim(), interests: interests.trim(), instructions: instructions.trim(), enabled, interval_hours: Number(interval)};
-  try { const result = editId ? await boardsApi.update(editId, body) : await boardsApi.create(body); if (owner !== stamp() || !allowed()) return; selected = result.board.id; editing = false; await load(); notice = editId ? 'Board updated.' : 'Board created. Find images to start filling it.'; }
+  try { const result = editId ? await boardsApi.update(editId, body) : await boardsApi.create(body); if (owner !== stamp() || !allowed()) return; selected = result.board.id; editing = false; await load(); notice = editId ? 'Board updated.' : active(result.board.last_status) ? 'Board created. Follow its curator’s progress below.' : 'Board created. Find images to start filling it.'; }
   catch (e) { if (owner === stamp() && allowed()) error = message(e); }
   finally { if (owner === stamp()) saving = false; }
  }
- async function refresh() { if (!selected || !allowed() || refreshing) return; refreshing = true; const id = selected, owner = stamp(); try { const result = await boardsApi.refresh(id); if (owner !== stamp() || !allowed()) return; notice = result.queued === false ? result.status ?? 'Your curator is already collecting images.' : 'Your curator is looking for new images. You can keep browsing.'; pollUntil = Date.now() + 180000; await load(false, true); } catch (e) { if (owner === stamp()) error = message(e); } finally { if (owner === stamp()) refreshing = false; } }
+ async function refresh() {
+  if (!selected || !allowed() || findDisabled) return;
+  refreshing = true; error = ''; notice = ''; const id = selected, owner = stamp();
+  try {
+   const result = await boardsApi.refresh(id);
+   if (owner !== stamp() || selected !== id || !allowed()) return;
+   if (result.board) { boards = boards.map(b => b.id === id ? result.board : b); rememberRetry([result.board]); }
+   retryDeadlines[id] = Date.now() + Math.max(0, result.retry_after ?? 0) * 1000;
+   if (result.queued || result.status === 'collecting') pollUntil = Date.now() + 180000;
+   await load(false, true);
+  } catch (e) { if (owner === stamp() && selected === id && allowed()) error = message(e); }
+  finally { if (owner === stamp() && selected === id) refreshing = false; }
+ }
+
  async function pinAction(p: BoardPin, patch: {saved?: boolean; hidden?: boolean; board_id?: number}) {
   if (!allowed() || busy !== null) return; busy = p.id; const owner = stamp();
   try { await boardsApi.pin(p.board_id, p.id, patch); if (owner !== stamp() || !allowed()) return; if (patch.hidden || patch.board_id || (savedOnly && patch.saved === false)) pins = pins.filter(v => v.id !== p.id); else pins = pins.map(v => v.id === p.id ? {...v, ...patch} : v); if (preview?.id === p.id) preview = patch.hidden || patch.board_id ? null : {...preview, ...patch}; moving = null; }
@@ -89,14 +123,25 @@
   <nav class="board-rail" aria-label="Your mood boards">{#each boards as b}<button class="btn" class:chosen={selected === b.id} aria-pressed={selected === b.id} onclick={() => choose(b.id)}>{b.name}<span>{b.pin_count ?? 0}</span></button>{/each}</nav>
  {/if}
  {#if board}
-  <div class="board-heading"><div><h2>{board.name}</h2><p class="muted interests">{board.interests}</p></div><div class="tools"><button class="btn" onclick={() => { error = ''; importOpen = true; }}>Import Pinterest</button><button class="btn" class:chosen={savedOnly} aria-pressed={savedOnly} onclick={() => { savedOnly = !savedOnly; void load(); }}>Saved{savedOnly ? ' only' : ''}</button><button class="btn" disabled={refreshing} onclick={refresh}>{refreshing ? 'Starting…' : 'Find images'}</button><button class="btn" aria-label={`Edit ${board.name} curator`} onclick={() => edit(board)}>Edit curator</button></div></div>
-  <p class="curator-note muted">{board.enabled ? `Curator checks every ${board.interval_hours} hours.` : 'Automatic discovery paused.'}{#if board.last_status}{' '}Last check: {board.last_status}
- .{/if}</p>{#if board.error}<p class="feedback error" role="status">{board.error}</p>{/if}
+  <div class="board-heading"><div><h2>{board.name}</h2><p class="muted interests">{board.interests}</p></div><div class="tools"><button class="btn" onclick={() => { error = ''; importOpen = true; }}>Import Pinterest</button><button class="btn" class:chosen={savedOnly} aria-pressed={savedOnly} onclick={() => { savedOnly = !savedOnly; void load(); }}>Saved{savedOnly ? ' only' : ''}</button><button class="btn" disabled={findDisabled} onclick={refresh}>{findLabel}</button><button class="btn" aria-label={`Edit ${board.name} curator`} onclick={() => edit(board)}>Edit curator</button></div></div>
+  <p class="curator-note muted">{board.enabled ? `Curator checks every ${board.interval_hours} hours.` : 'Automatic discovery paused.'}</p>
+  <section class="curator-activity" aria-label="Board curator activity" aria-busy={curatorActive}>
+   <a class="activity-link" href="/team">View Agent activity</a>
+   <div role="status" aria-live="polite"><strong>{activityTitle(board.last_status)}</strong>
+    {#if curatorActive}<p>{board.last_status === 'queued' ? 'Waiting for the curator to start. This page updates automatically.' : 'Searching sources and checking images against your instructions with vision. Results appear here automatically.'}</p>
+    {:else if board.last_result}<p>{board.last_result}</p>
+    {:else if board.last_status === 'no_matches'}<p>The search finished, but no images met your instructions. Try another search later or edit the curator to broaden its search.</p>
+    {:else if board.last_status === 'ok'}<p>The last search finished. {board.pin_count} images are on this board.</p>
+    {:else if !board.last_status}<p>Ask your curator to search for images, or leave automatic discovery enabled.</p>{/if}
+    {#if board.error}<p class="error">{board.error}</p>{/if}
+   </div>
+   {#if !curatorActive && retrySeconds > 0}<p class="retry">You can search again in {retrySeconds} seconds.</p>{/if}
+  </section>
   {#if importJob}<p class="feedback" role="status">Pinterest: {importJob.status === 'complete' ? 'import complete' : importJob.status}. {importJob.imported} imported, {importJob.skipped} skipped.{#if importJob.error} {importJob.error}{/if}{#if importJob.status === 'complete'} Latest feed pins only; Pinterest does not expose the whole board here.{/if}</p>{/if}
  {/if}
  {#if loading}<p class="empty" role="status">Gathering your images…</p>
  {:else if !boards.length}<div class="empty"><h2>What inspires you?</h2><p>Give a hobby, interest or idea its own board. Its curator will find images and GIFs for you to collect.</p><button class="btn primary" onclick={() => edit()}>Create your first board</button></div>
- {:else if !pins.length}<div class="empty"><h2>{savedOnly ? 'Your favourites belong here' : 'Make room for inspiration'}</h2><p>{savedOnly ? 'Save an image from this board to find it here later.' : 'Your board is ready. Ask its curator to find images, then save the ones you love.'}</p>{#if !savedOnly}<button class="btn primary" onclick={refresh}>Find images</button>{/if}</div>
+ {:else if !pins.length}<div class="empty"><h2>{savedOnly ? 'Your favourites belong here' : 'Make room for inspiration'}</h2><p>{savedOnly ? 'Save an image from this board to find it here later.' : curatorActive ? 'Your curator is working. Matching images will appear automatically.' : board?.last_status === 'no_matches' ? 'No matching images were found. You can refine your curator’s instructions or try another search when it is ready.' : board?.last_status === 'error' ? 'Your curator could not finish. See its activity above for the reason.' : 'Your board is ready. Ask its curator to find images, then save the ones you love.'}</p>{#if !savedOnly}<button class="btn primary" disabled={findDisabled} onclick={refresh}>{findLabel}</button>{/if}</div>
  {:else}
   <div class="masonry">{#each pins as pin (pin.id)}<article class="pin"><button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} /></button><div class="caption"><button class="pin-title" onclick={() => { preview = pin; }}>{pin.title}</button><div class="pin-meta"><span>{pin.attribution ?? ''}</span><button class="btn" class:saved={pin.saved} disabled={busy === pin.id} aria-label={pin.saved ? `Unsave ${pin.title}` : `Save ${pin.title}`} aria-pressed={pin.saved} onclick={() => pinAction(pin, {saved: !pin.saved})}>{pin.saved ? 'Saved' : 'Save'}</button></div></div></article>{/each}</div>
   {#if hasMore}<div class="load-more" bind:this={sentinel}><button class="btn" disabled={more} onclick={() => load(true)}>{more ? 'Loading…' : 'More inspiration'}</button></div>{/if}
@@ -123,7 +168,11 @@
  .board-heading h2{font-size:1.35rem;margin:0}
  .interests{margin:.35rem 0;max-width:65ch}
  .tools{display:flex;gap:.45rem;flex-wrap:wrap}
- .curator-note{font-size:.8rem;margin:.65rem 0 1.5rem}
+ .curator-note{font-size:.8rem;margin:.65rem 0}
+ .curator-activity{background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--r-md);padding:1rem;margin:1rem 0 1.5rem}
+ .curator-activity p{margin:.45rem 0 0;color:var(--muted);line-height:1.5}
+ .curator-activity .error{color:var(--danger,#ff929d)}
+ .curator-activity .retry{font-size:.85rem}
  .masonry{columns:4;column-gap:1rem}
  .pin{break-inside:avoid;margin:0 0 1.25rem;overflow:hidden}
  .picture{display:block;width:100%;padding:0;border:0;background:var(--surface);border-radius:var(--r-lg);overflow:hidden;min-height:5rem}
