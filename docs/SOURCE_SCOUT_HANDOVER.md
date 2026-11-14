@@ -8,6 +8,21 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Mood Board targets, inspiration, social sources, Today/News split (`8a23fb9`, 2026-11-14)
+
+- Range `1ec292b..8a23fb9`: per-board image target (default 100, max 1000, curator re-queues until reached),
+  inspiration image (upload/URL) guiding vision curation, manual image add, boards UI redesign, social image
+  sources (Reddit, Bluesky, Mastodon; Flickr/Tumblr with key) with a Search & sources settings card, Today/News
+  split. Additive schema: `moodboard.target_images` column (default 100) and `moodreference` table, created at
+  startup; verified present after deploy.
+- Backup `/root/compose/watchcraft-backups/20261114-moodboard-8a23fb9` (online DB quick_check ok, config hashes,
+  previous source, release file list); rollback images `watchcraft:rollback-20261114-moodboard-api`/`-worker`/
+  `-downloader`/`-subtitles`, `rollback.sh`. rsync (checksum) of the 39 changed files, no deletions.
+- All four services run `sha256:f26dc55c2b9e02265572a88d15d822385b153e54c6877e79b3ef42f9a4df6abd`, zero restarts,
+  no tracebacks; health, `/`, `/boards`, `/today`, `/news`, `/settings` 200; `.env`/`compose.host.yaml` unchanged.
+- Live source check from prod: 29 results from Commons, Pexels, Pixelfed and Mastodon; Reddit and Bluesky
+  returned none (V-097).
+
 ## Deployment record — Meme Tracker real memes (`7356cd5`, 2026-11-13)
 
 - New `reddit_memes` provider (direct image posts, NSFW/spoiler-tagged skipped), Lemmy `item_type: meme` keeps
