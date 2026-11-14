@@ -7,6 +7,7 @@ test('desktop sidebar: sections, links, active state, compact toggle', async ({ 
 	for (const h of ['Watch', 'Explore', 'Research', 'Workshop']) await expect(nav.getByRole('button', { name: h, exact: true })).toBeVisible();
 	await expect(nav.getByRole('link', { name: 'Today' })).toHaveAttribute('href', '/today');
 	await expect(nav.getByRole('link', { name: 'News' })).toHaveAttribute('href', '/news');
+	await expect(nav.getByRole('link', { name: 'Mood Board' })).toHaveAttribute('href', '/boards');
 	await expect(nav.getByRole('link', { name: 'Research' })).toHaveAttribute('href', '/research');
 	await expect(nav.getByRole('link', { name: 'Statistics' })).toHaveAttribute('aria-current', 'page');
 	await expect(nav.getByRole('link', { name: 'TV' })).not.toHaveAttribute('aria-current', 'page');
@@ -47,6 +48,7 @@ test('mobile viewport shows bottom bar and More sheet', async ({ page }) => {
 	await bar.getByRole('button', { name: 'More' }).click();
 	const sheet = page.getByRole('dialog', { name: 'More navigation' });
 	await expect(sheet.getByRole('link', { name: 'News' })).toBeVisible();
+	await expect(sheet.getByRole('link', { name: 'Mood Board' })).toHaveAttribute('href', '/boards');
 	await expect(sheet.getByRole('link', { name: 'Settings' })).toBeVisible();
 	await expect(sheet.getByRole('link', { name: 'Find' })).toBeVisible();
 });

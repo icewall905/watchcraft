@@ -535,3 +535,47 @@ class NewsImpression(SQLModel, table=True):
     last_shown: float = Field(default_factory=time.time, index=True)
     prev_shown: float = 0  # last_shown before the current visit touched it, keeping that visit's order stable
     visits: int = 1  # distinct visits that showed it, so repeat exposure sinks gradually
+
+
+class MoodBoard(SQLModel, table=True):
+    """An isolated visual curator; never enters the news or meme pipeline."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    profile_id: int = Field(index=True)
+    name: str
+    interests: str
+    instructions: str = ''
+    enabled: bool = True
+    interval_hours: int = 12
+    next_run: float = 0
+    last_run: float | None = None
+    last_status: str = ''
+    error: str = ''
+    lease: str = ''
+    build_started: float = 0
+    revision: int = 0
+    source_offset: int = 0
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodPin(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint('board_id', 'source_url'),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    board_id: int = Field(index=True)
+    profile_id: int = Field(index=True)
+    title: str
+    source_url: str
+    image_url: str
+    media_type: str = 'image'
+    width: int = 0
+    height: int = 0
+    attribution: str = ''
+    license: str = ''
+    saved: bool = False
+    hidden: bool = False
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodAsset(SQLModel, table=True):
+    pin_id: int = Field(primary_key=True)
+    mime: str
+    data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))

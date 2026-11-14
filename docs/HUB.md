@@ -245,3 +245,17 @@ and what has already been tried; without one the fixed order runs. A successful 
 the failure, so the job completes rather than being retried. The pass is on by default and can
 be turned off per household with the "Recover unreadable pages" toggle on the Team page
 (`local_library.rescue`). See `docs/SECURITY.md` for the sandbox.
+
+## Mood boards
+
+`/boards` keeps visual inspiration in profile-owned boards. Each board has independent interests,
+optional curator notes, collection cadence and enabled state. These curators collect Wikimedia Commons
+images/GIFs into local media with source attribution and license; pins never enter News or Memes.
+The masonry page supports saving, hiding, moving and paginating images. Reduced-motion users open
+animated GIFs explicitly. Advanced curator notes require an available configured AI model; ordinary
+interest search works without one. Collection is bounded to 50 boards/profile and 1,000 pins/board.
+
+`/api/hub/boards` lists/creates boards; `/{id}` reads/edits/deletes a board, `/{id}/refresh` queues a
+bounded collection, and `/{id}/pins/{pin}` changes saved/hidden state or moves a pin. Pin media is served
+from `/{id}/pins/{pin}/media`. All routes require Hub access and ownership; original media URLs are
+never fetched directly by the browser. Board/profile deletion removes private archived image bytes.

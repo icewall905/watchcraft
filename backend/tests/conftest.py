@@ -26,6 +26,8 @@ def _isolated_background_work(monkeypatch):
     async def idle_scheduler():
         await asyncio.Event().wait()
 
+    from bt.hub import moodboards
+    monkeypatch.setattr(moodboards, 'scheduler', idle_scheduler)
     monkeypatch.setattr(engine, 'scheduler', idle_scheduler)
     monkeypatch.setattr(subtitle_jobs, 'worker', idle_scheduler)
     monkeypatch.setattr(slots, 'after_release', None)
