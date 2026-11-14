@@ -662,3 +662,19 @@ def test_background_search_has_separate_cache_and_broader_music_query(monkeypatc
     assert len(calls) == 2
     assert 'params' in calls[0] and calls[1] == {'query': 'soft rain'}
     assert yt.search('soft rain') == []
+
+
+@pytest.mark.parametrize('label', ['Song', 'Video'])
+def test_background_search_byline_removes_type_prefix_only_with_separator(label):
+    artist = [_run('Ambient Artist', 'UCambient'), _run(' • '), _run('3M views'), _run(' • '), _run('4:07')]
+    response = {'contents': [
+        _search_item('AAAAAAAAAAA', 'Gentle Night', 'MUSIC_VIDEO_TYPE_ATV',
+                     [_run(label), _run(' • '), *artist]),
+        _search_item('BBBBBBBBBBB', 'Calm Piano', yt.OMV, [_run('Song', 'UCsong')])]}
+    tracks = yt.parse_search(response, background=True)
+    assert (tracks[0]['artist'], tracks[0]['artist_id'], tracks[0]['duration_s'], tracks[0]['views']) == (
+        'Ambient Artist', 'UCambient', 247, 3_000_000)
+    # With no bullet after Song, retain the artist rather than swallowing its name.
+    assert tracks[1]['artist'] == 'Song' and tracks[1]['artist_id'] == 'UCsong'
+    # Strict search continues to use its existing byline format.
+    assert [t['video_id'] for t in yt.parse_search(response)] == ['BBBBBBBBBBB']

@@ -116,7 +116,14 @@ def parse_search(resp: dict, *, background: bool = False) -> list[dict]:
             continue
         vid = ((r.get('playlistItemData') or {}).get('videoId')
                or ((_find(r, 'watchEndpoint') or {}).get('videoId')) or '')
-        t = _track(vid, _text(cols[0]), _runs(cols[1]), background=background)
+        byline = _runs(cols[1])
+        # Unfiltered background search includes a result-type prefix (e.g. Song • Artist).
+        # Require the separator so a legitimate artist called Song remains intact.
+        if (background and len(byline) >= 2 and
+                str(byline[0].get('text') or '').strip() in {'Song', 'Video'} and
+                str(byline[1].get('text') or '').strip() == '•'):
+            byline = byline[2:]
+        t = _track(vid, _text(cols[0]), byline, background=background)
         if t and t['video_id'] not in seen:
             seen.add(t['video_id'])
             out.append(t)
