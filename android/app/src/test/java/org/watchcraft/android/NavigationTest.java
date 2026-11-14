@@ -20,6 +20,12 @@ public class NavigationTest {
         Navigation.replace(paths, 1, "/alerts");
         assertEquals("/library", paths[1]);
     }
+    @Test public void moodBoardCanBeChosenAsAShortcut() {
+        assertEquals("Mood Board", Navigation.feature("/boards").title);
+        String[] paths = Navigation.DEFAULTS.clone();
+        Navigation.replace(paths, 2, "/boards");
+        assertEquals("/boards", Navigation.restore(paths)[2]);
+    }
     @Test public void nestedPagesSelectTheirOwnShortcutWithoutPrefixCollisions() {
         assertTrue(Navigation.matches("/news", "/news/12"));
         assertFalse(Navigation.matches("/news", "/newsletter"));

@@ -15,6 +15,7 @@ final class Feature {
         new Feature("Discover", "/discover", "compass", "Explore"),
         new Feature("News", "/news", "news", "Explore"),
         new Feature("Meme Tracker", "/memes", "smile", "Explore"),
+        new Feature("Mood Board", "/boards", "library", "Explore"),
         new Feature("Library", "/library", "library", "Explore"),
         new Feature("Knowledge", "/knowledge", "book", "Explore"),
         new Feature("Briefings", "/briefings", "list", "Explore"),
