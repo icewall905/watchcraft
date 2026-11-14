@@ -346,5 +346,6 @@ test('News starts with Today and continues into the news feed on the same page',
 	await page.getByRole('link', { name: 'Explore news' }).click();
 	await expect(page.getByRole('heading', { name: 'More news', exact: true })).toBeInViewport();
 	await expect(feed.getByRole('heading', { name: 'Another news story' })).toBeVisible();
+	await page.evaluate(() => window.scrollTo(0, 0));
 	await page.screenshot({ path: '/tmp/watchcraft-combined-news.png', fullPage: true });
 });

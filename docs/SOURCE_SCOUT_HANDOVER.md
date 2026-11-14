@@ -2122,3 +2122,20 @@ in the local `todo.md` (which is intentionally ignored by Git).
 - Exact image `watchcraft:release-0f7f146`, digest `sha256:2a7788d59a55f0b04cd619b2dec592968442066e101c774ded0173e8af49b598`; all four services deployed with host overlay, zero restarts, API/subtitles healthy. Public health, new route, database integrity, configuration and profile/PIN fingerprint preservation passed. Live authenticated browser verified sidebar/page and complete new-board curator form.
 - Backup `/root/compose/watchcraft-backups/20261114-boards` retains online snapshot, identity/config baselines, source and per-service rollback images/script. Isolated network-disabled restore preserved all original table counts/identity with additive board tables, collected a fixture GIF, saved/served/scoped/deleted its board, passed existing media range/decode and started API twice. No fixture boards or private example interests were written to production.
 - Published Android APK checksum/package/version and existing signing certificate verified. Real household board relevance, multi-day automatic collection and physical-device/Obtainium acceptance remain in the external tracker.
+
+## Deployment record — Pinterest, visual boards, unified News and prepared moods (2026-11-14)
+
+- Server revision `c41bb62` (includes `cfc5f82`); all four services run image
+  `sha256:b6f58351a3e10e75c33751b2f7de39a3dca14198108c35373a0ecef20ed69ded`, zero restarts at check.
+- Backup `/root/compose/watchcraft-backups/20261114-pinterest-news-moods` retains online DB,
+  original source, configuration fingerprints, per-service rollback images and rollback script.
+  Network-isolated restored migration preserved all 73 original table counts and profile/PIN
+  fingerprints; board/Pinterest capture fixtures, local media/range and startup twice passed.
+- Backend final suite: 1,243 passed, 6 skipped. Frontend check/build and targeted boards,
+  News/Today/navigation/music browser regressions passed. Live configured vision endpoint
+  distinguished image pixels; public Pinterest RSS returned 24 pins and a decoded local capture.
+- Live `/news` shows Today followed by More news. Four preset mixes were prepared for the signed-in
+  profile, each with 40 tracks; readable-local counts at check were 5/1/3/2 and other copies queued.
+  Downloader was active. Readiness uses real files and never labels the pending whole mix ready.
+- Android `android-v0.1.8` / code 10 built from `b2a5957`, with four configurable shortcut slots.
+  Published APK checksum and original signing certificate verified.
