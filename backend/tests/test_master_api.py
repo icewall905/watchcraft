@@ -19,7 +19,9 @@ def add(type='news', tier='feature', final=70.0, pid=1, story=None, title=None, 
         s.add(it); s.flush()
         s.add(CuratorDiscovery(curator_id=1, item_id=it.id, profile_id=pid, score=60))
         if type == 'meme':
-            s.add(MemeExample(item_id=it.id))
+            it.meta = {'community': 'r/memes'}
+            s.add(it)
+            s.add(MemeExample(item_id=it.id, has_media=True))
         if story:
             s.add(StoryItem(item_id=it.id, story_id=story))
         if verdict:
@@ -63,6 +65,18 @@ def test_today_renders_the_edition_and_remembers_what_was_shown(client):
         edition.patch(s, 1)
     again = client.get('/api/hub/today').json()
     assert entries(again, 'lead') == [lead] and entries(again, 'stories') == [better]
+
+
+def test_reading_or_dismissing_an_entry_removes_it_from_today(client):
+    keep = add(title='Still here')
+    read = add(title='Already read')
+    gone = add(title='Not interested')
+    shown = {e['item_id'] for sec in client.get('/api/hub/today').json()['sections'] for e in sec.get('entries', [])}
+    assert {keep, read, gone} <= shown
+    client.post(f'/api/hub/items/{read}/state', json={'read': True})
+    client.post(f'/api/hub/items/{gone}/state', json={'dismissed': True})
+    shown = {e['item_id'] for sec in client.get('/api/hub/today').json()['sections'] for e in sec.get('entries', [])}
+    assert keep in shown and read not in shown and gone not in shown
 
 
 def test_citations_resolve_only_to_items_the_profile_can_see(client):
@@ -309,23 +323,23 @@ def test_today_expands_existing_edition_from_kept_articles_without_losing_delive
     lead = add(story=new_story(), final=90)
     first = client.get('/api/hub/today').json()
     assert entries(first, 'lead') == [lead]
-    kept = {add(story=new_story(), tier='keep', title=f'Kept report {n}') for n in range(35)}
+    kept = {add(story=new_story(), tier='keep', title=f'Kept report {n}') for n in range(90)}
     expanded = client.get('/api/hub/today').json()
     assert entries(expanded, 'lead') == [lead]
-    assert len(entries(expanded, 'stories')) == 29
+    assert len(entries(expanded, 'stories')) == 90
     assert set(entries(expanded, 'stories')).issubset(kept)
     again = client.get('/api/hub/today').json()
     assert entries(again, 'stories') == entries(expanded, 'stories')
 
 
 def test_today_preview_does_not_consume_hidden_entries_until_expanded(client):
-    for n in range(35):
+    for n in range(90):
         add(story=new_story(), tier='keep', title=f'Preview story {n}')
     result = client.get('/api/hub/today?preview=true').json()
-    assert len(entries(result, 'stories')) == 29
+    assert len(entries(result, 'stories')) == 89
     initial = set(entries(result, 'lead') + entries(result, 'stories')[:8])
     with session() as s:
         assert set(s.exec(select(Edition)).one().shown_item_ids) == initial
-    expanded = client.get('/api/hub/today?preview=true&stories=29').json()
+    expanded = client.get('/api/hub/today?preview=true&stories=36').json()
     with session() as s:
-        assert set(s.exec(select(Edition)).one().shown_item_ids) == set(entries(expanded, 'lead') + entries(expanded, 'stories'))
+        assert set(s.exec(select(Edition)).one().shown_item_ids) == set(entries(expanded, 'lead') + entries(expanded, 'stories')[:36])

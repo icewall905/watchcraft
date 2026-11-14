@@ -76,6 +76,27 @@ def test_news_groups_two_shared_terms_without_one_word_false_positive(client, mo
     assert 'Mars mission discovers' in mars['title']
 
 
+def test_bulk_state_marks_every_source_of_one_story(client, monkeypatch):
+    feed = b'''<rss><channel><title>Stories</title>
+    <item><title>Mars mission discovers water ice</title><link>https://example.org/mars-a</link><pubDate>Fri, 30 Oct 2026 12:00:00 GMT</pubDate></item>
+    <item><title>New Mars mission discovers ice</title><link>https://example.org/mars-b</link><pubDate>Fri, 30 Oct 2026 11:00:00 GMT</pubDate></item>
+    <item><title>Apple unveils faster laptops</title><link>https://example.org/apple-a</link><pubDate>Fri, 30 Oct 2026 10:00:00 GMT</pubDate></item>
+    </channel></rss>'''
+    monkeypatch.setattr(curation, 'fetch', lambda url, **k: feed)
+    curator = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/stories'}])
+    hub.run(curator['id'], 'manual')
+    mars = next(g for g in client.get('/api/hub/news?days=30').json()['groups'] if len(g['items']) == 2)
+    ids = [i['id'] for i in mars['items']]
+    assert client.post('/api/hub/items/state', json={'item_ids': ids, 'read': True}).json() == {'updated': 2}
+    assert all(client.get(f'/api/hub/items/{i}').json()['state']['read_at'] for i in ids)
+    # The whole story leaves the fresh mix; the unrelated one stays.
+    left = client.get('/api/hub/news', params={'mode': 'foryou', 'days': 30, 'visit_at': time.time() + 1}).json()['groups']
+    assert all(i['id'] not in ids for g in left for i in g['items']) and left
+    other = client.post('/api/profiles', json={'name': 'Other'}).json()
+    h = {'X-Profile-Id': str(other['id'])}
+    assert client.post('/api/hub/items/state', headers=h, json={'item_ids': ids, 'dismissed': True}).status_code == 404
+
+
 def test_discovery_save_and_profile_isolation(client, monkeypatch):
     monkeypatch.setattr(curation, 'fetch', lambda url, **k: RSS)
     c = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}])
@@ -382,6 +403,15 @@ def test_research_report_fallback_and_draft(client, monkeypatch):
     rep = client.post(f"/api/hub/curators/{c['id']}/report").json()
     assert 'AI summary unavailable' in rep['report'] and rep['report_refs']
     assert 'findings by type' not in rep['report']
+
+
+def test_curator_draft_suggests_only_feeds_with_urls(client):
+    # Providers are offered as tick boxes through provider_keys. A url-less row per provider
+    # gave the review form duplicate list keys, which aborted its whole render.
+    d = client.post('/api/hub/curators/draft', json={'goal': 'Find beginner knitting patterns for scarves'}).json()
+    assert len(d['provider_keys']) > 1
+    urls = [s['url'] for s in d['source_suggestions']]
+    assert all(urls) and len(urls) == len(set(urls))
 
 
 def test_import_url_extracts_recipe(client, monkeypatch):

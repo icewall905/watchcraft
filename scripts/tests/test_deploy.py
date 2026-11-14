@@ -78,7 +78,7 @@ class BackupTests(unittest.TestCase):
 
     def test_local_pin_reset_only_changes_the_selected_profile(self):
         database = self.root / 'bt.sqlite3'
-        with sqlite3.connect(database) as connection:
+        with contextlib.closing(sqlite3.connect(database)) as connection, connection:
             connection.execute('CREATE TABLE profile (id INTEGER PRIMARY KEY, name TEXT)')
             connection.execute('CREATE TABLE setting (key TEXT PRIMARY KEY, value TEXT)')
             connection.execute("INSERT INTO profile VALUES (1, 'Family')")
@@ -86,7 +86,7 @@ class BackupTests(unittest.TestCase):
             connection.execute("INSERT INTO setting VALUES ('profile_pin_1', 'first-hash')")
             connection.execute("INSERT INTO setting VALUES ('profile_pin_2', 'second-hash')")
         deploy.profile_pin(self.root, 2)
-        with sqlite3.connect(database) as connection:
+        with contextlib.closing(sqlite3.connect(database)) as connection, connection:
             self.assertEqual(connection.execute('SELECT key FROM setting').fetchall(), [('profile_pin_1',)])
         with self.assertRaisesRegex(ValueError, 'No profile'):
             deploy.profile_pin(self.root, 999)
@@ -97,7 +97,7 @@ class BackupTests(unittest.TestCase):
 
     def test_parent_pin_recovery_preserves_child_protection(self):
         database = self.root / 'bt.sqlite3'
-        with sqlite3.connect(database) as connection:
+        with contextlib.closing(sqlite3.connect(database)) as connection, connection:
             connection.execute('CREATE TABLE profile (id INTEGER PRIMARY KEY, name TEXT, role TEXT)')
             connection.execute('CREATE TABLE setting (key TEXT PRIMARY KEY, value TEXT)')
             connection.execute("INSERT INTO profile VALUES (1, 'Parent', 'admin'), (2, 'Child', 'child')")
@@ -106,7 +106,7 @@ class BackupTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             deploy.profile_pin(self.root, 1)
         pin = re.search(r'PIN reset to: ([0-9]{8})', output.getvalue()).group(1)
-        with sqlite3.connect(database) as connection:
+        with contextlib.closing(sqlite3.connect(database)) as connection, connection:
             record = json.loads(connection.execute("SELECT value FROM setting WHERE key='profile_pin_1'").fetchone()[0])
             self.assertEqual(record['hash'], hashlib.pbkdf2_hmac('sha256', pin.encode(), bytes.fromhex(record['salt']), 260_000).hex())
 

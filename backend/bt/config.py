@@ -44,6 +44,17 @@ DEFAULT_SETTINGS: dict = {
         "brave_api_key": os.environ.get("WC_BRAVE_API_KEY", ""),
         "hub_ai": True,  # use the configured LLM for curator relevance, drafts, reports and briefings
     },
+    # Mood Board image sources. Social sources use public read APIs; Flickr/Tumblr only with a key.
+    "moodboard_sources": {
+        "web": True,  # SearXNG (search settings) with Wikimedia Commons fallback
+        "reddit": True,
+        "bluesky": True,
+        "mastodon": True,
+        "mastodon_instance": os.environ.get("WC_MOODBOARD_MASTODON_INSTANCE", "mastodon.social"),
+        "flickr_api_key": os.environ.get("WC_FLICKR_API_KEY", ""),
+        "tumblr_api_key": os.environ.get("WC_TUMBLR_API_KEY", ""),
+        "source_timeout_s": 20,
+    },
     # Alert delivery. An empty URL or host disables that channel; the password is redacted in responses.
     "notify": {
         "webhook_url": "",

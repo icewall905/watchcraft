@@ -1,6 +1,169 @@
 # Source Scout handover — 2026-10-30
 
 
+## Data change — text-only Mastodon "memes" hidden (2026-11-13, user-approved)
+
+- Removed 1,335 `CuratorDiscovery` rows of meme curators 4/9 whose item is a `mastodon` meme without media
+  (saved/favourited kept); findings 3,164 -> 1,829. Not dismissed, so profile taste words and publisher scores
+  are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
+  (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
+
+## Deployment record — Mood Board targets, inspiration, social sources, Today/News split (`8a23fb9`, 2026-11-14)
+
+- Range `1ec292b..8a23fb9`: per-board image target (default 100, max 1000, curator re-queues until reached),
+  inspiration image (upload/URL) guiding vision curation, manual image add, boards UI redesign, social image
+  sources (Reddit, Bluesky, Mastodon; Flickr/Tumblr with key) with a Search & sources settings card, Today/News
+  split. Additive schema: `moodboard.target_images` column (default 100) and `moodreference` table, created at
+  startup; verified present after deploy.
+- Backup `/root/compose/watchcraft-backups/20261114-moodboard-8a23fb9` (online DB quick_check ok, config hashes,
+  previous source, release file list); rollback images `watchcraft:rollback-20261114-moodboard-api`/`-worker`/
+  `-downloader`/`-subtitles`, `rollback.sh`. rsync (checksum) of the 39 changed files, no deletions.
+- All four services run `sha256:f26dc55c2b9e02265572a88d15d822385b153e54c6877e79b3ef42f9a4df6abd`, zero restarts,
+  no tracebacks; health, `/`, `/boards`, `/today`, `/news`, `/settings` 200; `.env`/`compose.host.yaml` unchanged.
+- Live source check from prod: 29 results from Commons, Pexels, Pixelfed and Mastodon; Reddit and Bluesky
+  returned none (V-097).
+
+## Deployment record — Meme Tracker real memes (`7356cd5`, 2026-11-13)
+
+- New `reddit_memes` provider (direct image posts, NSFW/spoiler-tagged skipped), Lemmy `item_type: meme` keeps
+  picture posts only, Mastodon meme queries no longer widen to generic tags, meme-community pictures/clips pass the
+  keyword gate, Mastodon autopilot leaves curators with other meme sources alone, one shared 60 s Reddit pace
+  (10 min rest after 429, capped 1 h). Code only; no schema change.
+- Backup `/root/compose/watchcraft-backups/20261113-memes-7356cd5` (online DB quick_check ok, config hashes,
+  previous source, `memes.py`); rollback images `watchcraft:rollback-20261113-memes-api`/`-worker`, `rollback.sh`.
+  rsync (checksum) changed exactly the 12 files of `0b01869..7356cd5`.
+- Image `sha256:4580e4443c0bafeec08173cc7b70645a537118dc12444bfb59656a79a35261d2`; recreated `bt-api`/`bt-worker`,
+  zero restarts, no tracebacks; health 200 local/public; `/memes`, `/news`, `/` 200; config unchanged.
+- Data (user-approved, `memes.py`): Meme Tracker detached 2 mastodon_trends + 5 Lemmy news communities (still on
+  other curators), attached Reddit memes (memes, dankmemes, me_irl, wholesomememes, ProgrammerHumor, linuxmemes)
+  and Lemmy meme communities (lemmy.world memes/lemmyshitpost/linuxmemes, programming.dev programmer_humor,
+  lemmy.ml memes; Hot, 30), max_per_run 30 -> 150. First run: 97 new, every Reddit sub read without a 429.
+
+## Deployment record — YouTube Shorts source + social sources attached (`9d12545`, 2026-11-13)
+
+- New `youtube_shorts` query provider: Shorts per curator query via `ytdl.search_shorts`, clips saved locally at
+  720x1280 as Moments (downloader options, honours downloader backoff, 1 h rest after a bot check, 40 clips/h,
+  logged as YouTube requests; no page fetch). Code only; no schema change.
+- Backup `/root/compose/watchcraft-backups/20261113-shorts-9d12545` (online DB quick_check ok, config hashes,
+  previous source, `attach.py`); rollback images `watchcraft:rollback-20261113-shorts-api`/`-worker`, `rollback.sh`.
+  rsync (checksum) changed exactly the 4 files of `5fe06dc..9d12545`.
+- Image `sha256:fea319e7341207c8393ec840281503093ba4909825ec7adabd11816bdb63d814`; recreated `bt-api`/`bt-worker`,
+  zero restarts, no tracebacks; health 200 local/public; `/music`, `/news`, `/memes`, `/` 200; config unchanged.
+- Data (user-approved): `attach.py` attached Reddit (worldnews, news, europe, Denmark, MachineLearning, LocalLLaMA,
+  homeassistant, netsec, cybersecurity), Bing News, Bluesky (Reuters, AP, BBC, Guardian) to the matching curators,
+  YouTube Shorts to Meme Tracker, and created curator 9 "Video Moments" (profile 2, memes only, 6 h, 60/run:
+  YouTube Shorts + TikTok bbcnews/reuters/washingtonpost/nytimes/nasa/natgeo). All enabled curators set due.
+
+## Deployment record — Music Videos Dislike/Less + DJ offline picks (`b50327d`, 2026-11-13)
+
+- 👎 Dislike song / 🔉 Less <artist> (new `MusicFavorite` kinds `dislike`/`less`, no schema change) filter the DJ,
+  radio, For you and mixes and reach the AI DJ prompt. DJ picks are saved per profile (`music_dj:<pid>` setting) into
+  the offline wanted set after favourites; lyrics prewarm per pick, one background auto-sync/transcribe of the next
+  song per 30 days (`music_prewarm_synced` setting).
+- Backup `/root/compose/watchcraft-backups/20261113-musictaste-b50327d` (online DB quick_check ok, config hashes,
+  previous source); rollback images `watchcraft:rollback-20261113-musictaste-api`/`-worker`, `rollback.sh`.
+  rsync (checksum) changed exactly the 12 files of `21a8e81..b50327d`.
+- Image `sha256:aafb0845e7f4e57ce0ac2c16ac9c4319f78e875940494fdbee3a2cfd14632240`; recreated `bt-api`/`bt-worker`,
+  zero restarts, no tracebacks; health 200 local/public; `/music`, `/news`, `/` 200; new bundle present;
+  `.env`/`compose.host.yaml` unchanged. TV acceptance: V-084.
+
+## Deployment record — Music Videos on a TV remote (`21a8e81`, 2026-11-13)
+
+- Party/full-screen deck holds a nav scope (remote no longer lands on page buttons hidden behind it), new Full
+  screen mode with idle-fading controls, lyrics retry after a failed first lookup. Frontend only; no data change.
+- Backup `/root/compose/watchcraft-backups/20261113-music-21a8e81` (previous source, config hashes; no DB copy as
+  nothing touches data); rollback images `watchcraft:rollback-20261113-music-api`/`-worker`, `rollback.sh`.
+  rsync (checksum) changed exactly the 4 files of `fa472b2..21a8e81`.
+- Image `sha256:7cebd08f072923011a55bc28f67d07083dd90dd0f8926d46fe0635a5c97f4b9c`; recreated `bt-api`/`bt-worker`,
+  zero restarts, no tracebacks; health 200 local/public; `/music`, `/news`, `/` 200; new bundle present;
+  `.env`/`compose.host.yaml` unchanged. TV acceptance: V-083.
+
+## Deployment record — endless News, deeper curators, social sources (`fa472b2`, 2026-11-13)
+
+- News Refresh/pull-to-refresh (`POST /api/hub/news/refresh`), dates/day headers, caught-up card; curator
+  `max_per_run` default 500 (schema v5 lifted all 6 article curators from <500 to 500), 30-day article age guard,
+  newest-first runs; providers `subreddit`, `bing_news`, `bluesky`, `tiktok` (clips via yt-dlp, allow-listed to
+  tiktok.com, `^TikTok$` extractor only); Seen it/Dismiss bulk state. Additive migration only.
+- Backup `/root/compose/watchcraft-backups/20261113-feeds-fa472b2` (online DB quick_check ok, schema 4, config
+  hashes, previous source); rollback images `watchcraft:rollback-20261113-feeds-api`/`-worker`, `rollback.sh`
+  (the old image ignores the raised budgets; restore the DB copy only if v5 itself must be undone). rsync
+  (checksum, no `--delete`) changed exactly the 25 files of `6688115..fa472b2`.
+- Image `sha256:a02d97842d9bf42902c6afe8b052ee5472357c752fdc64c6e7f760a2dbe1438a`; recreated `bt-api`/`bt-worker`
+  only, zero restarts, no tracebacks. Health 200 local/public; `/news`, `/today`, `/memes`, `/` 200; quick_check ok;
+  schema 5; `.env`/`compose.host.yaml` unchanged. From the prod container TikTok listing and Reddit RSS answered.
+- Afterwards all 6 idle enabled curators were set due for a full refresh (one was already running).
+  Acceptance: V-082.
+
+## Deployment record — longer Today edition (`6688115`, 2026-11-08)
+
+- Today holds up to 80 stories / 40 reads / 16 moments (was 30/20/10), opens with 16/9/6 and grows in steps; only
+  rendered entries count as delivered. No schema change.
+- Backup `/root/compose/watchcraft-backups/20261108-today-6688115` (online DB quick_check ok, config hashes,
+  previous source); rollback images `watchcraft:rollback-20261108-today-api`/`-worker`, `rollback.sh`. rsync changed
+  exactly the 7 files of `4cd898e..6688115`.
+- Network-isolated copy: profile 2 edition rebuilt to lead 1 / stories 79 / reads 40 / memes 9 in 0.1 s.
+- Image `sha256:c79d34e62ab48e6ec20ff4886fe0e2598a31621e8df27494b80bb0212cdd8c71`; `bt-api`/`bt-worker` recreated,
+  zero restarts, no tracebacks; health 200 local/public; `/today`, `/news`, `/` 200; new bundle present;
+  quick_check ok; profiles/PINs and `.env`/`compose.host.yaml` unchanged.
+
+## Deployment record — News paging, per-interest refill, article upgrade, folded shelf (`1935ec2..4cd898e`, 2026-11-08)
+
+- T-120 `1935ec2`: the capture lane re-reads recent `web` captures of news curators (one per 120 s, only when no
+  capture job is due) and promotes those whose markup proves article identity; audits news curators that find
+  no articles. T-121 `12143d4`: boost per interest (unseen/fresh shares), never saturated ones, quiet curators back
+  off. T-122 + UI `4cd898e`: server-paged News (topic/mute filters in SQL, Unicode casefold, Latest keyset, For you
+  per-visit ranking with late arrivals appended, interest balance, outlet/discussion counts); Today shelf folded
+  into a side widget. No schema change.
+- Backup `/root/compose/watchcraft-backups/20261108-news3-4cd898e` (online DB, quick_check ok, profile hash,
+  config hashes, previous source); rollback images `watchcraft:rollback-20261108-news3-api`/`-worker`, `rollback.sh`.
+  rsync (checksum, no `--delete`) changed exactly the 21 files of `c90a271..4cd898e`.
+- Network-isolated run of the new image on a copy, profile 2 in-process: Latest 15 pages/429 stories, For you 14
+  pages/411 stories, 0 duplicates, ≤0.08 s per page; shelf 0.05 s (General News saturated/not boosted; four other
+  interests underserved, quiet backoff 2–24 h); upgrade dry run 118 web captures, 65 eligible. Copy removed.
+- Image `sha256:18c73050056dd9380ad39c87ac2ee8dfeef4f251e59f9007290fae679f98d4d3`; recreated `bt-api`/`bt-worker`,
+  zero restarts, no tracebacks. Health 200 local and public; `/news`, `/today`, `/` 200; bad cursor 422; new
+  bundle present; quick_check ok; profiles/PINs hash and `.env`/`compose.host.yaml` unchanged.
+- Acceptance pending: V-079 (fresh mix per visit), V-080 (article upgrade yield and per-interest refill on prod).
+
+## Deployment record — News For you mix per visit (`c90a271`, 2026-11-08)
+
+- News gets a For you tab (default) that leads each visit with stories not shown before; one visit (activity gap
+  under 30 min) keeps its order and scroll. New table `newsimpression` (additive, created at startup) and
+  `POST /api/hub/news/seen`. Latest stays chronological.
+- Backup `/root/compose/watchcraft-backups/20261108-foryou-c90a271` (online DB, quick_check ok, profile hash,
+  `.env`/`compose.host.yaml` hashes, previous source); rollback images `watchcraft:rollback-20261108-foryou-api`
+  and `-worker`; `rollback.sh` there. rsync (checksum, no `--delete`) changed exactly the 9 files of
+  `dffedb9..c90a271`.
+- Before rollout the new image ran network-isolated on a copy of the backup: table created, quick_check ok,
+  profile 2 For you returned 300 groups (13 publishers in the top 20) in 0.1 s; copy removed afterwards.
+- Rebuilt `watchcraft:latest` (`sha256:e66056ba3ca88ab65f62e2989bd1a830a77dc7cfe915a16e96c70c48df7c1276`), recreated
+  `bt-api`/`bt-worker` only; zero restarts, no tracebacks. Health 200 locally and on `wc.tdgs.org`; `/news`,
+  `/today`, `/` 200; `visit_at=nan` 422; new bundle present; quick_check ok; profiles/PINs hash unchanged;
+  `.env`/`compose.host.yaml` unchanged. Real-visit acceptance is V-079.
+
+## Deployment record — curator draft no longer blanks the review form (`2eeb9f4`, 2026-11-07)
+
+- Creating a curator reached "Review the proposal" with no form at all. `POST /api/hub/curators/draft` returned
+  one `source_suggestions` row per provider, all with `url: ''`, and `CuratorForm.svelte:206` keys that list by
+  `s.url`; Svelte raised `each_key_duplicate` while rendering and aborted the whole component, leaving only the
+  heading and the draft badge. Every draft proposing two or more providers was affected, since `be67a59`. The
+  existing browser test only checked the `?goal=` prefill and never clicked Draft.
+- `source_suggestions` now carries feeds only, deduplicated by url; providers stay available as tick boxes through
+  `provider_keys`. Backend 1041 passed/6 skipped; `svelte-check` 0 errors; `hub.spec.ts` 5/5. The extended browser
+  test fails with the fix reverted.
+- Backup `/root/compose/watchcraft-backups/20261107-draftfix-2eeb9f4` (online DB, integrity ok, source, config
+  hashes); rollback image `watchcraft:rollback-20261107-draftfix-331d08a`. rsync (checksum, no `--delete`) changed
+  exactly the 36 files of `3d8718a..2eeb9f4` — the Android client and this record aside, only `backend/bt/hub/api.py`,
+  `backend/tests/test_curation.py` and `frontend/tests/hub.spec.ts`; `.env`/`compose.host.yaml` hashes unchanged.
+  Rebuilt `watchcraft:latest` (`sha256:cbcc4d85f2e0204c746a4399fe2b2282dd9cc0e3d5acd0b3e11ac71c95d31698`), recreated
+  `bt-api`/`bt-worker`/`bt-downloader`/`bt-subtitles`; all healthy, no errors in their logs.
+- Checked on prod: health 200 locally and on `wc.tdgs.org`, `/curators/new` 200, `quick_check` ok, and the draft
+  endpoint returns `source_suggestions: []` with `provider_keys` intact for both a one-provider and a four-provider
+  goal (`nvd`, `github_search`, `cisa_kev`, `web_search`). No url-less or duplicate rows remain.
+- Rollback: tag `watchcraft:rollback-20261107-draftfix-331d08a` as `watchcraft:latest`, restore `source.tar.gz`,
+  run the two-file Compose `up -d --no-build --force-recreate --no-deps --wait bt-api bt-worker bt-downloader
+  bt-subtitles`, restore `DEPLOYED_COMMIT`. No schema or data change.
+
 ## Deployment record — Music section renamed Music Videos (`3d8718a`, 2026-11-07)
 
 - The Watch-section entry, the TV-mode drawer entry, the page title and the `/music` heading now read "Music
@@ -1909,3 +2072,119 @@ in the local `todo.md` (which is intentionally ignored by Git).
   both from prior `0f465c9`. Previous images already understand article learning; no quarantine is required for
   this rollback. Downstream services stay running. Conditional interrupted-job recovery found no owned active
   jobs needing recovery at the final rollout. The new maintenance state is additive Setting data.
+
+## Deployment record — news coverage diagnostic and capture identity (`aec1a22..dffedb9`, 2026-11-08)
+
+- Added a standard-library read-only SQLite coverage report for per-profile/curator article discovery,
+  readiness, preparation blockers, provider/publisher coverage and publication/discovery clocks. Explicit
+  scan truncation and reference targets prevent partial counts from appearing complete. Free-form
+  instructions, profile names, article bodies and private application settings are omitted from output.
+- Successful direct HTML capture now promotes generic web findings only when extraction identifies a
+  structured article/news page, fills absent author/publisher/publication metadata, and queues normal
+  master curation for eligible owning profiles. Existing metadata, specific types, concurrent edits and
+  social-post identity are preserved. Already captured generic pages are not automatically relabeled.
+- Both commits pushed to `origin/codex/android-app`. Full backend validation: 1044 passed, six skipped;
+  final focused capture/report suites: 35 passed; frontend check/build passed (three existing CSS warnings),
+  and both News browser regressions passed. Independent implementation and release-gate reviews approved.
+- Exact release image initialized a private restored database twice with integrity, all table counts and
+  protected profile/settings/curator/source/channel hashes preserved. API and worker each started twice
+  with networking disabled and production media read-only. A disposable structured-HTML capture fixture
+  passed extraction, metadata preservation, master queueing and actual News selection; no test records,
+  feedback, playback history or PIN changes were written to production.
+- API and worker deployed with `compose.host.yaml` and `--no-deps`; production marker `dffedb9`, image
+  `sha256:2d7f4cd863688b4ac869ecaef79aac2c2f804773c1934a61e36d7b3c3709fb8c`.
+  API healthy and worker running, both zero restarts. Downloader/subtitle images and start times unchanged.
+  Local/public health, News/Today/Home routes, database integrity, exact profiles/PINs and private config
+  hashes passed. Production saved-video decode passed; HTTP Range returned 206 on the disposable clone,
+  avoiding production playback timestamp changes. This verifies deployment, not sustained per-interest
+  freshness or human acceptance of curator relevance.
+- Backup `/root/compose/watchcraft-backups/20261108-news-dffedb9` retains online and final pre-rollout DB
+  snapshots, previous source, build/validation/rollout logs and `rollback.sh`. Previous revision `2eeb9f4`;
+  rollback API/worker tags `watchcraft:rollback-20261108-news-api` and
+  `watchcraft:rollback-20261108-news-worker`. Rollback stops API/worker, retains a fresh DB backup and
+  restarts their prior images without restoring old data or recreating downloader/subtitles.
+
+
+### 2026-11-14 — music imports and clean Meme Radar
+
+- Deployed `2ed3c03` and `b1dfec1`, pushed to `origin/codex/android-app`. Music supports ordered YouTube/Music Assistant snapshot imports and seed-track mix creation. Meme Radar now requires captured humor, has separate humor judging and stable endless browsing.
+- Full backend: 1162 passed, six skipped; frontend check/build passed (three existing CSS warnings); music/meme browser checks: 29 passed. Exact release image `watchcraft:release-b1dfec1`, digest `sha256:d9640af6e3ca67b1e47b09f166c4e9a55437a9e8ff73f8e022a541b5942f2bd2`.
+- Backup `/root/compose/watchcraft-backups/20261114-music-memes` retains online SQLite backup, config/identity hashes, previous source and per-service rollback images/script. Isolated network-disabled restore preserved all table counts and profile/PIN fingerprint; init twice, media decode/range and master pass passed.
+- All four services deployed with host overlay; API/subtitles healthy, all zero restarts. Local/public health, affected routes, integrity and unchanged configuration/profile/PIN hashes passed. Live browser checked uncropped meme layout. Normal master rejudging queued.
+- Music Assistant URL/token are absent on production; actual provider/device acceptance remains in the external tracker.
+
+
+### 2026-11-14 — deeper Today and Android navigation
+
+- Today runtime `659186d` deployed; regression-only capacity assertions follow in `274a817`. Expanded from 80 stories/40 reads/16 memes to 300 stories/120 reads/32 memes. Existing topics and curators label and arrange unseen entries in short related runs; delivered ordering stays stable. Today now applies captured humor eligibility even to retained entries. Master review reserves reading-family capacity within its 2,000-item pass; empty-type article curators receive consistent supply boosts.
+- Final backend 1166 passed/six skipped; frontend check/build passed (three existing CSS warnings); Today browser suite 14 passed. Independent review approved after correcting Android Playlists tab selection.
+- Backup `/root/compose/watchcraft-backups/20261114-today`; exact image `watchcraft:release-659186d`, digest `sha256:260e50d3dbd458edd3ad879637369e5c8bd15129f09cc70e4cf8a1e463a0233c`. Network-disabled restored copy preserved all table counts and identity, expanded the real edition to 1+299/120/32, decoded/ranged media, patched deterministically and started API twice. Backup and per-service rollback images retained.
+- Four services deployed with host overlay; API/subtitles healthy, all zero restarts. Public/local health, affected routes, DB integrity and unchanged configuration/profile/PIN hashes passed. Live Today browser verified counts, interest headings, 16→36 story expansion and no horizontal overflow. Clean meme feed supplied two disjoint 20-item pages from 337 eligible items.
+- Android `c5c245f`, signed `android-v0.1.6`/code8 published with original certificate. TV submenu, top notification bell, Today/News/Meme Tracker defaults and device-local configurable shortcuts; Library remains in More. Fourteen unit tests, lint/build and signed CI passed; downloaded checksum/package/certificate verified. Native menu interaction, restart persistence and Obtainium/physical-device acceptance remain tracked externally.
+
+
+### 2026-11-14 — mood background generator
+
+- Deployed `7adba89..23235a1`: Music Videos has Mellow, Spooky, Romantic and Zen background presets plus custom text. Generated profile-owned mood mixes use existing asynchronous build/refresh/playback; generation never autoplays. Zen selection requests gentle family-friendly instrumental wind-down music.
+- Mood-only YouTube Music search accepts known music uploads/art tracks/visualizers with its own cache; ordinary music search/radio stay official-video-only. Live strict Zen search returned zero; broader candidate returned eight real tracks with verified artist credits after correcting unfiltered Song/Video bylines.
+- Full backend 1177 passed/six skipped; music browser suite21 passed; frontend check/build passed with three existing CSS warnings. Mobile custom-form screenshot inspected; independent implementation/search review passed. Exact image `watchcraft:release-23235a1`, digest `sha256:806d4b692672d17fc7db29f1713baea88f37dac7b47072929ec4dde328f430cb`.
+- Backup `/root/compose/watchcraft-backups/20261114-mood` retains online snapshot/config identity fingerprints, old source and per-service rollback tags/script. Network-disabled restored copy preserved baseline counts and identity, saved/queued all four presets and custom mood, passed media decode/range and started API twice. All four services now run release image with zero restarts; API/subtitles healthy, public health/integrity/configuration/profile/PIN preservation passed. Live browser verified presets and custom form. Actual listening suitability remains external acceptance tracking.
+
+### 2026-11-14 — independent image/GIF Mood Boards
+
+- `54ea2fb` adds `/boards`, profile-owned boards with independent visual curators, interests/notes/cadence, scheduled and manual collection, masonry pagination, local images/GIFs, save/hide/move and credited source previews. `0f7f146` adds Android menu/shortcut access and publishes signed0.1.7/code9. Visual pins stay separate from ContentItems, News and Memes; profile deletion removes their private bytes.
+- Full backend1220 passed/six skipped; final focused API/provider43 passed after stale-lease recovery fix; board/navigation browser9 passed; frontend check/build passed with three existing CSS warnings; Android15 unit tests/lint/build passed. Independent release review approved. Real production-host Commons search found five credited garden images and decoded436163bytes at1280×835; source documentation/captures and MIME/host changes verified.
+- Exact image `watchcraft:release-0f7f146`, digest `sha256:2a7788d59a55f0b04cd619b2dec592968442066e101c774ded0173e8af49b598`; all four services deployed with host overlay, zero restarts, API/subtitles healthy. Public health, new route, database integrity, configuration and profile/PIN fingerprint preservation passed. Live authenticated browser verified sidebar/page and complete new-board curator form.
+- Backup `/root/compose/watchcraft-backups/20261114-boards` retains online snapshot, identity/config baselines, source and per-service rollback images/script. Isolated network-disabled restore preserved all original table counts/identity with additive board tables, collected a fixture GIF, saved/served/scoped/deleted its board, passed existing media range/decode and started API twice. No fixture boards or private example interests were written to production.
+- Published Android APK checksum/package/version and existing signing certificate verified. Real household board relevance, multi-day automatic collection and physical-device/Obtainium acceptance remain in the external tracker.
+
+## Deployment record — Pinterest, visual boards, unified News and prepared moods (2026-11-14)
+
+- Server revision `c41bb62` (includes `cfc5f82`); all four services run image
+  `sha256:b6f58351a3e10e75c33751b2f7de39a3dca14198108c35373a0ecef20ed69ded`, zero restarts at check.
+- Backup `/root/compose/watchcraft-backups/20261114-pinterest-news-moods` retains online DB,
+  original source, configuration fingerprints, per-service rollback images and rollback script.
+  Network-isolated restored migration preserved all 73 original table counts and profile/PIN
+  fingerprints; board/Pinterest capture fixtures, local media/range and startup twice passed.
+- Backend final suite: 1,243 passed, 6 skipped. Frontend check/build and targeted boards,
+  News/Today/navigation/music browser regressions passed. Live configured vision endpoint
+  distinguished image pixels; public Pinterest RSS returned 24 pins and a decoded local capture.
+- Live `/news` shows Today followed by More news. Four preset mixes were prepared for the signed-in
+  profile, each with 40 tracks; readable-local counts at check were 5/1/3/2 and other copies queued.
+  Downloader was active. Readiness uses real files and never labels the pending whole mix ready.
+- Android `android-v0.1.8` / code 10 built from `b2a5957`, with four configurable shortcut slots.
+  Published APK checksum and original signing certificate verified.
+
+## Deployment record — Mood Board discovery and real activity repair (2026-11-14)
+
+- `b9ddda1` fixes B-066: configured SearXNG image discovery with Commons fallback, short planned
+  queries, safe local raster capture and strict vision review. Empty runs report `no_matches`;
+  the board shows last-result details and retry countdowns and follows active runs automatically.
+  Profile-owned board milestones/cards now appear in Agent Activity with real search/review counts.
+- Backup `/root/compose/watchcraft-backups/20261114-board-curation-fix` retains online DB, source,
+  configuration fingerprints and per-service rollback images/script. Network-isolated restore
+  preserved all 74 baseline table counts and profile/PIN identity; media, board activity, Pinterest
+  fixtures and repeated startup passed.
+- Final backend suite: 1,267 passed, 6 skipped. Frontend check/build passed (three existing warnings),
+  boards/team/home-shelf browser regressions 13 passed; final rebuilt board regressions 7 passed.
+- All four services run `sha256:6c5ed3dd6137b34415ad4311543f77f4f6743d22543d78a3f0f306f6c3d0f40f`,
+  zero restarts at verification; public health and configuration/profile fingerprints passed.
+
+## Deployment record — Board theme relevance and Android refresh (2026-11-14)
+
+- Server revision `1ec292b` anchors query planning and pixel review to the full board theme and
+  excludes stock-preview hosts. All four services run image
+  `sha256:1fddbb0ced98836365df79fb1d785cad52b577d1ed2523801c2b650232e1eba8`,
+  with zero restarts; public health and configuration/profile fingerprints passed.
+- Backup `/root/compose/watchcraft-backups/20261114-board-theme-fix` retains online DB, source,
+  configuration baselines and per-service rollback images/script. Isolated restored validation
+  preserved all 74 baseline table counts and identity; media/board/Pinterest/activity and repeated
+  startup passed. Final backend suite: 1,268 passed, 6 skipped.
+- The actual Homelab board search found 29 candidates and safely captured 25 previews. Its real
+  vision run and timeline were verified. Stricter theme re-review kept eight images visible and
+  recoverably hid seven weak unsaved matches, preserving all image data and user-saved pins.
+  Source URL, image fingerprint, board revision and idle lease were checked before applying review.
+- Android `android-v0.1.9` / code 11 published from `1c20fbc`; signed CI tests/lint/build passed.
+  Released APK checksum, package/version and original signing certificate independently verified.
+  Physical-device/Obtainium acceptance remains tracked separately. Disposable restore copies removed;
+  original online backups and rollback assets retained.

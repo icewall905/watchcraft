@@ -13,12 +13,14 @@ import time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import func
+from sqlalchemy import and_, func, or_
 from sqlmodel import Session, select
 
 from ...db import get_settings
 from .. import ai
-from ..models import Alert, ContentItem, Curator, Edition, ItemState, ItemVerdict, StoryItem
+from ..models import (Alert, ContentItem, Curator, CuratorDiscovery, Edition, ItemState,
+                      ItemVerdict, MemeExample, StoryItem, Topic, TopicItem)
+from ..meme_quality import candidate_clause
 from . import views
 
 log = logging.getLogger(__name__)
@@ -28,8 +30,11 @@ STORY_TYPES = ('news', 'article')
 # Today is a substantial daily edition, while the curator's separate feature limits
 # continue to control what gets the strongest verdict. Approved "keep" items
 # provide depth after the featured pool.
-SECTIONS = [('lead', 'Today\'s story', 1), ('stories', 'Stories', 29), ('reads', 'Worth reading', 20),
-            ('memes', 'Something light', 10)]
+# Sized for a long morning scroll: the page reveals these in steps, and only what is
+# actually rendered counts as delivered (see master_api.today preview limits).
+SECTIONS = [('lead', 'Today\'s story', 1), ('stories', 'Stories', 299), ('reads', 'Worth reading', 120),
+            ('memes', 'Something light', 32)]
+SECTION_SIZES = {key: size for key, _, size in SECTIONS}
 INTRO_WORDS = 60
 STORY_SUMMARIES = 4  # model-written story summaries per morning
 
@@ -40,13 +45,19 @@ def today(now: float | None = None) -> str:
     return datetime.fromtimestamp(now or time.time(), tz).date().isoformat()
 
 
+def _meme_eligible():
+    """Use the same provenance/media gate as the humor feed, even for stored editions."""
+    captured = ContentItem.id.in_(select(MemeExample.item_id).where(MemeExample.has_media == True))  # noqa: E712
+    return or_(ContentItem.type != 'meme', and_(captured, candidate_clause(ContentItem, has_media=captured)))
+
+
 def _candidates(s: Session, pid: int) -> list[tuple[ItemVerdict, ContentItem, int | None]]:
     """Visible featured and keeper items; the edition can be broad without changing feature quotas."""
     rows = s.exec(select(ItemVerdict, ContentItem, StoryItem.story_id)
                   .join(ContentItem, ContentItem.id == ItemVerdict.item_id)
                   .outerjoin(StoryItem, StoryItem.item_id == ItemVerdict.item_id)
                   .where(ItemVerdict.profile_id == pid, ItemVerdict.tier.in_(('feature', 'keep')),
-                         views.visible(pid, ItemVerdict.item_id))
+                         views.visible(pid, ItemVerdict.item_id), _meme_eligible())
                   .order_by(ItemVerdict.final.desc())).all()
     return list(rows)
 
@@ -118,6 +129,46 @@ def _varied(rows: list) -> list:
     return ordered
 
 
+def _editorial_groups(s: Session, pid: int, ids: list[int]) -> dict[int, dict]:
+    """Use this reader's existing interests; never invent topics or reveal another profile's."""
+    if not ids:
+        return {}
+    groups = {}
+    # Explicit topic membership takes precedence over a discovering curator. Stable
+    # IDs break ties when a source belongs to several configured interests.
+    for iid, tid, title in s.exec(
+            select(TopicItem.item_id, Topic.id, Topic.name).join(Topic, Topic.id == TopicItem.topic_id)
+            .where(TopicItem.item_id.in_(ids), Topic.profile_id == pid, Topic.muted == False)  # noqa: E712
+            .order_by(Topic.pinned.desc(), Topic.id)).all():
+        groups.setdefault(iid, {'group_key': f'topic:{tid}', 'group_title': title})
+    for iid, cid, title in s.exec(
+            select(CuratorDiscovery.item_id, Curator.id, Curator.name)
+            .join(Curator, Curator.id == CuratorDiscovery.curator_id)
+            .where(CuratorDiscovery.item_id.in_(ids), CuratorDiscovery.profile_id == pid,
+                   Curator.profile_id == pid, Curator.enabled == True, Curator.kind == 'watch')  # noqa: E712
+            .order_by(Curator.id)).all():
+        groups.setdefault(iid, {'group_key': f'curator:{cid}', 'group_title': title})
+    return groups
+
+
+def _related_runs(entries: list[dict]) -> list[dict]:
+    """Read related stories together, then move on to another interest after three."""
+    buckets = {}
+    for entry in entries:
+        # Unclassified items remain independent rather than becoming a fabricated topic.
+        key = entry.get('group_key', f'item:{entry["item_id"]}')
+        buckets.setdefault(key, deque()).append(entry)
+    active = deque(buckets.values())
+    ordered = []
+    while active:
+        bucket = active.popleft()
+        for _ in range(min(3, len(bucket))):
+            ordered.append(bucket.popleft())
+        if bucket:
+            active.append(bucket)
+    return ordered
+
+
 def desired(s: Session, pid: int, now: float | None = None) -> dict[str, list[dict]]:
     """What the edition would hold if built from scratch now, best first."""
     now = now if now is not None else time.time()
@@ -150,6 +201,12 @@ def desired(s: Session, pid: int, now: float | None = None) -> dict[str, list[di
             (out['lead'] if not out['lead'] else out['stories']).append(entry)
         else:
             out['reads'].append(entry)
+    groups = _editorial_groups(s, pid, [e['item_id'] for entries in out.values() for e in entries])
+    for key, entries in out.items():
+        for entry in entries:
+            entry.update(groups.get(entry['item_id'], {}))
+        if key in ('stories', 'reads'):
+            out[key] = _related_runs(entries)
     return out
 
 
@@ -164,7 +221,7 @@ def _alive(s: Session, pid: int, ids: list[int], now: float) -> set[int]:
                   .join(ContentItem, ContentItem.id == ItemVerdict.item_id)
                   .where(ItemVerdict.profile_id == pid, ItemVerdict.item_id.in_(ids),
                          ItemVerdict.tier.in_(('feature', 'keep')), ItemVerdict.overruled != 'demoted',
-                         views.visible(pid, ItemVerdict.item_id))).all()
+                         views.visible(pid, ItemVerdict.item_id), _meme_eligible())).all()
     fresh = {iid for iid, kind, published, found in rows
              if iid in promoted or now - (published if published is not None else found)
              <= (7 if kind in ('news', 'article', 'meme') else 30) * 86400}
@@ -233,6 +290,13 @@ def _patch_locked(s: Session, pid: int, now: float | None, run_id: str) -> Editi
     old = [sec for sec in copy.deepcopy(ed.sections) if sec.get('key') in {k for k, _, _ in SECTIONS}]
     placed = [e['item_id'] for sec in old for e in sec.get('entries', [])]
     sections = merge(old, desired(s, pid, now), set(ed.shown_item_ids), _alive(s, pid, placed, now))
+    group_ids = [e['item_id'] for sec in sections for e in sec['entries']]
+    groups = _editorial_groups(s, pid, group_ids)
+    for sec in sections:
+        for entry in sec['entries']:
+            entry.pop('group_key', None)
+            entry.pop('group_title', None)
+            entry.update(groups.get(entry['item_id'], {}))
     story_ids = [e['story_id'] for sec in sections for e in sec['entries'] if e.get('story_id')]
     counts = _sources(s, pid, story_ids)
     for sec in sections:

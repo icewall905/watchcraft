@@ -240,3 +240,203 @@ test('a failed auto-sync says why and stops', async ({ page }) => {
 	await page.waitForTimeout(3500);
 	expect(calls).toBe(1); // no silent retry loop
 });
+
+test('the remote stays inside the party deck and Back leaves it', async ({ page }) => {
+	await page.setViewportSize({ width: 1920, height: 1080 });
+	await fixture(page);
+	await freshPage(page, '/music');
+	await page.getByRole('button', { name: 'Play Titanium by David Guetta' }).first().click();
+	const deck = page.getByRole('region', { name: 'Music player' });
+	await deck.getByRole('button', { name: /Party mode/ }).click();
+	await deck.getByRole('button', { name: 'Play', exact: true }).focus();
+	for (let i = 0; i < 6; i++) await page.keyboard.press('ArrowLeft');
+	await page.keyboard.press('ArrowUp');
+	// Page buttons hidden behind the deck used to take the focus here.
+	expect(await page.evaluate(() => !!document.activeElement?.closest('.deck'))).toBe(true);
+	await page.keyboard.press('Escape');
+	await expect(deck.getByRole('button', { name: /Party mode/ })).toBeVisible();
+});
+
+test('full screen fills the screen with the video and Back returns', async ({ page }) => {
+	await fixture(page);
+	await freshPage(page, '/music');
+	await page.getByRole('button', { name: 'Play Titanium by David Guetta' }).first().click();
+	const deck = page.getByRole('region', { name: 'Music player' });
+	await deck.getByRole('button', { name: 'Full screen' }).click();
+	await expect(deck).toHaveClass(/full/);
+	const box = await deck.locator('.screen').boundingBox();
+	const view = page.viewportSize()!;
+	expect(box!.width).toBeGreaterThan(view.width - 2);
+	await deck.getByRole('button', { name: 'Exit full screen' }).focus();
+	await page.keyboard.press('Escape');
+	await expect(deck).not.toHaveClass(/full/);
+	await expect(deck.getByRole('button', { name: 'Full screen' })).toBeVisible();
+	// Stopping from full screen leaves it: the next song opens in the docked player.
+	await deck.getByRole('button', { name: 'Full screen' }).click();
+	await deck.getByRole('button', { name: 'Stop and close player' }).click();
+	await expect(deck).toHaveCount(0);
+	await page.getByRole('button', { name: 'Play Halo by Beyoncé' }).first().click();
+	await expect(deck).not.toHaveClass(/full/);
+});
+
+test('lyrics appear after a failed first lookup without toggling karaoke', async ({ page }) => {
+	await fixture(page);
+	await page.addInitScript(() => Object.defineProperty(HTMLMediaElement.prototype, 'currentTime', { get: () => 12, set: () => {}, configurable: true }));
+	const lines = [{ t: 5000, text: 'First line of the song' }, { t: 10000, text: 'Second line we sing now' }];
+	let calls = 0;
+	await page.route('**/api/music/lyrics/freshtrack1', (r) => (++calls === 1
+		? r.fulfill({ status: 502, json: { detail: 'upstream' } })
+		: r.fulfill({ json: { video_id: 'freshtrack1', status: 'found', source: 'lrclib', synced: true, lines, plain: '', offset_ms: 0, offset_source: '', duration: 200 } })));
+	await freshPage(page, '/music');
+	await page.getByRole('button', { name: 'Play Titanium by David Guetta' }).first().click();
+	const deck = page.getByRole('region', { name: 'Music player' });
+	await deck.getByTitle('Lyrics (karaoke)').click();
+	await expect(deck.locator('.line.now')).toHaveText('Second line we sing now', { timeout: 10_000 });
+	expect(calls).toBeGreaterThanOrEqual(2);
+});
+
+test('dislike skips the song and Less of an artist teaches the picks', async ({ page }) => {
+	await fixture(page);
+	const taught: Record<string, unknown>[] = [];
+	await page.route('**/api/music/favorites', (r) => {
+		const body = r.request().postDataJSON();
+		taught.push(body);
+		return r.fulfill({ json: { tracks: [], artists: [], disliked: ['djtrack0001'], less: body.kind === 'less' ? [{ name: 'The Killers', artist_id: '', key: 'the killers' }] : [] } });
+	});
+	await page.route('**/api/music/dj', (r) => r.fulfill({ json: { line: 'Go!', source: 'radio', tracks: DJ } }));
+	await freshPage(page, '/music');
+	await page.getByRole('button', { name: /Party/ }).first().click();
+	const deck = page.getByRole('region', { name: 'Music player' });
+	await expect(deck.getByRole('heading', { name: 'Take On Me' })).toBeVisible();
+	await deck.getByRole('button', { name: 'Dislike: skip and never pick again' }).click();
+	await expect(deck.getByRole('heading', { name: 'Mr. Brightside' })).toBeVisible();
+	expect(taught[0]).toMatchObject({ kind: 'dislike', on: true, track: { video_id: 'djtrack0001' } });
+	await expect(deck.locator('.upnext li').first()).toContainText('Kiss');
+
+	await deck.getByRole('button', { name: 'More actions' }).click();
+	await page.getByRole('button', { name: '🔉 Less The Killers' }).click();
+	expect(taught.at(-1)).toMatchObject({ kind: 'less', on: true, artist: 'The Killers' });
+});
+
+test('new mix searches and selects a seed song', async ({ page }) => {
+	await fixture(page);
+	const mix = { id: 81, name: 'Seed radio', kind: 'seed', emoji: '📻', status: 'ready', count: 2, covers: [], tracks: FRESH };
+	let created: Record<string, unknown> | null = null;
+	await page.route('**/api/music/search?*', (r) => r.fulfill({ json: { tracks: FRESH } }));
+	await page.route('**/api/music/mixes', (r) => { created = r.request().postDataJSON(); return r.fulfill({ json: mix }); });
+	await page.route('**/api/music/mixes/81', (r) => r.fulfill({ json: mix }));
+	await freshPage(page, '/music?tab=mixes');
+	await page.getByRole('button', { name: /New mix/ }).click();
+	await page.getByRole('button', { name: /From a seed track/ }).click();
+	await expect(page.getByRole('button', { name: 'Create mix from seed' })).toBeDisabled();
+	await page.getByLabel('Seed song', { exact: true }).fill('Titanium');
+	await page.getByRole('button', { name: 'Find seed track' }).click();
+	await page.getByRole('button', { name: 'David Guetta — Titanium', exact: true }).click();
+	await page.getByRole('button', { name: 'Create mix from seed' }).click();
+	await expect(page.getByRole('dialog', { name: /Seed radio/ })).toBeVisible();
+	expect(created).toMatchObject({ kind: 'seed', seed: { video_id: 'freshtrack1' } });
+});
+
+test('playlist import reports skipped tracks and explains Music Assistant setup', async ({ page }) => {
+	await fixture(page);
+	const mix = { id: 82, name: 'Imported favourites', kind: 'manual', emoji: '💿', status: 'ready', count: 2, covers: [], tracks: FRESH };
+	let imported: Record<string, unknown> | null = null;
+	await page.route('**/api/music/import/status', (r) => r.fulfill({ json: { music_assistant_configured: false, max_tracks: 300 } }));
+	await page.route('**/api/music/import', (r) => { imported = r.request().postDataJSON(); return r.fulfill({ json: { mix, imported: 2, skipped: 1, duplicates: 1, limited: false } }); });
+	await page.route('**/api/music/mixes/82', (r) => r.fulfill({ json: mix }));
+	await freshPage(page, '/music?tab=mixes');
+	await page.getByRole('button', { name: /Import playlist/ }).click();
+	await page.getByRole('button', { name: 'Music Assistant', exact: true }).click();
+	await expect(page.getByText(/set MUSIC_ASSISTANT_URL/)).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Import playlist', exact: true })).toBeDisabled();
+	await page.getByRole('button', { name: 'YouTube \/ YouTube Music' }).click();
+	await page.getByLabel('Playlist link', { exact: true }).fill('https://music.youtube.com/playlist?list=PLexample');
+	await page.getByRole('button', { name: 'Import playlist', exact: true }).click();
+	await expect(page.getByRole('dialog', { name: /Imported favourites/ })).toBeVisible();
+	await expect(page.getByRole('status').filter({ hasText: 'Imported 2 tracks.' })).toContainText('1 skipped; 1 duplicates removed');
+	expect(imported).toMatchObject({ source: 'youtube', reference: 'https://music.youtube.com/playlist?list=PLexample' });
+});
+
+test('Music Assistant import retains its form after an error and can retry', async ({ page }) => {
+	await fixture(page);
+	let calls = 0;
+	const mix = { id: 83, name: 'MA mix', kind: 'manual', emoji: '💿', status: 'ready', count: 2, covers: [], tracks: FRESH };
+	await page.route('**/api/music/import/status', (r) => r.fulfill({ json: { music_assistant_configured: true, max_tracks: 300 } }));
+	await page.route('**/api/music/import', (r) => {
+		expect(r.request().postDataJSON()).toMatchObject({ source: 'music_assistant', reference: 'library://playlist/13' });
+		if (++calls === 1) return r.fulfill({ status: 400, json: { detail: 'Music Assistant is temporarily unavailable' } });
+		return r.fulfill({ json: { mix, imported: 2, skipped: 0, duplicates: 0, limited: true } });
+	});
+	await page.route('**/api/music/mixes/83', (r) => r.fulfill({ json: mix }));
+	await freshPage(page, '/music?tab=mixes');
+	await page.getByRole('button', { name: /Import playlist/ }).click();
+	await page.getByRole('button', { name: 'Music Assistant', exact: true }).click();
+	await page.getByLabel('Playlist URI', { exact: true }).fill('library://playlist/13');
+	await page.getByRole('button', { name: 'Import playlist', exact: true }).click();
+	await expect(page.getByRole('dialog').getByRole('alert')).toContainText('temporarily unavailable');
+	await expect(page.getByLabel('Playlist URI', { exact: true })).toHaveValue('library://playlist/13');
+	await page.screenshot({ path: '/tmp/watchcraft-music-import.png' });
+	await page.getByRole('button', { name: 'Import playlist', exact: true }).click();
+	await expect(page.getByRole('dialog', { name: /MA mix/ })).toBeVisible();
+	await expect(page.getByRole('status').filter({ hasText: 'Imported 2 tracks.' })).toContainText('300-track limit');
+});
+
+
+test('mood background presets and custom descriptions create saved mixes without autoplay', async ({ page }) => {
+ await fixture(page);
+ const requests: Record<string, unknown>[] = [];
+ const mix = {id: 88, name: 'Zen background', kind: 'mood', emoji: '🍃', description: 'Gentle instrumental background music', curator: 'zen', curator_name: '', color: '', blurb: '', seed_video_id: '', status: 'building', error: '', count: 0, created_at: 1, refreshed_at: 0, covers: [], tracks: []};
+ await page.route('**/api/music/moods', async route => {requests.push(route.request().postDataJSON()); await route.fulfill({json: mix});});
+ await page.route('**/api/music/mixes/88', route => route.fulfill({json: mix}));
+ await page.route('**/api/music/mixes', route => route.fulfill({json: {mixes: [mix]}}));
+ await freshPage(page, '/music');
+ const generator = page.getByRole('region', {name: 'Mood background generator'});
+ for (const name of ['Mellow background', 'Spooky background', 'Romantic background', 'Zen background', 'Custom mood']) await expect(generator.getByRole('button', {name: new RegExp(name)})).toBeVisible();
+ await generator.getByRole('button', {name: /Zen background/}).click();
+ await expect(page.getByRole('dialog').getByText(/family-friendly/)).toBeVisible();
+ await page.getByRole('button', {name: 'Prepare background', exact: true}).click();
+ await expect.poll(() => requests.length).toBe(1);
+ expect(requests[0]).toEqual({preset: 'zen'});
+ await expect(page.getByRole('dialog', {name: /Zen background/})).toBeVisible();
+ await expect(page.getByRole('region', {name: 'Music player'})).toHaveCount(0);
+ await page.keyboard.press('Escape');
+ await generator.getByRole('button', {name: /Custom mood/}).click();
+ const submit = page.getByRole('button', {name: 'Prepare background', exact: true});
+ await expect(submit).toBeDisabled();
+ await page.getByLabel('Describe your mood').fill('  Rainy bookshop with gentle piano  ');
+ await page.setViewportSize({width: 390, height: 844});
+ expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+ await page.screenshot({path: '/tmp/watchcraft-custom-mood-mobile.png'});
+ await submit.click();
+ await expect.poll(() => requests.length).toBe(2);
+ expect(requests[1]).toEqual({preset: 'custom', description: 'Rainy bookshop with gentle piano'});
+});
+
+test('mood generation keeps the custom text after a failed request', async ({ page }) => {
+ await fixture(page);
+ await page.route('**/api/music/moods', route => route.fulfill({status: 503, json: {detail: 'Try again shortly'}}));
+ await freshPage(page, '/music');
+ await page.getByRole('region', {name: 'Mood background generator'}).getByRole('button', {name: /Custom mood/}).click();
+ await page.getByLabel('Describe your mood').fill('Quiet winter cabin');
+ await page.getByRole('button', {name: 'Prepare background', exact: true}).click();
+ await expect(page.getByRole('dialog').getByRole('alert')).toBeVisible();
+ await expect(page.getByLabel('Describe your mood')).toHaveValue('Quiet winter cabin');
+ await expect(page.getByRole('button', {name: 'Prepare background', exact: true})).toBeEnabled();
+});
+
+
+test('mood background shows download progress and only plays saved videos', async ({ page }) => {
+ await fixture(page);
+ const mix = {id: 89, name: 'Mellow background', kind: 'mood', emoji: '🍃', description: '', curator: 'mellow', curator_name: '', color: '', blurb: '', seed_video_id: '', status: 'ready', error: '', count: 2, created_at: 1, refreshed_at: 1, covers: [], offline: {saved: 1, total: 2, failed: 0, state: 'partial'}, tracks: [t('savedtrack1', 'Saved calm', 'Piano', {offline: true}), t('pending0001', 'Pending calm', 'Piano', {offline: false})]};
+ await page.route('**/api/music/mixes/89', r => r.fulfill({json: mix}));
+ await page.route('**/api/music/mixes/89/played', r => r.fulfill({json: {ok: true}}));
+ await freshPage(page, '/music?mix=89');
+ const dialog = page.getByRole('dialog', {name: /Mellow background/});
+ await expect(dialog.getByRole('status')).toContainText('1 of 2 videos downloaded');
+ await expect(dialog.getByRole('button', {name: /Pending calm/})).toBeDisabled();
+ await expect(dialog.getByRole('button', {name: /DJ from this mix/})).toHaveCount(0);
+ await dialog.getByRole('button', {name: '▶ Play', exact: true}).click();
+ const player = page.getByRole('region', {name: 'Music player'});
+ await expect(player.getByText('Saved calm', {exact: true})).toBeVisible();
+ await expect(player).not.toContainText('Pending calm');
+});

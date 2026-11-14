@@ -95,12 +95,12 @@ def test_hiding_a_language_keeps_it_out_of_the_meme_feed(client):
     from bt.hub.models import MemeExample
     curator = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}])
     ids = _discover(curator, [
-        ('de', ContentItem(url='https://example.org/de', type='meme', title='Ein Witz', summary='')),
-        ('en', ContentItem(url='https://example.org/en', type='meme', title='A joke', summary='')),
+        ('de', ContentItem(url='https://example.org/de', type='meme', title='Ein Witz', summary='', meta={'tags': ['memes']})),
+        ('en', ContentItem(url='https://example.org/en', type='meme', title='A joke', summary='', meta={'tags': ['memes']})),
     ])
     with session() as s:
-        s.add(MemeExample(item_id=ids['de'], language='de'))
-        s.add(MemeExample(item_id=ids['en'], language='en'))
+        s.add(MemeExample(item_id=ids['de'], language='de', has_media=True))
+        s.add(MemeExample(item_id=ids['en'], language='en', has_media=True))
         s.commit()
 
     def feed():

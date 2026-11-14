@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { api } from '$lib/api';
 	import { focusable } from '$lib/nav';
 	import { agent, STATE_LABEL, cleanDetail } from '$lib/stores/agent.svelte';
@@ -20,17 +20,26 @@
 	let loading = $state(true);
 	let now = $state(Date.now() / 1000);
 
+	const stamp = () => `${session.profileId}:${session.version}`;
+	const allowed = () => session.ready && session.hubAllowed && !session.needsLogin && !session.choosing && !session.profile?.pin_locked;
+	let identity = '';
+	$effect(() => {
+		const key = `${stamp()}:${allowed()}`;
+		if (key !== identity) { identity = key; untrack(() => { team = null; capture = null; error = ''; loading = allowed(); if (allowed()) void load(); }); }
+	});
 	async function load() {
+		if (!allowed()) return;
+		const owner = stamp();
 		try {
-			team = await hub.team();
-			hub.captureStatus().then((value) => { capture = value; if (!assetLimitChanged) assetLimit = value.asset_max_mb; rescueOn = value.rescue ?? true; }).catch(() => {});
+			const result = await hub.team();
+			if (owner !== stamp() || !allowed()) return;
+			team = result;
+			hub.captureStatus().then((value) => { if (owner !== stamp() || !allowed()) return; capture = value; if (!assetLimitChanged) assetLimit = value.asset_max_mb; rescueOn = value.rescue ?? true; }).catch(() => {});
 			error = '';
-		} catch (e) {
-			error = errMsg(e);
-		} finally {
-			loading = false;
-		}
+		} catch (e) { if (owner === stamp() && allowed()) error = errMsg(e); }
+		finally { if (owner === stamp()) loading = false; }
 	}
+
 	async function saveCaptureSettings(enabled: boolean) {
 		if (!capture) return;
 		try { await hub.setCaptureSettings(enabled, assetLimit, rescueOn); assetLimitChanged = false; capture = await hub.captureStatus(); }
@@ -43,17 +52,17 @@
 		finally { retrying = false; }
 	}
 	onMount(() => {
-		load();
+		let mounted = true;
 		api.agentStatus().then((s) => { if (s.downloader) agent.downloader = s.downloader; }).catch(() => {});
 		// Poll faster while someone is working; the page never moves focus or scroll.
 		let t: ReturnType<typeof setTimeout>;
 		const tick = async () => {
 			await load();
-			t = setTimeout(tick, team && (team.running || team.waiting) ? 4000 : 15000);
+			if (mounted) t = setTimeout(tick, team && (team.running || team.waiting) ? 4000 : 15000);
 		};
 		t = setTimeout(tick, 4000);
 		const clock = setInterval(() => (now = Date.now() / 1000), 1000);
-		return () => { clearTimeout(t); clearInterval(clock); };
+		return () => { mounted = false; clearTimeout(t); clearInterval(clock); };
 	});
 
 	const LABEL: Record<TeamStatus, string> = { running: 'Working', waiting: 'Waiting for a free slot', idle: 'Resting', attention: 'Needs attention', paused: 'Paused' };
@@ -78,9 +87,10 @@
 
 	// Deterministic, friendly narration built only from real state.
 	function now_line(a: TeamAgent): string {
+		if (a.status === 'waiting' && a.kind === 'moodboard') return 'Queued for visual curation.';
 		if (a.status === 'waiting') return 'Ready to go as soon as another agent finishes.';
 		if (a.status === 'running') {
-			if (a.kind === 'curator' && a.doing) return a.doing;
+			if ((a.kind === 'curator' || a.kind === 'moodboard') && a.doing) return a.doing;
 			if (a.kind === 'scout') return a.doing || `Researching “${a.query}”.`;
 			if (a.kind === 'master') return a.doing || 'Selecting your edition.';
 			if (a.kind === 'briefing') return a.doing || 'Writing a briefing.';
@@ -93,6 +103,7 @@
 			return 'Has not been sent out yet. Give it a site or topic under Sources.';
 		}
 		if (a.kind === 'master') return a.last_run ? `Edition updated ${ago(a.last_run)}.` : 'The first selection is on its way.';
+		if (a.kind === 'moodboard') return `${plural(a.pin_count ?? 0, 'image')} on this board${a.found_today ? ` · ${a.found_today} added today` : ''}.`;
 		if (a.kind === 'briefing') return a.last_run ? `Last briefing written ${ago(a.last_run)}.` : 'No briefing written yet.';
 		if (a.found_today) return `Brought back ${plural(a.found_today, 'find')} today.`;
 		if (a.last?.new_items) return `Last run brought back ${plural(a.last.new_items, 'new item')}.`;
@@ -101,6 +112,7 @@
 	}
 	function story(e: TeamEntry): string {
 		if (e.kind === 'scout_run') return e.status === 'complete' ? `scouted “${e.query}” and validated ${plural(e.suggestions ?? 0, 'source')}.` : `could not finish scouting “${e.query}”.`;
+		if (e.kind === 'moodboard_run') return e.title || (e.status === 'failed' ? 'could not finish visual curation.' : `collected ${plural(e.new_items ?? 0, 'image')}.`);
 		if (e.kind === 'briefing') return `wrote a new issue of “${e.title}”.`;
 		if (e.status === 'failed') return 'ran into trouble on its last run.';
 		const extra = e.errors ? ` ${plural(e.errors, 'source')} had problems.` : '';
@@ -110,8 +122,8 @@
 		a.next_run && !working(a) ? `Next run ${ago(a.next_run)}` : a.last_run ? `Last run ${ago(a.last_run)}` : '',
 		a.kind === 'scout' && a.plans ? plural(a.plans, 'scheduled search') : ''
 	].filter(Boolean).join(' · ');
-	const href = (a: TeamAgent) => (a.kind === 'master' ? '/today' : a.kind === 'scout' ? '/sources' : a.kind === 'briefing' ? '/briefings' : a.role === 'research' ? `/research/${a.id}` : `/curators/${a.id}`);
-	const entryHref = (e: TeamEntry) => (e.kind === 'scout_run' ? '/sources' : e.kind === 'briefing' ? '/briefings' : `/curators/${e.agent.split('-')[1]}`);
+	const href = (a: TeamAgent) => (a.kind === 'moodboard' ? '/boards' : a.kind === 'master' ? '/news' : a.kind === 'scout' ? '/sources' : a.kind === 'briefing' ? '/briefings' : a.role === 'research' ? `/research/${a.id}` : `/curators/${a.id}`);
+	const entryHref = (e: TeamEntry) => (e.kind === 'moodboard_run' ? '/boards' : e.kind === 'scout_run' ? '/sources' : e.kind === 'briefing' ? '/briefings' : `/curators/${e.agent.split('-')[1]}`);
 </script>
 
 <svelte:head><title>Agent Activity · WatchCraft</title></svelte:head>
@@ -173,9 +185,10 @@
 				<a class="card-link" href={href(a)} use:focusable>
 				<div class="top">
 					<span class="avatar emoji">{a.icon}{#if a.status === 'running'}<span class="spark" aria-hidden="true"><AgentGlyph state={GLYPH[a.status]} size="1rem" /></span>{/if}</span>
-					<div class="ttl"><h2>{a.name}</h2><span class="role">{a.kind === 'master' ? 'Master curator' : a.kind === 'scout' ? 'Source Scout' : a.kind === 'briefing' ? 'Briefings' : a.role === 'research' ? 'Researcher' : 'Watcher'}</span></div>
-					<span class="st {a.status}">{LABEL[a.status] + (a.status === 'running' && a.since ? ` · ${elapsed(a.since)}` : '')}</span>
+					<div class="ttl"><h2>{a.name}</h2><span class="role">{a.kind === 'moodboard' ? 'Mood Board curator' : a.kind === 'master' ? 'Master curator' : a.kind === 'scout' ? 'Source Scout' : a.kind === 'briefing' ? 'Briefings' : a.role === 'research' ? 'Researcher' : 'Watcher'}</span></div>
+					<span class="st {a.status}">{(a.kind === 'moodboard' && a.status === 'waiting' ? 'Queued' : LABEL[a.status]) + (a.status === 'running' && a.since ? ` · ${elapsed(a.since)}` : '')}</span>
 				</div>
+				{#if a.kind === 'moodboard'}<p class="muted small">{a.pin_count ?? 0} images · {a.found_today ?? 0} added today</p>{/if}
 				{#if a.mission}<p class="mission muted">{a.mission}</p>{/if}
 				<p class="now">{now_line(a)}</p>
 				{#if foot(a)}<p class="foot muted small">{foot(a)}</p>{/if}
@@ -217,7 +230,7 @@
 		{/each}
 	</section>
 
-	{#if team && !team.agents.some((a) => a.kind === 'curator')}
+	{#if team && !team.agents.some((a) => a.kind === 'curator' || a.kind === 'moodboard')}
 		<p class="muted hint">No curators yet. <a href="/curators/new" use:focusable>Create one</a> and it will show up here when it goes to work.</p>
 	{/if}
 

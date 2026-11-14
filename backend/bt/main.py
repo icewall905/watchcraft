@@ -8,9 +8,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import auth
-from .hub import api as hub_api, engine as hub_engine, master_api as hub_master_api, sharing as hub_sharing
+from .hub import api as hub_api, engine as hub_engine, master_api as hub_master_api, sharing as hub_sharing, moodboards, moodboard_imports
 from .api import agent as agent_api
-from .music import api as music_api
+from .music import api as music_api, service as music_service
 from .api import core
 from .api import proxy as proxy_api
 from .api import video
@@ -27,15 +27,21 @@ from .db import init_db
 async def lifespan(_app):
     init_db()
     task = asyncio.create_task(hub_engine.scheduler())
+    boards = asyncio.create_task(moodboards.scheduler())
+    moods = asyncio.create_task(music_service.mood_scheduler())
+    imports = asyncio.create_task(moodboard_imports.scheduler())
     subs = (asyncio.create_task(subtitle_jobs.worker())
             if os.environ.get('BT_SUBTITLE_WORKER', '1').lower() in ('1', 'true', 'yes') else None)
     try:
         yield
     finally:
         task.cancel()
+        boards.cancel()
+        moods.cancel()
+        imports.cancel()
         if subs:
             subs.cancel()
-        for running in (task, subs):
+        for running in (task, boards, moods, imports, subs):
             if running is None:
                 continue
             with suppress(asyncio.CancelledError):
@@ -47,6 +53,8 @@ app.add_middleware(auth.AuthMiddleware)
 app.include_router(auth.router, prefix="/api")
 app.include_router(core.router, prefix="/api")
 app.include_router(hub_api.router, prefix="/api")
+app.include_router(moodboards.router, prefix="/api")
+app.include_router(moodboard_imports.router, prefix="/api")
 app.include_router(hub_master_api.router, prefix="/api")
 app.include_router(hub_sharing.router, prefix="/api")
 app.include_router(hub_sharing.public_router)

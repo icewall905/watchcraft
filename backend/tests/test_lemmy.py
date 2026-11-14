@@ -54,7 +54,8 @@ def test_excluded_communities(monkeypatch, changes):
 
 def test_v4_capabilities_sort(monkeypatch):
     calls = mock_api(monkeypatch, v4=True)
-    assert lemmy('https://fetch.example/c/news@origin.example', config={'sort': 'TopDay', 'limit': 30, 'item_type': 'meme'})[0]['type'] == 'meme'
+    # a meme community keeps picture posts only; this story link is not one
+    assert lemmy('https://fetch.example/c/news@origin.example', config={'sort': 'TopDay', 'limit': 30, 'item_type': 'meme'}) == []
     assert len(calls) == 3
     assert '/api/v4/post/list?' in calls[-1]
     assert parse_qs(urlsplit(calls[-1]).query)['time_range_seconds'] == ['86400']
@@ -115,3 +116,18 @@ def test_v4_published_counts_and_actor_schema(monkeypatch):
     assert item['meta']['social_post'] is True
     assert item['meta']['ranking'] == 'Hot'
     assert item['meta']['observed_at'] > 0
+
+
+def test_meme_community_picture_posts_carry_their_image(monkeypatch):
+    from bt.hub import lemmy as lm
+    view = {'post': {'ap_id': 'https://origin.example/post/9', 'name': 'When the build passes',
+                     'url': 'https://origin.example/pictrs/image/abc.webp', 'thumbnail_url': ''},
+            'community': {'name': 'memes', 'actor_id': 'https://origin.example/c/memes'},
+            'creator': {'name': 'joe'}, 'counts': {'score': 40}}
+    item = lm._post(view, 'origin.example', 'memes', 'meme')
+    assert item['image'] == 'https://origin.example/pictrs/image/abc.webp'
+    assert item['meta']['media'] == {'type': 'image', 'url': item['image'], 'preview_url': item['image'],
+                                     'alt': 'When the build passes'}
+    view['post']['url'] = 'https://news.example/story'
+    assert lm._post(view, 'origin.example', 'memes', 'meme') is None
+    assert lm._post(view, 'origin.example', 'memes', 'news')['type'] == 'news'

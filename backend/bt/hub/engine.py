@@ -17,12 +17,16 @@ from . import activity, ai, polling, slots, narrate, watchers
 from .models import (Alert, Briefing, CollectionItem, ContentItem, Curator, CuratorDiscovery, CuratorRun,
                      CuratorSource, ItemState, PageRevision, SitemapEntry, Source, SourceCheck, TopicItem)
 from .providers import PROVIDERS, RateLimited
+from .meme_quality import GENERIC_MEME_TERMS, humor_curator, is_meme_candidate
 from .research import identity_names, person_match
 
 log = logging.getLogger(__name__)
 LEASE_S = 900
-NEWS_RUN_FLOOR = 100
-NEWS_RUN_CAP = 200
+NEWS_RUN_FLOOR = 500
+NEWS_RUN_CAP = 1000
+# A deep run must not fill News with archives: watch curators skip articles older than News's
+# widest range (a month), which the feed could never show anyway. None disables the guard.
+NEWS_MAX_AGE: int | None = 30 * 86400
 SEVERITY = ['info', 'low', 'medium', 'high', 'critical']
 TYPE_BLOCKED = 'Content type not selected'
 TRACKING = re.compile(r'^(utm_[a-z]+|fbclid|gclid|mc_cid|mc_eid|ref|ref_src)$', re.I)
@@ -261,13 +265,17 @@ def taste(s, pid: int, article: bool = False) -> tuple[list[str], list[str]]:
 
 def _taste_nudge(data: dict, score: float, reason: str, liked: list[str], disliked: list[str]) -> tuple[float, str]:
     words = set(re.split(r'[^a-z0-9]+', f"{data.get('title', '')} {data.get('summary', '')}".lower()))
-    up = [w for w in liked if w in words]
-    down = [w for w in disliked if w in words]
+    neutral = GENERIC_MEME_TERMS if data.get('type') == 'meme' else ()
+    up = [w for w in liked if w in words and w not in neutral]
+    down = [w for w in disliked if w in words and w not in neutral]
     if up and not down:
         return min(100.0, score + TASTE_NUDGE), ' · '.join(x for x in (reason, f'You save "{up[0]}"') if x)
     if down and not up:
         return max(0.0, score - TASTE_NUDGE), ' · '.join(x for x in (reason, f'You dismiss "{down[0]}"') if x)
     return score, reason
+
+
+MEME_COMMUNITY_PROVIDERS = ('reddit_memes', 'lemmy', 'mastodon')
 
 
 def keyword_score(c: Curator, data: dict) -> tuple[float | None, str]:
@@ -297,8 +305,9 @@ def keyword_score(c: Curator, data: dict) -> tuple[float | None, str]:
 def tune(c: Curator, data: dict, score: float, reason: str) -> tuple[float, str]:
     """Nudge a keyword or AI score by the family's "more/less like this" title terms."""
     hay = f"{data.get('title', '')} {data.get('summary', '')}".lower()
-    down = [x for x in _terms(c.tuned_down) if x in hay]
-    up = [x for x in _terms(c.tuned_up) if x in hay]
+    neutral = GENERIC_MEME_TERMS if data.get('type') == 'meme' else ()
+    down = [x for x in _terms(c.tuned_down) if x in hay and x not in neutral]
+    up = [x for x in _terms(c.tuned_up) if x in hay and x not in neutral]
     if down and not up:
         score, note = score - 10, f'Less like this: "{down[0]}"'
     elif up and not down:
@@ -427,23 +436,35 @@ def fresh_candidates(scored, known: set[str], limit: int, nonarticle_limit: int 
 
 
 def news_run_budget(s: Session, curator: Curator, trigger: str = 'schedule', now: float | None = None) -> tuple[int, int | None]:
-    """Raise scheduled article collectors to a bounded batch while short.
+    """Raise scheduled article collectors to a bounded batch while their interest is short.
 
-    Mixed-content scouts can use the extra slots for articles; other content stays
-    within the curator's configured budget. Manual runs, disabled curators, and
-    configurations already above the floor retain their requested limit (capped
-    at the public API's 200-item maximum).
+    The decision is per interest (news_supply.interest_decision): an underserved interest is
+    raised even when the profile total is met, a saturated one never is. Mixed-content scouts
+    can use the extra slots for articles; other content stays within the curator's configured
+    budget. Manual runs, disabled curators, and configurations already above the floor retain
+    their requested limit (capped at the public API's 1000-item maximum).
     """
     configured = max(1, min(NEWS_RUN_CAP, int(curator.max_per_run or 1)))
-    types = set(curator.content_types or [])
-    if (trigger != 'schedule' or not curator.enabled or curator.kind != 'watch'
-            or not types.intersection({'news', 'article'})):
+    if trigger != 'schedule' or not _news_collector(curator):
         return configured, None
-    from .news_supply import snapshot
-    supply = snapshot(s, curator.profile_id, now)
-    if supply['met']:
+    if not _news_boost(s, curator, now)['boost']:
         return configured, None
     return max(configured, NEWS_RUN_FLOOR), configured
+
+
+def _news_collector(curator: Curator) -> bool:
+    return (curator.enabled and curator.kind == 'watch'
+            and (not curator.content_types or bool(set(curator.content_types).intersection({'news', 'article'}))))
+
+
+def _news_boost(s, curator: Curator, now: float | None) -> dict:
+    """Per-interest boost decision; an unsaved curator has no interest accounting and
+    falls back to the profile-wide supply."""
+    from . import news_supply
+    if curator.id is None:
+        return {'boost': not news_supply.snapshot(s, curator.profile_id, now)['met'],
+                'backoff_seconds': news_supply.CATCH_UP}
+    return news_supply.interest_decision(s, curator, now, cache=True)
 
 
 def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
@@ -530,8 +551,9 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
     with session() as s:
         liked, disliked = taste(s, c.profile_id)
         article_liked, article_disliked = taste(s, c.profile_id, article=True)
-    scored, type_blocked = [], 0
+    scored, type_blocked, too_old = [], 0, 0
     seen_urls = set()
+    oldest = time.time() - NEWS_MAX_AGE if NEWS_MAX_AGE else None
     for src, q, d in candidates:
         try:
             key = canonical_url(d['url'])
@@ -542,6 +564,12 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         seen_urls.add(key)
         if not person_match(c, d):
             continue
+        if (oldest and c.kind == 'watch' and d.get('type') in {'news', 'article'}
+                and isinstance(d.get('published_at'), (int, float)) and d['published_at'] < oldest):
+            too_old += 1
+            continue
+        if humor_curator(c) and d.get('type') == 'meme' and not is_meme_candidate(d):
+            continue
         score, reason = keyword_score(c, d)
         if score is None:
             type_blocked += reason == TYPE_BLOCKED
@@ -550,6 +578,11 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         up_words, down_words = (article_liked, article_disliked) if d.get("type") in {"news", "article", "web"} else (liked, disliked)
         if score > 0 and (up_words or down_words):
             score, reason = _taste_nudge(d, score, reason, up_words, down_words)
+        # A picture or clip from a meme community is already chosen by that community; captions rarely
+        # carry the curator's keywords ("me when…"), so they are not held to them.
+        if score == 0 and d.get('type') == 'meme' and src.provider in MEME_COMMUNITY_PROVIDERS \
+                and is_meme_candidate(d):
+            score, reason = 50.0, 'Picked by a meme community'
         # Feeds are unfiltered firehoses: with keywords set, keep matches only. Query results already match a query.
         if score == 0 and (PROVIDERS[src.provider].mode != 'query' or _feed_needs_keywords(src.provider)):
             continue
@@ -558,6 +591,11 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
     if not scored and type_blocked and type_blocked == len(seen_urls):
         errors.append({'source': 'Content types',
                        'message': f'No attached source can produce {", ".join(c.content_types)}; add one that can.'})
+    if too_old:
+        log.info('curator %s skipped %d articles older than %d days', cid, too_old, (NEWS_MAX_AGE or 0) // 86400)
+    # Newest first, so a capped run keeps current reporting (undated items count as new).
+    now_ts = time.time()
+    scored.sort(key=lambda x: -(x[2].get('published_at') if isinstance(x[2].get('published_at'), (int, float)) else now_ts))
     with session() as s:
         known = set(s.exec(select(ContentItem.url).join(CuratorDiscovery, CuratorDiscovery.item_id == ContentItem.id)
                                       .where(CuratorDiscovery.curator_id == cid)).all())
@@ -783,21 +821,20 @@ def schedule_after(interval_hours: int) -> float:
 
 
 def next_run_after(s, curator: Curator, now: float) -> float:
-    """Revisit existing news curators hourly while article supply is below target.
+    """Revisit news curators hourly while their own interest is short.
 
     The configured interval stays untouched. Normal scheduler slots and curator leases
-    still bound work; scheduled news-only runs get a bounded screening batch while
-    supply is short. Supply requires both 100 locally ready articles and a 300-item
-    quality-approved candidate buffer; after both are full, the configured interval
-    resumes after the next successful run.
+    still bound work. A curator is boosted when its interest lacks unseen ready articles
+    or daily intake (even if other interests fill the profile), never when its interest is
+    saturated, and otherwise only while the profile-wide supply is short. Interests whose
+    recent scheduled runs found nothing back off exponentially up to the configured interval.
     """
     interval = curator.interval_hours
     scheduled = now + interval * 3600 if interval else 1e12
-    if (curator.enabled and curator.kind == 'watch' and curator.last_status == 'ok' and interval > 1
-            and set(curator.content_types or []).intersection({'news', 'article'})):
-        from .news_supply import snapshot
-        if not snapshot(s, curator.profile_id, now)['met']:
-            scheduled = min(scheduled, now + 3600)
+    if curator.last_status == 'ok' and interval > 1 and _news_collector(curator):
+        decision = _news_boost(s, curator, now)
+        if decision['boost']:
+            scheduled = min(scheduled, now + max(3600, decision['backoff_seconds'] or 3600))
     return scheduled
 
 

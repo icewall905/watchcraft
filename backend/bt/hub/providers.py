@@ -11,6 +11,7 @@ import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from typing import Callable
+from html import unescape as unescape_html
 from urllib.parse import quote, unquote, urlencode, urljoin, urlsplit
 
 
@@ -192,8 +193,14 @@ def _mastodon_tags(q: str) -> list[str]:
         return []
     joined = ''.join(words)
     out = [joined] if len(joined) >= 3 else []
+    if len(words) > 1 and any(w in MEME_WORDS for w in words):
+        # "linux memes" means #linuxmemes or #memes, never all of #linux: that tag is mostly news and chat.
+        return (out + [w for w in words if w in MEME_WORDS and w not in out])[:3]
     out += [w for w in words if w not in out]
     return out[:3]
+
+
+MEME_WORDS = {'meme', 'memes', 'humor', 'humour', 'funny', 'jokes', 'joke', 'shitpost', 'shitposting', 'comics', 'lol'}
 
 
 _PLAIN_LINK = re.compile(r'<a\b(?![^>]*class="[^"]*(?:mention|hashtag))[^>]*>.*?</a>', re.I | re.S)
@@ -306,6 +313,324 @@ def lobsters(url: str, _q: str = '') -> list[dict]:
              'meta': {'tags': (s.get('tags') or [])[:8], 'score': s.get('score'),
                       'comments': s.get('comment_count'), 'discussion': s.get('comments_url')}}
             for s in data[:40] if isinstance(s, dict) and s.get('title') and (s.get('url') or s.get('comments_url'))]
+
+
+REDDIT_SUB = re.compile(r'^[A-Za-z0-9][A-Za-z0-9_]{1,20}$')
+REDDIT_SORTS = {'hot': '', 'new': 'new/', 'rising': 'rising/', 'top': 'top/'}
+_REDDIT_LINK = re.compile(r'<a href="([^"]+)">\[link\]</a>')
+REDDIT_HOSTS = ('reddit.com', 'redd.it', 'redditmedia.com')
+
+
+# Reddit answers anonymous feed reads in quick succession with 429. Every subreddit source (news and
+# memes, all curators) goes through one pace (60 s), and after a 429 Reddit rests until the window passes.
+REDDIT_GAP_S = 60.0
+REDDIT_BLOCK_S = 600
+_reddit_lock = threading.Lock()
+_reddit_last = 0.0
+_reddit_blocked_until = 0.0
+
+
+REDDIT_MAX_WAIT_S = 600  # a read further back in the queue than this fails fast and retries next run
+
+
+def _reddit_get(feed: str) -> bytes:
+    """One paced Reddit read. Each caller reserves the next free slot, then sleeps outside the lock."""
+    global _reddit_last, _reddit_blocked_until
+    with _reddit_lock:
+        now = time.monotonic()
+        if now < _reddit_blocked_until:
+            raise RateLimited(f'Reddit asked us to slow down; trying again in {int(_reddit_blocked_until - now)}s.')
+        slot = max(now, _reddit_last + REDDIT_GAP_S)
+        if slot - now > REDDIT_MAX_WAIT_S:
+            raise RateLimited(f'Reddit is busy with other sources; trying again in {int(slot - now)}s.')
+        _reddit_last = slot
+    if slot > now:
+        time.sleep(slot - now)
+    try:
+        return curation.fetch(feed, headers={'User-Agent': 'WatchCraft/1.0 (self-hosted news reader)'})
+    except curation.FetchError as e:
+        if e.status == 429:
+            hint = int(e.retry_after) if e.retry_after.isdigit() else 0
+            with _reddit_lock:
+                _reddit_blocked_until = max(_reddit_blocked_until, time.monotonic() + min(max(REDDIT_BLOCK_S, hint), 3600))
+            raise RateLimited('Reddit asked us to slow down; trying again later.') from e
+        raise
+
+
+def reddit_feed(source: str) -> str:
+    """r/news, news, or a reddit.com/r/<sub>[/hot|new|rising|top][?t=day] URL -> its public RSS feed."""
+    raw = source.strip()
+    if '://' not in raw:
+        raw = 'https://www.reddit.com/r/' + raw.removeprefix('/').removeprefix('r/')
+    parts = urlsplit(raw)
+    host = (parts.hostname or '').lower()
+    if host != 'reddit.com' and not host.endswith('.reddit.com'):
+        raise ValueError('Use a subreddit like r/worldnews or https://www.reddit.com/r/worldnews/top/?t=day.')
+    path = [p for p in parts.path.split('/') if p]
+    if len(path) < 2 or path[0].lower() != 'r' or not REDDIT_SUB.match(path[1]):
+        raise ValueError('Use a subreddit like r/worldnews.')
+    sort = path[2].lower() if len(path) > 2 and path[2].lower() in REDDIT_SORTS else 'top'
+    window = re.search(r'(?:^|&)t=(hour|day|week)(?:&|$)', parts.query or '')
+    query = f'?t={window.group(1) if window else "day"}&limit=50' if sort == 'top' else '?limit=50'
+    return f'https://www.reddit.com/r/{path[1]}/{REDDIT_SORTS[sort]}.rss{query}'
+
+
+def reddit(url: str, _q: str = '') -> list[dict]:
+    """A subreddit's public RSS (top of the day by default), resolved to the articles it links.
+
+    Self posts and reddit-hosted media are skipped: News wants the reporting, with the thread kept
+    as the discussion link. Votes are popularity, never verification."""
+    feed = reddit_feed(url)
+    sub = feed.split('/r/', 1)[1].split('/', 1)[0]
+    root = _xml(_reddit_get(feed))
+    out = []
+    for entry in root.iter():
+        if _local(entry.tag) != 'entry':
+            continue
+        title = thread = html = ''
+        published = None
+        image = ''
+        for c in entry:
+            tag = _local(c.tag)
+            if tag == 'title': title = clean(''.join(c.itertext()), 500)
+            elif tag == 'link': thread = (c.get('href') or '').strip()
+            elif tag == 'content': html = ''.join(c.itertext())
+            elif tag == 'published': published = ts(''.join(c.itertext())) or published
+            elif tag == 'updated' and not published: published = ts(''.join(c.itertext()))
+            elif tag == 'thumbnail' and not image: image = safe_image(c.get('url') or '')
+        m = _REDDIT_LINK.search(html)
+        link = unescape_html(m.group(1)) if m else ''
+        host = (urlsplit(link).hostname or '').lower()
+        if not title or not link.startswith('https://') or any(host == h or host.endswith('.' + h) for h in REDDIT_HOSTS):
+            continue
+        out.append({'url': link, 'title': title, 'type': 'news', 'provider': 'subreddit',
+                    'publisher': host.removeprefix('www.'), 'published_at': published, 'image': image,
+                    'summary': '', 'external_id': link,
+                    'meta': {'platform': 'reddit', 'community': f'r/{sub}', 'discussion': thread,
+                             'discussion_url': thread, 'observed_at': time.time()}})
+        if len(out) >= 50:
+            break
+    return out
+
+
+REDDIT_IMAGE_HOSTS = ('i.redd.it', 'i.imgur.com')
+_IMAGE_PATH = re.compile(r'\.(?:jpe?g|png|webp|gif)$', re.I)
+
+
+def reddit_memes(url: str, _q: str = '') -> list[dict]:
+    """Image posts from a meme subreddit (top of the day by default) as memes, picture first.
+
+    Only direct images (i.redd.it, i.imgur.com) are kept: galleries, videos, text and link posts are
+    skipped. The thread is the item; votes are popularity only."""
+    feed = reddit_feed(url)
+    sub = feed.split('/r/', 1)[1].split('/', 1)[0]
+    root = _xml(_reddit_get(feed))
+    out = []
+    for entry in root.iter():
+        if _local(entry.tag) != 'entry':
+            continue
+        title = thread = html = author = ''
+        published = None
+        for c in entry:
+            tag = _local(c.tag)
+            if tag == 'title': title = clean(''.join(c.itertext()), 500)
+            elif tag == 'link': thread = (c.get('href') or '').strip()
+            elif tag == 'content': html = ''.join(c.itertext())
+            elif tag == 'published': published = ts(''.join(c.itertext())) or published
+            elif tag == 'author': author = clean(''.join(c.itertext()), 100)
+        m = _REDDIT_LINK.search(html)
+        link = unescape_html(m.group(1)) if m else ''
+        parts = urlsplit(link)
+        if (not title or not thread.startswith('https://www.reddit.com/') or parts.scheme != 'https'
+                or (parts.hostname or '').lower() not in REDDIT_IMAGE_HOSTS or not _IMAGE_PATH.search(parts.path)):
+            continue
+        image = safe_image(link)
+        # Reddit's feed carries no over_18 flag: posts that call themselves NSFW or spoilers are skipped.
+        if not image or re.search(r'\b(nsfw|nsfl|spoiler)\b', title, re.I):
+            continue
+        out.append({'url': thread, 'title': title, 'type': 'meme', 'provider': 'reddit_memes',
+                    'publisher': f'r/{sub}', 'author': author.removeprefix('/u/'), 'published_at': published,
+                    'image': image, 'summary': '', 'external_id': f'reddit:{thread}',
+                    'meta': {'platform': 'reddit', 'social_post': True, 'community': f'r/{sub}',
+                             'discussion_url': thread, 'observed_at': time.time(),
+                             'media': {'type': 'image', 'url': image, 'preview_url': image, 'alt': title}}})
+        if len(out) >= 50:
+            break
+    return out
+
+
+def bing_news(_url: str, q: str = '') -> list[dict]:
+    """Bing News search RSS for one curator query: current reporting from many outlets.
+
+    Licensed for personal, non-commercial RSS readers. Links are click-tracking redirects whose
+    `url` parameter is the article itself; only https article links are kept."""
+    from urllib.parse import parse_qs
+    if not q.strip():
+        return []
+    feed = 'https://www.bing.com/news/search?' + urlencode({'q': q.strip()[:200], 'format': 'rss', 'setlang': 'en'})
+    out = []
+    for item in parse_feed(curation.fetch(feed), feed):
+        link = item.get('url') or ''
+        target = (parse_qs(urlsplit(link).query).get('url') or [''])[0] if (urlsplit(link).hostname or '').lower().removeprefix('www.') == 'bing.com' else link
+        host = (urlsplit(target).hostname or '').lower()
+        if not target.startswith('https://') or not host or host.endswith('bing.com'):
+            continue
+        item.update(url=target, provider='bing_news', type='news', external_id=target,
+                    publisher=item.get('publisher') if item.get('publisher') and 'Bing' not in item['publisher'] else host.removeprefix('www.'))
+        out.append(item)
+    return out
+
+
+BSKY_API = 'https://public.api.bsky.app/xrpc/'
+_BSKY_ID = re.compile(r'^(did:plc:[a-z2-7]{24}|did:web:[a-z0-9.-]+|[a-z0-9][a-z0-9.-]{1,252}\.[a-z]{2,})$', re.I)
+
+
+def _bsky(method: str, **params) -> dict:
+    data = json.loads(curation.fetch(BSKY_API + method + '?' + urlencode(params), kinds=('application/json',)))
+    if not isinstance(data, dict):
+        raise ValueError('Unexpected Bluesky response.')
+    return data
+
+
+def bluesky_source(url: str) -> tuple[str, str, str]:
+    """bsky.app/profile/<handle> -> ('author', actor, '') ; .../profile/<actor>/feed/<rkey> -> ('feed', actor, rkey)."""
+    parts = urlsplit(url.strip() if '://' in url else 'https://bsky.app/profile/' + url.strip().lstrip('@'))
+    path = [p for p in parts.path.split('/') if p]
+    if (parts.hostname or '').lower() != 'bsky.app' or len(path) < 2 or path[0] != 'profile' or not _BSKY_ID.match(path[1]):
+        raise ValueError('Use a Bluesky account (https://bsky.app/profile/reuters.com) or a custom feed URL.')
+    if len(path) >= 4 and path[2] == 'feed' and re.fullmatch(r'[A-Za-z0-9._~-]{1,64}', path[3]):
+        return 'feed', path[1], path[3]
+    return 'author', path[1], ''
+
+
+def bluesky(url: str, _q: str = '') -> list[dict]:
+    """Links shared by one Bluesky account or custom feed, resolved to the articles they point at."""
+    kind, actor, rkey = bluesky_source(url)
+    if kind == 'feed':
+        did = actor if actor.startswith('did:') else _bsky('app.bsky.actor.getProfile', actor=actor).get('did', '')
+        if not str(did).startswith('did:'):
+            raise ValueError('Bluesky account not found.')
+        data = _bsky('app.bsky.feed.getFeed', feed=f'at://{did}/app.bsky.feed.generator/{rkey}', limit=100)
+    else:
+        data = _bsky('app.bsky.feed.getAuthorFeed', actor=actor, limit=100, filter='posts_no_replies')
+    out, seen = [], set()
+    for row in data.get('feed') or []:
+        post = (row or {}).get('post') or {}
+        if any((l or {}).get('val') in ('porn', 'sexual', 'nudity', 'graphic-media') for l in post.get('labels') or []):
+            continue
+        embed = post.get('embed') or {}
+        ext = embed.get('external') or (embed.get('media') or {}).get('external') or {}
+        link = str(ext.get('uri') or '')
+        host = (urlsplit(link).hostname or '').lower()
+        if not link.startswith('https://') or host.endswith('bsky.app') or link in seen or not ext.get('title'):
+            continue
+        seen.add(link)
+        author = post.get('author') or {}
+        rkey_post = str(post.get('uri') or '').rsplit('/', 1)[-1]
+        thread = f"https://bsky.app/profile/{author.get('handle', '')}/post/{rkey_post}" if author.get('handle') else ''
+        out.append({'url': link, 'title': clean(ext.get('title'), 500), 'type': 'news', 'provider': 'bluesky',
+                    'publisher': host.removeprefix('www.'), 'summary': clean(ext.get('description'), 1000),
+                    'image': safe_image(str(ext.get('thumb') or '')),
+                    'published_at': ts((post.get('record') or {}).get('createdAt') or post.get('indexedAt')),
+                    'external_id': link,
+                    'meta': {'platform': 'bluesky', 'shared_by': author.get('handle', ''), 'discussion_url': thread,
+                             'likes': post.get('likeCount'), 'reposts': post.get('repostCount')}})
+        if len(out) >= 60:
+            break
+    return out
+
+
+TIKTOK_HANDLE = re.compile(r'^[A-Za-z0-9_.]{2,24}$')
+TIKTOK_MAX_SECONDS = 180  # the local clip limit (capture.VIDEO_MAX_SECONDS)
+
+
+def tiktok_handle(source: str) -> str:
+    """@bbcnews, bbcnews or https://www.tiktok.com/@bbcnews -> 'bbcnews'."""
+    raw = source.strip()
+    if '://' in raw:
+        parts = urlsplit(raw)
+        host = (parts.hostname or '').lower()
+        path = [p for p in parts.path.split('/') if p]
+        if host not in ('tiktok.com', 'www.tiktok.com', 'm.tiktok.com') or not path or not path[0].startswith('@'):
+            raise ValueError('Use a TikTok account like https://www.tiktok.com/@bbcnews.')
+        raw = path[0]
+    handle = raw.removeprefix('@')
+    if not TIKTOK_HANDLE.match(handle):
+        raise ValueError('Use a TikTok account like https://www.tiktok.com/@bbcnews.')
+    return handle
+
+
+def tiktok(url: str, _q: str = '') -> list[dict]:
+    """Recent clips from one public TikTok account, listed by yt-dlp (no login, no cookies).
+
+    Clips become Moments (type meme); capture downloads each one locally through yt-dlp so it plays
+    without TikTok. Hashtag and search pages need a logged-in app session and are not supported."""
+    import yt_dlp
+    handle = tiktok_handle(url)
+    opts = {'quiet': True, 'no_warnings': True, 'extract_flat': True, 'playlistend': 30, 'skip_download': True,
+            'socket_timeout': 20}
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(f'https://www.tiktok.com/@{handle}', download=False) or {}
+    except Exception as e:  # noqa: BLE001 — yt-dlp errors carry no secrets; keep them short
+        raise ValueError(f'TikTok account could not be read: {str(e)[:160]}') from e
+    out = []
+    for e in info.get('entries') or []:
+        vid = str((e or {}).get('id') or '')
+        if not re.fullmatch(r'\d{8,25}', vid):
+            continue
+        duration = e.get('duration')
+        if isinstance(duration, (int, float)) and duration > TIKTOK_MAX_SECONDS:
+            continue
+        link = f'https://www.tiktok.com/@{handle}/video/{vid}'
+        caption = clean(e.get('title') or e.get('description') or '', 500) or f'@{handle} on TikTok'
+        thumbs = [t.get('url') for t in e.get('thumbnails') or [] if isinstance(t, dict) and t.get('url')]
+        out.append({'url': link, 'title': caption, 'type': 'meme', 'provider': 'tiktok',
+                    'publisher': f'@{handle}', 'author': clean(e.get('uploader') or handle, 100),
+                    'summary': clean(e.get('description') or '', 1000),
+                    'image': safe_image(thumbs[-1]) if thumbs else '',
+                    'published_at': float(e['timestamp']) if isinstance(e.get('timestamp'), (int, float)) else None,
+                    'external_id': f'tiktok:{vid}',
+                    'meta': {'platform': 'tiktok', 'social_post': True, 'community': f'@{handle}', 'discussion_url': link,
+                             'media': {'type': 'video', 'via': 'yt-dlp', 'url': link},
+                             'duration': duration, 'views': e.get('view_count'), 'likes': e.get('like_count')}})
+    return out
+
+
+YT_SHORTS_PER_QUERY = 10  # each clip is downloaded (<=25 MB), so a query brings a handful, not a page
+
+
+def youtube_shorts(_url: str, q: str = '') -> list[dict]:
+    """YouTube Shorts for one curator query, through the app's YouTube client (cookies, proxy, PO tokens).
+
+    Like TikTok clips they become Moments (type meme) and capture saves each one locally. Longer videos stay
+    with the video categories, which download and play them as full videos."""
+    from .. import ytdl
+    if not q.strip():
+        return []
+    try:
+        found = ytdl.search_shorts(q.strip()[:200], YT_SHORTS_PER_QUERY, 'worker')
+    except Exception as e:  # noqa: BLE001 — YtBlocked / YtError carry no secrets; keep them short
+        raise ValueError(f'YouTube Shorts search failed: {str(e)[:160]}') from e
+    out = []
+    for e in found:
+        vid = e.get('id') or ''
+        if not re.fullmatch(r'[A-Za-z0-9_-]{11}', vid) or e.get('is_live'):
+            continue
+        # Shorts search gives id, title and views only; length and channel are checked when the clip is saved.
+        link = f'https://www.youtube.com/shorts/{vid}'
+        published = e.get('published_at')
+        out.append({'url': link, 'title': clean(e.get('title') or '', 500) or 'YouTube Short', 'type': 'meme',
+                    'provider': 'youtube_shorts', 'publisher': clean(e.get('channel_name') or 'YouTube', 100),
+                    'author': clean(e.get('channel_name') or '', 100), 'summary': '',
+                    'image': f'https://i.ytimg.com/vi/{vid}/hqdefault.jpg',
+                    'published_at': published.timestamp() if published else None,
+                    'external_id': f'youtube:{vid}',
+                    'meta': {'platform': 'youtube', 'social_post': True, 'community': 'YouTube Shorts',
+                             'discussion_url': link, 'video_id': vid,
+                             'media': {'type': 'video', 'via': 'yt-dlp', 'url': link},
+                             'duration': e.get('duration_s') or None, 'views': e.get('view_count') or None}})
+    return out
 
 
 def rss(url: str, _q: str = '') -> list[dict]:
@@ -618,6 +943,18 @@ PROVIDERS = {p.key: p for p in [
              ['keyword-search', 'update-monitoring', 'structured-metadata'], needs_url=True, default_type='meme'),
     Provider('devto', 'dev.to articles', 'query', 'Developer articles from dev.to. The first query word is used as a tag when it is a usable one.', devto,
              ['keyword-search', 'structured-metadata'], default_type='article'),
+    Provider('subreddit', 'Reddit subreddit', 'feed', 'Articles linked from one subreddit, top of the day by default. Use r/worldnews or https://www.reddit.com/r/worldnews/new/. Self posts are skipped; votes are popularity, not verification.', reddit,
+             ['feed', 'community-scoped'], needs_url=True, default_type='news'),
+    Provider('reddit_memes', 'Reddit memes', 'feed', 'Image posts from a meme subreddit, top of the day by default (r/memes, r/ProgrammerHumor, …/hot/). Galleries, videos and text posts are skipped.', reddit_memes,
+             ['feed', 'community-scoped'], needs_url=True, default_type='meme'),
+    Provider('bing_news', 'Bing News search', 'query', 'Current reporting from many outlets for each curator query (Bing News RSS, personal use).', bing_news,
+             ['keyword-search', 'feed'], default_type='news'),
+    Provider('bluesky', 'Bluesky account or feed', 'feed', 'Articles linked by one Bluesky account (https://bsky.app/profile/reuters.com) or custom feed (…/feed/<name>). Posts without a link are skipped.', bluesky,
+             ['feed', 'structured-metadata'], needs_url=True, default_type='news'),
+    Provider('tiktok', 'TikTok account', 'feed', 'Recent clips (up to 3 minutes) from one public account, saved locally so they play here. Use https://www.tiktok.com/@bbcnews. Hashtags and search need a login and are not supported.', tiktok,
+             ['feed', 'community-scoped'], needs_url=True, default_type='meme'),
+    Provider('youtube_shorts', 'YouTube Shorts search', 'query', 'Shorts for each curator query, saved locally so they play here as Moments (up to 3 minutes). Longer videos belong in a video category.', youtube_shorts,
+             ['keyword-search', 'community-scoped'], default_type='meme'),
     Provider('lobsters', 'Lobste.rs stories', 'feed', 'Stories from the Lobste.rs technology community. Use https://lobste.rs/hottest.json or /newest.json.', lobsters,
              ['feed', 'structured-metadata'], needs_url=True, default_type='news'),
 ]}

@@ -472,7 +472,18 @@ def _local_short_rows(s: Session, pid: int, cid: int):
     return ready
 
 
+def _short_file_present(relative):
+    """Presence and size only. Feed counts run on every poll, and opening each file costs an NFS
+    round trip that the attribute cache cannot absorb."""
+    path = abs_path(relative) if relative else None
+    try:
+        return bool(path and path.is_file() and path.stat().st_size > 0)
+    except OSError:
+        return False
+
+
 def _readable_short_file(relative):
+    """Presence plus a real read, for the list that is about to serve the file."""
     path = abs_path(relative) if relative else None
     try:
         if path and path.is_file() and path.stat().st_size > 0:
@@ -512,7 +523,7 @@ def shorts_feeds(pid: int = Depends(profile_id), s: Session = Depends(get_sessio
         if vid in watched:
             continue
         if status == 'done' and path not in readable:
-            readable[path] = _readable_short_file(path)
+            readable[path] = _short_file_present(path)
         key = ('error_count' if status == 'error' else
                'ready_count' if status == 'done' and readable[path] else 'pending_count')
         counts[cid][key] += 1
@@ -1066,7 +1077,10 @@ def _cleanup_seen(video_id: str) -> None:
 
 def _redact(st: dict) -> dict:
     st = {**st, "llm": {**st["llm"]}, "throttle": {**st["throttle"]}, "search": {**st["search"]},
-          "notify": {**st["notify"]}, "stt": {**st["stt"]}}
+          "notify": {**st["notify"]}, "stt": {**st["stt"]}, "moodboard_sources": {**st["moodboard_sources"]}}
+    for k in ("flickr_api_key", "tumblr_api_key"):
+        if st["moodboard_sources"].get(k):
+            st["moodboard_sources"][k] = "********"
     if st["stt"].get("api_key"):
         st["stt"]["api_key"] = "********"
     if st["search"].get("brave_api_key"):
@@ -1146,6 +1160,25 @@ def write_settings(key: str, value: dict, s: Session = Depends(get_session)):
         url = value.get("searxng_url", cur["searxng_url"]).strip()
         if url and not url.startswith(("http://", "https://")):
             raise HTTPException(400, "SearXNG URL must start with http:// or https://")
+    if key == "moodboard_sources":
+        import re
+        for k in ("flickr_api_key", "tumblr_api_key"):
+            if value.get(k) == "********":
+                value[k] = cur.get(k, "")
+            if not isinstance(value.get(k, cur.get(k, "")), str) or len(value.get(k, cur.get(k, ""))) > 200:
+                raise HTTPException(400, "API keys must be text")
+        merged = {**cur, **value}
+        if set(value) - set(cur):
+            raise HTTPException(400, "Unknown Mood Board source setting")
+        if any(type(merged[k]) is not bool for k in ("web", "reddit", "bluesky", "mastodon")):
+            raise HTTPException(400, "Source switches must be on or off")
+        instance = merged["mastodon_instance"]
+        if not isinstance(instance, str) or (instance and not re.fullmatch(
+                r"(?=.{4,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}", instance.strip().lower())):
+            raise HTTPException(400, "Use a Mastodon instance host name like mastodon.social")
+        value["mastodon_instance"] = instance.strip().lower()
+        if type(merged["source_timeout_s"]) is not int or not 5 <= merged["source_timeout_s"] <= 60:
+            raise HTTPException(400, "Use a per-source timeout between 5 and 60 seconds")
     if key == "team":
         n = value.get("max_parallel", cur["max_parallel"])
         if type(n) is not int or not 1 <= n <= 8:

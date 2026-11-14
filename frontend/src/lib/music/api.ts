@@ -4,21 +4,25 @@ import { request } from '$lib/api';
 export type Track = {
 	video_id: string; title: string; artist: string; artist_id: string; views: number; duration_s: number; thumbnail: string;
 	fav?: boolean; fav_artist?: boolean; reason?: string;
+	/** Taught away: the DJ, radio, For you and mixes skip this song / play this artist less. */
+	disliked?: boolean; less_artist?: boolean;
 	/** Stored on this server: plays from disk, no YouTube needed. */
 	offline?: boolean;
 	/** Client-only: what the DJ said when it queued this track. */
 	dj_line?: string;
 };
 export type FavArtist = { name: string; artist_id: string; key: string };
-export type Favorites = { tracks: Track[]; artists: FavArtist[] };
+export type Favorites = { tracks: Track[]; artists: FavArtist[]; disliked?: string[]; less?: FavArtist[] };
 export type Curator = { key: string; name: string; emoji: string; color: string; taste: string };
+export type Mood = { key: 'mellow' | 'spooky' | 'romantic' | 'zen'; name: string; emoji: string; description: string };
 export type Mix = {
-	id: number; name: string; kind: 'seed' | 'curator' | 'manual'; emoji: string; description: string; curator: string;
+	id: number; name: string; kind: 'seed' | 'curator' | 'manual' | 'mood'; emoji: string; description: string; curator: string;
 	curator_name: string; color: string; blurb: string; seed_video_id: string; status: 'building' | 'ready' | 'error';
+	offline?: { saved: number; total: number; failed: number; blocked?: number; state: 'ready' | 'partial' | 'preparing' };
 	error: string; count: number; created_at: number; refreshed_at: number; last_played_at: number; covers: string[]; tracks?: Track[];
 };
 export type OfflineSummary = { wanted: number; saved: number; pending: number };
-export type MusicHome = { favorites: Favorites; mixes: Mix[]; recent: Track[]; recent_mixes: Mix[]; ai: boolean; curators: Curator[]; offline: OfflineSummary };
+export type MusicHome = { favorites: Favorites; mixes: Mix[]; recent: Track[]; recent_mixes: Mix[]; ai: boolean; curators: Curator[]; moods?: Mood[]; offline: OfflineSummary };
 export type ForYou = { loved: Track[]; fresh: Track[]; generated_at: number };
 export type LyricLine = { t: number; end?: number; text: string; words?: { t: number; text: string }[] };
 export type Transcript = { status: string; progress: number; enabled: boolean; lines: LyricLine[] };
@@ -46,10 +50,16 @@ export const music = {
 	favorites: () => get<Favorites>('/favorites'),
 	favTrack: (t: Track, on: boolean) => send<Favorites>('POST', '/favorites', { kind: 'track', on, track: slim(t) }),
 	favArtist: (name: string, on: boolean, artistId = '') => send<Favorites>('POST', '/favorites', { kind: 'artist', on, artist: name, artist_id: artistId }),
+	dislike: (t: Track, on: boolean) => send<Favorites>('POST', '/favorites', { kind: 'dislike', on, track: slim(t) }),
+	lessArtist: (name: string, on: boolean, artistId = '') => send<Favorites>('POST', '/favorites', { kind: 'less', on, artist: name, artist_id: artistId }),
 	play: (videoId: string, skipped: boolean) => send<{ ok: boolean }>('POST', '/plays', { video_id: videoId, skipped }, false),
+	importStatus: () => get<{ music_assistant_configured: boolean; max_tracks: number }>('/import/status'),
+	importPlaylist: (body: { source: 'youtube' | 'music_assistant'; reference: string; name?: string }) =>
+		send<{ mix: Mix; imported: number; skipped: number; duplicates: number; limited: boolean }>('POST', '/import', body),
+	createMood: (body: { preset: Mood['key'] | 'custom'; description?: string }) => send<Mix>('POST', '/moods', body),
 	mixes: () => get<{ mixes: Mix[] }>('/mixes'),
 	mix: (id: number) => get<Mix>(`/mixes/${id}`),
-	createMix: (body: { kind: Mix['kind']; seed?: Track; description?: string; curator?: string; name?: string; tracks?: Track[] }) =>
+	createMix: (body: { kind: Exclude<Mix['kind'], 'mood'>; seed?: Track; description?: string; curator?: string; name?: string; tracks?: Track[] }) =>
 		send<Mix>('POST', '/mixes', { ...body, seed: body.seed ? slim(body.seed) : undefined, tracks: body.tracks?.map(slim) }),
 	renameMix: (id: number, name: string) => send<Mix>('PATCH', `/mixes/${id}`, { name }),
 	copyMix: (id: number, name = '') => send<Mix>('POST', `/mixes/${id}/copy`, { name }),

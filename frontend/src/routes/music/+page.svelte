@@ -5,7 +5,7 @@
 	import { focusable } from '$lib/nav';
 	import Modal from '$lib/components/Modal.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
-	import { music, type Curator, type FavArtist, type ForYou, type Mix, type OfflineSummary, type Track } from '$lib/music/api';
+	import { music, type Curator, type FavArtist, type ForYou, type Mix, type Mood, type OfflineSummary, type Track } from '$lib/music/api';
 	import { player, shuffled } from '$lib/music/player.svelte';
 	import TrackCard from '$lib/music/TrackCard.svelte';
 	import Player from '$lib/music/Player.svelte';
@@ -19,6 +19,33 @@
 	const mixId = $derived(Number(page.url.searchParams.get('mix')) || 0);
 	const artistName = $derived(page.url.searchParams.get('artist') ?? '');
 
+	const defaultMoods: Mood[] = [
+        {key: 'mellow', name: 'Mellow background', emoji: '🌙', description: 'Soft, unhurried music for an easy evening.'},
+        {key: 'spooky', name: 'Spooky background', emoji: '🎃', description: 'Eerie atmosphere without jump scares or sudden blasts.'},
+        {key: 'romantic', name: 'Romantic background', emoji: '🕯️', description: 'Warm, intimate music that leaves room for conversation.'},
+        {key: 'zen', name: 'Zen background', emoji: '🍃', description: 'Gentle, family-friendly music for winding down before bedtime.'}
+    ];
+    let moods = $state<Mood[]>(defaultMoods);
+    let moodOpen = $state(false);
+    let moodPreset = $state<Mood['key'] | 'custom'>('mellow');
+    let customMood = $state('');
+    let moodError = $state('');
+    let moodBusy = $state(false);
+    function openMood(preset: Mood['key'] | 'custom') {
+        moodPreset = preset; moodError = ''; moodOpen = true;
+    }
+    async function generateMood(e: Event) {
+        e.preventDefault();
+        if (moodBusy || (moodPreset === 'custom' && !customMood.trim())) return;
+        moodBusy = true; moodError = '';
+        try {
+            const mix = await music.createMood({preset: moodPreset, ...(moodPreset === 'custom' ? {description: customMood.trim()} : {})});
+            mixes = [mix, ...mixes.filter(m => m.id !== mix.id)];
+            moodOpen = false;
+            setParams({tab: 'mixes', mix: String(mix.id), artist: null, q: null});
+        } catch (e) { moodError = e instanceof Error ? e.message : 'Could not start your mood background.'; }
+        finally { moodBusy = false; }
+    }
 	let ai = $state(false);
 	let offline = $state<OfflineSummary | null>(null);
 	let curators = $state<Curator[]>([]);
@@ -43,8 +70,62 @@
 	let newDesc = $state('');
 	let newCurator = $state('disco');
 	let newName = $state('');
-	let newKind = $state<'curator' | 'manual'>('curator');
+	let newKind = $state<'curator' | 'manual' | 'seed'>('curator');
+	let seedQuery = $state('');
+	let seedResults = $state<Track[]>([]);
+	let seedTrack = $state<Track | null>(null);
+	let seedSearching = $state(false);
+	let seedError = $state('');
+	let seedSearchVersion = 0;
+
+	async function findSeed() {
+		const query = seedQuery.trim();
+		if (!query) return;
+		const version = ++seedSearchVersion;
+		seedSearching = true;
+		seedTrack = null;
+		seedResults = [];
+		seedError = '';
+		try {
+			const r = await music.search(query);
+			if (version === seedSearchVersion) seedResults = r.tracks;
+		} catch (e) {
+			if (version === seedSearchVersion) seedError = (e as Error).message;
+		} finally {
+			if (version === seedSearchVersion) seedSearching = false;
+		}
+	}
+	let importing = $state(false);
+	let importSource = $state<'youtube' | 'music_assistant'>('youtube');
+	let importReference = $state('');
+	let importName = $state('');
+	let importStatus = $state<{ music_assistant_configured: boolean; max_tracks: number } | null>(null);
+	let importError = $state('');
+	let importReport = $state('');
 	let busy = $state(false);
+
+	async function openImport() {
+		importing = true;
+		importError = '';
+		try { importStatus = await music.importStatus(); }
+		catch (e) { importError = (e as Error).message; }
+	}
+	async function importPlaylist(e: Event) {
+		e.preventDefault();
+		if (busy || !importReference.trim()) return;
+		busy = true;
+		importError = '';
+		try {
+			const r = await music.importPlaylist({ source: importSource, reference: importReference.trim(), name: importName.trim() });
+			mixes = [r.mix, ...mixes.filter((m) => m.id !== r.mix.id)];
+			importReport = `Imported ${r.imported} tracks. ${r.skipped} skipped; ${r.duplicates} duplicates removed.${r.limited ? ' The import reached its 300-track limit; more tracks may remain in the source.' : ''}`;
+			importing = false;
+			importReference = '';
+			importName = '';
+			setParams({ tab: 'mixes', mix: String(r.mix.id), artist: null });
+		} catch (e) { importError = (e as Error).message; }
+		finally { busy = false; }
+	}
 	let poll: number | undefined;
 
 	function setParams(patch: Record<string, string | null>) {
@@ -59,6 +140,7 @@
 			ai = h.ai;
 			offline = h.offline;
 			curators = h.curators;
+			moods = h.moods?.length ? h.moods : defaultMoods;
 			recent = h.recent;
 			recentMixes = h.recent_mixes;
 			favTracks = h.favorites.tracks;
@@ -115,7 +197,7 @@
 	});
 	// Mixes build in the background: poll while any is still building.
 	$effect(() => {
-		const building = mixes.some((m) => m.status === 'building') || openMix?.status === 'building';
+		const building = mixes.some((m) => m.status === 'building' || (m.kind === 'mood' && m.offline?.state !== 'ready')) || openMix?.status === 'building' || (openMix?.kind === 'mood' && openMix.offline?.state !== 'ready');
 		window.clearInterval(poll);
 		if (building) poll = window.setInterval(() => void refreshMixes().catch(() => {}), 2500);
 		return () => window.clearInterval(poll);
@@ -141,7 +223,8 @@
 
 	/** Play a mix and remember it for "Recent mixes". */
 	function playMix(m: Mix, how: 'play' | 'shuffle' | 'dj', start = 0) {
-		const tracks = m.tracks ?? [];
+		const tracks = (m.tracks ?? []).filter(t => m.kind !== 'mood' || t.offline);
+		if (m.kind === 'mood') start = Math.max(0, tracks.findIndex(t => t.video_id === m.tracks?.[start]?.video_id));
 		if (!tracks.length) return;
 		if (how === 'play') player.play(tracks, start, { source: m.name });
 		else if (how === 'shuffle') player.shuffleAll(tracks, m.name);
@@ -206,15 +289,21 @@
 	}
 	async function createMix(e: Event) {
 		e.preventDefault();
+		if (newKind === 'seed' && !seedTrack) return;
 		busy = true;
 		try {
 			const m = newKind === 'curator'
 				? await music.createMix({ kind: 'curator', description: newDesc, curator: newCurator })
-				: await music.createMix({ kind: 'manual', name: newName });
+				: newKind === 'seed'
+					? await music.createMix({ kind: 'seed', seed: seedTrack!, name: newName })
+					: await music.createMix({ kind: 'manual', name: newName });
 			mixes = [m, ...mixes];
 			creating = false;
 			newDesc = '';
 			newName = '';
+			seedTrack = null;
+			seedResults = [];
+			seedQuery = '';
 			setParams({ tab: 'mixes', mix: String(m.id) });
 		} catch { /* toast shown */ } finally {
 			busy = false;
@@ -291,6 +380,16 @@
 		</div>
 	</section>
 
+    <section class="mood-background" aria-label="Mood background generator">
+        <header><div><h2>Mood background</h2><p class="muted">Background mixes are curated ahead of time and downloaded for local playback. Pick a mood or describe your own.</p></div></header>
+        <div class="mood-grid">
+            {#each moods as mood (mood.key)}
+                <button class="mood-option" use:focusable onclick={() => openMood(mood.key)}><span aria-hidden="true">{mood.emoji}</span><strong>{mood.name}</strong><small>{mood.description}</small></button>
+            {/each}
+            <button class="mood-option" use:focusable onclick={() => openMood('custom')}><span aria-hidden="true">✨</span><strong>Custom mood</strong><small>A rainy bookshop, a quiet space station…</small></button>
+        </div>
+    </section>
+
 	{#if q}
 		<section class="shelf">
 			<header>
@@ -305,6 +404,8 @@
 			{:else}{@render grid(results, q)}{/if}
 		</section>
 	{/if}
+
+	{#if importReport}<p class="hint" role="status">{importReport} <button class="btn small" onclick={() => (importReport = '')}>Dismiss</button></p>{/if}
 
 	<nav class="tabs" aria-label="Music sections">
 		{#each TABS as [key, label]}
@@ -346,8 +447,9 @@
 	{:else if tab === 'mixes'}
 		<div class="mixes">
 			<button class="mix new" use:focusable onclick={() => (creating = true)}>
-				<span class="plus">＋</span><strong>New mix</strong><small>Describe it — a curator builds it</small>
+				<span class="plus">＋</span><strong>New mix</strong><small>Describe it, choose a seed song, or build your own</small>
 			</button>
+			<button class="mix new" use:focusable onclick={openImport}><span class="plus">⇩</span><strong>Import playlist</strong><small>YouTube or Music Assistant</small></button>
 			{#each mixes as m (m.id)}
 				<button class="mix" use:focusable style:--mix={m.color || '#ff4fa3'} onclick={() => setParams({ mix: String(m.id) })}>
 					<div class="covers">
@@ -355,6 +457,7 @@
 					</div>
 					<strong>{m.emoji} {m.name}</strong>
 					<small>
+						{#if m.kind === 'mood' && m.offline}<span>{m.offline.saved}/{m.offline.total} downloaded · </span>{/if}
 						{#if m.status === 'building'}<span class="pulse">Curating…</span>
 						{:else if m.status === 'error'}⚠️ {m.error}
 						{:else}{m.count} videos{m.curator_name ? ` · by ${m.curator_name}` : m.kind === 'seed' ? ' · track radio' : ''}{/if}
@@ -395,6 +498,8 @@
 			<button class="btn" use:focusable onclick={() => player.toggleFav(t)}>{player.isFav(t) ? '💔 Remove from favourites' : '❤️ Favourite song'}</button>
 			<button class="btn" use:focusable onclick={() => player.toggleFavArtist(t.artist, t.artist_id)}>{player.isFavArtist(t.artist) ? '☆ Unfavourite artist' : `⭐ Favourite ${t.artist}`}</button>
 			<button class="btn" use:focusable onclick={() => showArtist(t.artist)}>🎤 More from {t.artist}</button>
+			<button class="btn" use:focusable onclick={() => { const playing = player.current?.video_id === t.video_id; void player.toggleDislike(t); if (playing) sheet = null; }}>{player.isDisliked(t) ? '↩️ Undo dislike' : '👎 Dislike song'}</button>
+			<button class="btn" use:focusable onclick={() => player.toggleLessArtist(t.artist, t.artist_id)}>{player.isLessArtist(t.artist) ? `🔊 Normal amount of ${t.artist}` : `🔉 Less ${t.artist}`}</button>
 			{#if manualMixes.length}
 				<p class="muted small">Add to a mix</p>
 				<div class="addto">
@@ -409,22 +514,25 @@
 
 {#if openMix}
 	{@const m = openMix}
-	<Modal portal title={`${m.emoji} ${m.name}`} subtitle={m.curator_name ? `Curated by ${m.curator_name}` : m.kind === 'seed' ? 'Track radio' : 'Your mix'} size="lg" onClose={() => setParams({ mix: null })}>
+	<Modal portal title={`${m.emoji} ${m.name}`} subtitle={m.kind === 'mood' ? 'Mood background' : m.curator_name ? `Curated by ${m.curator_name}` : m.kind === 'seed' ? 'Track radio' : 'Your mix'} size="lg" onClose={() => setParams({ mix: null })}>
 		<div class="mixview">
 			{#if m.blurb || m.description}
 				<p class="blurb">{m.blurb}{#if m.description}<br /><small class="muted">“{m.description}”</small>{/if}</p>
 			{/if}
 			<div class="acts">
-				{#if m.tracks?.length}
+				{#if m.tracks?.length && (m.kind !== 'mood' || m.tracks.some(t => t.offline))}
 					<button class="btn primary" use:focusable onclick={() => { playMix(m, 'play'); setParams({ mix: null }); }}>▶ Play</button>
 					<button class="btn" use:focusable onclick={() => { playMix(m, 'shuffle'); setParams({ mix: null }); }}>🔀 Shuffle</button>
-					<button class="btn" use:focusable onclick={() => { setParams({ mix: null }); playMix(m, 'dj'); }}>🎧 DJ from this mix</button>
+					{#if m.kind !== 'mood'}<button class="btn" use:focusable onclick={() => { setParams({ mix: null }); playMix(m, 'dj'); }}>🎧 DJ from this mix</button>{/if}
 					{#if m.kind !== 'manual' && m.status === 'ready'}<button class="btn" use:focusable title="Keep these exact songs as your own mix" onclick={() => keepCopy(m)}>💾 Keep a copy</button>{/if}
 				{/if}
 				<button class="btn ghost" use:focusable onclick={() => renameMix(m)}>✏️ Rename</button>
 				{#if m.kind !== 'manual'}<button class="btn ghost" use:focusable disabled={m.status === 'building'} onclick={() => refreshMix(m)}>🔄 Fresh picks</button>{/if}
 				<button class="btn ghost danger" use:focusable onclick={() => removeMix(m)}>🗑 Delete</button>
 			</div>
+			{#if m.kind === 'mood' && m.offline}
+				<p role="status">{m.offline.saved} of {m.offline.total} videos downloaded. {m.offline.state === 'ready' ? 'Ready for local playback.' : m.offline.saved ? 'Play the downloaded selection while the rest prepares.' : 'Preparing your background; playback starts once videos are downloaded.'}{m.offline.failed ? ` ${m.offline.failed} downloads need retrying in Storage.` : ''}{m.offline.blocked ? ` ${m.offline.blocked} videos are waiting for space in the household download allowance.` : ''}</p>
+			{/if}
 			{#if m.status === 'building'}
 				<div class="building"><span class="disc small spinning"><span></span></span>{m.curator_name || 'The curator'} is digging through YouTube Music…</div>
 			{:else if m.status === 'error'}
@@ -434,7 +542,7 @@
 				<ol class="tracklist">
 					{#each m.tracks as t, i (t.video_id)}
 						<li class:now={player.current?.video_id === t.video_id}>
-							<button class="row" use:focusable onclick={() => playMix(m, 'play', i)}>
+							<button class="row" disabled={m.kind === 'mood' && !t.offline} use:focusable onclick={() => playMix(m, 'play', i)}>
 								<span class="n">{i + 1}</span>
 								<img src={t.thumbnail} alt="" loading="lazy" />
 								<span class="tt"><strong>{t.title}</strong><small>{t.offline ? '💾 ' : ''}{t.artist}{t.reason ? ` · ${t.reason}` : ''}</small></span>
@@ -458,6 +566,7 @@
 		<div class="mixview">
 			<div class="acts">
 				<button class="btn" class:primary={!player.isFavArtist(a.name)} use:focusable onclick={() => player.toggleFavArtist(a.name, a.tracks[0]?.artist_id ?? '')}>{player.isFavArtist(a.name) ? '⭐ Favourite artist' : '☆ Favourite artist'}</button>
+				<button class="btn" use:focusable onclick={() => player.toggleLessArtist(a.name, a.tracks[0]?.artist_id ?? '')}>{player.isLessArtist(a.name) ? '🔊 Normal amount' : '🔉 Less of them'}</button>
 				{#if a.tracks.length}
 					<button class="btn" use:focusable onclick={() => { player.play(a.tracks, 0, { source: a.name }); setParams({ artist: null }); }}>▶ Play all</button>
 					<button class="btn" use:focusable onclick={() => { player.shuffleAll(a.tracks, a.name); setParams({ artist: null }); }}>🔀 Shuffle</button>
@@ -470,11 +579,57 @@
 	</Modal>
 {/if}
 
+
+{#if importing}
+	<Modal portal title="Import playlist" subtitle="Save a playlist as a mix in this profile" size="md" onClose={() => { if (!busy) importing = false; }}>
+		<form class="create" onsubmit={importPlaylist}>
+			<div class="kind">
+				<button type="button" class="chip" class:on={importSource === 'youtube'} disabled={busy} use:focusable onclick={() => { importSource = 'youtube'; importReference = ''; }}>YouTube / YouTube Music</button>
+				<button type="button" class="chip" class:on={importSource === 'music_assistant'} disabled={busy} use:focusable onclick={() => { importSource = 'music_assistant'; importReference = ''; }}>Music Assistant</button>
+			</div>
+			{#if importSource === 'youtube'}
+				<p class="muted">Paste a YouTube or YouTube Music playlist link. Private playlists need working YouTube cookies in Settings.</p>
+			{:else}
+				<p class="muted">Requires Music Assistant 2.11 or newer. Paste a playlist URI, such as library://playlist/13. Songs are matched to YouTube music videos; unavailable matches are skipped.</p>
+				{#if importStatus && !importStatus.music_assistant_configured}
+					<p class="hint">To connect, set MUSIC_ASSISTANT_URL and MUSIC_ASSISTANT_TOKEN on the WatchCraft server and restart it. Create a long-lived token in Music Assistant → Settings → Profile.</p>
+				{/if}
+			{/if}
+			<label for="playlist-reference">{importSource === 'youtube' ? 'Playlist link' : 'Playlist URI'}</label>
+			<input id="playlist-reference" class="input" required maxlength="1000" bind:value={importReference} disabled={busy} placeholder={importSource === 'youtube' ? 'https://music.youtube.com/playlist?list=…' : 'library://playlist/13'} use:focusable />
+			<label for="import-name">Mix name (optional)</label>
+			<input id="import-name" class="input" maxlength="80" bind:value={importName} disabled={busy} use:focusable />
+			<p class="muted small">Imports up to 300 tracks in order, without duplicates. This saves a copy; later source edits do not sync.</p>
+			{#if importError}<p class="err" role="alert">{importError}</p>{/if}
+			<button class="btn primary big" use:focusable disabled={busy || !importReference.trim() || (importSource === 'music_assistant' && !importStatus?.music_assistant_configured)}>{busy ? 'Importing and matching tracks…' : 'Import playlist'}</button>
+		</form>
+	</Modal>
+{/if}
+
+{#if moodOpen}
+    <Modal portal title="Mood background" subtitle="Prepare a downloaded background music video mix" size="md" onClose={() => { if (!moodBusy) moodOpen = false; }}>
+        <form class="create" onsubmit={generateMood}>
+            <div class="ideas" role="group" aria-label="Background moods">
+                {#each moods as mood (mood.key)}<button type="button" class="chip" class:on={moodPreset === mood.key} aria-pressed={moodPreset === mood.key} disabled={moodBusy} use:focusable onclick={() => (moodPreset = mood.key)}>{mood.emoji} {mood.name}</button>{/each}
+                <button type="button" class="chip" class:on={moodPreset === 'custom'} aria-pressed={moodPreset === 'custom'} disabled={moodBusy} use:focusable onclick={() => (moodPreset = 'custom')}>✨ Custom mood</button>
+            </div>
+            {#if moodPreset === 'custom'}
+                <label for="custom-mood">Describe your mood</label>
+                <textarea id="custom-mood" class="input" rows="3" maxlength="300" bind:value={customMood} disabled={moodBusy} placeholder="e.g. Gentle piano and rain for reading on a winter evening" use:focusable></textarea>
+            {:else}<p>{moods.find(m => m.key === moodPreset)?.description}</p>{/if}
+            <p class="muted small">The curator picks mostly instrumental music with a steady atmosphere. Your mix is saved under Mixes; playback starts when you press Play.</p>
+            {#if moodError}<p class="err" role="alert">{moodError}</p>{/if}
+            <button class="btn primary big" use:focusable disabled={moodBusy || (moodPreset === 'custom' && !customMood.trim())}>{moodBusy ? 'Starting…' : 'Prepare background'}</button>
+        </form>
+    </Modal>
+{/if}
+
 {#if creating}
-	<Modal portal title="New mix" subtitle="Describe the mood and pick a curator — or start an empty mix" size="md" onClose={() => (creating = false)}>
+	<Modal portal title="New mix" subtitle="Describe a mood, choose a seed song, or start an empty mix" size="md" onClose={() => (creating = false)}>
 		<form class="create" onsubmit={createMix}>
 			<div class="kind">
 				<button type="button" class="chip" class:on={newKind === 'curator'} use:focusable onclick={() => (newKind = 'curator')}>✨ Curated</button>
+				<button type="button" class="chip" class:on={newKind === 'seed'} use:focusable onclick={() => (newKind = 'seed')}>📻 From a seed track</button>
 				<button type="button" class="chip" class:on={newKind === 'manual'} use:focusable onclick={() => (newKind = 'manual')}>💿 Build it myself</button>
 			</div>
 			{#if newKind === 'curator'}
@@ -491,6 +646,23 @@
 					{/each}
 				</div>
 				<button class="btn primary big" use:focusable disabled={busy || !newDesc.trim()}>{busy ? 'Starting…' : `Ask ${curatorOf(newCurator)?.name ?? 'the curator'}`}</button>
+			{:else if newKind === 'seed'}
+				<p class="muted">Choose one song. YouTube Music radio finds related music videos, and saves them as a mix you can refresh.</p>
+				<label for="seed-search">Seed song</label>
+				<div class="acts">
+					<input id="seed-search" class="input" type="search" maxlength="200" bind:value={seedQuery} placeholder="Artist and song title" use:focusable onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void findSeed(); } }} />
+					<button type="button" class="btn" use:focusable disabled={seedSearching || !seedQuery.trim()} onclick={findSeed}>{seedSearching ? 'Searching…' : 'Find seed track'}</button>
+				</div>
+				{#if seedError}<p class="err" role="alert">{seedError}</p>{/if}
+				<div class="seed-results" aria-live="polite">
+					{#each seedResults as t (t.video_id)}
+						<button type="button" class="btn" class:primary={seedTrack?.video_id === t.video_id} aria-pressed={seedTrack?.video_id === t.video_id} use:focusable onclick={() => (seedTrack = t)}>{t.artist} — {t.title}</button>
+					{/each}
+				</div>
+				{#if seedTrack}<p>Seed: <strong>{seedTrack.artist} — {seedTrack.title}</strong></p>{/if}
+				<label for="seed-name">Mix name (optional)</label>
+				<input id="seed-name" class="input" maxlength="80" bind:value={newName} placeholder="Name this mix" use:focusable />
+				<button class="btn primary big" use:focusable disabled={busy || !seedTrack}>{busy ? 'Starting…' : 'Create mix from seed'}</button>
 			{:else}
 				<input class="input" maxlength="80" bind:value={newName} placeholder="Mix name" use:focusable />
 				<button class="btn primary big" use:focusable disabled={busy}>Create mix</button>
@@ -574,6 +746,15 @@
 	.ic { background: none; border: 0; font-size: 1.1rem; padding: 0.35rem; border-radius: var(--r-sm); cursor: pointer; color: var(--text); }
 	.ic:focus-visible { outline: 2px solid var(--accent); }
 
+    .mood-background { margin: 1.5rem 0; padding: clamp(1rem, 3vw, 1.5rem); border: 1px solid var(--line-strong); border-radius: 18px; background: var(--surface-solid); }
+    .mood-background h2 { margin: 0 0 .4rem; }
+    .mood-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: .7rem; margin-top: 1rem; }
+    .mood-option { display: flex; flex-direction: column; align-items: flex-start; gap: .4rem; padding: 1rem; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--surface-solid); color: inherit; text-align: left; cursor: pointer; font: inherit; }
+    .mood-option:hover, .mood-option:focus-visible { border-color: var(--accent); }
+    .mood-option > span { font-size: 1.5rem; }
+    .mood-option small { color: var(--muted); line-height: 1.4; }
+	.seed-results { display: grid; gap: 0.4rem; max-height: 18rem; overflow-y: auto; }
+	.seed-results .btn { justify-content: flex-start; text-align: start; white-space: normal; }
 	.create { display: grid; gap: 0.8rem; }
 	.kind, .ideas { display: flex; gap: 0.4rem; flex-wrap: wrap; }
 	.curators { display: grid; gap: 0.5rem; grid-template-columns: repeat(auto-fill, minmax(10rem, 1fr)); }

@@ -40,7 +40,7 @@ class Curator(SQLModel, table=True):
     content_types: list = J()
     ai_enabled: bool = False
     min_score: int = 0
-    max_per_run: int = 30
+    max_per_run: int = 500  # article collectors find a deep feed; the scheduler still backs off when stocked
     collection_id: int | None = None
     topic_id: int | None = None
     alert_enabled: bool = False
@@ -525,3 +525,85 @@ class ArticleText(SQLModel, table=True):
     removed: int = 0
     reviewed_at: float = 0
     backfill: bool = False
+
+
+class NewsImpression(SQLModel, table=True):
+    """When a profile's News feed last showed an article; drives a fresh For you mix per visit."""
+    profile_id: int = Field(primary_key=True)
+    item_id: int = Field(primary_key=True)
+    first_shown: float = Field(default_factory=time.time)
+    last_shown: float = Field(default_factory=time.time, index=True)
+    prev_shown: float = 0  # last_shown before the current visit touched it, keeping that visit's order stable
+    visits: int = 1  # distinct visits that showed it, so repeat exposure sinks gradually
+
+
+class MoodBoard(SQLModel, table=True):
+    """An isolated visual curator; never enters the news or meme pipeline."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    profile_id: int = Field(index=True)
+    name: str
+    interests: str
+    instructions: str = ''
+    enabled: bool = True
+    interval_hours: int = 12
+    next_run: float = 0
+    last_run: float | None = None
+    last_status: str = ''
+    error: str = ''
+    lease: str = ''
+    build_started: float = 0
+    revision: int = 0
+    source_offset: int = 0
+    target_images: int = 100
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodPin(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint('board_id', 'source_url'),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    board_id: int = Field(index=True)
+    profile_id: int = Field(index=True)
+    title: str
+    source_url: str
+    image_url: str
+    media_type: str = 'image'
+    width: int = 0
+    height: int = 0
+    attribution: str = ''
+    license: str = ''
+    saved: bool = False
+    hidden: bool = False
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodAsset(SQLModel, table=True):
+    pin_id: int = Field(primary_key=True)
+    mime: str
+    data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+
+
+class MoodImport(SQLModel, table=True):
+    """Durable, profile-owned snapshot imports; no Pinterest credentials retained."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    board_id: int = Field(index=True)
+    profile_id: int = Field(index=True)
+    url: str
+    status: str = 'queued'
+    imported: int = 0
+    skipped: int = 0
+    total: int = 0
+    processed: list = J([])
+    candidates: list = J([])
+    fetched: bool = False
+    error: str = ''
+    lease: str = ''
+    lease_until: float = 0
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodReference(SQLModel, table=True):
+    """One locally stored inspiration image per board, scoped through its owner."""
+    board_id: int = Field(primary_key=True)
+    name: str = ''
+    mime: str
+    data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))

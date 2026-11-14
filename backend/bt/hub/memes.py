@@ -432,6 +432,11 @@ def ensure_source(c) -> str:
         # A source that returns posts, or that has not been tried yet, needs no help.
         if any(x.enabled and not x.last_error and (x.item_count > 0 or x.last_checked is None) for x in sources):
             return ''
+        # Nor does a curator fed by other meme sources (Reddit memes, Lemmy, clips): Mastodon is the fallback.
+        others = s.exec(select(Source).join(CuratorSource, CuratorSource.source_id == Source.id)
+                        .where(CuratorSource.curator_id == c.id, Source.provider != 'mastodon', Source.enabled == True)).all()  # noqa: E712
+        if others:
+            return ''
         if time.time() - float(get_kv(_autopilot_key(c.id), {}).get('at') or 0) < AUTOPILOT_EVERY:
             return ''
         queries = [q for q in (row.queries or []) if q.strip()]

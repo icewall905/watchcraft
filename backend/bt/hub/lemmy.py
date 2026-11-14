@@ -49,6 +49,12 @@ def _unsupported(error: Exception) -> bool:
     return status in (404, 405) if status is not None else bool(re.search(r'HTTP (?:404|405)\b', str(error)))
 
 
+def _picture(url: str) -> bool:
+    """A direct image link (pict-rs uploads and common image files): the meme itself."""
+    path = urlsplit(url).path.lower()
+    return bool(url) and ('/pictrs/image/' in path or path.endswith(('.jpg', '.jpeg', '.png', '.webp', '.gif')))
+
+
 def _post(view: dict, instance: str, selected: str, item_type: str) -> dict | None:
     if not isinstance(view, dict):
         return None
@@ -68,6 +74,8 @@ def _post(view: dict, instance: str, selected: str, item_type: str) -> dict | No
         return None
     body = strip_tags(post.get('body') or '', TEXT_LIMIT)
     article = safe_image(post.get('url') or '')
+    if item_type == 'meme' and not _picture(article):
+        return None  # a meme community's text and link posts are not memes
     counts = view.get('counts') if isinstance(view.get('counts'), dict) else {}
     community_id = safe_image(community.get('actor_id') or community.get('ap_id') or '')
     origin = urlsplit(community_id).hostname or instance
@@ -81,12 +89,14 @@ def _post(view: dict, instance: str, selected: str, item_type: str) -> dict | No
         'title': title, 'summary': clean(body or post.get('alt_text') or title, 1000), 'body': body,
         'publisher': f"!{community.get('name')}@{origin}", 'author': clean(creator.get('display_name') or creator.get('name'), 200),
         'published_at': ts(post.get('published') or post.get('published_at')),
-        'image': safe_image(post.get('thumbnail_url') or ''),
+        'image': safe_image(post.get('thumbnail_url') or '') or (article if item_type == 'meme' and _picture(article) else ''),
         'meta': {'social_post': True, 'platform': 'lemmy', 'instance': instance, 'community': f"!{community.get('name')}@{origin}",
                  'community_url': community_id, 'discussion_url': ap_id, 'article_url': article,
                  'sensitive': False, 'observations': observations,
                  'updated_at': ts(post.get('updated') or post.get('updated_at')),
-                 'coverage': 'Selected public community; popularity is an instance observation.'},
+                 'coverage': 'Selected public community; popularity is an instance observation.',
+                 **({'media': {'type': 'image', 'url': article, 'preview_url': article, 'alt': title}}
+                    if item_type == 'meme' and _picture(article) else {})},
     }
 
 
@@ -122,7 +132,7 @@ def lemmy(source: str, q: str = '', config: dict | None = None) -> list[dict]:
         out = []
         for item in parse_feed(social_fetch.fetch(feed), feed)[:limit]:
             discussion = safe_image(item.get('url') or '')
-            if not discussion:
+            if not discussion or (item_type == 'meme' and not _picture(item.get('image') or '')):
                 continue
             item.update(provider='lemmy', type=item_type, external_id=discussion)
             item['meta'].update(platform='lemmy', instance=urlsplit(base).hostname,

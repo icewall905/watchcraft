@@ -83,8 +83,9 @@ def today(preview: bool = False, stories: int = 8, reads: int = 6, memes: int = 
             sections.append(out)
         delivered = entry_ids
         if preview:
-            limits = {'lead': 1, 'stories': max(0, min(stories, 29)),
-                      'reads': max(0, min(reads, 20)), 'memes': max(0, min(memes, 10))}
+            size = edition.SECTION_SIZES
+            limits = {'lead': 1, 'stories': max(0, min(stories, size['stories'])),
+                      'reads': max(0, min(reads, size['reads'])), 'memes': max(0, min(memes, size['memes']))}
             delivered = [e['item_id'] for sec in ed.sections
                          for e in sec.get('entries', [])[:limits.get(sec['key'], 0)]]
         shown = [i for i in delivered if i in found]

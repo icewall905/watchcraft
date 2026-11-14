@@ -18,7 +18,7 @@ export type Verdict = {
 };
 export type CitationRef = { n: number; item_id: number | null; title?: string; url?: string };
 export type EditionEntry = {
-	item_id: number; item: Item; story_id?: number; sources?: number; summary?: string; summary_refs?: CitationRef[];
+	item_id: number; item: Item; story_id?: number; sources?: number; summary?: string; summary_refs?: CitationRef[]; group_key?: string; group_title?: string;
 };
 export type EditionSection =
 	| { key: 'lead' | 'stories' | 'reads' | 'memes'; title: string; entries: EditionEntry[] }
@@ -113,7 +113,8 @@ export type TopicDetail = Topic & { items: Item[]; recent: Item[]; curators: { i
 export type Briefing = { id: number; name: string; curator_ids: number[]; topic_ids: number[]; frequency: 'manual' | 'daily' | 'weekly'; length: 'concise' | 'detailed'; last_generated: number | null; next_run: number | null };
 export type Issue = { id: number; created_at: number; content: string; item_ids: number[]; ai: boolean };
 export type Alert = { id: number; severity: string; state: string; title: string; reason: string; curator_id: number | null; item: Item; created_at: number; snooze_until?: number | null };
-export type NewsGroup = { key: string; story_id?: number | null; title: string; items: Item[]; latest: number };
+export type NewsGroup = { key: string; story_id?: number | null; title: string; items: Item[]; latest: number; seen?: boolean; new?: boolean;
+	article_count?: number; publisher_count?: number; discussion_count?: number };
 export type SearchResult = Page<Item> & {
 	videos: { id: string; title: string; channel_name: string; thumbnail: string }[];
 	curators: { id: number; name: string; kind: string }[];
@@ -125,10 +126,10 @@ export type SavedSearch = { id: number; name: string; query: string; filters: Re
 
 export type TeamStatus = 'running' | 'waiting' | 'idle' | 'attention' | 'paused';
 export type TeamAgent = {
-	key: string; kind: 'curator' | 'scout' | 'briefing' | 'master'; id: number | null; name: string; icon: string; color: string; mission: string;
+	key: string; kind: 'curator' | 'scout' | 'briefing' | 'master' | 'moodboard'; id: number | null; name: string; icon: string; color: string; mission: string;
 	tone?: ToneName;
 	status: TeamStatus; since: number | null; next_run: number | null; last_run?: number | null; doing?: string | null; query?: string;
-	role?: 'watch' | 'research'; error?: string; enabled?: boolean; found_today?: number; plans?: number;
+	role?: 'watch' | 'research' | 'visual'; pin_count?: number; error?: string; enabled?: boolean; found_today?: number; plans?: number;
 	finds?: { id: number; title: string; found_at: number; url?: string; summary?: string; publisher?: string;
 		type?: string; published_at?: number | null; source_name?: string; reason?: string; score?: number | null }[];
 	timeline?: { id?: number; step: string; message: string; at: number; detail?: string;
@@ -139,7 +140,7 @@ export type TeamAgent = {
 	last?: { status: string; new_items?: number; seen_items?: number; suggestions?: number; query?: string; error?: string; finished_at: number | null; started_at?: number | null; duration_s?: number | null } | null;
 };
 export type TeamEntry = {
-	at: number; agent: string; name: string; icon: string; kind: 'curator_run' | 'scout_run' | 'briefing'; status: string;
+	at: number; agent: string; name: string; icon: string; kind: 'curator_run' | 'scout_run' | 'briefing' | 'moodboard_run'; status: string;
 	new_items?: number; seen_items?: number; errors?: number; query?: string; suggestions?: number; title?: string; briefing_id?: number;
 };
 export type Team = { limit: number; running: number; waiting: number; agents: TeamAgent[]; journal: TeamEntry[] };

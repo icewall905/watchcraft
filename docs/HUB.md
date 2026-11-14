@@ -245,3 +245,51 @@ and what has already been tried; without one the fixed order runs. A successful 
 the failure, so the job completes rather than being retried. The pass is on by default and can
 be turned off per household with the "Recover unreadable pages" toggle on the Team page
 (`local_library.rescue`). See `docs/SECURITY.md` for the sandbox.
+
+## Mood boards
+
+`/boards` keeps visual inspiration in profile-owned boards. Each board has independent interests,
+optional curator notes, collection cadence and enabled state. These curators search configured SearXNG image search (Wikimedia Commons fallback)
+and public social networks in parallel, then capture approved images/GIFs locally with original source and rights information; pins never enter News or Memes.
+The masonry page supports saving, hiding, moving and paginating images. Reduced-motion users open
+animated GIFs explicitly. Curators require a configured vision-enabled AI model and inspect captured image pixels,
+applying specific instructions as strict requirements and excluding uncertain matches. Unavailable
+vision leaves existing pins intact and reports a clear error. Short planned queries retrieve candidates;
+the full curator instructions are enforced by image review. Queued, running, empty and failed outcomes
+are visible on the board and in Agent Activity, including real search/review/add counts. The manual
+refresh response includes a retry countdown and last result instead of a generic cooldown message.
+Collection is bounded to 50 boards/profile and 1,000 pins/board.
+
+Image sources are toggled under the `moodboard_sources` setting (`PUT /api/settings/moodboard_sources`):
+`web`, `reddit` (public search, SFW image/gallery posts), `bluesky` (public AppView post search, image embeds,
+moderation-labelled posts skipped) and `mastodon` (hashtag timeline on `mastodon_instance`, default
+mastodon.social; sensitive/CW posts skipped) are on by default. Flickr (safe search, per-photo license) and Tumblr
+(tagged photo posts) join only when `flickr_api_key` / `tumblr_api_key` is set; keys are redacted in responses.
+Each source has a `source_timeout_s` deadline (default 20 s); a slow or failing source is dropped for that run,
+and the run errors only when every source fails. Results are interleaved across sources, deduplicated by post and
+image URL, and keep provider attribution, the original post link and rights text. Later pages rotate per source
+(Reddit sort/period, Bluesky top/latest and cursor, Mastodon/Tumblr hashtag variants then older time windows,
+Flickr page). All fetches use the shared public fetcher with per-host pacing and Retry-After cooldowns.
+Instagram, TikTok, Facebook, X and Pinterest search have no usable public API and are not scraped; only public
+Pinterest boards can be imported (below).
+
+`/api/hub/boards` lists/creates boards; `/{id}` reads/edits/deletes a board, `/{id}/refresh` queues a
+bounded collection, and `/{id}/pins/{pin}` changes saved/hidden state or moves a pin. Pin media is served
+from `/{id}/pins/{pin}/media`. All routes require Hub access and ownership; original media URLs are
+never fetched directly by the browser. Board/profile deletion removes private archived image bytes.
+
+Public Pinterest boards can be imported into an existing board using `/{id}/pinterest` (POST a
+`url`, GET latest job status). Imports run in a durable queue and capture up to 25 latest feed pins
+locally, preserve Pinterest links, mark imported pins saved and skip duplicates. This is a snapshot
+of the public RSS feed, not full-board history; private boards and short links are unsupported.
+Original creators retain rights. Explicit imports do not undergo automatic curator screening.
+
+`/today` is a compact overview of everything curated today: the master edition's lead, a few top
+stories, reads and memes, plus today's new videos, music mixes and refreshed Mood Board pins, each
+with a link to its full section. `/news` is the separate, endless News feed. Android 0.1.8 added four
+configurable bottom shortcuts (More stays fixed); 0.1.10 restores Today as its own destination.
+
+Music background presets are prepared proactively for Hub profiles and queued through the existing
+bounded downloader. Custom moods are retained too. Mood mix readiness and track playback eligibility
+check readable, nonempty local files, with download/allowance progress shown in the mix dialog.
+Prepared selections persist until Fresh picks is requested. Manual Storage deletion stays respected.

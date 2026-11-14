@@ -47,6 +47,9 @@ class MusicPlayer {
 	announce = $state('');
 	favTracks = new SvelteSet<string>();
 	favArtists = new SvelteSet<string>();
+	/** Taught away: disliked video ids, and artists to play less of. */
+	dislikes = new SvelteSet<string>();
+	lessArtists = new SvelteSet<string>();
 	/** The page sets this to show a mix the player just saved. */
 	savedMix: ((m: import('./api').Mix) => void) | null = null;
 	/** Bumped only when the user changes a favourite here: lists that show favourites reload on it. */
@@ -76,6 +79,8 @@ class MusicPlayer {
 	syncFavorites(f: Favorites) {
 		syncSet(this.favTracks, new Set(f.tracks.map((t) => t.video_id)));
 		syncSet(this.favArtists, new Set(f.artists.map((a) => a.key)));
+		if (f.disliked) syncSet(this.dislikes, new Set(f.disliked));
+		if (f.less) syncSet(this.lessArtists, new Set(f.less.map((a) => a.key)));
 	}
 	/** Seed favourite flags from tracks the server just decorated. */
 	learn(tracks: Track[]) {
@@ -83,6 +88,8 @@ class MusicPlayer {
 			if (t.fav && !this.favTracks.has(t.video_id)) this.favTracks.add(t.video_id);
 			const a = norm(t.artist || '');
 			if (t.fav_artist && a && !this.favArtists.has(a)) this.favArtists.add(a);
+			if (t.disliked && !this.dislikes.has(t.video_id)) this.dislikes.add(t.video_id);
+			if (t.less_artist && a && !this.lessArtists.has(a)) this.lessArtists.add(a);
 		}
 	}
 	isFav(t: Track) {
@@ -111,6 +118,49 @@ class MusicPlayer {
 		} catch {
 			/* toast already shown */
 		}
+	}
+
+	isDisliked(t: Track) {
+		return this.dislikes.has(t.video_id);
+	}
+	/** Any credited artist ("Dua Lipa, DaBaby") is one to play less of. */
+	isLessArtist(name: string) {
+		const a = ` ${norm(name)} `;
+		for (const k of this.lessArtists) if (k && a.includes(` ${k} `)) return true;
+		return false;
+	}
+	/** Teach the picks: this song never again. Disliking what plays skips it. */
+	async toggleDislike(t: Track) {
+		const on = !this.isDisliked(t);
+		try {
+			this.syncFavorites(await music.dislike(t, on));
+			this.favVersion++;
+		} catch {
+			return;
+		}
+		if (!on) return toast.success(`Okay, ${t.title} can play again`);
+		toast.success(`👎 Got it — no more ${t.title}`);
+		this.dropUpcoming((u) => u.video_id === t.video_id);
+		if (this.current?.video_id === t.video_id) void this.next(true);
+	}
+	/** Teach the picks: fewer songs by this artist. The DJ drops the ones it already lined up. */
+	async toggleLessArtist(name: string, artistId = '') {
+		const on = !this.isLessArtist(name);
+		try {
+			this.syncFavorites(await music.lessArtist(name, on, artistId));
+			this.favVersion++;
+		} catch {
+			return;
+		}
+		if (!on) return toast.success(`${name} is back in the rotation`);
+		toast.success(`🔉 Less ${name} from now on`);
+		if (this.mode === 'dj') this.dropUpcoming((u) => this.isLessArtist(u.artist || ''));
+	}
+	private dropUpcoming(gone: (t: Track) => boolean) {
+		const head = this.queue.slice(0, this.index + 1);
+		const rest = this.queue.slice(this.index + 1).filter((t) => !gone(t));
+		if (rest.length !== this.queue.length - head.length) this.queue = [...head, ...rest];
+		this.keepDjFed();
 	}
 
 	// ---------- queue
@@ -361,7 +411,8 @@ class MusicPlayer {
 				if (seq !== this.djSeq || this.mode !== 'dj') return;
 				this.learn(r.tracks);
 				const have = new Set(this.queue.map((t) => t.video_id));
-				const fresh = r.tracks.filter((t) => !have.has(t.video_id));
+				// A dislike made while this fetch was out still counts.
+				const fresh = r.tracks.filter((t) => !have.has(t.video_id) && !this.isDisliked(t) && !this.isLessArtist(t.artist || ''));
 				if (fresh.length) {
 					fresh[0] = { ...fresh[0], dj_line: r.line };
 					this.queue = [...this.queue, ...fresh];

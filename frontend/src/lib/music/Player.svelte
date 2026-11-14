@@ -209,6 +209,37 @@
 
 	// The app shell has transformed ancestors that trap position:fixed. The deck lives on <body>,
 	// moved there before its video ever plays (moving a playing <video> would pause it).
+	// Full screen: the video (with lyrics) fills the screen, controls fade after a few idle seconds.
+	// The page is asked for real fullscreen too where the browser allows it (TV browsers, the app shell).
+	let full = $state(false);
+	let idle = $state(false);
+	let idleTimer: number | undefined;
+	function wake() {
+		idle = false;
+		window.clearTimeout(idleTimer);
+		if (full) idleTimer = window.setTimeout(() => (idle = true), 4000);
+	}
+	async function setFull(on: boolean) {
+		full = on;
+		wake();
+		try {
+			if (on && !document.fullscreenElement) await document.documentElement.requestFullscreen?.();
+			else if (!on && document.fullscreenElement) await document.exitFullscreen?.();
+		} catch { /* the in-page full screen still applies */ }
+	}
+	const onFullscreenChange = () => { if (!document.fullscreenElement && full) { full = false; wake(); } };
+	// While the deck covers the page (party or full screen), the remote stays inside it: otherwise Left
+	// walked onto page buttons hidden behind the deck and the cursor seemed stuck. Back leaves the mode.
+	function coverScope(node: HTMLElement, on: boolean) {
+		let scope: ReturnType<typeof nav.pushScope> | null = null;
+		const set = (v: boolean) => {
+			if (v && !scope) scope = nav.pushScope(node, () => { if (full) void setFull(false); else player.party = false; });
+			else if (!v && scope) { nav.popScope(scope); scope = null; }
+		};
+		set(on);
+		return { update: set, destroy: () => set(false) };
+	}
+
 	function toBody(node: HTMLElement) {
 		document.body.appendChild(node);
 		return { destroy: () => node.remove() };
@@ -274,17 +305,30 @@
 		} else if (e.key === 'MediaTrackPrevious') {
 			e.preventDefault();
 			player.prev();
-		} else if (player.party && e.key === 'Escape') {
-			e.preventDefault();
-			player.party = false;
 		}
 	}
 	let offRaw: (() => void) | undefined;
+	let offKeys: (() => void) | undefined;
+	// Stopping (✕, end of the queue, failed songs) unmounts the deck but not this component: leave full screen.
+	$effect(() => { if (!cur && full) void setFull(false); });
 	onMount(() => {
 		offRaw = nav.onRawKey(onKey);
+		// While the controls are faded out, the first arrow/OK only brings them back: it must not press a
+		// button the viewer cannot see.
+		offKeys = nav.handleKeys((key) => {
+			if (!full) return false;
+			const hidden = idle;
+			wake();
+			return hidden && ['up', 'down', 'left', 'right', 'select'].includes(key);
+		});
+		document.addEventListener('fullscreenchange', onFullscreenChange);
 	});
 	onDestroy(() => {
 		offRaw?.();
+		offKeys?.();
+		document.removeEventListener('fullscreenchange', onFullscreenChange);
+		window.clearTimeout(idleTimer);
+		if (full && document.fullscreenElement) void document.exitFullscreen?.().catch(() => {});
 		loadSeq++;
 		window.clearTimeout(announceTimer);
 		void shaka?.destroy?.().catch?.(() => {});
@@ -296,7 +340,8 @@
 </script>
 
 {#if cur}
-	<section class="deck" class:party={player.party} aria-label="Music player" use:toBody>
+	<section class="deck" class:party={player.party && !full} class:full class:idle={full && idle} aria-label="Music player"
+		use:toBody use:coverScope={player.party || full} onpointermove={() => full && wake()}>
 		<div class="screen">
 			<!-- svelte-ignore a11y_media_has_caption -->
 			<video
@@ -310,11 +355,11 @@
 				onclick={toggle}
 			></video>
 			{#if loading}<div class="spinner" aria-label="Loading"><span class="vinyl"></span></div>{/if}
-			{#if player.showLyrics}<Lyrics track={cur} {el} big={player.party} />{/if}
+			{#if player.showLyrics}<Lyrics track={cur} {el} big={player.party || full} />{/if}
 			{#if showAnnounce && player.mode === 'dj'}
 				<div class="announce" class:top={player.showLyrics} role="status"><span class="mic">🎙️</span>{player.announce}</div>
 			{/if}
-			{#if player.party}
+			{#if player.party && !full}
 				<div class="now">
 					<span class="src">{player.source || 'Now playing'}</span>
 					<h2>{cur.title}</h2>
@@ -331,6 +376,7 @@
 					<button class="artist-link" use:focusable onclick={() => onArtist(cur.artist)}>{cur.artist}{cur.offline ? ' · 💾 saved' : ''}</button>
 				</div>
 				<button class="heart" class:on={player.isFav(cur)} use:focusable aria-label={player.isFav(cur) ? 'Remove from favourites' : 'Add to favourites'} onclick={() => player.toggleFav(cur)}>{player.isFav(cur) ? '❤️' : '🤍'}</button>
+				<button class="heart" class:on={player.isDisliked(cur)} use:focusable aria-label={player.isDisliked(cur) ? 'Undo dislike' : 'Dislike: skip and never pick again'} title="Dislike" onclick={() => player.toggleDislike(cur)}>👎</button>
 				<button class="mini" use:focusable aria-label="More actions" onclick={() => onMore(cur)}>⋯</button>
 			</div>
 			<div class="controls">
@@ -343,7 +389,8 @@
 				<button class="mini toggle" class:on={player.showLyrics} use:focusable aria-pressed={player.showLyrics} title="Lyrics (karaoke)" onclick={toggleLyrics}>📝</button>
 				<button class="mini toggle" class:on={player.vocalCut} use:focusable aria-pressed={player.vocalCut} title="Karaoke: turn the vocals down" onclick={toggleVocals}>🎤</button>
 				<button class="mini" use:focusable disabled={saving} title="Save what is playing as a mix" aria-label="Save as mix" onclick={saveMix}>💾</button>
-				<button class="btn ghost" use:focusable onclick={() => (player.party = !player.party)}>{player.party ? '↙ Shrink' : '🎉 Party mode'}</button>
+				<button class="mini" use:focusable aria-label={full ? 'Exit full screen' : 'Full screen'} title={full ? 'Exit full screen' : 'Full screen'} onclick={() => setFull(!full)}>{full ? '🗗' : '⛶'}</button>
+				{#if !full}<button class="btn ghost" use:focusable onclick={() => (player.party = !player.party)}>{player.party ? '↙ Shrink' : '🎉 Party mode'}</button>{/if}
 				<button class="mini" use:focusable aria-label="Stop and close player" onclick={() => player.stop()}>✕</button>
 			</div>
 			<!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -353,7 +400,7 @@
 			</div>
 		</div>
 
-		{#if player.party}
+		{#if player.party && !full}
 			<aside class="booth">
 				<header>
 					<h3>{player.mode === 'dj' ? '🎧 DJ booth' : 'Up next'}</h3>
@@ -417,6 +464,15 @@
 		border: 1px solid var(--line-strong);
 		box-shadow: 0 -10px 40px -20px rgba(0, 0, 0, 0.6);
 	}
+	/* ---------- full screen: video edge to edge, controls over it that fade when idle */
+	.deck.full { inset: 0; width: auto; z-index: 300; display: block; padding: 0; border: 0; border-radius: 0; background: #000; }
+	.full .screen { position: absolute; inset: 0; aspect-ratio: auto; border-radius: 0; }
+	.full .bar { position: absolute; left: 0; right: 0; bottom: 0; padding: 2.5rem clamp(1rem, 3vw, 3rem) 1.2rem; background: linear-gradient(transparent, rgba(0, 0, 0, 0.85)); color: #fff; transition: opacity 0.4s ease; }
+	.full .meta img { display: block; }
+	.full .screen :global(.lyrics) { bottom: 8.5rem; transition: bottom 0.4s ease; }
+	.full.idle .bar { opacity: 0; }
+	.full.idle .screen :global(.lyrics) { bottom: 0; }
+	.full.idle { cursor: none; }
 	.screen { position: relative; aspect-ratio: 16 / 9; border-radius: var(--r-md); overflow: hidden; background: #000; }
 	video { width: 100%; height: 100%; display: block; object-fit: contain; background: #000; cursor: pointer; }
 	.bar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: 'meta controls right' 'progress progress progress'; gap: 0.5rem 1rem; align-items: center; }

@@ -49,6 +49,8 @@ def init_db() -> None:
         from .hub import migrate, models as _hub_models  # noqa: F401
         from .music import models as _music_models  # noqa: F401
         SQLModel.metadata.create_all(connection)
+        if 'target_images' not in {c['name'] for c in inspect(connection).get_columns('moodboard')}:
+            connection.exec_driver_sql("ALTER TABLE moodboard ADD COLUMN target_images INTEGER NOT NULL DEFAULT 100")
         # Additive shared-learning type columns. Existing rows are videos by default;
         # keep the legacy video_id column unchanged for old feedback and callers.
         _migrate_shared_learning_columns(connection)

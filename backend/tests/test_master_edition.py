@@ -12,7 +12,7 @@ from bt import db
 from bt.db import init_db, save_setting, session
 from bt.hub import ai, engine, slots
 from bt.hub.master import edition, judge, schedule
-from bt.hub.models import Alert, ContentItem, Curator, CuratorDiscovery, Edition, ItemVerdict, MasterQueue, Story, StoryItem
+from bt.hub.models import Alert, ContentItem, Curator, CuratorDiscovery, Edition, ItemVerdict, MasterQueue, MemeExample, Story, StoryItem, Topic, TopicItem
 
 _n = iter(range(1, 10_000))
 
@@ -31,6 +31,10 @@ def featured(s, type='news', final=70.0, story=None, publisher='', pid=1, tier='
     n = next(_n)
     it = ContentItem(url=f'https://example.org/{n}', type=type, title=f'Item {n}', publisher=publisher or f'pub{n}')
     s.add(it); s.flush()
+    if type == 'meme':
+        it.meta = {'community': 'memes'}
+        s.add(it)
+        s.add(MemeExample(item_id=it.id, has_media=True))
     if story is not None:
         s.add(StoryItem(item_id=it.id, story_id=story))
     s.add(ItemVerdict(profile_id=pid, item_id=it.id, tier=tier, final=final))
@@ -76,23 +80,23 @@ def test_today_fills_a_larger_edition_from_featured_then_keeper_pool():
     with session() as s:
         # Candidates comfortably exceed the old 20-entry total and each section's
         # featured subset is smaller than its new capacity.
-        stories = [story(s) for _ in range(36)]
-        story_ids = [featured(s, story=st, final=90 + i if i < 20 else 60 + i, tier='feature' if i < 20 else 'keep')
+        stories = [story(s) for _ in range(90)]
+        story_ids = [featured(s, story=st, final=90 + i if i < 20 else 60 + i % 25, tier='feature' if i < 20 else 'keep')
                      for i, st in enumerate(stories)]
-        read_ids = [featured(s, type='project', final=90 + i if i < 12 else 60 + i, tier='feature' if i < 12 else 'keep')
-                    for i in range(28)]
+        read_ids = [featured(s, type='project', final=90 + i if i < 12 else 60 + i % 25, tier='feature' if i < 12 else 'keep')
+                    for i in range(48)]
         meme_ids = [featured(s, type='meme', final=90 + i if i < 8 else 60 + i, tier='feature' if i < 8 else 'keep')
-                    for i in range(15)]
+                    for i in range(20)]
         s.commit()
 
         ed = edition.patch(s, 1)
         assert len(ids(ed, 'lead')) == 1
-        assert len(ids(ed, 'stories')) == 29
-        assert len(ids(ed, 'reads')) == 20
-        assert len(ids(ed, 'memes')) == 10
+        assert len(ids(ed, 'stories')) == 89
+        assert len(ids(ed, 'reads')) == 48
+        assert len(ids(ed, 'memes')) == 20
         selected = [*ids(ed, 'lead'), *ids(ed, 'stories')]
         assert set(selected[:20]) == set(story_ids[:20])
-        assert len(set(selected)) == 30
+        assert len(set(selected)) == 90
         assert set(ids(ed, 'reads')[:12]) == set(read_ids[:12])
         assert set(ids(ed, 'memes')[:8]) == set(meme_ids[:8])
 
@@ -109,7 +113,7 @@ def test_existing_today_edition_expands_on_patch_without_moving_seen_items():
 
         patched = edition.patch(s, 1)
         selected = ids(patched, 'memes')
-        assert len(selected) == 10
+        assert len(selected) == 13  # every candidate fits the larger section
         assert selected[0] == featured_memes[1]
 
 
@@ -443,3 +447,43 @@ def test_patch_repairs_already_pinned_previous_day_duplicates(promoted):
         patched = edition.patch(s, 1)
         assert ids(patched, 'reads') == ([old, unseen] if promoted else [unseen])
         assert patched.intro == ('Yesterday again [1].' if promoted else '')
+
+
+def test_today_removes_previously_shown_nonhumor_and_uncaptured_memes():
+    with session() as s:
+        good = featured(s, type='meme')
+        bad = featured(s, type='meme')
+        uncaptured = featured(s, type='meme')
+        ed = edition.patch(s, 1)
+        ed.shown_item_ids = [good, bad, uncaptured]
+        s.add(ed)
+        item = s.get(ContentItem, bad); item.meta = {'community': 'homeassistant'}; s.add(item)
+        ex = s.get(MemeExample, uncaptured); ex.has_media = False; s.add(ex)
+        item = s.get(ContentItem, uncaptured); item.image = 'https://example.org/remote.jpg'; s.add(item)
+        s.commit()
+        assert ids(edition.patch(s, 1), 'memes') == [good]
+
+
+def test_today_groups_interests_in_short_runs_and_preserves_delivered_order():
+    with session() as s:
+        a = Curator(profile_id=1, name='AI research', kind='watch')
+        b = Curator(profile_id=1, name='Home Assistant', kind='watch')
+        foreign = Curator(profile_id=2, name='Private foreign interest', kind='watch')
+        s.add(a); s.add(b); s.add(foreign); s.flush()
+        items = [featured(s, final=95-i) for i in range(10)]
+        for index, iid in enumerate(items):
+            discovery = s.exec(select(CuratorDiscovery).where(CuratorDiscovery.item_id == iid, CuratorDiscovery.profile_id == 1)).one()
+            discovery.curator_id = a.id if index < 6 else b.id; s.add(discovery)
+            s.add(CuratorDiscovery(curator_id=foreign.id, item_id=iid, profile_id=2))
+        topic = Topic(profile_id=2, name='Foreign topic'); s.add(topic); s.flush()
+        s.add(TopicItem(topic_id=topic.id, item_id=items[1])); s.commit()
+        ed = edition.patch(s, 1)
+        entries = section(ed, 'stories')['entries']
+        assert [e['group_title'] for e in entries[:6]] == ['AI research']*3 + ['Home Assistant']*3
+        assert all('Foreign' not in e['group_title'] for e in entries)
+        before = [e['item_id'] for e in entries[:4]]
+        ed.shown_item_ids = [items[0], *before]; s.add(ed); s.commit()
+        newer = featured(s, final=99); s.commit()
+        patched = edition.patch(s, 1)
+        assert ids(patched, 'stories')[:4] == before
+        assert ids(edition.patch(s, 1), 'stories') == ids(patched, 'stories')

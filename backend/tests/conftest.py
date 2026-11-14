@@ -26,6 +26,11 @@ def _isolated_background_work(monkeypatch):
     async def idle_scheduler():
         await asyncio.Event().wait()
 
+    from bt.music import service as music_service
+    monkeypatch.setattr(music_service, 'mood_scheduler', idle_scheduler)
+    from bt.hub import moodboards, moodboard_imports
+    monkeypatch.setattr(moodboard_imports, 'scheduler', idle_scheduler)
+    monkeypatch.setattr(moodboards, 'scheduler', idle_scheduler)
     monkeypatch.setattr(engine, 'scheduler', idle_scheduler)
     monkeypatch.setattr(subtitle_jobs, 'worker', idle_scheduler)
     monkeypatch.setattr(slots, 'after_release', None)
@@ -40,3 +45,19 @@ def _no_browser(monkeypatch):
     `rescue.tool_render` directly and are unaffected.
     """
     monkeypatch.setitem(rescue.TOOLS, 'render', ('disabled in tests', lambda ctx: ''))
+
+
+@pytest.fixture(autouse=True)
+def _no_article_age_guard(monkeypatch):
+    """Feed fixtures carry fixed publication dates; the age guard would retire them as the calendar
+    moves. Tests of the guard switch it back on."""
+    from bt.hub import engine
+    monkeypatch.setattr(engine, 'NEWS_MAX_AGE', None)
+
+
+@pytest.fixture(autouse=True)
+def _no_reddit_pace(monkeypatch):
+    """Reddit feed reads are paced 60 s apart in production; tests read fixtures back to back."""
+    from bt.hub import providers
+    monkeypatch.setattr(providers, 'REDDIT_GAP_S', 0.0)
+    monkeypatch.setattr(providers, '_reddit_blocked_until', 0.0)
