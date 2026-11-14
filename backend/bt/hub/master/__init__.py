@@ -13,3 +13,11 @@ LOCK = threading.RLock()
 
 # Bump when rules or scoring change, so stored verdicts are recomputed by the next pass.
 PASS_VERSION = 3
+
+# Meme judging uses entertainment criteria rather than article-editor criteria.
+# Keep other content's stored decisions valid when only the meme rubric changes.
+MEME_PASS_VERSION = 4
+
+
+def pass_version(content_type: str) -> int:
+    return MEME_PASS_VERSION if content_type == 'meme' else PASS_VERSION

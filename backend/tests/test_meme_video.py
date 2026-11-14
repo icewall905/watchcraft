@@ -106,4 +106,4 @@ def test_identical_video_bytes_deduplicate_across_posts(client, clip):
     capture.save_asset(1, second, 'video', 'https://cdn.test/repost.mp4', clip, 'video/mp4')
     with session() as s:
         assert s.get(MemeExample, second).dup_of == first
-    assert client.get('/api/hub/memes/items', headers=H).json()['total'] == 1
+    assert client.get('/api/hub/memes/items', headers=H, params={'curation': 'all'}).json()['total'] == 1

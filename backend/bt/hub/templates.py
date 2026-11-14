@@ -30,6 +30,6 @@ TEMPLATES = [
       ['best 24gb vram gpu for local llm'], [], ['web_search', 'hackernews'], ['article', 'news', 'web']),
     T('osint', 'OSINT research brief', 'One-off deep research on a business, person, domain or topic from public sources.', '🕵',
       [], [], ['web_search', 'wikipedia', 'hackernews', 'github_search'], [], 0, 'research'),
-    T('meme-radar', 'Meme Tracker', 'Memes and emerging formats from public Mastodon communities. Add a Mastodon instance as a source; each query is tried as a hashtag.',
+    T('meme-radar', 'Meme Tracker', 'Visual memes from humor-scoped public communities. Add a Mastodon instance or a meme hashtag source; text-only posts and obvious promotions are skipped.',
       '😂', ['memes', 'linux memes', 'programming humor', 'AI memes'], ['meme', 'linux', 'programming', 'humor', 'AI'], ['mastodon'], ['meme'], 12, max_per_run=16),
 ]

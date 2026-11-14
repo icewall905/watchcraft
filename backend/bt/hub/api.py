@@ -122,7 +122,9 @@ def _salient(item, c) -> list[str]:
     tokens = r"[a-z][a-z'’]{2,}"
     own = set(re.findall(tokens, ' '.join([c.name, c.subject, *c.keywords, *c.queries, *c.aliases]).lower()))
     words = re.findall(tokens, (item.title or '').lower())
-    return [w for w in dict.fromkeys(words) if w not in _STOPWORDS and w not in own][:3]
+    from .meme_quality import GENERIC_MEME_TERMS
+    neutral = GENERIC_MEME_TERMS if getattr(item, 'type', '') == 'meme' else ()
+    return [w for w in dict.fromkeys(words) if w not in _STOPWORDS and w not in own and w not in neutral][:3]
 
 
 # ---------- registry / counts
@@ -2396,12 +2398,54 @@ def hide_meme_language(code: str, body: MemeLanguageIn, pid: int = Depends(profi
         return {'hidden_languages': prefs['hidden_meme_languages']}
 
 
+MEME_REFRESH_COOLDOWN = 5 * 60
+
+
+@router.post('/memes/refresh')
+def refresh_memes(pid: int = Depends(profile_id)):
+    """Ask enabled humor collectors for fresh posts; the worker keeps normal source pacing."""
+    from .meme_quality import humor_curator
+    now = time.time()
+    with session() as s:
+        started, busy, fresh, next_fresh = [], 0, 0, []
+        for c in s.exec(select(Curator).where(Curator.profile_id == pid, Curator.enabled == True)).all():  # noqa: E712
+            if not humor_curator(c):
+                continue
+            if c.last_status in ('running', 'queued') and (c.next_run or 0) > now:
+                busy += 1
+            elif c.last_run and now - c.last_run < MEME_REFRESH_COOLDOWN:
+                fresh += 1
+                next_fresh.append(c.last_run + MEME_REFRESH_COOLDOWN)
+            else:
+                c.next_run, c.last_status = 0, 'queued'
+                s.add(c)
+                started.append(c.id)
+        s.commit()
+    for cid in started:
+        engine.start(cid)
+    return {'started': len(started), 'running': busy, 'recent': fresh,
+            'next_at': min(next_fresh) if fresh and not started and not busy else None}
+
+
 @router.get('/memes/items')
 def meme_items(view: str = 'examples', q: str = '', community: str = '', provider: str = '', language: str = '',
                format_id: int | None = None, topic: int = 0, since: float | None = None, until: float | None = None,
-               offset: int = 0, limit: int = 30, curation: str = 'curated',
+               offset: int = 0, limit: int = 30, curation: str = 'curated', cursor: str = '',
                pid: int = Depends(profile_id)):
-    """Image-first feed. 'examples' hides exact duplicates, dismissed items and examples of hidden trends."""
+    """Visual humor first; saved/history retain intentionally kept non-humor Moments.
+
+    A keyset cursor keeps scrolling stable when earlier cards are hidden or new items arrive.
+    Offset remains available to older clients; totals describe the complete matching feed.
+    """
+    after = None
+    if cursor:
+        try:
+            stamp, iid = cursor.split(':')
+            after = (float(stamp), int(iid))
+            if not math.isfinite(after[0]) or after[0] < 0 or after[1] < 1:
+                raise ValueError
+        except (ValueError, TypeError):
+            raise HTTPException(400, 'Invalid meme feed cursor') from None
     limit = max(1, min(limit, 100))
     with session() as s:
         st = ItemState
@@ -2422,7 +2466,9 @@ def meme_items(view: str = 'examples', q: str = '', community: str = '', provide
         if view == 'saved':
             stmt = stmt.where(st.saved == True)  # noqa: E711
         elif view == 'examples' and curation != 'all':
-            stmt = stmt.where(curation_views.curated(pid, ContentItem.id))
+            from .meme_quality import candidate_clause
+            stmt = stmt.where(curation_views.curated(pid, ContentItem.id),
+                              MemeExample.has_media == True, candidate_clause(ContentItem, has_media=MemeExample.has_media))  # noqa: E712
         if community:
             stmt = stmt.where(MemeExample.community == community)
         if language:
@@ -2447,11 +2493,18 @@ def meme_items(view: str = 'examples', q: str = '', community: str = '', provide
         if since: stmt = stmt.where(when >= since)
         if until: stmt = stmt.where(when <= until)
         total = s.exec(select(func.count()).select_from(stmt.subquery())).one()
+        if after:
+            stamp, iid = after
+            stmt = stmt.where(or_(ContentItem.first_seen < stamp,
+                                  (ContentItem.first_seen == stamp) & (ContentItem.id < iid)))
         rows = s.exec(stmt.order_by(ContentItem.first_seen.desc(), ContentItem.id.desc())
-                      .offset(max(0, offset)).limit(limit)).all()
+                      .offset(0 if after else max(0, offset)).limit(limit + 1)).all()
+        has_more = len(rows) > limit
+        rows = rows[:limit]
         out = serialize(s, pid, list(rows))
         _attach_meme(s, out)
-        return {'items': out, 'total': total}
+        next_cursor = f'{rows[-1].first_seen}:{rows[-1].id}' if has_more and rows else None
+        return {'items': out, 'total': total, 'has_more': has_more, 'next_cursor': next_cursor}
 
 
 @router.get('/memes/facets')

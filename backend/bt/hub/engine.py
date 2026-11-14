@@ -17,6 +17,7 @@ from . import activity, ai, polling, slots, narrate, watchers
 from .models import (Alert, Briefing, CollectionItem, ContentItem, Curator, CuratorDiscovery, CuratorRun,
                      CuratorSource, ItemState, PageRevision, SitemapEntry, Source, SourceCheck, TopicItem)
 from .providers import PROVIDERS, RateLimited
+from .meme_quality import GENERIC_MEME_TERMS, humor_curator, is_meme_candidate
 from .research import identity_names, person_match
 
 log = logging.getLogger(__name__)
@@ -264,8 +265,9 @@ def taste(s, pid: int, article: bool = False) -> tuple[list[str], list[str]]:
 
 def _taste_nudge(data: dict, score: float, reason: str, liked: list[str], disliked: list[str]) -> tuple[float, str]:
     words = set(re.split(r'[^a-z0-9]+', f"{data.get('title', '')} {data.get('summary', '')}".lower()))
-    up = [w for w in liked if w in words]
-    down = [w for w in disliked if w in words]
+    neutral = GENERIC_MEME_TERMS if data.get('type') == 'meme' else ()
+    up = [w for w in liked if w in words and w not in neutral]
+    down = [w for w in disliked if w in words and w not in neutral]
     if up and not down:
         return min(100.0, score + TASTE_NUDGE), ' · '.join(x for x in (reason, f'You save "{up[0]}"') if x)
     if down and not up:
@@ -273,7 +275,7 @@ def _taste_nudge(data: dict, score: float, reason: str, liked: list[str], dislik
     return score, reason
 
 
-MEME_COMMUNITY_PROVIDERS = ('reddit_memes', 'lemmy', 'tiktok', 'youtube_shorts')
+MEME_COMMUNITY_PROVIDERS = ('reddit_memes', 'lemmy', 'mastodon')
 
 
 def keyword_score(c: Curator, data: dict) -> tuple[float | None, str]:
@@ -303,8 +305,9 @@ def keyword_score(c: Curator, data: dict) -> tuple[float | None, str]:
 def tune(c: Curator, data: dict, score: float, reason: str) -> tuple[float, str]:
     """Nudge a keyword or AI score by the family's "more/less like this" title terms."""
     hay = f"{data.get('title', '')} {data.get('summary', '')}".lower()
-    down = [x for x in _terms(c.tuned_down) if x in hay]
-    up = [x for x in _terms(c.tuned_up) if x in hay]
+    neutral = GENERIC_MEME_TERMS if data.get('type') == 'meme' else ()
+    down = [x for x in _terms(c.tuned_down) if x in hay and x not in neutral]
+    up = [x for x in _terms(c.tuned_up) if x in hay and x not in neutral]
     if down and not up:
         score, note = score - 10, f'Less like this: "{down[0]}"'
     elif up and not down:
@@ -565,6 +568,8 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
                 and isinstance(d.get('published_at'), (int, float)) and d['published_at'] < oldest):
             too_old += 1
             continue
+        if humor_curator(c) and d.get('type') == 'meme' and not is_meme_candidate(d):
+            continue
         score, reason = keyword_score(c, d)
         if score is None:
             type_blocked += reason == TYPE_BLOCKED
@@ -576,7 +581,7 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         # A picture or clip from a meme community is already chosen by that community; captions rarely
         # carry the curator's keywords ("me when…"), so they are not held to them.
         if score == 0 and d.get('type') == 'meme' and src.provider in MEME_COMMUNITY_PROVIDERS \
-                and ((d.get('meta') or {}).get('media') or {}).get('url'):
+                and is_meme_candidate(d):
             score, reason = 50.0, 'Picked by a meme community'
         # Feeds are unfiltered firehoses: with keywords set, keep matches only. Query results already match a query.
         if score == 0 and (PROVIDERS[src.provider].mode != 'query' or _feed_needs_keywords(src.provider)):

@@ -19,7 +19,9 @@ def add(type='news', tier='feature', final=70.0, pid=1, story=None, title=None, 
         s.add(it); s.flush()
         s.add(CuratorDiscovery(curator_id=1, item_id=it.id, profile_id=pid, score=60))
         if type == 'meme':
-            s.add(MemeExample(item_id=it.id))
+            it.meta = {'community': 'r/memes'}
+            s.add(it)
+            s.add(MemeExample(item_id=it.id, has_media=True))
         if story:
             s.add(StoryItem(item_id=it.id, story_id=story))
         if verdict:

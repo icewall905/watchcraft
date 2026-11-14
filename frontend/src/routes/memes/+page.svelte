@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { focusable } from '$lib/nav';
@@ -31,6 +31,11 @@
 	let more = $state(false);
 	let error = $state('');
 	let seq = 0;
+	let offset = $state(0);
+	let cursor: string | null = null;
+	let hasMore = $state(false);
+	let sentinel = $state<HTMLDivElement>();
+	let autoPaused = $state(false);
 	let open = $state<Item | null>(null);
 	// Thumbs are per item and per session: the curator's tuned lists are the durable record.
 	let verdicts = $state<Record<number, 'more' | 'less'>>({});
@@ -75,15 +80,25 @@
 	}
 
 	async function loadFeed(append = false) {
+		if (append && (loading || more || !hasMore)) return;
 		const id = ++seq;
+		const start = append ? offset : 0;
+		if (!append) { cursor = null; more = false; hasMore = false; autoPaused = false; }
 		if (append) more = true; else loading = true;
 		error = '';
 		try {
 			const r = tab === 'set-aside'
-				? await hub.setAside({ type: 'meme', offset: append ? items.length : 0, limit: LIMIT })
-				: await hub.memeItems({ ...params, offset: append ? items.length : 0 });
+				? await hub.setAside({ type: 'meme', offset: start, limit: LIMIT })
+				: await hub.memeItems({ ...params, offset: append && cursor ? 0 : start, cursor: append ? cursor ?? undefined : undefined });
 			if (id !== seq) return;
-			items = append ? [...items, ...r.items.filter((n) => !items.some((o) => o.id === n.id))] : r.items;
+			const seen = new Set(append ? items.map((it) => it.id) : []);
+			const fresh = r.items.filter((it) => { if (seen.has(it.id)) return false; seen.add(it.id); return true; });
+			items = append ? [...items, ...fresh] : fresh;
+			offset = start + r.items.length;
+			const paging = r as { next_cursor?: string | null; has_more?: boolean };
+			cursor = paging.next_cursor ?? null;
+			hasMore = r.items.length > 0 && (paging.has_more ?? offset < r.total);
+			if (append && !fresh.length) autoPaused = true;
 			total = r.total;
 		} catch (e) { if (id === seq) error = errMsg(e); }
 		finally { if (id === seq) { loading = false; more = false; } }
@@ -95,7 +110,22 @@
 			else if (tab === 'formats') formats = (await hub.memeFormats({ sort: 'new' })).formats;
 		} catch (e) { error = error || errMsg(e); }
 	}
-	$effect(() => { if (feed) void loadFeed(false); else { loading = true; void loadSide().finally(() => (loading = false)); } });
+	$effect(() => {
+		const current = params;
+		untrack(() => {
+			if (feed) void loadFeed(false);
+			else { ++seq; loading = true; more = false; void loadSide().finally(() => (loading = false)); }
+		});
+	});
+	$effect(() => {
+		const target = sentinel;
+		if (!target || loading || more || !hasMore || error || autoPaused || typeof IntersectionObserver === 'undefined') return;
+		const observer = new IntersectionObserver(([entry]) => {
+			if (entry.isIntersecting) void loadFeed(true);
+		}, { rootMargin: '400px' });
+		observer.observe(target);
+		return () => observer.disconnect();
+	});
 
 	onMount(() => {
 		hub.memeFacets().then((f) => { communities = f.communities; languages = f.languages; }).catch(() => {});
@@ -164,6 +194,7 @@
 		verdicts = { ...verdicts, [it.id]: 'less' };
 		items = items.filter((x) => x.id !== it.id);
 		total = Math.max(0, total - 1);
+		offset = Math.max(0, offset - 1);
 		if (open?.id === it.id) closeDrawer();
 	}
 	async function promote(it: Item) {
@@ -173,6 +204,7 @@
 			await hub.overrule(it.id, 'promote');
 			items = items.filter((x) => x.id !== it.id);
 			total = Math.max(0, total - 1);
+			offset = Math.max(0, offset - 1);
 		} catch (e) { toast.error(errMsg(e)); }
 		finally { promoting = null; }
 	}
@@ -255,7 +287,7 @@
 		const st = await hub.setState(iid, { [key]: !open.state[key] });
 		if (open?.id !== iid) return;
 		open = { ...open, state: st };
-		if (st.dismissed) items = items.filter((x) => x.id !== open?.id);
+		if (st.dismissed) { items = items.filter((x) => x.id !== iid); offset = Math.max(0, offset - 1); total = Math.max(0, total - 1); }
 	}
 	async function explain() {
 		if (!open) return;
@@ -265,14 +297,19 @@
 		catch (e) { explainError = errMsg(e); }
 		finally { explaining = false; }
 	}
-	// Analysis runs on the scheduler tick; this forces it now so a fresh run shows up immediately.
 	async function refreshRadar() {
 		if (sweeping) return;
 		sweeping = true; sweepNote = '';
 		try {
-			const r = await hub.memeSweep();
-			sweepNote = r.analyzed ? `Analyzed ${r.analyzed} new example${r.analyzed === 1 ? '' : 's'}.`
-				: 'Nothing new to analyze yet — give your curators a run first.';
+			const r = await hub.memeRefresh();
+			if (r.started || r.running) sweepNote = 'Looking for fresh memes… Your curators are collecting now. Refresh this feed shortly to see what they find.';
+			else if (r.recent) {
+				const minutes = r.next_at ? Math.max(1, Math.ceil((r.next_at * 1000 - Date.now()) / 60000)) : 5;
+				sweepNote = `Your meme curators refreshed recently. Try again in ${minutes} minute${minutes === 1 ? '' : 's'}.`;
+			} else sweepNote = 'Enable a Meme Tracker curator to start finding fresh memes.';
+			// Also classify any memes already waiting locally. Collection continues in
+			// the background; never claim that scheduling means new memes arrived.
+			await hub.memeSweep().catch(() => null);
 			if (feed) await loadFeed(false); else await loadSide();
 		} catch (e) { sweepNote = errMsg(e); }
 		finally { sweeping = false; }
@@ -288,10 +325,10 @@
 	<header class="head">
 		<div>
 			<h1>Meme Radar</h1>
-			<p class="muted">What your curators see spreading — counted, not guessed.</p>
+			<p class="muted">Fresh laughs from your curators. Scroll, enjoy, and tune your taste.</p>
 		</div>
 		<div class="head-acts">
-			<button class="btn" disabled={sweeping} use:focusable onclick={refreshRadar}>{sweeping ? 'Refreshing…' : 'Refresh radar'}</button>
+			<button class="btn" disabled={sweeping} use:focusable onclick={refreshRadar}>{sweeping ? 'Refreshing…' : 'Refresh memes'}</button>
 			<a class="btn ghost" href="/curators" use:focusable>Manage curators</a>
 		</div>
 	</header>
@@ -305,6 +342,7 @@
 	</div>
 
 	{#if feed && tab !== 'set-aside'}
+		<details class="feed-filters"><summary>Filter your feed</summary>
 		<LiveFilter placeholder="Filter memes by words or tags…" label="Filter memes" count={loading ? null : total} />
 		<div class="filters">
 			<select class="input" aria-label="Community filter" value={page.url.searchParams.get('community') ?? ''} onchange={(e) => setParam('community', e.currentTarget.value)}>
@@ -326,6 +364,7 @@
 				<button class="chip on" use:focusable onclick={() => setParam('format_id', '')}>Format filter — clear ✕</button>
 			{/if}
 		</div>
+		</details>
 	{/if}
 
 	{#if loading}
@@ -401,8 +440,10 @@
 				</article>
 			{/each}
 		</div>
-		{#if items.length < total}
-			<div class="more"><button class="btn big" disabled={more} use:focusable onclick={() => loadFeed(true)}>{more ? 'Loading…' : `Load more (${total - items.length} left)`}</button></div>
+		{#if error}<p class="warn small" role="alert">Couldn’t load more memes: {error}</p>{/if}
+		{#if hasMore}
+			<div class="more" bind:this={sentinel}><button class="btn big" disabled={more} use:focusable onclick={() => { autoPaused = false; void loadFeed(true); }}>{more ? 'Loading…' : 'Load more memes'}</button></div>
+		{:else}<p class="caught-up muted" role="status">You’re caught up. New memes will appear as your curators find them.</p>
 		{/if}
 	{/if}
 </div>
@@ -500,7 +541,13 @@
 	.filters .input { min-height: 2.75rem; width: auto; max-width: 16rem; }
 	.skeletons { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 1rem; }
 	.sk { height: 16rem; }
-	.gallery { columns: 4 15rem; column-gap: 1rem; }
+	.gallery { display: grid; grid-template-columns: minmax(0, 40rem); justify-content: center; gap: 1.5rem; }
+	.feed-filters summary { cursor: pointer; color: var(--ink-soft); margin-bottom: .7rem; }
+	.gallery :global(.meme-tile > .thumb) { aspect-ratio: auto; min-height: 10rem; }
+	.gallery .shot { width: 100%; height: auto; }
+	.gallery .shot :global(img) { width: 100%; height: auto; max-height: 80vh; object-fit: contain; }
+	.gallery :global(.caption) { font-size: 1rem; }
+	.caught-up { text-align: center; padding: 2rem 1rem; }
 	.gallery > :global(*) { break-inside: avoid; margin-bottom: 1rem; }
 	.more { display: grid; place-items: center; padding: 1rem; }
 	.trends { display: grid; gap: 1rem; grid-template-columns: repeat(auto-fill, minmax(20rem, 1fr)); }
@@ -537,7 +584,7 @@
 	.link { background: none; border: 0; color: var(--accent); padding: 0; font: inherit; cursor: pointer; text-decoration: underline; }
 	.similar { display: flex; gap: .5rem; flex-wrap: wrap; }
 	.sim { width: 6rem; height: 6rem; border-radius: var(--r-md); overflow: hidden; border: 1px solid var(--rule); background: var(--paper-raised); padding: 0; cursor: pointer; display: grid; place-items: center; }
-	.meme-card { break-inside: avoid; margin-bottom: 1rem; padding: .65rem; border: 1px solid var(--rule); border-radius: var(--r-md); background: color-mix(in srgb, var(--paper-raised) 60%, transparent); }
+	.meme-card { align-self: start; break-inside: avoid; margin-bottom: 1rem; padding: .65rem; border: 1px solid var(--rule); border-radius: var(--r-md); background: color-mix(in srgb, var(--paper-raised) 60%, transparent); }
 	.shot { display: grid; place-items: center; width: 100%; height: 100%; }
 	.shot :global(img) { max-width: 100%; max-height: 34rem; object-fit: contain; }
 	.shot.sensitive :global(img), .text-meme.sensitive { filter: blur(7px); }

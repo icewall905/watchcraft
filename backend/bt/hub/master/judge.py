@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 from ...db import get_agent_control, get_agent_state, get_settings
 from .. import ai
 from ..models import ContentItem, Curator, HubPreferenceCore, ItemVerdict
-from . import PASS_VERSION, rules, score
+from . import rules, score, pass_version
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +36,43 @@ SYSTEM = ('You are the editor of a calm personal magazine. For each item, rate Q
           'thoughtful reader\'s time: substance, originality, craft; low for spam, rage bait, clickbait, reposts, '
           'low-effort memes, thin rewrites, ads) and RELEVANCE 0-100 to this reader\'s interests below. The reason is '
           'one short, concrete sentence about the item itself. Set uncertain=true when evidence is insufficient or the decision needs an editor. Be strict: most items should not score above 70.')
+
+
+MEME_SYSTEM = (
+    'You curate a fun, scrollable meme feed. Rate QUALITY 0-100 for humor, an understandable joke, '
+    'playfulness and entertainment value; RELEVANCE 0-100 for the reader meme tastes. '
+    'Everyday observational humor, silly puns, relatable situations and familiar meme formats can be good memes. '
+    'Do not require technical insight, article substance, a long title or an original meme format. '
+    'Reject ads, unrelated news, ordinary photos without a joke, engagement farming and spam when evidence supports it. '
+    'Use the actual caption, supplied image description and community context. Community and popularity are context, '
+    'not proof of a funny image. You cannot see image pixels: never invent visual details or claim to assess unseen '
+    'image quality. A short title such as me_irl is normal and is not evidence of low effort. '
+    'When the joke depends on an unseen image and the text does not explain it, set uncertain=true; '
+    'do not confidently reject or approve it from its title alone. Honor stated meme exclusions and tastes. '
+    'The reason is one short, concrete sentence grounded in the supplied evidence. '
+    'Return uncertain=true whenever the supplied evidence cannot support the decision.'
+)
+
+
+def meme_reader(s: Session, pid: int) -> str:
+    """Meme briefs only: article research interests are not an entertainment requirement."""
+    from ..meme_quality import GENERIC_MEME_TERMS, humor_curator
+
+    parts = []
+    for c in s.exec(select(Curator).where(Curator.profile_id == pid, Curator.enabled == True)).all():  # noqa: E712
+        if not humor_curator(c):
+            continue
+        parts.append('; '.join(x for x in (c.name, (c.instructions or '')[:600],
+                     'keywords: ' + ', '.join(c.keywords[:10]) if c.keywords else '',
+                     'avoid: ' + ', '.join(c.exclusions[:10]) if c.exclusions else '',
+                     'more like: ' + ', '.join(x for x in c.tuned_up if x.casefold() not in GENERIC_MEME_TERMS)[:400] if c.tuned_up else '',
+                     'less like: ' + ', '.join(x for x in c.tuned_down if x.casefold() not in GENERIC_MEME_TERMS)[:400] if c.tuned_down else '') if x))
+    profile_rules = rules.load(s, pid)
+    if profile_rules.hidden_languages:
+        parts.append('Hidden meme languages: ' + ', '.join(sorted(profile_rules.hidden_languages)))
+    if profile_rules.hidden_communities:
+        parts.append('Hidden meme communities: ' + ', '.join(sorted(profile_rules.hidden_communities)))
+    return '\n'.join(parts)[:3000] or 'A varied feed of fun memes; no narrower meme interests stated.'
 
 
 def video_busy(now: float | None = None) -> bool:
@@ -132,21 +169,25 @@ def judge(s: Session, pid: int, now: float | None = None, limit: int = LIGHT_LIM
     from ..article_preferences import ARTICLE_TYPES
     ordinary_interests = reader(s, pid, include_articles=False)
     article_interests = reader(s, pid, include_articles=True) if any(item.type in ARTICLE_TYPES for _, item in todo) else ordinary_interests
-    groups = {kind: [pair for pair in todo if (pair[1].type in ARTICLE_TYPES) == kind] for kind in (True, False)}
-    order = [(todo[0][1].type in ARTICLE_TYPES), not (todo[0][1].type in ARTICLE_TYPES)]
-    batches = [(groups[kind][start:start + BATCH], kind)
+    meme_interests = meme_reader(s, pid) if any(item.type == 'meme' for _, item in todo) else ''
+    def kind(item):
+        return 'meme' if item.type == 'meme' else ('article' if item.type in ARTICLE_TYPES else 'ordinary')
+    order = list(dict.fromkeys(kind(item) for _, item in todo))
+    groups = {group: [pair for pair in todo if kind(pair[1]) == group] for group in order}
+    batches = [(groups[group][start:start + BATCH], group)
                for start in range(0, max(map(len, groups.values())), BATCH)
-               for kind in order if groups[kind][start:start + BATCH]]
+               for group in order if groups[group][start:start + BATCH]]
     escalations = 0
     completed = 0
-    for batch, article_group in batches:
+    for batch, group in batches:
         if worker_busy():
             out['stopped'] = 'video busy'
             out['skipped'] += len(todo) - completed
             break
-        interests = article_interests if article_group else ordinary_interests
+        interests = {'article': article_interests, 'ordinary': ordinary_interests, 'meme': meme_interests}[group]
+        system = MEME_SYSTEM if group == 'meme' else SYSTEM
         try:
-            res = ai._call(SYSTEM, f'Reader interests:\n{ai._esc(interests)}\n\n{ai._data([_row(i) for _, i in batch])}',
+            res = ai._call(system, f'Reader interests:\n{ai._esc(interests)}\n\n{ai._data([_row(i) for _, i in batch])}',
                            SCHEMA, max_tokens=1800, role='worker')
         except Exception as e:  # noqa: BLE001 — the rules verdict stands
             log.info('master judge failed: %s', e)
@@ -176,13 +217,14 @@ def judge(s: Session, pid: int, now: float | None = None, limit: int = LIGHT_LIM
             out['stopped'] = 'video busy'
         if doubtful and not editor_busy:
             try:
-                review = ai._call(SYSTEM + ' Resolve these uncertain worker decisions from the supplied source evidence.',
+                review = ai._call(system + ' Resolve these uncertain worker decisions from the supplied source evidence.',
                                   f'Reader interests:\n{ai._esc(interests)}\n\n' + ai._data([_row(batch[n - 1][1]) for n in doubtful]),
                                   SCHEMA, max_tokens=1000, role='judge')
                 for reviewed in review.get('verdicts', []):
                     number = reviewed.get('n') if isinstance(reviewed, dict) else None
                     if isinstance(number, int) and 1 <= number <= len(doubtful):
-                        if _score(reviewed.get('quality')) is not None and _score(reviewed.get('relevance')) is not None:
+                        if (not (group == 'meme' and reviewed.get('uncertain') is True)
+                                and _score(reviewed.get('quality')) is not None and _score(reviewed.get('relevance')) is not None):
                             authoritative[doubtful[number - 1]] = reviewed
             except Exception as e:  # keep uncertain items eligible while the judge is unavailable
                 log.info('master escalation failed: %s', e)
@@ -204,13 +246,13 @@ def judge(s: Session, pid: int, now: float | None = None, limit: int = LIGHT_LIM
             q, r = _score(row.get('quality')), _score(row.get('relevance'))
             if q is None or r is None:
                 continue  # a malformed row leaves that item's rules verdict alone
-            v, _ = batch[n - 1]
+            v, item = batch[n - 1]
             v.quality = q if reviewed else round(MODEL_WEIGHT['quality'] * q + (1 - MODEL_WEIGHT['quality']) * v.quality, 1)
             v.relevance = r if reviewed else round(MODEL_WEIGHT['relevance'] * r + (1 - MODEL_WEIGHT['relevance']) * v.relevance, 1)
             v.final = score.final(v.quality, v.relevance)
             reason = str(row.get('reason') or '').strip()[:200]
             v.reasons = ([f'editor: {reason}'] if reason else []) + [x for x in v.reasons if not x.startswith('editor:')][:7]
-            v.judged_by, v.pass_version, v.judged_at = 'llm', PASS_VERSION, now
+            v.judged_by, v.pass_version, v.judged_at = 'llm', pass_version(item.type), now
             s.add(v)
             out['judged'] += 1
         s.commit()

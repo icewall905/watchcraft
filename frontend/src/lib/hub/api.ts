@@ -140,7 +140,7 @@ export const hub = {
 	saveSearch: (body: Partial<SavedSearch>) => send<SavedSearch>('POST', '/saved-searches', body),
 	deleteSavedSearch: (id: number) => send<{ ok: boolean }>('DELETE', `/saved-searches/${id}`),
 
-	memeItems: (params: Params, signal?: AbortSignal) => get<Page<Item>>('/memes/items' + qs(params), signal),
+	memeItems: (params: Params, signal?: AbortSignal) => get<Page<Item> & { next_cursor?: string | null; has_more?: boolean }>('/memes/items' + qs(params), signal),
 	memeFacets: () => get<{ communities: { key: string; count: number }[]; languages: { key: string; count: number }[]; hidden_languages: string[] }>('/memes/facets'),
 	memeTrends: (params: Params) => get<{ trends: MemeTrend[] }>('/memes/trends' + qs(params)),
 	memeTrendState: (id: number, body: { followed?: boolean; hidden?: boolean }) => send<{ followed: boolean; hidden: boolean }>('POST', `/memes/trends/${id}/state`, body),
@@ -149,6 +149,7 @@ export const hub = {
 	memeSimilar: (id: number) => get<{ items: Item[] }>(`/memes/items/${id}/similar`),
 	memeExplain: (id: number, refresh = false) => send<{ ai: boolean; explanation: MemeExplain }>('POST', `/memes/items/${id}/explain`, { refresh }),
 	/** Analyze collected examples and recount trends now instead of on the next scheduler tick. */
+	memeRefresh: () => send<{ started: number; running: number; recent: number; next_at: number | null }>('POST', '/memes/refresh'),
 	memeSweep: () => send<{ analyzed: number; transitions: number; formats: number }>('POST', '/memes/sweep'),
 	hideMemeLanguage: (code: string, hidden = true) =>
 		send<{ hidden_languages: string[] }>('POST', `/memes/languages/${encodeURIComponent(code)}/hide`, { hidden }),

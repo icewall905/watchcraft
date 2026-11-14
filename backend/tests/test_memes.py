@@ -68,7 +68,7 @@ def _seed_meme(url, title, image, community, first_seen=None):
             cur = Curator(profile_id=1, name='Meme Tracker', next_run=0)
             s.add(cur); s.flush()
         it = ContentItem(url=url, type='meme', title=title, summary=title, provider='mastodon',
-                         meta={'community': community, 'language': 'en', 'platform': 'mastodon'})
+                         meta={'community': community, 'tags': ['memes'], 'language': 'en', 'platform': 'mastodon'})
         if first_seen:
             it.first_seen = first_seen
         s.add(it); s.flush()
@@ -314,7 +314,8 @@ def test_sensitive_metadata_reaches_feed(client):
         it.meta = {**it.meta, 'sensitive': True, 'spoiler': 'Content warning'}
         s.add(it); s.commit()
     _analyze_all()
-    meta = client.get('/api/hub/memes/items', headers=H).json()['items'][0]['meme']
+    assert client.get('/api/hub/memes/items', headers=H).json()['items'] == []
+    meta = client.get('/api/hub/memes/items', headers=H, params={'view': 'history'}).json()['items'][0]['meme']
     assert meta['sensitive'] and meta['spoiler'] == 'Content warning'
 
 
@@ -415,10 +416,11 @@ def test_a_meme_curator_with_no_source_collects_on_its_own(client, monkeypatch):
     from bt.hub import engine, providers
     cur = client.post('/api/hub/curators', json={'name': 'Meme Tracker', 'queries': ['memes'],
                                                  'content_types': ['meme'], 'interval_hours': 12}, headers=H).json()
-    # Text-only, so the sweep can analyze it without waiting for an image capture.
+    # A real visual meme: public text-only hashtag posts no longer enter this curator.
     post = {'id': '1', 'visibility': 'public', 'url': 'https://mastodon.world/@a/1', 'content': '<p>a meme</p>',
             'created_at': '2026-10-30T12:00:00.000Z', 'account': {'acct': 'a'}, 'tags': [{'name': 'memes'}],
-            'media_attachments': []}
+            'media_attachments': [{'type': 'image', 'url': 'https://cdn.test/a.jpg'}]}
+    monkeypatch.setattr(capture, 'dispatch', lambda *a, **kw: None)
 
     def fake(url, q=''):
         if 'mastodon.world' in url:
@@ -433,6 +435,10 @@ def test_a_meme_curator_with_no_source_collects_on_its_own(client, monkeypatch):
     agent = next(a for a in client.get('/api/hub/team').json()['agents'] if a['kind'] == 'curator')
     assert 'source_repaired' in [e['step'] for e in agent['timeline']]
     assert client.get('/api/hub/memes/items', headers=H).json()['total'] == 0  # not analyzed until a sweep
+    with session() as s:
+        item = s.exec(select(ContentItem).where(ContentItem.url == post['url'])).one()
+        iid = item.id
+    capture.save_asset(1, iid, 'image', 'https://cdn.test/a.jpg', _images()[0], 'image/jpeg')
     client.post('/api/hub/memes/sweep', headers=H)
     assert client.get('/api/hub/memes/items', headers=H).json()['total'] == 1
 
@@ -494,7 +500,7 @@ def test_reddit_memes_reach_a_keyword_meme_curator_and_keep_the_autopilot_away(c
            'meta': {'platform': 'reddit', 'social_post': True, 'community': 'r/memes',
                     'media': {'type': 'image', 'url': 'https://i.redd.it/a.jpg'}}}
     text = {**pic, 'url': 'https://www.reddit.com/r/memes/comments/a2/', 'external_id': 'reddit:a2',
-            'title': 'a caption only', 'meta': {**pic['meta'], 'media': {}}}
+            'title': 'a caption only', 'image': '', 'meta': {**pic['meta'], 'media': {}}}
     monkeypatch.setattr(providers.PROVIDERS['reddit_memes'], 'fetch', lambda url, q='': [dict(pic), dict(text)])
     probed = []
     monkeypatch.setattr(memes, '_working_instance', lambda *a: probed.append(a) or 'mastodon.world')

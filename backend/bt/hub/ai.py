@@ -81,26 +81,60 @@ def rank(c: Curator, items: list[dict]) -> list[tuple[float, str]]:
     out = [(50.0, '')] * len(items)
     from .article_preferences import ARTICLE_TYPES, context
     article_indices = [n for n, item in enumerate(items) if item.get('type') in ARTICLE_TYPES]
-    other_indices = [n for n, item in enumerate(items) if item.get('type') not in ARTICLE_TYPES]
+    meme_indices = [n for n, item in enumerate(items) if item.get('type') == 'meme']
+    other_indices = [n for n, item in enumerate(items) if item.get('type') not in ARTICLE_TYPES and item.get('type') != 'meme']
     article_memory = ''
     if article_indices:
         with session() as s:
             article_memory = context(s, c.profile_id)
-    for indices in (article_indices, other_indices):
+    for indices in (article_indices, meme_indices, other_indices):
         for start in range(0, len(indices), 15):
             positions = indices[start:start + 15]
             batch = [items[n] for n in positions]
             memory_text = ('\nShared article memory:\n' + _esc(article_memory)) if indices is article_indices and article_memory else ''
-            res = _call('You rate how well each item matches a user\'s stated interest. Score 0-100. The reason must be one '
-                        'short sentence citing concrete evidence from the item (title/summary). '
-                        'Follow explicit scoped preferences; inferred lessons retain their evidence strength. '
-                        'If evidence is weak, say so and score low.',
+            system = ('You rate how well each item matches a user\'s stated interest. Score 0-100. The reason must be one '
+                      'short sentence citing concrete evidence from the item (title/summary). '
+                      'Follow explicit scoped preferences; inferred lessons retain their evidence strength. '
+                      'If evidence is weak, say so and score low.')
+            schema = RANK_SCHEMA
+            if indices is meme_indices:
+                system = ('You screen meme candidates for relevance to the stated meme interests, not article substance. '
+                          'Score 0-100 using the actual caption, supplied image description and humor community provenance. '
+                          'Normal short captions such as me_irl, everyday situations, silly puns and familiar formats '
+                          'are not evidence of poor relevance. Do not demand technical insight or detailed reporting. '
+                          'You cannot see image pixels; never invent or judge unseen visual humor. '
+                          'If a humor-scoped candidate fits the interest but the joke is in an unseen image, use a '
+                          'neutral score of 50 and uncertain=true, rather than rejecting it for missing text. '
+                          'Provenance supports relevance, not proof the image is funny. Score low for actual evidence '
+                          'of unrelated content, promotion or explicit excluded tastes; honor stated exclusions. '
+                          'Give one short reason grounded in the supplied evidence.')
+                schema = {'type': 'object', 'properties': {'scores': {'type': 'array', 'items': {
+                    'type': 'object', 'properties': {**RANK_SCHEMA['properties']['scores']['items']['properties'],
+                                                  'uncertain': {'type': 'boolean'}},
+                    'required': ['n', 'score', 'reason']}}}, 'required': ['scores']}
+                rows = []
+                for item in batch:
+                    meta = item.get('meta') or {}
+                    media = meta.get('media') if isinstance(meta.get('media'), dict) else {}
+                    evidence = []
+                    if meta.get('community'):
+                        evidence.append('community: ' + str(meta['community']))
+                    if media.get('alt'):
+                        evidence.append('image description: ' + str(media['alt']))
+                    if meta.get('tags'):
+                        evidence.append('tags: ' + ', '.join(map(str, meta['tags'])))
+                    evidence.append(str(item.get('coverage') or ''))
+                    rows.append({**item, 'coverage': '; '.join(x for x in evidence if x)})
+                batch = rows
+            res = _call(system,
                         f'Interest: {c.instructions or c.name}\nKeywords: {", ".join(c.keywords)}\nAvoid: {", ".join(c.exclusions)}'
-                        + memory_text + f'\n\n{_data(batch)}', RANK_SCHEMA, role='worker')
+                        + memory_text + f'\n\n{_data(batch)}', schema, role='worker')
             for row in res.get('scores', []):
                 n = row.get('n')
                 if isinstance(n, int) and 1 <= n <= len(batch):
-                    out[positions[n - 1]] = (float(max(0, min(100, int(row.get('score', 0))))), str(row.get('reason', ''))[:300])
+                    value = (50.0 if indices is meme_indices and row.get('uncertain') is True
+                             else float(max(0, min(100, int(row.get('score', 0))))))
+                    out[positions[n - 1]] = (value, str(row.get('reason', ''))[:300])
     return out
 
 
