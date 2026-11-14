@@ -57,11 +57,11 @@
  async function importPinterest(e: SubmitEvent) {
   e.preventDefault(); if (!selected || !allowed() || importing) return;
   importing = true; const id = selected, owner = stamp();
-  try { const result = await boardsApi.pinterest(id, pinterestUrl.trim()); if (owner !== stamp() || !allowed()) return; importJob = result.import; importOpen = false; pollUntil = Date.now() + 180000; notice = 'Pinterest import queued. Images will appear as they are saved.'; }
-  catch (e) { if (owner === stamp() && allowed()) error = message(e); }
-  finally { if (owner === stamp()) importing = false; }
+  try { const result = await boardsApi.pinterest(id, pinterestUrl.trim()); if (owner !== stamp() || selected !== id || !allowed()) return; importJob = result.import; importOpen = false; pollUntil = Date.now() + 180000; notice = 'Pinterest import queued. Images will appear as they are saved.'; }
+  catch (e) { if (owner === stamp() && selected === id && allowed()) error = message(e); }
+  finally { if (owner === stamp() && selected === id) importing = false; }
  }
- function choose(id: number) { selected = id; importJob = null; pins = []; preview = null; notice = ''; void load(); }
+ function choose(id: number) { importOpen = false; importing = false; selected = id; importJob = null; pins = []; preview = null; notice = ''; void load(); }
  function edit(b?: MoodBoard) { editId = b?.id ?? null; name = b?.name ?? ''; interests = b?.interests ?? ''; instructions = b?.instructions ?? ''; enabled = b?.enabled ?? true; interval = b?.interval_hours ?? 12; error = ''; editing = true; }
  async function saveBoard(e: SubmitEvent) {
   e.preventDefault(); if (!allowed() || saving) return; saving = true; const owner = stamp();

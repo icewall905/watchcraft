@@ -310,3 +310,20 @@ def test_board_and_profile_deletion_remove_private_import_history(client):
     assert client.delete(f"/api/profiles/{other['id']}").status_code == 200
     with session() as s:
         assert not s.exec(select(MoodImport)).all()
+
+
+def test_concurrent_import_cannot_push_curator_over_pin_limit(client, monkeypatch):
+    b = make(client)
+    monkeypatch.setattr(mb, 'MAX_PINS', 2)
+    monkeypatch.setattr(moodboard_sources, 'search', lambda *a, **kw: [candidate(99)])
+    monkeypatch.setattr(mb, 'capture_image', lambda url: (b'bytes', 'image/jpeg', 20, 30))
+    def choose(rows, *args):
+        if rows:
+            seed(b['id'], 2)  # Another writer fills the board during network/vision work.
+        return rows
+    monkeypatch.setattr(mb, 'select_candidates', choose)
+    assert mb.dispatch_due()
+    with session() as s:
+        pins = s.exec(select(MoodPin).where(MoodPin.board_id == b['id'])).all()
+        assert len(pins) == 2
+        assert not any(p.source_url == candidate(99)['source_url'] for p in pins)

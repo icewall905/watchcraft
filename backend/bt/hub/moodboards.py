@@ -329,7 +329,10 @@ def collect(bid, lease, revision):
         board = s.get(MoodBoard, bid)
         if not board or board.lease != lease or board.revision != revision or not hub_allowed(s, board.profile_id):
             return
+        count = s.exec(select(func.count()).select_from(MoodPin).where(MoodPin.board_id == bid)).one()
         for item, data, mime, width, height in results:
+            if count >= MAX_PINS:
+                break
             if s.exec(select(MoodPin.id).where(MoodPin.board_id == bid, MoodPin.source_url == item['source_url'])).first():
                 continue
             pin = MoodPin(board_id=bid, profile_id=board.profile_id, title=item['title'][:500],
@@ -339,11 +342,12 @@ def collect(bid, lease, revision):
             s.add(pin)
             s.flush()
             s.add(MoodAsset(pin_id=pin.id, mime=mime, data=data))
+            count += 1
         if not error:
             board.source_offset = (offset + 30) % (300 * len(interests))
         board.last_status = 'error' if error else ('partial' if failures else 'ok')
         board.error = error or ('This board has reached its 1,000-image limit. Move images to another board to make room.'
-                               if len(existing) >= MAX_PINS else (f'{failures} images could not be captured.' if failures else ''))
+                               if count >= MAX_PINS else (f'{failures} images could not be captured.' if failures else ''))
         board.lease = ''
         board.build_started = 0
         s.add(board)
