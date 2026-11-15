@@ -54,8 +54,11 @@ def available() -> tuple[bool, str]:
     return True, ''
 
 
-def embed(texts: list[str]) -> list[list[float]]:
-    """One embeddings request. Raises ValueError with a readable reason on any failure."""
+def embed(texts: list, timeout_s: float | None = None) -> list[list[float]]:
+    """One embeddings request. Raises ValueError with a readable reason on any failure.
+
+    Items are strings, or llama.cpp multimodal objects ``{"content": [text/image_url parts]}``
+    for a vision-capable embeddings model (used by Mood Board image search)."""
     ok, reason = available()
     if not ok:
         raise ValueError(reason)
@@ -65,7 +68,7 @@ def embed(texts: list[str]) -> list[list[float]]:
         headers['Authorization'] = f'Bearer {cfg["api_key"]}'
     try:
         r = httpx.post(f'{cfg["base_url"]}/embeddings', json={'model': cfg['model'], 'input': texts},
-                       headers=headers, timeout=cfg['timeout_s'])
+                       headers=headers, timeout=timeout_s or cfg['timeout_s'])
         r.raise_for_status()
         data = r.json()
     except httpx.HTTPStatusError as e:

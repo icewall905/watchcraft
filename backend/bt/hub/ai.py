@@ -45,9 +45,9 @@ def _data(items: list[dict]) -> str:
 
 
 def _call(system: str, user: str, schema: dict, max_tokens=1500, images: list[str] | None = None,
-          role: str = 'judge') -> dict:
+          role: str = 'judge', timeout_s: float = 90) -> dict:
     return llm.chat_json([{'role': 'system', 'content': f'{system}\n\n{GUARD}'}, {'role': 'user', 'content': user}],
-                         json_schema=schema, max_tokens=max_tokens, retries=1, timeout_s=90, no_think=True,
+                         json_schema=schema, max_tokens=max_tokens, retries=1, timeout_s=timeout_s, no_think=True,
                          images=images, role=role)
 
 

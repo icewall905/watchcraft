@@ -10,18 +10,20 @@ async function setup(page:Page,empty=false){
  await page.route('**/api/hub/boards**',async route=>{
   const req=route.request(),url=new URL(req.url()),path=url.pathname,method=req.method();
   if(path.endsWith('/media')){const id=Number(path.split('/').at(-2));return route.fulfill({contentType:'image/svg+xml',body:`<svg xmlns="http://www.w3.org/2000/svg" width="320" height="${240+id*55}" viewBox="0 0 320 400"><rect width="320" height="400" fill="#c1d4c8"/><circle cx="150" cy="160" r="${65+id*5}" fill="#446f59"/><path d="M40 400Q130 220 280 400" fill="#d7ccac"/><path d="M160 340L150 140" stroke="#5e4a3c" stroke-width="12"/></svg>`});}
-  const body=method==='POST'||method==='PATCH'?req.postDataJSON()??{}:{};
+  const body=method==='POST'||method==='PATCH'||method==='PUT'?req.postDataJSON()??{}:{};
   if(method!=='GET')writes.push({method,path,body});
+  if(path==='/api/hub/boards/search'){const q=url.searchParams.get('q')||'';const hits=q.includes('star')?[{...pin(5,'Product 123',2),board_name:'Pottery ideas',similarity:0.71}]:[];return route.fulfill({json:{available:true,reason:'',indexed:4,pins_total:5,pins:hits}});}
   if(path==='/api/hub/boards'){if(method==='POST'){const made={...board(8,body.name),...body};boards.push(made);return route.fulfill({json:{board:made}});}return route.fulfill({json:{boards}});}
   const id=Number(path.split('/')[4]);
   if(path.endsWith('/pinterest')){if(method==='POST')importJob={id:1,board_id:id,status:'queued',imported:0,skipped:0,total:0,error:''};return route.fulfill({json:{import:importJob}});}
   if(path.endsWith('/reference')){const b=boards.find(b=>b.id===id)!;if(method==='DELETE'){b.reference_url=null;b.reference_name='';return route.fulfill({json:{board:b}});}b.reference_url=`/api/hub/boards/${id}/reference/media?v=1`;b.reference_name=body.title||'Reference image';return route.fulfill({json:{board:b}});}
   if(path.endsWith('/images')){const added=pin(9,body.title||'Uploaded image',id);added.saved=true;if(body.data_base64)added.source_url='upload:sha256:abc';pins=[added,...pins];return route.fulfill({json:{pin:added}});}
   if(path.endsWith('/refresh')){const b=boards.find(b=>b.id===id)!;Object.assign(b,{last_status:'no_matches',last_result:'No images met your instructions in the last search.',retry_after:3});return route.fulfill({json:{queued:false,status:'cooldown',retry_after:3,last_result:b.last_result,board:b}});}
+  if(path.endsWith('/feedback')){const pid=Number(path.split('/').at(-2)),row:any=pins.find(p=>p.id===pid)!;row.feedback=body.verdict;row.feedback_note=body.note||'';if(body.verdict==='bad')pins=pins.filter(p=>p.id!==pid);return route.fulfill({json:{pin:{...row,hidden:body.verdict==='bad'},board:boards.find(b=>b.id===id)}});}
   if(path.includes('/pins/')){const pid=Number(path.split('/').at(-1)),row=pins.find(p=>p.id===pid)!;Object.assign(row,body);row.image_url=`/api/hub/boards/${row.board_id}/pins/${row.id}/media`;if(body.hidden)pins=pins.filter(p=>p.id!==pid);return route.fulfill({json:{pin:row}});}
   if(method==='PATCH'){const b=boards.find(b=>b.id===id)!;Object.assign(b,body);return route.fulfill({json:{board:b}});}
   if(method==='DELETE'){boards=boards.filter(b=>b.id!==id);return route.fulfill({json:{ok:true}});}
-  let rows=pins.filter(p=>p.board_id===id);if(url.searchParams.get('saved')==='true')rows=rows.filter(p=>p.saved);
+  let rows=pins.filter(p=>p.board_id===id);if(url.searchParams.get('saved')==='true')rows=rows.filter(p=>p.saved);if(url.searchParams.get('unreviewed')==='true')rows=rows.filter((p:any)=>!p.feedback);
   return route.fulfill({json:{board:boards.find(b=>b.id===id),pins:rows,next_cursor:null,has_more:false}});
  });return writes;
 }
@@ -157,4 +159,40 @@ test('queued and failed curator searches stay visible without reporting a succes
  await expect(activity).toContainText('Curator needs attention',{timeout:12000});
  await expect(activity).toContainText('The vision model is unavailable. No unverified images were added.');
  await expect(page.getByRole('button',{name:'Find images',exact:true}).first()).toBeEnabled();
+});
+
+test('search finds images across boards by what the picture shows',async({page})=>{
+ await setup(page);await freshPage(page,'/boards');
+ await page.getByLabel("Search your boards by what's in the picture").fill('flower dress with stars');
+ await page.getByRole('button',{name:'Search',exact:true}).click();
+ const results=page.getByRole('region',{name:'Search results'});
+ await expect(results).toContainText('Best matches for “flower dress with stars”');
+ await expect(results).toContainText('4 of 5 searchable');
+ await expect(results.getByRole('button',{name:'View Product 123'})).toBeVisible();
+ await expect(page.getByRole('heading',{name:'Garden inspiration'})).toHaveCount(0);
+ await results.getByRole('button',{name:'on Pottery ideas'}).click();
+ await expect(page.getByRole('region',{name:'Search results'})).toHaveCount(0);
+ await expect(page.getByRole('heading',{name:'Pottery ideas',exact:true})).toBeVisible();
+ await page.getByLabel("Search your boards by what's in the picture").fill('purple cat');
+ await page.getByRole('button',{name:'Search',exact:true}).click();
+ await expect(page.getByText('No matching images')).toBeVisible();
+ await page.getByRole('button',{name:'Clear'}).click();
+ await expect(page.getByRole('region',{name:'Search results'})).toHaveCount(0);
+});
+
+test('review pins: confirm fits and teach the curator what does not fit',async({page})=>{
+ const writes=await setup(page);await freshPage(page,'/boards');
+ const fits=page.getByRole('group',{name:'Review Quiet courtyard'}).getByRole('button',{name:'Fits'});
+ await fits.click();await expect(fits).toHaveAttribute('aria-pressed','true');
+ expect(writes.at(-1)).toMatchObject({method:'PUT',body:{verdict:'good'}});
+ await page.getByRole('group',{name:'Review Stone garden path'}).getByRole('button',{name:'Not a fit'}).click();
+ await page.getByRole('button',{name:'Text, quote or poster image'}).click();
+ await expect(page.getByLabel('Tell the curator (optional)')).toHaveValue('Text, quote or poster image');
+ await page.getByRole('button',{name:'Remove and teach curator'}).click();
+ await expect(page.getByText('Your curator will avoid images like this.')).toBeVisible();
+ await expect(page.getByRole('button',{name:'View Stone garden path'})).toHaveCount(0);
+ expect(writes.at(-1)).toMatchObject({method:'PUT',path:'/api/hub/boards/1/pins/1/feedback',body:{verdict:'bad',note:'Text, quote or poster image'}});
+ await page.getByRole('button',{name:'To review'}).click();
+ await expect(page.getByRole('button',{name:'View Bonsai detail'})).toBeVisible();
+ await expect(page.getByRole('button',{name:'View Quiet courtyard'})).toHaveCount(0);
 });

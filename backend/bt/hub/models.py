@@ -582,6 +582,28 @@ class MoodAsset(SQLModel, table=True):
     data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
 
 
+class MoodFeedback(SQLModel, table=True):
+    """Owner's review of one pin, taught to that board's curator. 'bad' pins are hidden from the board."""
+    pin_id: int = Field(primary_key=True)
+    board_id: int = Field(index=True)
+    profile_id: int = Field(index=True)
+    verdict: str  # 'good' | 'bad'
+    note: str = ''
+    title: str = ''  # Snapshot: the lesson survives if the pin later moves or is deleted.
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodPinVector(SQLModel, table=True):
+    """Image+caption embedding of one pin under one embeddings model (packed float32).
+
+    dim == 0 marks a pin whose image could not be embedded, so the sweep does not retry it forever."""
+    pin_id: int = Field(primary_key=True)
+    model: str = Field(primary_key=True)
+    dim: int = 0
+    vector: bytes = Field(default=b'', sa_column=Column(LargeBinary, default=b''))
+    created_at: float = Field(default_factory=time.time)
+
+
 class MoodImport(SQLModel, table=True):
     """Durable, profile-owned snapshot imports; no Pinterest credentials retained."""
     id: Optional[int] = Field(default=None, primary_key=True)
