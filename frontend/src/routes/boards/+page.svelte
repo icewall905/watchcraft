@@ -180,6 +180,21 @@
   catch (e) { if (owner === stamp() && selected === id) error = message(e); }
   finally { if (owner === stamp() && selected === id) imageBusy = false; }
  }
+ let reshuffleOpen = $state(false), reshuffling = $state(false);
+ const replaceable = $derived(board ? Math.max(0, (board.pin_count ?? 0) - (board.saved_count ?? 0)) : 0);
+ // Swap every image that is not hearted or thumbs-up for new finds. The curator is not taught from them.
+ async function reshuffle() {
+  if (!selected || !allowed() || reshuffling) return;
+  reshuffling = true; error = ''; const id = selected, owner = stamp();
+  try {
+   const result = await boardsApi.reshuffle(id);
+   if (owner !== stamp() || selected !== id || !allowed()) return;
+   boards = boards.map(b => b.id === id ? result.board : b); rememberRetry([result.board]);
+   reshuffleOpen = false; pollUntil = Date.now() + 180000;
+   notice = result.replaced ? `Replacing ${result.replaced} image${result.replaced === 1 ? '' : 's'}. Your curator is finding new ones; the ${result.kept} you liked stay.` : 'Nothing to replace: every image is liked. Your curator will look for more.';
+   void load();
+  } catch (e) { if (owner === stamp()) error = message(e); } finally { if (owner === stamp()) reshuffling = false; }
+ }
  async function refresh() {
   if (!selected || !allowed() || findDisabled) return;
   refreshing = true; error = ''; notice = ''; const id = selected, owner = stamp();
@@ -258,6 +273,7 @@
   {:else if name === 'puzzle'}<path d="M10 3h4v3a2 2 0 1 0 4 0V3h3v7h-3a2 2 0 1 0 0 4h3v7h-7v-3a2 2 0 1 0-4 0v3H3v-7h3a2 2 0 1 0 0-4H3V3h7z"/>
   {:else if name === 'check'}<path d="M5 12l5 5L20 7"/>
   {:else if name === 'x'}<path d="M6 6l12 12M18 6L6 18"/>
+  {:else if name === 'shuffle'}<path d="M16 3h5v5"/><path d="M4 20 21 3"/><path d="M21 16v5h-5"/><path d="M15 15l6 6"/><path d="M4 4l5 5"/>
   {:else if name === 'up'}<path d="M7 10v11"/><path d="M15 5.9 14 10h5.8a2 2 0 0 1 1.9 2.6l-2.3 8a2 2 0 0 1-1.9 1.4H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.8a2 2 0 0 0 1.8-1.1L12 2a3.1 3.1 0 0 1 3 3.9z"/>
   {:else if name === 'down'}<path d="M17 14V3"/><path d="M9 18.1 10 14H4.2a2 2 0 0 1-1.9-2.6l2.3-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.8a2 2 0 0 0-1.8 1.1L12 22a3.1 3.1 0 0 1-3-3.9z"/>
   {:else if name === 'trash'}<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -349,6 +365,7 @@
     </div>
     <div class="tools" role="toolbar" aria-label="Board actions">
      <button class="btn primary find" disabled={findDisabled} onclick={refresh}>{@render icon('spark')}{findLabel}</button>
+     <button class="btn pill" disabled={curatorActive || reshuffling} title="Replace every image you have not hearted or given a thumbs up" onclick={() => { error = ''; reshuffleOpen = true; }}>{@render icon('shuffle')}Reshuffle</button>
      <button class="btn pill" onclick={() => openImage('manual')}>{@render icon('plus')}Add image</button>
      <button class="btn pill" onclick={() => openImage('reference')}>{@render icon('eye')}{board.reference_url ? 'Change inspiration image' : 'Add inspiration image'}</button>
      <button class="btn pill" onclick={() => { error = ''; importOpen = true; }}>{@render icon('pin')}Import Pinterest</button>
@@ -511,6 +528,11 @@
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
  </div>
+</Modal>{/if}
+{#if reshuffleOpen && board}<Modal portal title="Reshuffle this board?" onClose={() => { reshuffleOpen = false; }}>
+ <p>{replaceable ? `${replaceable} image${replaceable === 1 ? '' : 's'} you have not hearted or given a thumbs up will be replaced with new finds.` : 'Every image on this board is liked, so nothing will be replaced.'} Images you liked stay where they are.</p>
+ <p class="muted small">Replaced images will not come back, and your curator does not learn from them. Use 👎 for images it should avoid.</p>
+ <div class="form-actions"><button class="btn" onclick={() => { reshuffleOpen = false; }}>Cancel</button><button class="btn primary" disabled={reshuffling} onclick={reshuffle}>{reshuffling ? 'Reshuffling…' : replaceable ? `Replace ${replaceable} image${replaceable === 1 ? '' : 's'}` : 'Find more'}</button></div>
 </Modal>{/if}
 {#if deleteConfirm}<Modal portal title="Delete this board?" onClose={() => { deleteConfirm = false; }}><p>This removes the board and its saved pins.</p><div class="form-actions"><button class="btn" onclick={() => { deleteConfirm = false; }}>Keep board</button><button class="btn danger" onclick={removeBoard}>Delete board</button></div></Modal>{/if}
 

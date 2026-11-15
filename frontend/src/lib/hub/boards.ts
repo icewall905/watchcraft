@@ -29,6 +29,7 @@ export const boardsApi = {
  detail: (id: number, params: {cursor?: string; saved?: boolean; unreviewed?: boolean} = {}, signal?: AbortSignal) => request<BoardPage>(`${base}/${id}${qs(params)}`, {signal, toast: false}),
  create: (body: BoardInput) => request<{board: MoodBoard}>(base, {method: 'POST', body, toast: false}),
  update: (id: number, body: BoardInput) => request<{board: MoodBoard}>(`${base}/${id}`, {method: 'PATCH', body, toast: false}),
+ reshuffle: (id: number) => request<{replaced: number; kept: number; board: MoodBoard}>(`${base}/${id}/reshuffle`, {method: 'POST', body: {}, toast: false}),
  refresh: (id: number) => request<{status: 'queued' | 'collecting' | 'cooldown'; queued: boolean; retry_after: number; last_result: string; board: MoodBoard}>(`${base}/${id}/refresh`, {method: 'POST', body: {}, toast: false}),
  addImage: (id: number, body: BoardImageInput) => request<{pin: BoardPin}>(`${base}/${id}/images`, {method: 'POST', body, toast: false}),
  setReference: (id: number, body: BoardImageInput) => request<{board: MoodBoard}>(`${base}/${id}/reference`, {method: 'POST', body, toast: false}),

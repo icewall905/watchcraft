@@ -19,15 +19,17 @@ async function setup(page:Page,empty=false,tweak?:(rows:any[])=>void,pageSize=0)
   if(path.endsWith('/pinterest')){if(method==='POST')importJob={id:1,board_id:id,status:'queued',imported:0,skipped:0,total:0,error:''};return route.fulfill({json:{import:importJob}});}
   if(path.endsWith('/reference')){const b=boards.find(b=>b.id===id)!;if(method==='DELETE'){b.reference_url=null;b.reference_name='';return route.fulfill({json:{board:b}});}b.reference_url=`/api/hub/boards/${id}/reference/media?v=1`;b.reference_name=body.title||'Reference image';return route.fulfill({json:{board:b}});}
   if(path.endsWith('/images')){const added=pin(9,body.title||'Uploaded image',id);added.saved=true;if(body.data_base64)added.source_url='upload:sha256:abc';pins=[added,...pins];return route.fulfill({json:{pin:added}});}
+  if(path.endsWith('/reshuffle')){const b:any=boards.find(b=>b.id===id)!;const gone=pins.filter((p:any)=>p.board_id===id&&!p.saved&&p.feedback!=='good');pins=pins.filter(p=>!gone.includes(p));Object.assign(b,{last_status:'queued',pin_count:pins.filter(p=>p.board_id===id).length});return route.fulfill({json:{replaced:gone.length,kept:b.pin_count,board:b}});}
   if(path.endsWith('/refresh')){const b=boards.find(b=>b.id===id)!;Object.assign(b,{last_status:'no_matches',last_result:'No images met your instructions in the last search.',retry_after:3});return route.fulfill({json:{queued:false,status:'cooldown',retry_after:3,last_result:b.last_result,board:b}});}
   if(path.endsWith('/feedback')){const pid=Number(path.split('/').at(-2)),row:any=pins.find(p=>p.id===pid)!;row.feedback=body.verdict;row.feedback_note=body.note||'';if(body.verdict==='bad')pins=pins.filter(p=>p.id!==pid);return route.fulfill({json:{pin:{...row,hidden:body.verdict==='bad'},board:boards.find(b=>b.id===id)}});}
   if(path.includes('/pins/')){const pid=Number(path.split('/').at(-1)),row=pins.find(p=>p.id===pid)!;Object.assign(row,body);row.image_url=`/api/hub/boards/${row.board_id}/pins/${row.id}/media`;if(body.hidden)pins=pins.filter(p=>p.id!==pid);return route.fulfill({json:{pin:row}});}
   if(method==='PATCH'){const b=boards.find(b=>b.id===id)!;Object.assign(b,body);return route.fulfill({json:{board:b}});}
   if(method==='DELETE'){boards=boards.filter(b=>b.id!==id);return route.fulfill({json:{ok:true}});}
-  let rows=pins.filter(p=>p.board_id===id);if(url.searchParams.get('saved')==='true')rows=rows.filter((p:any)=>p.saved||p.feedback==='good');if(url.searchParams.get('unreviewed')==='true')rows=rows.filter((p:any)=>!p.feedback);
+  const all=pins.filter(p=>p.board_id===id),counted={...boards.find(b=>b.id===id),pin_count:all.length,saved_count:all.filter((p:any)=>p.saved||p.feedback==='good').length};
+  let rows=all;if(url.searchParams.get('saved')==='true')rows=rows.filter((p:any)=>p.saved||p.feedback==='good');if(url.searchParams.get('unreviewed')==='true')rows=rows.filter((p:any)=>!p.feedback);
   const cur=url.searchParams.get('cursor');if(cur)rows=rows.filter(p=>p.id<Number(cur));
-  if(pageSize&&rows.length>pageSize){rows=rows.slice(0,pageSize);return route.fulfill({json:{board:boards.find(b=>b.id===id),pins:rows,next_cursor:String(rows.at(-1)!.id),has_more:true}});}
-  return route.fulfill({json:{board:boards.find(b=>b.id===id),pins:rows,next_cursor:null,has_more:false}});
+  if(pageSize&&rows.length>pageSize){rows=rows.slice(0,pageSize);return route.fulfill({json:{board:counted,pins:rows,next_cursor:String(rows.at(-1)!.id),has_more:true}});}
+  return route.fulfill({json:{board:counted,pins:rows,next_cursor:null,has_more:false}});
  });return writes;
 }
 
@@ -315,4 +317,20 @@ test('desktop mode: Backspace edits text and never closes a dialog; Escape still
  await page.keyboard.press('Backspace');await page.keyboard.press('Backspace');await page.keyboard.press('Backspace');await page.keyboard.press('Backspace');
  await expect(page.getByRole('dialog')).toBeVisible();await expect(url).toHaveValue('');
  await page.keyboard.press('Escape');await expect(page.getByRole('dialog')).toHaveCount(0);
+});
+
+test('reshuffle replaces everything not hearted or thumbs-up, after confirming',async({page})=>{
+ const writes=await setup(page,false,rows=>{rows[0].saved=true;(rows[1] as any).feedback='good';});
+ await freshPage(page,'/boards?board=1');
+ await page.getByRole('button',{name:'Reshuffle'}).click();
+ const dialog=page.getByRole('dialog',{name:'Reshuffle this board?'});
+ await expect(dialog).toContainText('1 image you have not hearted or given a thumbs up will be replaced');
+ await dialog.getByRole('button',{name:'Cancel'}).click();expect(writes.some(w=>w.path.endsWith('/reshuffle'))).toBe(false);
+ await page.getByRole('button',{name:'Reshuffle'}).click();
+ await page.getByRole('button',{name:'Replace 1 image'}).click();
+ await expect(page.getByText('Replacing 1 image. Your curator is finding new ones')).toBeVisible();
+ await expect(page.getByRole('button',{name:'View Stone garden path'})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'View Quiet courtyard'})).toBeVisible();
+ await expect(page.getByRole('button',{name:'View Bonsai detail'})).toBeVisible();
+ expect(writes.at(-1)).toMatchObject({method:'POST',path:'/api/hub/boards/1/reshuffle'});
 });

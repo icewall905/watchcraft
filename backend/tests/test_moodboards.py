@@ -7,7 +7,7 @@ from sqlmodel import select
 from test_curation import client  # noqa: F401
 from bt.db import session
 from bt.hub import moodboards as mb, moodboard_sources
-from bt.hub.models import MoodAsset, MoodBoard, MoodPin, MoodImport, ContentItem
+from bt.hub.models import MoodAsset, MoodBoard, MoodFeedback, MoodPin, MoodPinNote, MoodImport, ContentItem
 
 
 REAL_VISION_IMAGE = mb.vision_image
@@ -641,3 +641,40 @@ def test_saved_list_keeps_pins_marked_fits(client):
     liked = client.get(f"/api/hub/boards/{b['id']}?saved=true").json()
     assert {p['id'] for p in liked['pins']} == {pins[0]['id'], pins[1]['id']}
     assert liked['board']['saved_count'] == 2
+
+
+def test_reshuffle_replaces_only_unliked_images_and_frees_storage(client, monkeypatch):
+    b = make(client, enabled=False)
+    seed(b['id'], 5)
+    pins = client.get(f"/api/hub/boards/{b['id']}").json()['pins']
+    base = f"/api/hub/boards/{b['id']}"
+    client.patch(f"{base}/pins/{pins[0]['id']}", json={'saved': True})
+    client.put(f"{base}/pins/{pins[1]['id']}/feedback", json={'verdict': 'good'})
+    with session() as s:
+        s.add(MoodPinNote(pin_id=pins[2]['id'], seen='x', why='y'))
+        s.commit()
+    r = client.post(f"{base}/reshuffle")
+    assert r.status_code == 200, r.text
+    assert (r.json()['replaced'], r.json()['kept']) == (3, 2)
+    assert r.json()['board']['last_status'] == 'queued'
+    left = {p['id'] for p in client.get(base).json()['pins']}
+    assert left == {pins[0]['id'], pins[1]['id']}
+    with session() as s:
+        gone = [p['id'] for p in pins[2:]]
+        assert all(s.get(MoodPin, i).hidden for i in gone)  # link kept so it is never found again
+        assert not any(s.get(MoodAsset, i) for i in gone) and not s.get(MoodPinNote, pins[2]['id'])
+        assert mb.stored(s, b['id']) == 2
+        assert not s.exec(select(MoodFeedback).where(MoodFeedback.pin_id.in_(gone))).all()  # curator not taught
+    assert client.patch(f"{base}/pins/{pins[2]['id']}", json={'hidden': False}).status_code == 410
+    # Adding that image back by hand stores its picture again.
+    body, raw = image_upload()
+    back = client.post(f"{base}/images", json={**body, 'source_url': pins[2]['source_url']}).json()['pin']
+    assert back['id'] == pins[2]['id'] and client.get(back['image_url']).content == raw
+    # Nothing left to replace: still queues a refill, replaces nothing.
+    assert client.post(f"{base}/reshuffle").json()['replaced'] == 0
+    with session() as s:
+        board = s.get(MoodBoard, b['id'])
+        board.lease = 'running'
+        s.add(board)
+        s.commit()
+    assert client.post(f"{base}/reshuffle").status_code == 409

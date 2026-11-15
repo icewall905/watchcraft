@@ -146,6 +146,13 @@ def owned(s, pid, bid):
     return board
 
 
+def stored(s, bid) -> int:
+    """Images a board keeps the picture of. Reshuffled-away pins keep only their link (so they are never found
+    again) and do not count toward the 1,000-image limit."""
+    return s.exec(select(func.count()).select_from(MoodAsset).join(MoodPin, MoodPin.id == MoodAsset.pin_id)
+                  .where(MoodPin.board_id == bid)).one()
+
+
 def liked():
     """Favourites: saved with the heart, or marked "Fits" for the curator. Both belong in the Saved list."""
     good = select(MoodFeedback.pin_id).where(MoodFeedback.verdict == 'good')
@@ -327,6 +334,35 @@ def refresh(bid: int, pid: int = Depends(require_hub)):
     return {'queued': True, 'status': 'queued', 'retry_after': 0, 'last_result': data['last_result'], 'board': data}
 
 
+@router.post('/{bid}/reshuffle')
+def reshuffle(bid: int, pid: int = Depends(require_hub)):
+    """Replace every image that is not saved or marked Fits, then queue the curator to refill the board.
+    Replaced images keep only their link, so the same picture is never found again; the curator is not
+    taught anything from them (unlike Not a fit)."""
+    with session() as s:
+        s.connection().exec_driver_sql('BEGIN IMMEDIATE')
+        board = owned(s, pid, bid)
+        if board.lease:
+            raise HTTPException(409, 'Your curator is searching right now. Reshuffle when it has finished.')
+        ids = s.exec(select(MoodPin.id).where(MoodPin.board_id == bid, MoodPin.hidden == False,
+                                              ~liked())).all()
+        if ids:
+            s.exec(update(MoodPin).where(MoodPin.id.in_(ids)).values(hidden=True))
+            s.exec(delete(MoodAsset).where(MoodAsset.pin_id.in_(ids)))
+            s.exec(delete(MoodPinVector).where(MoodPinVector.pin_id.in_(ids)))
+            s.exec(delete(MoodPinNote).where(MoodPinNote.pin_id.in_(ids)))
+        kept = s.exec(select(func.count()).select_from(MoodPin).where(MoodPin.board_id == bid, MoodPin.hidden == False)).one()
+        board.next_run = time.time() + retry_after(board)
+        board.last_status = 'queued'
+        board.error = ''
+        s.add(board)
+        s.commit()
+        data = board_json(s, board)
+    activity.emit_board(board, 'queued-' + secrets.token_hex(8), 'queued',
+                        f'Reshuffled {board.name}: replacing {len(ids)} images, keeping {kept} you liked.')
+    return {'replaced': len(ids), 'kept': kept, 'board': data}
+
+
 @router.patch('/{bid}/pins/{pin_id}')
 def edit_pin(bid: int, pin_id: int, data: PinEdit, pid: int = Depends(require_hub)):
     with session() as s:
@@ -339,9 +375,11 @@ def edit_pin(bid: int, pin_id: int, data: PinEdit, pid: int = Depends(require_hu
             if s.exec(select(MoodPin.id).where(MoodPin.board_id == data.board_id,
                                                MoodPin.source_url == pin.source_url)).first():
                 raise HTTPException(409, 'This image is already on that board')
-            if s.exec(select(func.count()).select_from(MoodPin).where(MoodPin.board_id == data.board_id)).one() >= MAX_PINS:
+            if stored(s, data.board_id) >= MAX_PINS:
                 raise HTTPException(409, 'The destination board has reached its image limit')
             pin.board_id = data.board_id
+        if data.hidden is False and pin.hidden and not s.get(MoodAsset, pin.id):
+            raise HTTPException(410, 'This image was reshuffled away and its picture is no longer stored.')
         for key in ('saved', 'hidden'):
             value = getattr(data, key)
             if value is not None:
@@ -437,13 +475,16 @@ def add_image_for(pid, bid, data):
         owned(s, pid, bid)
         old = s.exec(select(MoodPin).where(MoodPin.board_id == bid, MoodPin.source_url == source)).first()
         if old:
+            if not s.get(MoodAsset, old.id):  # Reshuffled away earlier: store the picture again.
+                s.add(MoodAsset(pin_id=old.id, mime=mime, data=raw))
+                old.width, old.height = width, height
+                old.media_type = 'gif' if mime == 'image/gif' else 'image'
             old.hidden = False
             old.saved = True
             s.add(old)
             s.commit()
             return {'pin': pin_json(old)}
-        count = s.exec(select(func.count()).select_from(MoodPin).where(MoodPin.board_id == bid)).one()
-        if count >= MAX_PINS:
+        if stored(s, bid) >= MAX_PINS:
             raise HTTPException(409, 'This board has reached its 1,000-image storage limit')
         pin = MoodPin(board_id=bid, profile_id=pid, title=data.title.strip() or 'Added image',
                       source_url=source, image_url=data.url or linked or '', saved=True,
@@ -690,7 +731,7 @@ def collect(bid, lease, revision):
         page_offset = ((offset // (30 * len(interests))) * 30) % 300
         existing = set(s.exec(select(MoodPin.source_url).where(MoodPin.board_id == bid)).all())
         visible = s.exec(select(func.count()).select_from(MoodPin).where(MoodPin.board_id == bid, MoodPin.hidden == False)).one()
-        remaining = max(0, min(board.target_images - visible, MAX_PINS - len(existing)))
+        remaining = max(0, min(board.target_images - visible, MAX_PINS - stored(s, bid)))
         reference = s.get(MoodReference, bid)
         reference_data = reference.data if reference else None
     results, failures = [], 0
@@ -716,7 +757,7 @@ def collect(bid, lease, revision):
                     candidates.append(item)
         milestone('capture', f'Found {len(candidates)} candidates; downloading image previews for visual review.', candidates=len(candidates))
         for item in candidates[:30]:
-            if not remaining or len(existing) >= MAX_PINS:
+            if not remaining:
                 break
             if item['source_url'] in existing:
                 continue
@@ -742,7 +783,7 @@ def collect(bid, lease, revision):
             extra['strict'] = False
         selected = select_candidates(captured, context, instructions, progress, **extra)
         for item in selected:
-            if not remaining or len(existing) >= MAX_PINS:
+            if not remaining:
                 break
             if len(results) >= remaining:
                 break
@@ -764,7 +805,7 @@ def collect(bid, lease, revision):
         board = s.get(MoodBoard, bid)
         if not board or board.lease != lease or board.revision != revision or not hub_allowed(s, board.profile_id):
             return
-        count = s.exec(select(func.count()).select_from(MoodPin).where(MoodPin.board_id == bid)).one()
+        count = stored(s, bid)
         visible = s.exec(select(func.count()).select_from(MoodPin).where(MoodPin.board_id == bid, MoodPin.hidden == False)).one()
         for item, data, mime, width, height in results:
             if count >= MAX_PINS or visible + added >= board.target_images:
@@ -819,7 +860,7 @@ def dispatch_due():
             if not hub_allowed(s, candidate.profile_id):
                 continue
             visible = s.exec(select(func.count()).select_from(MoodPin).where(MoodPin.board_id == candidate.id, MoodPin.hidden == False)).one()
-            total = s.exec(select(func.count()).select_from(MoodPin).where(MoodPin.board_id == candidate.id)).one()
+            total = stored(s, candidate.id)
             if visible >= candidate.target_images or total >= MAX_PINS:
                 candidate.next_run = now + candidate.interval_hours * 3600
                 candidate.last_status = 'target_reached'
