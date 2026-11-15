@@ -8,6 +8,18 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — curator learning, board Share, Pinterest search, child boards, share-sheet fix (`1bdbf34`, 2026-11-15)
+
+- Range `dbc00ad..1bdbf34`: merged curator learning (ce7cdd7; new `profileknowledge`, `teaching`, `knowledgechat`
+  tables, `/api/curator/knowledge*`), Mood Board Share (64a5261; `moodsharelink`, `moodsharenotice`,
+  `/api/hub/mood-share/*`, public `/s/{token}`), opt-in Pinterest search (e53d939; off by default, guarded),
+  child-friendly boards (6e26ea2) and the viewer share-sheet fix (1bdbf34). Additive tables/columns only.
+- Backup `/root/compose/watchcraft-backups/20261115-merge-1bdbf34` (online DB quick_check ok, config hashes,
+  previous source, `new-files.txt`); rollback images `watchcraft:rollback-20261115-merge-*`, `rollback.sh`.
+  Pruned 8 older backups (~23 GB) and their rollback tags; see `PRUNE-MANIFEST-20261115T184047Z.txt`.
+- All four services run `sha256:3ee04f862e119c898a68f08887765fd882b1d21098d7dfa4c959edfa623f730e`, zero restarts,
+  no tracebacks; health, `/boards`, `/s/…` 200; new routes and tables present; previews 740/740.
+
 ## Deployment record — Mood Board grid previews + preloading (`dbc00ad`, 2026-11-15)
 
 - Additive `moodthumb` table: 560 px WebP previews (empty data = serve original, for animated/small images), made
