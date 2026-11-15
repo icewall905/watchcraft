@@ -8,6 +8,21 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Mood Board image search, pin review, per-image vision verdicts (`ed1ab7e`, 2026-11-15)
+
+- Range `8a23fb9..ed1ab7e`: pin image+caption embeddings (configured `embeddinggemma2` at `10.0.10.73:8082`,
+  llama.cpp multimodal input, 768 dims) in the additive `moodpinvector` table, swept 8 pins per 15 s by the
+  Mood Board scheduler; `GET /api/hub/boards/search`; Fits / Not a fit review in the additive `moodfeedback`
+  table, fed to the board curator; per-image describe-then-verdict vision schema; one failed vision batch no
+  longer aborts a run (180 s vision timeout, distinct busy/failed message).
+- Backup `/root/compose/watchcraft-backups/20261115-moodsearch-ed1ab7e` (online DB quick_check ok, config hashes,
+  previous source of the 9 existing files); rollback images `watchcraft:rollback-20261115-moodsearch-api`/
+  `-worker`/`-downloader`/`-subtitles`, `rollback.sh` (also removes the two new files). rsync (checksum) of the
+  11 changed files, no deletions.
+- All four services run `sha256:6bd6e2ac209cd3d0d12ba43a89d7244c0c5a39f29160f5427be410622449f326`, zero restarts,
+  no tracebacks; health, `/`, `/boards` 200; both tables created. Live search on the Homelab board ("server
+  rack") ranked rack/server-room pins first at 16/98 pins indexed.
+
 ## Deployment record — Mood Board targets, inspiration, social sources, Today/News split (`8a23fb9`, 2026-11-14)
 
 - Range `1ec292b..8a23fb9`: per-board image target (default 100, max 1000, curator re-queues until reached),
