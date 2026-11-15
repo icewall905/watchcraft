@@ -6,7 +6,7 @@ from sqlmodel import select
 
 from test_curation import client  # noqa: F401
 from bt.db import session
-from bt.hub import moodboards as mb, moodboard_sources
+from bt.hub import moodboards as mb
 from bt.hub.models import MoodAsset, MoodPin
 
 IMG = 'https://i.pinimg.com/originals/ab/cd/ef/abcdef.jpg'
@@ -57,16 +57,10 @@ def test_image_only_and_non_pinterest_source_keep_image_identity(client, monkeyp
         assert s.get(MoodPin, other['pin']['id']).source_url == 'https://example.com/a.png'
 
 
-def test_pinimg_capture_goes_through_spaced_social_fetch(monkeypatch):
+def test_pinimg_capture_goes_through_spaced_social_fetch(client, monkeypatch):
     raw, calls = png(), []
     monkeypatch.setattr(mb.social_fetch, 'fetch', lambda url, **kw: calls.append(('spaced', url)) or (raw, url, {}))
     monkeypatch.setattr(mb.curation, 'fetch', lambda url, **kw: calls.append(('direct', url)) or (raw, url, {}))
     assert mb.capture_image(IMG)[1:] == ('image/png', 4, 3)
     assert mb.capture_image('https://upload.wikimedia.org/x.png')[1:] == ('image/png', 4, 3)
     assert calls == [('spaced', IMG), ('direct', 'https://upload.wikimedia.org/x.png')]
-
-
-def test_curator_sources_never_include_pinterest():
-    cfg = {'web': True, 'reddit': True, 'bluesky': True, 'mastodon': True, 'mastodon_instance': 'mastodon.social',
-           'flickr_api_key': 'k', 'tumblr_api_key': 'k', 'pinterest': True}
-    assert 'pinterest' not in [name for name, _ in moodboard_sources.enabled_sources(cfg)]

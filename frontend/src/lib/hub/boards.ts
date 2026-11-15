@@ -20,10 +20,15 @@ export interface PinterestImport { id: number; board_id: number; status: string;
 export interface FoundPin extends BoardPin { board_name: string; similarity: number }
 export interface BoardSearch { available: boolean; reason: string; indexed: number; pins_total: number; pins: FoundPin[] }
 export interface ExtensionKey { id: number; name: string; hint: string; created_at: number; last_used: number | null }
+export interface PinterestResult { token: string; title: string; pin_url: string; attribution: string; width: number; height: number; preview_url: string; on_board: boolean }
+export interface PinterestStatus { enabled: boolean; blocked: boolean; blocked_until: number; reason: string; last_block_at: number; last_reason: string; hour_left: number; day_left: number; images_left: number }
 const base = '/hub/boards';
 export const boardsApi = {
  pinterest: (id: number, url: string) => request<{import: PinterestImport}>(`${base}/${id}/pinterest`, {method: 'POST', body: {url}, toast: false}),
  pinterestStatus: (id: number, signal?: AbortSignal) => request<{import: PinterestImport | null}>(`${base}/${id}/pinterest`, {signal, toast: false}),
+ pinterestLive: (id: number, q: string, more = false) => request<{results: PinterestResult[]; has_more: boolean}>(`${base}/${id}/pinterest/search${qs({q, more: more || undefined})}`, {toast: false}),
+ pinterestAdd: (id: number, token: string) => request<{pin: BoardPin; existing?: boolean}>(`${base}/${id}/pinterest/add`, {method: 'POST', body: {token}, toast: false}),
+ pinterestLiveStatus: () => request<PinterestStatus>(`${base}/pinterest/status`, {toast: false}),
  search: (q: string, signal?: AbortSignal) => request<BoardSearch>(`${base}/search${qs({q})}`, {signal, toast: false}),
  list: (signal?: AbortSignal) => request<{boards: MoodBoard[]}>(base, {signal, toast: false}),
  detail: (id: number, params: {cursor?: string; saved?: boolean; unreviewed?: boolean} = {}, signal?: AbortSignal) => request<BoardPage>(`${base}/${id}${qs(params)}`, {signal, toast: false}),

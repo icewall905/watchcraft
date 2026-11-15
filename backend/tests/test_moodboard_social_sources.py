@@ -177,5 +177,5 @@ def test_settings_api_validates_and_redacts(client):
     r = client.put('/api/settings/moodboard_sources', json={'flickr_api_key': '********', 'reddit': True})
     from bt.db import get_settings
     assert get_settings()['moodboard_sources']['flickr_api_key'] == 'secret'
-    for bad in ({'reddit': 'yes'}, {'mastodon_instance': '127.0.0.1'}, {'source_timeout_s': 1}, {'pinterest': True}):
+    for bad in ({'reddit': 'yes'}, {'mastodon_instance': '127.0.0.1'}, {'source_timeout_s': 1}, {'pinterest': 'yes'}, {'instagram': True}):
         assert client.put('/api/settings/moodboard_sources', json=bad).status_code == 400

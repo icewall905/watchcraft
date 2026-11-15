@@ -1170,7 +1170,7 @@ def write_settings(key: str, value: dict, s: Session = Depends(get_session)):
         merged = {**cur, **value}
         if set(value) - set(cur):
             raise HTTPException(400, "Unknown Mood Board source setting")
-        if any(type(merged[k]) is not bool for k in ("web", "reddit", "bluesky", "mastodon")):
+        if any(type(merged[k]) is not bool for k in ("web", "reddit", "bluesky", "mastodon", "pinterest")):
             raise HTTPException(400, "Source switches must be on or off")
         instance = merged["mastodon_instance"]
         if not isinstance(instance, str) or (instance and not re.fullmatch(

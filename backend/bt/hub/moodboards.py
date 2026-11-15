@@ -559,7 +559,11 @@ SPACED_IMAGE_HOSTS = ('i.pinimg.com',)
 
 
 def capture_image(url):
-    fetch = social_fetch.fetch if urlsplit(url).hostname in SPACED_IMAGE_HOSTS else curation.fetch
+    spaced = urlsplit(url).hostname in SPACED_IMAGE_HOSTS
+    if spaced:
+        from . import pinterest_guard
+        pinterest_guard.take_image()  # Daily i.pinimg.com budget, shared by imports, curator and live search.
+    fetch = social_fetch.fetch if spaced else curation.fetch
     data, final, meta = fetch(url, kinds=IMAGE_TYPES, limit=5_000_000, with_metadata=True)
     return validate_image(data)
 
