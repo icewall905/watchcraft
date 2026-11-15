@@ -34,7 +34,8 @@ class AuthMiddleware:
     async def __call__(self, scope, receive, send):
         if scope["type"] == "http":
             p = scope["path"]
-            if p.startswith("/api/") and p not in OPEN and not _authed(Request(scope)):
+            # /api/ext/v1/ is the browser extension: it authenticates with its own key (bt/hub/extension.py).
+            if p.startswith("/api/") and p not in OPEN and not p.startswith("/api/ext/v1/") and not _authed(Request(scope)):
                 return await JSONResponse({"detail": "auth required"}, status_code=401)(scope, receive, send)
         await self.app(scope, receive, send)
 
