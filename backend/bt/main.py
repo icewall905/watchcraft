@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import auth
-from .hub import api as hub_api, engine as hub_engine, master_api as hub_master_api, sharing as hub_sharing, moodboards, moodboard_imports, extension as hub_extension, moodboard_share
+from .hub import api as hub_api, engine as hub_engine, master_api as hub_master_api, sharing as hub_sharing, moodboards, moodboard_imports, pinterest_live, extension as hub_extension, moodboard_share
 from .knowledge import api as knowledge_api
 from .api import agent as agent_api
 from .music import api as music_api, service as music_service
@@ -56,6 +56,7 @@ app.include_router(core.router, prefix="/api")
 app.include_router(hub_api.router, prefix="/api")
 app.include_router(moodboards.router, prefix="/api")
 app.include_router(hub_extension.router, prefix="/api")
+app.include_router(pinterest_live.router, prefix="/api")
 app.include_router(moodboard_imports.router, prefix="/api")
 app.include_router(moodboard_share.router, prefix="/api")
 app.include_router(moodboard_share.public_router, prefix="/api")

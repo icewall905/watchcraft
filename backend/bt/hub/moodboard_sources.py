@@ -4,8 +4,12 @@ Web search is configured SearXNG with Wikimedia Commons fallback. Social sources
 Bluesky, Mastodon; Flickr/Tumblr with an API key) use public read APIs only and run in
 parallel with a per-source deadline. Results are interleaved and deduplicated; each keeps its
 original post link, provider attribution and rights text. Captured raster pixels are judged by
-the board curator. Instagram, TikTok, Facebook, X and Pinterest search have no public API and
-are deliberately not scraped.
+the board curator. Instagram, TikTok, Facebook and X have no public API and are not scraped.
+Pinterest search is opt-in (off by default): its robots.txt disallows non-allowlisted bots and its
+terms forbid scraping, so the owner must switch it on knowingly. ``pinterest_guard`` keeps it slow
+(jittered spacing, small per-run/hour/day budgets), honest (normal User-Agent, no cookies or evasion)
+and pauses itself on the first block or captcha. Boards also link out to Pinterest's own search and
+accept pasted pin/image links; public board RSS import lives in ``moodboard_imports``.
 """
 import html
 import json
@@ -20,7 +24,7 @@ from urllib.parse import quote, urlencode, urlsplit
 from .. import curation
 from ..config import DEFAULT_SETTINGS
 from ..db import get_settings
-from . import social_fetch
+from . import pinterest_guard, social_fetch
 
 API = 'https://commons.wikimedia.org/w/api.php'
 MAX_RESPONSE_BYTES = 2_000_000
@@ -535,6 +539,114 @@ def tumblr_search(query, limit=30, offset=0, api_key=''):
     return results
 
 
+PINTEREST_SEARCH = 'https://www.pinterest.com/resource/BaseSearchResource/get/'
+_PINIMG = re.compile(r'^https://i\.pinimg\.com/[A-Za-z0-9_/.-]+\.(?:jpe?g|png|webp|gif)$', re.I)
+_pinterest_bookmarks = {}  # (query, page) -> bookmark for the next page; bounded, process-local.
+
+
+def _pinimg(value):
+    return value if isinstance(value, str) and len(value) < 1000 and _PINIMG.match(value) else ''
+
+
+def _pin_dicts(node, found, depth=0):
+    """Pins anywhere in a resource/initial-props payload: dicts with a numeric id and an images map."""
+    if depth > 12 or len(found) >= 200:
+        return found
+    if isinstance(node, dict):
+        if isinstance(node.get('images'), dict) and re.fullmatch(r'\d{1,25}', str(node.get('id') or '')):
+            found.append(node)
+            return found
+        for value in node.values():
+            _pin_dicts(value, found, depth + 1)
+    elif isinstance(node, list):
+        for value in node[:300]:
+            _pin_dicts(value, found, depth + 1)
+    return found
+
+
+def _bookmark(payload):
+    response = payload.get('resource_response') if isinstance(payload.get('resource_response'), dict) else {}
+    resource = payload.get('resource') if isinstance(payload.get('resource'), dict) else {}
+    options = resource.get('options') if isinstance(resource.get('options'), dict) else {}
+    marks = options.get('bookmarks') if isinstance(options.get('bookmarks'), list) else []
+    value = response.get('bookmark') or (marks[0] if marks else '')
+    return value if isinstance(value, str) and 0 < len(value) < 2000 and value != '-end-' else ''
+
+
+def parse_pinterest(payload, limit=30):
+    """Normalized candidates from a Pinterest search payload. Promoted, video and story pins are skipped."""
+    from .moodboard_imports import pin_url
+    results, seen = [], set()
+    for pin in _pin_dicts(payload, []):
+        if pin.get('is_promoted') or pin.get('promoter') or pin.get('videos') or pin.get('story_pin_data') or \
+                pin.get('is_video') or pin.get('type') not in (None, 'pin'):
+            continue
+        images = pin['images']
+        orig = images.get('orig') if isinstance(images.get('orig'), dict) else {}
+        big = images.get('736x') if isinstance(images.get('736x'), dict) else {}
+        small = images.get('236x') if isinstance(images.get('236x'), dict) else {}
+        image = _pinimg(orig.get('url')) or _pinimg(big.get('url'))
+        source = pin_url(f'https://www.pinterest.com/pin/{pin["id"]}/')
+        if not image or not source or source in seen:
+            continue
+        size = orig if image == orig.get('url') else big
+        pinner = pin.get('pinner') if isinstance(pin.get('pinner'), dict) else {}
+        user = str(pinner.get('username') or '')
+        title = next((t for t in (pin.get('grid_title'), pin.get('title')) if isinstance(t, str) and t.strip()), '')
+        description = ' '.join(v for v in (pin.get('description'), pin.get('auto_alt_text')) if isinstance(v, str))
+        item = _candidate('pinterest', title, description, source, image,
+                          ('@' + user if re.fullmatch(r'[\w.-]{1,60}', user) else 'Pinterest user') + ' (Pinterest)',
+                          RIGHTS, size.get('width'), size.get('height'))
+        if item:
+            item['preview_url'] = _pinimg(small.get('url')) or image
+            results.append(item)
+            seen.add(source)
+        if len(results) >= limit:
+            break
+    return results
+
+
+def pinterest_page(query, bookmark='', origin='curator', limit=25):
+    """One guarded search request -> (candidates, next bookmark). Raises pinterest_guard.Paused."""
+    query = query.strip()
+    options = {'query': query, 'scope': 'pins', 'page_size': 25, 'bookmarks': [bookmark] if bookmark else []}
+    url = PINTEREST_SEARCH + '?' + urlencode({'source_url': '/search/pins/?q=' + quote(query),
+                                              'data': json.dumps({'options': options, 'context': {}}, separators=(',', ':'))})
+    try:
+        payload = json.loads(pinterest_guard.fetch(url, origin=origin, limit=MAX_RESPONSE_BYTES))
+    except json.JSONDecodeError:
+        pinterest_guard.block('Pinterest returned something other than search results')
+        raise pinterest_guard.Paused('Pinterest returned an unexpected page and is now paused.', 86_400, blocked=True) from None
+    response = payload.get('resource_response') if isinstance(payload, dict) else None
+    if not isinstance(response, dict) or response.get('status', 'success') != 'success' or response.get('error'):
+        pinterest_guard.block('Pinterest refused the search (' + str((response or {}).get('message') or 'error')[:80] + ')')
+        raise pinterest_guard.Paused('Pinterest refused the search and is now paused.', 86_400, blocked=True)
+    return parse_pinterest(response.get('data'), limit), _bookmark(payload)
+
+
+def pinterest_search(query, limit=30, offset=0):
+    """Curator source: page 1 for a fresh query, later pages only from a remembered bookmark.
+
+    Budget/spacing/block pauses return an empty list quietly: the run carries on with other sources.
+    """
+    limit = _validate_search(query, limit, offset)
+    page = offset // 30
+    bookmark = _pinterest_bookmarks.get((query.strip().lower(), page), '') if page else ''
+    if page and not bookmark:
+        return []  # No deep crawling: only follow pages Pinterest itself handed out.
+    try:
+        results, following = pinterest_page(query, bookmark, 'curator', min(limit, 25))
+    except pinterest_guard.Paused:
+        return []
+    if following:
+        if len(_pinterest_bookmarks) > 200:
+            _pinterest_bookmarks.pop(next(iter(_pinterest_bookmarks)))
+        _pinterest_bookmarks[(query.strip().lower(), page + 1)] = following
+    for item in results:
+        item.pop('preview_url', None)
+    return results
+
+
 def source_settings():
     defaults = DEFAULT_SETTINGS['moodboard_sources']
     cfg = get_settings().get('moodboard_sources')
@@ -557,6 +669,8 @@ def enabled_sources(cfg=None):
         sources.append(('flickr', lambda q, l, o: flickr_search(q, l, o, cfg['flickr_api_key'])))
     if cfg.get('tumblr_api_key'):
         sources.append(('tumblr', lambda q, l, o: tumblr_search(q, l, o, cfg['tumblr_api_key'])))
+    if cfg.get('pinterest') and not pinterest_guard.blocked():
+        sources.append(('pinterest', pinterest_search))
     return sources
 
 

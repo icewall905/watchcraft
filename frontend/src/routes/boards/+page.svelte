@@ -5,6 +5,7 @@
  import { session } from '$lib/stores/session.svelte';
  import Modal from '$lib/components/Modal.svelte';
  import BoardImage from '$lib/hub/BoardImage.svelte';
+ import PinterestSearch from '$lib/hub/PinterestSearch.svelte';
  import PinViewer from '$lib/hub/PinViewer.svelte';
  import PinColumns from '$lib/hub/PinColumns.svelte';
  import { preloadImages, stopPreloading } from '$lib/hub/preload';
@@ -331,6 +332,7 @@
      {/snippet}
     </PinColumns>
    {:else}<div class="empty"><h2>Nothing found yet</h2><p>{searchInfo.indexed ? 'Try describing the picture differently, for example its colours, pattern or object.' : 'Your images are still being prepared for search. Try again in a few minutes.'}</p></div>{/if}
+   {#if !session.isChild}<PinterestSearch query={query} boardId={board?.id ?? null} boardName={board?.name ?? ''} prominent={!found.length} onadded={() => load(false, true)} />{/if}
   </section>
  {:else if searchInfo && !searchInfo.available}
   <p class="feedback" role="status">Image search is not available: {searchInfo.reason}<button class="dismiss" aria-label="Dismiss message" onclick={clearSearch}>×</button></p>

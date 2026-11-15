@@ -14,11 +14,12 @@ async function setup(page:Page,empty=false,tweak?:(rows:any[])=>void,pageSize=0)
   const body=method==='POST'||method==='PATCH'||method==='PUT'?req.postDataJSON()??{}:{};
   if(method!=='GET')writes.push({method,path,body});
   if(path==='/api/hub/boards/search'){const q=url.searchParams.get('q')||'';const hits=q.includes('star')?[{...pin(5,'Product 123',2),board_name:'Pottery ideas',similarity:0.71}]:[];return route.fulfill({json:{available:true,reason:'',indexed:4,pins_total:5,pins:hits}});}
+  if(path==='/api/hub/boards/pinterest/status')return route.fulfill({json:{enabled:false,blocked:false,blocked_until:0,reason:'',last_block_at:0,last_reason:'',hour_left:15,day_left:80,images_left:400}});
   if(path==='/api/hub/boards'){if(method==='POST'){const made={...board(8,body.name),...body};boards.push(made);return route.fulfill({json:{board:made}});}return route.fulfill({json:{boards}});}
   const id=Number(path.split('/')[4]);
   if(path.endsWith('/pinterest')){if(method==='POST')importJob={id:1,board_id:id,status:'queued',imported:0,skipped:0,total:0,error:''};return route.fulfill({json:{import:importJob}});}
   if(path.endsWith('/reference')){const b=boards.find(b=>b.id===id)!;if(method==='DELETE'){b.reference_url=null;b.reference_name='';return route.fulfill({json:{board:b}});}b.reference_url=`/api/hub/boards/${id}/reference/media?v=1`;b.reference_name=body.title||'Reference image';return route.fulfill({json:{board:b}});}
-  if(path.endsWith('/images')){const added=pin(9,body.title||'Uploaded image',id);added.saved=true;if(body.data_base64)added.source_url='upload:sha256:abc';pins=[added,...pins];return route.fulfill({json:{pin:added}});}
+  if(path.endsWith('/images')){const known:any=body.source_url&&pins.find((p:any)=>p.source_url===body.source_url);if(known)return route.fulfill({json:{pin:known,existing:true}});const added=pin(9,body.title||'Uploaded image',id);if(body.source_url)added.source_url=body.source_url;added.saved=true;if(body.data_base64)added.source_url='upload:sha256:abc';pins=[added,...pins];return route.fulfill({json:{pin:added}});}
   if(path.endsWith('/reshuffle')){const b:any=boards.find(b=>b.id===id)!;const gone=pins.filter((p:any)=>p.board_id===id&&!p.saved&&p.feedback!=='good');pins=pins.filter(p=>!gone.includes(p));Object.assign(b,{last_status:'queued',pin_count:pins.filter(p=>p.board_id===id).length});return route.fulfill({json:{replaced:gone.length,kept:b.pin_count,board:b}});}
   if(path.endsWith('/refresh')){const b=boards.find(b=>b.id===id)!;Object.assign(b,{last_status:'no_matches',last_result:'No images met your instructions in the last search.',retry_after:3});return route.fulfill({json:{queued:false,status:'cooldown',retry_after:3,last_result:b.last_result,board:b}});}
   if(path.endsWith('/feedback')){const pid=Number(path.split('/').at(-2)),row:any=pins.find(p=>p.id===pid)!;row.feedback=body.verdict;row.feedback_note=body.note||'';if(body.verdict==='bad')pins=pins.filter(p=>p.id!==pid);return route.fulfill({json:{pin:{...row,hidden:body.verdict==='bad'},board:boards.find(b=>b.id===id)}});}
@@ -374,4 +375,98 @@ test('child friendly: grown-ups can switch it on; child profiles always have it 
  await expect(page.getByRole('link',{name:'News',exact:true})).toHaveCount(0);
  await page.getByRole('button',{name:'New board'}).first().click();
  await expect(page.getByLabel(/Child friendly/)).toBeChecked();await expect(page.getByLabel(/Child friendly/)).toBeDisabled();
+});
+
+test('open Pinterest search in a new tab and pasted images are stored on the board',async({page})=>{
+ const writes=await setup(page);await freshPage(page,'/boards?board=1');
+ await expect(page.getByRole('heading',{name:'Garden inspiration',exact:true})).toBeVisible();
+ await page.getByLabel("Search your boards by what's in the picture").fill('purple cat');
+ await page.getByRole('button',{name:'Search',exact:true}).click();
+ const live=page.getByRole('region',{name:'Search Pinterest'});
+ await expect(live).toContainText('Look on Pinterest instead');
+ const link=live.getByRole('link',{name:/Open Pinterest search/});
+ await expect(link).toHaveAttribute('href','https://www.pinterest.com/search/pins/?q=purple%20cat');
+ await expect(link).toHaveAttribute('target','_blank');
+ await expect(link).toHaveAttribute('rel',/noopener/);
+ await expect(page.locator('img[src*="pinimg"], img[src*="pinterest"]')).toHaveCount(0);
+ const image=live.getByLabel('Pinterest image address'),pinLink=live.getByLabel('Pin link (optional)'),add=live.getByRole('button',{name:'Add to Garden inspiration'});
+ await image.fill('https://www.pinterest.com/pin/123456789/');await add.click();
+ await expect(live.getByRole('alert')).toContainText('Copy image address');
+ expect(writes.filter(w=>w.path.endsWith('/images'))).toHaveLength(0);
+ await image.fill('https://i.pinimg.com/originals/ab/cd/ef/abcdef.jpg');await pinLink.fill('https://www.pinterest.com/pin/123456789/');await add.click();
+ await expect(live.getByRole('status')).toHaveText('Added to Garden inspiration.');
+ expect(writes.find(w=>w.path==='/api/hub/boards/1/images')?.body).toEqual({url:'https://i.pinimg.com/originals/ab/cd/ef/abcdef.jpg',source_url:'https://www.pinterest.com/pin/123456789/',title:'purple cat'});
+ await image.fill('https://i.pinimg.com/originals/ab/cd/ef/abcdef.jpg');await pinLink.fill('https://www.pinterest.com/pin/123456789/');await add.click();
+ await expect(live.getByRole('status')).toHaveText('Already on Garden inspiration.');
+});
+
+test('Pinterest link-out without an open board only offers the search',async({page})=>{
+ await setup(page);await freshPage(page,'/boards');
+ await page.getByLabel("Search your boards by what's in the picture").fill('flower dress with stars');
+ await page.getByRole('button',{name:'Search',exact:true}).click();
+ const live=page.getByRole('region',{name:'Search Pinterest'});
+ await expect(live).toContainText('Want more like this?');
+ await expect(live).toContainText('Open a board to add images');
+ await expect(live.getByLabel('Pinterest image address')).toHaveCount(0);
+});
+
+async function livePinterest(page:Page,status:Record<string,unknown>={}){
+ const calls:{path:string;q?:string|null;more?:string|null;body?:any}[]=[];let searches=0;
+ const st={enabled:true,blocked:false,blocked_until:0,reason:'',last_block_at:0,last_reason:'',hour_left:14,day_left:79,images_left:398,...status};
+ await page.route(/\/api\/hub\/boards\/(?:\d+\/)?pinterest\/(status|search|preview|add)/,async route=>{
+  const req=route.request(),url=new URL(req.url()),path=url.pathname;
+  if(path.endsWith('/status'))return route.fulfill({json:st});
+  if(path.includes('/preview/')){calls.push({path});return route.fulfill({contentType:'image/svg+xml',body:'<svg xmlns="http://www.w3.org/2000/svg" width="236" height="300"><rect width="236" height="300" fill="#d9b8c4"/></svg>'});}
+  if(path.endsWith('/add')){const body=req.postDataJSON();calls.push({path,body});return route.fulfill({json:{pin:pin(20,'Window seat'),existing:false}});}
+  searches++;calls.push({path,q:url.searchParams.get('q'),more:url.searchParams.get('more')});
+  if(searches===3)return route.fulfill({status:429,json:{detail:'Pinterest requests are spaced out. Try again shortly. Try again in 14 seconds.'}});
+  const more=url.searchParams.get('more')==='true';
+  const rows=more?[{token:'t3',title:'Attic nook',pin_url:'https://www.pinterest.com/pin/1003/',attribution:'@loft (Pinterest)',width:236,height:300,preview_url:'/api/hub/boards/1/pinterest/preview/t3',on_board:false}]
+   :[{token:'t1',title:'Window seat',pin_url:'https://www.pinterest.com/pin/1001/',attribution:'@maker (Pinterest)',width:236,height:300,preview_url:'/api/hub/boards/1/pinterest/preview/t1',on_board:false},
+     {token:'t2',title:'Bay window',pin_url:'https://www.pinterest.com/pin/1002/',attribution:'@maker (Pinterest)',width:236,height:280,preview_url:'/api/hub/boards/1/pinterest/preview/t2',on_board:true}];
+  return route.fulfill({json:{results:rows,has_more:!more}});
+ });
+ return calls;
+}
+
+test('live Pinterest search: proxied previews, add to board, already on board, more and wait message',async({page})=>{
+ await setup(page);const calls=await livePinterest(page);
+ const external:string[]=[];page.on('request',r=>{const h=new URL(r.url()).hostname;if(/pinimg|pinterest/.test(h))external.push(r.url());});
+ await freshPage(page,'/boards?board=1');
+ await page.getByLabel("Search your boards by what's in the picture").fill('reading nook');
+ await page.getByRole('button',{name:'Search',exact:true}).click();
+ const live=page.getByRole('region',{name:'Search Pinterest'});
+ await live.getByRole('button',{name:'Search Pinterest live'}).click();
+ await expect(live.getByText('Live from Pinterest')).toBeVisible();
+ const grid=live.getByRole('list',{name:'Pinterest results'});
+ await expect(grid.getByRole('listitem')).toHaveCount(2);
+ await expect(grid.getByRole('img',{name:'Window seat'})).toBeVisible();
+ expect(await grid.getByRole('img',{name:'Window seat'}).getAttribute('src')).toMatch(/^blob:/);
+ await expect(grid.getByRole('listitem').nth(1)).toContainText('On this board');
+ await grid.getByRole('listitem').first().getByRole('button',{name:'Add to Garden inspiration'}).click();
+ await expect(grid.getByRole('listitem').first()).toContainText('Added');
+ expect(calls.find(c=>c.path.endsWith('/add'))?.body).toEqual({token:'t1'});
+ expect(calls[0]).toMatchObject({path:'/api/hub/boards/1/pinterest/search',q:'reading nook'});
+ await live.getByRole('button',{name:'More from Pinterest'}).click();
+ await expect(grid.getByRole('listitem')).toHaveCount(3);
+ expect(calls.filter(c=>c.q).at(-1)?.more).toBe('true');
+ await live.getByRole('button',{name:'Search Pinterest live'}).click();
+ await expect(live.getByRole('alert')).toContainText('Try again in 14 seconds');
+ expect(external).toEqual([]);
+});
+
+test('live Pinterest search is hidden when off and explains a self-pause',async({page})=>{
+ await setup(page);
+ await freshPage(page,'/boards?board=1');
+ await page.getByLabel("Search your boards by what's in the picture").fill('reading nook');
+ await page.getByRole('button',{name:'Search',exact:true}).click();
+ const live=page.getByRole('region',{name:'Search Pinterest'});
+ await expect(live.getByRole('link',{name:/Open Pinterest search/})).toBeVisible();
+ await expect(live.getByRole('button',{name:'Search Pinterest live'})).toHaveCount(0);
+ await livePinterest(page,{enabled:false,blocked:true,blocked_until:Math.floor(Date.now()/1000)+86400,reason:'HTTP 403 from Pinterest',last_block_at:Math.floor(Date.now()/1000)});
+ await page.reload();
+ await page.getByLabel("Search your boards by what's in the picture").fill('reading nook');
+ await page.getByRole('button',{name:'Search',exact:true}).click();
+ await expect(page.getByRole('region',{name:'Search Pinterest'})).toContainText('Pinterest paused itself: HTTP 403 from Pinterest');
+ await expect(page.getByRole('region',{name:'Search Pinterest'}).getByRole('button',{name:'Search Pinterest live'})).toHaveCount(0);
 });

@@ -53,6 +53,8 @@ DEFAULT_SETTINGS: dict = {
         "mastodon_instance": os.environ.get("WC_MOODBOARD_MASTODON_INSTANCE", "mastodon.social"),
         "flickr_api_key": os.environ.get("WC_FLICKR_API_KEY", ""),
         "tumblr_api_key": os.environ.get("WC_TUMBLR_API_KEY", ""),
+        # Opt-in: Pinterest's robots.txt and terms forbid scraping. Slow, budgeted, auto-pausing (pinterest_guard).
+        "pinterest": False,
         "source_timeout_s": 20,
     },
     # Alert delivery. An empty URL or host disables that channel; the password is redacted in responses.

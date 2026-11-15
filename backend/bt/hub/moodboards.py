@@ -20,7 +20,7 @@ from sqlmodel import select
 from .. import curation
 from ..access import boards_allowed, is_child, require_boards, require_hub
 from ..db import get_settings, session
-from . import ai, activity
+from . import ai, activity, social_fetch
 from ..models import AgentEvent
 from .models import MoodAsset, MoodBoard, MoodFeedback, MoodPin, MoodPinNote, MoodPinVector, MoodImport, MoodReference, MoodThumb
 
@@ -483,11 +483,15 @@ def add_image_for(pid, bid, data):
     raw, mime, width, height = input_image(data)
     linked = _public_http(data.source_url) if data.data_base64 else None
     page = _public_http(data.page_url)
-    source = data.url or linked or 'upload:sha256:' + hashlib.sha256(raw).hexdigest()
+    # A pasted Pinterest pin link (copied by the user from Pinterest in their own browser) identifies the
+    # image like a curator find does, so the same pin is never stored twice. It is never fetched here.
+    from .moodboard_imports import pin_url
+    pin_link = pin_url(data.source_url or '') if data.url else ''
+    source = pin_link or data.url or linked or 'upload:sha256:' + hashlib.sha256(raw).hexdigest()
     with session() as s:
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
         owned(s, pid, bid)
-        old = s.exec(select(MoodPin).where(MoodPin.board_id == bid, MoodPin.source_url == source)).first()
+        old = s.exec(select(MoodPin).where(MoodPin.board_id == bid, MoodPin.source_url.in_({source, data.url or source}))).first()
         if old:
             if not s.get(MoodAsset, old.id):  # Reshuffled away earlier: store the picture again.
                 s.add(MoodAsset(pin_id=old.id, mime=mime, data=raw))
@@ -497,13 +501,13 @@ def add_image_for(pid, bid, data):
             old.saved = True
             s.add(old)
             s.commit()
-            return {'pin': pin_json(old)}
+            return {'pin': pin_json(old), 'existing': True}
         if stored(s, bid) >= MAX_PINS:
             raise HTTPException(409, 'This board has reached its 1,000-image storage limit')
         pin = MoodPin(board_id=bid, profile_id=pid, title=data.title.strip() or 'Added image',
                       source_url=source, image_url=data.url or linked or '', saved=True,
                       media_type='gif' if mime == 'image/gif' else 'image', width=width, height=height,
-                      attribution=(urlsplit(page or data.url or linked).hostname if (page or data.url or linked) else 'Uploaded by you'))
+                      attribution='Pinterest' if pin_link else (urlsplit(page or data.url or linked).hostname if (page or data.url or linked) else 'Uploaded by you'))
         s.add(pin)
         s.flush()
         s.add(MoodAsset(pin_id=pin.id, mime=mime, data=raw))
@@ -629,8 +633,18 @@ def thumb(bid: int, pin_id: int, pid: int = Depends(require_boards)):
         return Response(asset.data, media_type=asset.mime, headers=THUMB_CACHE)
 
 
+# Image CDNs that get the per-host spacing and Retry-After cooldown of social_fetch. Board imports and
+# pasted Pinterest links can capture many pins from one host in a burst; space them out politely.
+SPACED_IMAGE_HOSTS = ('i.pinimg.com',)
+
+
 def capture_image(url):
-    data, final, meta = curation.fetch(url, kinds=IMAGE_TYPES, limit=5_000_000, with_metadata=True)
+    spaced = urlsplit(url).hostname in SPACED_IMAGE_HOSTS
+    if spaced:
+        from . import pinterest_guard
+        pinterest_guard.take_image()  # Daily i.pinimg.com budget, shared by imports, curator and live search.
+    fetch = social_fetch.fetch if spaced else curation.fetch
+    data, final, meta = fetch(url, kinds=IMAGE_TYPES, limit=5_000_000, with_metadata=True)
     return validate_image(data)
 
 
