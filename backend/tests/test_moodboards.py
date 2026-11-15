@@ -727,3 +727,67 @@ def test_small_or_animated_images_serve_the_original_as_preview(client):
     from bt.hub.models import MoodThumb
     with session() as s:
         assert not s.exec(select(MoodThumb)).all()
+
+
+def child_profile():
+    from bt.models import Profile
+    with session() as s:
+        child = Profile(name='Kid', role='child')
+        s.add(child)
+        s.commit()
+        s.refresh(child)
+        return {'X-Profile-Id': str(child.id)}
+
+
+def test_child_friendly_board_uses_safe_sources_and_child_rule(client, monkeypatch):
+    b = make(client, name='Dinosaurs', interests='dinosaurs', child_friendly=True, strictness='balanced')
+    assert b['child_friendly']
+    calls, prompts = [], []
+    def judge(system, user, schema, **kw):
+        if 'verdicts' in schema['properties']:
+            prompts.append((system, user))
+            return verdicts(range(schema['properties']['verdicts']['maxItems']))
+        return {'queries': ['cute dinosaur']}
+    monkeypatch.setattr(mb.ai, '_call', judge)
+    monkeypatch.setattr(moodboard_sources, 'search', lambda q, **kw: calls.append(kw) or [candidate(len(calls) * 10 + i) for i in range(3)])
+    monkeypatch.setattr(mb, 'capture_image', lambda url: (b'a', 'image/png', 900, 600))
+    assert mb.dispatch_due()
+    assert calls and all(kw.get('safe_only') for kw in calls)
+    system, user = prompts[0]
+    assert 'CHILD-FRIENDLY BOARD' in user and 'satisfies ALL' in system  # strict judging even though balanced was asked
+
+
+def test_safe_only_search_ignores_social_sources(monkeypatch):
+    used = []
+    monkeypatch.setattr(moodboard_sources, 'web_search', lambda q, l, o: used.append('web') or [])
+    monkeypatch.setattr(moodboard_sources, 'reddit_search', lambda q, l, o: used.append('reddit') or [])
+    monkeypatch.setattr(moodboard_sources, 'source_settings', lambda: {'web': False, 'reddit': True, 'source_timeout_s': 5})
+    moodboard_sources.search('kittens', safe_only=True)
+    assert used == ['web']
+
+
+def test_child_profiles_get_their_own_always_child_friendly_boards(client):
+    adult_board = make(client)
+    kid = child_profile()
+    assert client.get('/api/hub/boards', headers=kid).json() == {'boards': []}  # never sees a grown-up's boards
+    assert client.get(f"/api/hub/boards/{adult_board['id']}", headers=kid).status_code == 404
+    r = client.post('/api/hub/boards', headers=kid, json={'name': 'Unicorns', 'interests': 'unicorns', 'child_friendly': False, 'strictness': 'balanced'})
+    assert r.status_code == 200, r.text
+    board = r.json()['board']
+    assert board['child_friendly'] and board['strictness'] == 'strict'
+    base = f"/api/hub/boards/{board['id']}"
+    assert client.patch(base, headers=kid, json={'child_friendly': False}).status_code == 403
+    assert client.patch(base, headers=kid, json={'strictness': 'balanced'}).status_code == 403
+    assert client.patch(base, headers=kid, json={'name': 'Rainbow unicorns'}).status_code == 200
+    seed(board['id'], 2)
+    pins = client.get(base, headers=kid).json()['pins']
+    assert client.get(pins[0]['thumb_url'], headers=kid).status_code == 200
+    assert client.put(f"{base}/pins/{pins[0]['id']}/feedback", headers=kid, json={'verdict': 'good'}).status_code == 200
+    assert client.post(f"{base}/reshuffle", headers=kid).status_code == 200
+    # Only the safety-checked curator adds images for children: no uploads, links, imports or extension keys.
+    body, _ = image_upload()
+    assert client.post(f"{base}/images", headers=kid, json=body).status_code == 403
+    assert client.post(f"{base}/reference", headers=kid, json=body).status_code == 403
+    assert client.post(f"{base}/pinterest", headers=kid, json={'url': 'https://www.pinterest.com/a/b/'}).status_code == 403
+    assert client.post('/api/ext/keys', headers=kid, json={}).status_code == 403
+    assert client.get('/api/hub/today', headers=kid).status_code in (403, 404)  # the rest of the Hub stays closed

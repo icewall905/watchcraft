@@ -22,8 +22,8 @@
 	const path = $derived(page.url.pathname);
 	const search = $derived(page.url.search);
 	const isTv = $derived(deviceMode.mode === 'tv');
-	const sections = $derived(SECTIONS.map(s => ({ ...s, items: s.items.filter(it => session.hubAllowed || !isHubPath(it.href)) })).filter(s => s.items.length));
-	const drawer = $derived(TV_DRAWER.filter(it => session.hubAllowed || !isHubPath(it.href)));
+	const sections = $derived(SECTIONS.map(s => ({ ...s, items: s.items.filter(it => session.canOpen(it.href) || !isHubPath(it.href)) })).filter(s => s.items.length));
+	const drawer = $derived(TV_DRAWER.filter(it => session.canOpen(it.href) || !isHubPath(it.href)));
 
 	$effect(() => {
 		document.documentElement.style.setProperty('--sidebar-width', isTv ? '0rem' : compact ? '4.5rem' : '15rem');

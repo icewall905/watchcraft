@@ -56,6 +56,24 @@ def hub_allowed(s: Session, pid: int) -> bool:
     return bool(p and grown_up_access(s, p))
 
 
+def is_child(s: Session, pid: int) -> bool:
+    p = s.get(Profile, pid)
+    return bool(p and p.role == 'child')
+
+
+def boards_allowed(s: Session, pid: int) -> bool:
+    """Mood Boards: grown-ups, plus child profiles, whose boards are always child-friendly."""
+    p = s.get(Profile, pid)
+    return bool(p and (grown_up_access(s, p) or p.role == 'child'))
+
+
+def require_boards(pid: int = Depends(profile_id)) -> int:
+    with session() as s:
+        if not boards_allowed(s, pid):
+            raise HTTPException(403, 'Mood Boards are unavailable for this profile.')
+    return pid
+
+
 def require_hub(pid: int = Depends(profile_id)) -> int:
     with session() as s:
         if not hub_allowed(s, pid):

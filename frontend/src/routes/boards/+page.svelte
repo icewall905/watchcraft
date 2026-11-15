@@ -14,7 +14,7 @@
  let sentinel = $state<HTMLDivElement>();
  let cursor = $state<string | null>(null), hasMore = $state(false), editing = $state(false), editId = $state<number | null>(null);
  let name = $state(''), interests = $state(''), instructions = $state(''), enabled = $state(true), interval = $state(12), saving = $state(false);
- let targetImages = $state(100), avoid = $state(''), seeds = $state(''), media = $state<'any' | 'photos' | 'gifs'>('any'), minWidth = $state(0), strictness = $state<'strict' | 'balanced'>('strict');
+ let targetImages = $state(100), avoid = $state(''), seeds = $state(''), media = $state<'any' | 'photos' | 'gifs'>('any'), minWidth = $state(0), strictness = $state<'strict' | 'balanced'>('strict'), childFriendly = $state(false);
  let waiting = $state<BoardPin[]>([]), layout = $state(0); // `layout` re-flows the grid only when the list is replaced
  // After removing the open image from view, keep browsing: show the next one instead of closing.
  function following(p: BoardPin) { const list = found ?? pins; const i = list.findIndex(v => v.id === p.id); return list[i + 1] ?? list[i - 1] ?? null; }
@@ -49,7 +49,7 @@
  const retrySeconds = $derived(Math.max(0, Math.ceil((((selected ? retryDeadlines[selected] : 0) ?? 0) - clock) / 1000)));
  const findDisabled = $derived(refreshing || curatorActive || retrySeconds > 0);
  const findLabel = $derived(refreshing ? 'Starting…' : board?.last_status === 'queued' ? 'Queued…' : board?.last_status === 'collecting' ? 'Finding images…' : retrySeconds > 0 ? `Find images (${retrySeconds}s)` : 'Find images');
- const allowed = () => session.hubAllowed && session.ready && !session.needsLogin && !session.choosing && !session.profile?.pin_locked;
+ const allowed = () => session.boardsAllowed && session.ready && !session.needsLogin && !session.choosing && !session.profile?.pin_locked;
  const stamp = () => `${session.profileId}:${session.version}`;
  const message = (e: unknown) => e instanceof Error ? e.message : 'Could not load your boards.';
  function clear() { clearSearch(); waiting = []; importOpen = false; importing = false; importJob = null; pinterestUrl = ''; imageOpen = false; imageBusy = false; imageUrl = ''; imageTitle = ''; imageFile = null; controller?.abort(); controller = null; generation++; boards = []; pins = []; selected = null; preview = null; editing = false; moving = null; saving = false; busy = null; deleteConfirm = false; notice = ''; error = ''; loading = false; more = false; hasMore = false; cursor = null; pollUntil = 0; refreshing = false; retryDeadlines = {}; }
@@ -133,10 +133,10 @@
   return rows.sort(boardSort === 'name' ? (a, b) => a.name.localeCompare(b.name) : boardSort === 'size' ? (a, b) => (b.pin_count ?? 0) - (a.pin_count ?? 0) : (a, b) => recent(b) - recent(a));
  });
  const hue = (id: number) => (id * 67) % 360;
- function edit(b?: MoodBoard) { editId = b?.id ?? null; name = b?.name ?? ''; interests = b?.interests ?? ''; instructions = b?.instructions ?? ''; enabled = b?.enabled ?? true; interval = b?.interval_hours ?? 12; targetImages = b?.target_images ?? 100; avoid = b?.avoid ?? ''; seeds = b?.seed_searches ?? ''; media = b?.media ?? 'any'; minWidth = b?.min_width ?? 0; strictness = b?.strictness ?? 'strict'; error = ''; editing = true; }
+ function edit(b?: MoodBoard) { editId = b?.id ?? null; name = b?.name ?? ''; interests = b?.interests ?? ''; instructions = b?.instructions ?? ''; enabled = b?.enabled ?? true; interval = b?.interval_hours ?? 12; targetImages = b?.target_images ?? 100; avoid = b?.avoid ?? ''; seeds = b?.seed_searches ?? ''; media = b?.media ?? 'any'; minWidth = b?.min_width ?? 0; strictness = b?.strictness ?? 'strict'; childFriendly = session.isChild || (b?.child_friendly ?? false); error = ''; editing = true; }
  async function saveBoard(e: SubmitEvent) {
   e.preventDefault(); if (!allowed() || saving) return; saving = true; const owner = stamp();
-  const body: BoardInput = {name: name.trim(), interests: interests.trim(), instructions: instructions.trim(), enabled, interval_hours: Number(interval), target_images: Number(targetImages), avoid: avoid.trim(), seed_searches: seeds.trim(), media, min_width: Number(minWidth), strictness};
+  const body: BoardInput = {name: name.trim(), interests: interests.trim(), instructions: instructions.trim(), enabled, interval_hours: Number(interval), target_images: Number(targetImages), avoid: avoid.trim(), seed_searches: seeds.trim(), media, min_width: Number(minWidth), strictness: childFriendly ? 'strict' : strictness, child_friendly: session.isChild || childFriendly};
   try { const result = editId ? await boardsApi.update(editId, body) : await boardsApi.create(body); if (owner !== stamp() || !allowed()) return; selected = result.board.id; void goto(`/boards?board=${result.board.id}`, {keepFocus: true}); editing = false; await load(); notice = editId ? 'Board updated.' : active(result.board.last_status) ? 'Board created. Follow its curator’s progress below.' : 'Board created. Find images to start filling it.'; }
   catch (e) { if (owner === stamp() && allowed()) error = message(e); }
   finally { if (owner === stamp()) saving = false; }
@@ -289,7 +289,7 @@
 <section class="boards-page">
  <header class="page-heading">
   <div><p class="eyebrow">Your collections</p><h1>Mood boards</h1><p class="lede">A cosy place for everything that catches your eye.</p></div>
-  <div class="heading-actions"><button class="btn pill" onclick={openExtension}>{@render icon('puzzle')}Browser extension</button><button class="btn primary new-board" onclick={() => edit()}>{@render icon('plus')}New board</button></div>
+  <div class="heading-actions">{#if !session.isChild}<button class="btn pill" onclick={openExtension}>{@render icon('puzzle')}Browser extension</button>{/if}<button class="btn primary new-board" onclick={() => edit()}>{@render icon('plus')}New board</button></div>
  </header>
  {#if error && !editing && !imageOpen && !importOpen}<div class="feedback error" role="alert"><span>{error}</span><button class="btn" onclick={() => load()}>Try again</button></div>{/if}
  {#if notice}<p class="feedback good" role="status">{notice}<button class="dismiss" aria-label="Dismiss message" onclick={() => { notice = ''; }}>×</button></p>{/if}
@@ -347,7 +347,7 @@
       </span>
       <span class="card-body">
        <span class="card-name">{b.name}</span>
-       <span class="card-meta">{b.pin_count ?? 0} images{#if b.saved_count} · {@render icon('heart')}{b.saved_count}{/if}</span>
+       <span class="card-meta">{#if b.child_friendly}<span class="kid-badge" title="Child friendly">🧸</span> {/if}{b.pin_count ?? 0} images{#if b.saved_count} · {@render icon('heart')}{b.saved_count}{/if}</span>
        {#if active(b.last_status)}<span class="card-status busy">Curator searching…</span>
        {:else if b.last_status === 'error'}<span class="card-status bad">Needs attention</span>
        {:else if !b.enabled}<span class="card-status">Paused</span>{/if}
@@ -362,7 +362,7 @@
   <section class="board-hero">
    <div class="hero-main">
     <h2>{board.name}</h2>
-    {#if tags.length}<ul class="tags" aria-label="Interests">{#each tags as t}<li>{t}</li>{/each}</ul>{/if}
+    {#if tags.length || board.child_friendly}<ul class="tags" aria-label="Interests">{#if board.child_friendly}<li class="kid">🧸 Child friendly</li>{/if}{#each tags as t}<li>{t}</li>{/each}</ul>{/if}
     <div class="goal">
      <div class="goal-text"><span class="image-count">{board.pin_count ?? 0} / {board.target_images ?? 100} images</span><span class="muted">{board.enabled ? `Curator checks every ${board.interval_hours} hours.` : 'Automatic discovery paused.'}</span></div>
      <div class="bar" role="progressbar" aria-label="Images toward target" aria-valuemin="0" aria-valuemax={target} aria-valuenow={board.pin_count ?? 0}><span style:width="{progress}%"></span></div>
@@ -370,9 +370,11 @@
     <div class="tools" role="toolbar" aria-label="Board actions">
      <button class="btn primary find" disabled={findDisabled} onclick={refresh}>{@render icon('spark')}{findLabel}</button>
      <button class="btn pill" disabled={curatorActive || reshuffling} title="Replace every image you have not hearted or given a thumbs up" onclick={() => { error = ''; reshuffleOpen = true; }}>{@render icon('shuffle')}Reshuffle</button>
+     {#if !session.isChild}
      <button class="btn pill" onclick={() => openImage('manual')}>{@render icon('plus')}Add image</button>
      <button class="btn pill" onclick={() => openImage('reference')}>{@render icon('eye')}{board.reference_url ? 'Change inspiration image' : 'Add inspiration image'}</button>
      <button class="btn pill" onclick={() => { error = ''; importOpen = true; }}>{@render icon('pin')}Import Pinterest</button>
+     {/if}
      <span class="spacer"></span>
      <div class="segmented" role="group" aria-label="Show">
       <button class:on={!savedOnly && !reviewOnly} aria-pressed={!savedOnly && !reviewOnly} onclick={() => { if (savedOnly || reviewOnly) { savedOnly = false; reviewOnly = false; void load(); } }}>All</button>
@@ -446,12 +448,13 @@
    <label>What to avoid<textarea rows="2" maxlength="1000" bind:value={avoid} placeholder="Quote cards and text graphics, gaming chairs, product renders, people's faces"></textarea><small>Any image showing these is rejected, even if it otherwise fits.</small></label>
    <label>Seed searches<textarea rows="3" maxlength="1000" bind:value={seeds} placeholder={'10 inch mini rack\nraspberry pi cluster\nhomelab cable management'}></textarea><small>Your own search phrases, one per line. Used first, before the curator's own ideas.</small></label>
   </fieldset>
+  <label class="child-toggle"><input type="checkbox" bind:checked={childFriendly} disabled={session.isChild} /><span><strong>🧸 Child friendly</strong><small>{session.isChild ? 'Always on for child profiles.' : 'Only safe image search (no social feeds), strict checking, and every image must be fine for a young child.'}</small></span></label>
   <details class="tuning" open={media !== 'any' || minWidth > 0 || strictness !== 'strict'}>
    <summary>More tuning</summary>
    <div class="choice" role="radiogroup" aria-label="How strict">
     <span class="choice-label">How strict</span>
     <label class="opt"><input type="radio" name="strictness" value="strict" bind:group={strictness} /><span><strong>Strict</strong><small>Only clear matches that meet every instruction.</small></span></label>
-    <label class="opt"><input type="radio" name="strictness" value="balanced" bind:group={strictness} /><span><strong>Balanced</strong><small>Clear matches of the subject; preferences may be partly met.</small></span></label>
+    <label class="opt"><input type="radio" name="strictness" value="balanced" bind:group={strictness} disabled={childFriendly} /><span><strong>Balanced</strong><small>Clear matches of the subject; preferences may be partly met.</small></span></label>
    </div>
    <div class="form-grid">
     <label>Image type<select bind:value={media}><option value="any">Photos and GIFs</option><option value="photos">Photos only</option><option value="gifs">GIFs only</option></select></label>
@@ -613,6 +616,11 @@
  .board-filter{display:flex;align-items:center;gap:.5rem;padding:.1rem .9rem;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--mb-card);color:var(--muted);min-width:0;flex:0 1 16rem}
  .board-filter input{border:0;background:none;color:var(--text);font:inherit;padding:.5rem 0;outline:none;min-width:0;width:100%}
  .board-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,13.5rem),1fr));gap:1rem}
+ .child-toggle{display:flex;gap:.7rem;align-items:flex-start;padding:.8rem 1rem;border:1px solid var(--line);border-radius:var(--r-md);margin:1rem 0 .5rem;cursor:pointer}
+ .child-toggle input{margin-top:.25rem}
+ .child-toggle span{display:grid;gap:.15rem}
+ .child-toggle small{color:var(--muted);font-weight:400}
+ .tags li.kid{border-color:rgba(255,181,71,.5);color:#ffb547}
  .board-card{display:flex;flex-direction:column;text-align:left;padding:0;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--mb-card);color:var(--text);overflow:hidden;cursor:pointer;font:inherit;transition:transform .2s var(--ease),border-color .2s var(--ease),box-shadow .2s var(--ease)}
  .board-card:hover,.board-card:focus-visible{transform:translateY(-3px);border-color:var(--mb-rose);box-shadow:0 14px 30px -18px rgba(0,0,0,.8)}
  .collage{display:grid;gap:2px;aspect-ratio:4/3;background:linear-gradient(135deg,hsl(var(--hue,330) 70% 70% / .35),hsl(calc(var(--hue,330) + 40) 80% 60% / .25));overflow:hidden}

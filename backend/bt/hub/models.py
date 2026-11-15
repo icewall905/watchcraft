@@ -560,6 +560,7 @@ class MoodBoard(SQLModel, table=True):
     media: str = 'any'        # any | photos | gifs
     min_width: int = 0        # Skip captured images narrower than this (px)
     strictness: str = 'strict'  # strict | balanced
+    child_friendly: bool = False  # safe sources + child-safety vision rule; always on for child profiles
     created_at: float = Field(default_factory=time.time)
 
 

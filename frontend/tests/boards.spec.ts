@@ -355,3 +355,23 @@ test('grid uses small previews, preloads them gently, and never refetches while 
  await page.getByRole('button',{name:'View Tile 30',exact:true}).click();
  await expect.poll(()=>hits['/api/hub/boards/1/pins/30/media']??0).toBe(1);
 });
+
+test('child friendly: grown-ups can switch it on; child profiles always have it and lose adult-only tools',async({page})=>{
+ const writes=await setup(page);await freshPage(page,'/boards?board=1');
+ await page.getByRole('button',{name:'Edit Garden inspiration curator'}).click();
+ const kid=page.getByLabel(/Child friendly/);await expect(kid).toBeEnabled();await kid.check();
+ await page.getByText('More tuning').click();await expect(page.getByRole('radio',{name:/Balanced/})).toBeDisabled();
+ await page.getByRole('button',{name:'Save changes'}).click();
+ expect(writes.at(-1)).toMatchObject({method:'PATCH',body:{child_friendly:true,strictness:'strict'}});
+ // A child profile: Mood Boards open, other Hub pages stay hidden, only the curator adds images.
+ await page.route('**/api/profiles',async route=>{if(route.request().method()!=='GET')return route.fallback();const res=await route.fetch();const list=await res.json();return route.fulfill({json:list.map((p:any,i:number)=>i===0?{...p,role:'child'}:p)});});
+ await page.reload();
+ await expect(page.getByRole('heading',{name:'Garden inspiration'})).toBeVisible();
+ await expect(page.getByRole('button',{name:'Browser extension'})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Add image',exact:true})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Import Pinterest'})).toHaveCount(0);
+ await expect(page.getByRole('link',{name:'Mood Board',exact:true}).first()).toBeVisible();
+ await expect(page.getByRole('link',{name:'News',exact:true})).toHaveCount(0);
+ await page.getByRole('button',{name:'New board'}).first().click();
+ await expect(page.getByLabel(/Child friendly/)).toBeChecked();await expect(page.getByLabel(/Child friendly/)).toBeDisabled();
+});

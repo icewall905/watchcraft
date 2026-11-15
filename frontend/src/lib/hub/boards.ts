@@ -5,7 +5,7 @@ export interface MoodBoard {
  pin_count: number; target_images: number; reference_url: string | null; reference_name: string; last_run?: number | null; last_status?: string; error?: string;
  retry_after?: number; last_result?: string; cover_url?: string | null;
  preview_urls?: string[]; saved_count?: number; last_added?: number | null; created_at?: number;
- avoid?: string; seed_searches?: string; media?: 'any' | 'photos' | 'gifs'; min_width?: number; strictness?: 'strict' | 'balanced';
+ avoid?: string; seed_searches?: string; media?: 'any' | 'photos' | 'gifs'; min_width?: number; strictness?: 'strict' | 'balanced'; child_friendly?: boolean;
 }
 export interface BoardPin {
  id: number; board_id: number; title: string; image_url: string; thumb_url?: string; source_url: string;
@@ -13,7 +13,7 @@ export interface BoardPin {
  feedback?: '' | 'good' | 'bad'; feedback_note?: string;
  width?: number; height?: number; vision_seen?: string; vision_why?: string;
 }
-export type BoardInput = Pick<MoodBoard, 'name' | 'interests' | 'instructions' | 'enabled' | 'interval_hours'> & {target_images: number; avoid: string; seed_searches: string; media: 'any' | 'photos' | 'gifs'; min_width: number; strictness: 'strict' | 'balanced'};
+export type BoardInput = Pick<MoodBoard, 'name' | 'interests' | 'instructions' | 'enabled' | 'interval_hours'> & {target_images: number; avoid: string; seed_searches: string; media: 'any' | 'photos' | 'gifs'; min_width: number; strictness: 'strict' | 'balanced'; child_friendly: boolean};
 export type BoardImageInput = {url?: string; data_base64?: string; title?: string};
 export interface BoardPage { board: MoodBoard; pins: BoardPin[]; next_cursor: string | null; has_more: boolean }
 export interface PinterestImport { id: number; board_id: number; status: string; imported: number; skipped: number; total: number; error: string }

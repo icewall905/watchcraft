@@ -55,7 +55,8 @@ def init_db() -> None:
                                  ('seed_searches', "VARCHAR NOT NULL DEFAULT ''"),
                                  ('media', "VARCHAR NOT NULL DEFAULT 'any'"),
                                  ('min_width', 'INTEGER NOT NULL DEFAULT 0'),
-                                 ('strictness', "VARCHAR NOT NULL DEFAULT 'strict'")):
+                                 ('strictness', "VARCHAR NOT NULL DEFAULT 'strict'"),
+                                 ('child_friendly', 'BOOLEAN NOT NULL DEFAULT 0')):
             if name not in board_columns:
                 connection.exec_driver_sql(f'ALTER TABLE moodboard ADD COLUMN "{name}" {definition}')
         # Additive shared-learning type columns. Existing rows are videos by default;

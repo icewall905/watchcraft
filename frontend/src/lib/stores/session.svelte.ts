@@ -26,6 +26,14 @@ class Session {
 	});
 	isAdmin = $derived(this.profile?.role === 'admin' && !this.profile?.pin_locked);
 	hubAllowed = $derived(!!this.profile && this.profile.role !== 'child' && !this.profile.pin_locked);
+	isChild = $derived(this.profile?.role === 'child');
+	/** Mood Boards: grown-ups, plus child profiles (whose boards are always child-friendly). */
+	boardsAllowed = $derived(this.hubAllowed || (!!this.profile && this.profile.role === 'child' && !this.profile.pin_locked));
+	/** Whether this profile may open a Hub page. Children get Mood Boards only. */
+	canOpen(path: string): boolean {
+		const p = path.split(/[?#]/)[0];
+		return this.hubAllowed || (this.boardsAllowed && (p === '/boards' || p.startsWith('/boards/')));
+	}
 	needsLogin = $derived(this.authRequired && !this.authenticated);
 
 	constructor() {

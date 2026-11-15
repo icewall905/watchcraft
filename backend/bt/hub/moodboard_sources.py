@@ -566,7 +566,7 @@ def _image_key(url):
     return (parts.hostname or '') + parts.path if parts.hostname in ('preview.redd.it', 'i.redd.it') else url
 
 
-def search(query: str, limit: int = 30, offset: int = 0) -> list[dict]:
+def search(query: str, limit: int = 30, offset: int = 0, safe_only: bool = False) -> list[dict]:
     """All enabled sources in parallel, each bounded by a deadline; results interleaved and deduped.
 
     A slow or failing source is dropped for this call. Only when every source fails is an error raised,
@@ -574,7 +574,9 @@ def search(query: str, limit: int = 30, offset: int = 0) -> list[dict]:
     """
     limit = _validate_search(query, limit, offset)
     cfg = source_settings()
-    sources = enabled_sources(cfg)
+    # Child-friendly boards use only the SafeSearch-strict image search (SearXNG, Commons fallback),
+    # never social feeds, whatever the household's source settings say.
+    sources = [('web', web_search)] if safe_only else enabled_sources(cfg)
     if not sources:
         raise ValueError('No Mood Board image sources are enabled.')
     deadline = max(5, min(int(cfg.get('source_timeout_s') or 20), 60))

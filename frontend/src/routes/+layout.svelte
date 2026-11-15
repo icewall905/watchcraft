@@ -104,7 +104,7 @@
 		<div class:desktop={!fullscreen && deviceMode.mode === 'desktop'}>
 		{#if !fullscreen}<TopBar />{:else if page.url.pathname.startsWith('/watch/')}<PlaybackPicker floating />{/if}
 		<main class:fullscreen data-area={hubArea ? 'hub' : undefined}>
-			{#if !session.hubAllowed && isHubPath(page.url.pathname)}
+			{#if !session.canOpen(page.url.pathname) && isHubPath(page.url.pathname)}
 				<div class="page"><h1>Hub is unavailable for this profile</h1><p>Discovery, external sources and research are disabled. Switch to an adult profile to use the Hub.</p><a class="btn primary" href="/tv" use:focusable>Back to TV</a></div>
 			{:else}{#key session.version}
 				{@render children()}

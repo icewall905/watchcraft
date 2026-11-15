@@ -18,7 +18,7 @@ from sqlalchemy import delete, func, update
 from sqlmodel import select
 
 from .. import curation
-from ..access import hub_allowed, require_hub
+from ..access import boards_allowed, is_child, require_boards, require_hub
 from ..db import get_settings, session
 from . import ai, activity
 from ..models import AgentEvent
@@ -76,6 +76,7 @@ class BoardCreate(BaseModel):
     media: str = Field(default='any', pattern='^(any|photos|gifs)$')
     min_width: int = Field(default=0, ge=0, le=4000)
     strictness: str = Field(default='strict', pattern='^(strict|balanced)$')
+    child_friendly: bool = False
 
 
 class BoardEdit(BaseModel):
@@ -90,6 +91,7 @@ class BoardEdit(BaseModel):
     media: str | None = Field(default=None, pattern='^(any|photos|gifs)$')
     min_width: int | None = Field(default=None, ge=0, le=4000)
     strictness: str | None = Field(default=None, pattern='^(strict|balanced)$')
+    child_friendly: bool | None = None
 
 
 class PinFeedback(BaseModel):
@@ -193,33 +195,35 @@ def pin_json(pin, feedback=None, note=None):
 
 
 @router.get('')
-def boards(pid: int = Depends(require_hub)):
+def boards(pid: int = Depends(require_boards)):
     with session() as s:
         return {'boards': [board_json(s, b) for b in s.exec(select(MoodBoard).where(
             MoodBoard.profile_id == pid).order_by(MoodBoard.id.desc())).all()]}
 
 
 @router.get('/search')
-def search_pins(q: str = '', board_id: int | None = None, limit: int = 40, pid: int = Depends(require_hub)):
+def search_pins(q: str = '', board_id: int | None = None, limit: int = 40, pid: int = Depends(require_boards)):
     """Find pins by what the picture shows ("flower dress with stars"), across this profile's boards."""
     from . import moodboard_search
     return moodboard_search.search_response(q, pid, board_id, limit)
 
 
 @router.get('/search/status')
-def search_status(pid: int = Depends(require_hub)):
+def search_status(pid: int = Depends(require_boards)):
     from . import moodboard_search
     return moodboard_search.status(pid)
 
 
 @router.post('')
-def create(data: BoardCreate, pid: int = Depends(require_hub)):
+def create(data: BoardCreate, pid: int = Depends(require_boards)):
     values = data.model_dump()
     for key in ('name', 'interests', 'instructions', 'avoid', 'seed_searches'):
         values[key] = values[key].strip()
     if not values['name'] or not any(v.strip() for v in re.split(r'[,;\n]+', values['interests'])):
         raise HTTPException(422, 'Name and interests are required')
     with session() as s:
+        if is_child(s, pid):
+            values['child_friendly'], values['strictness'] = True, 'strict'
         if s.exec(select(func.count()).select_from(MoodBoard).where(MoodBoard.profile_id == pid)).one() >= 50:
             raise HTTPException(409, 'Keep up to 50 boards per profile')
         board = MoodBoard(profile_id=pid, **values)
@@ -235,7 +239,7 @@ def create(data: BoardCreate, pid: int = Depends(require_hub)):
 
 @router.get('/{bid}')
 def detail(bid: int, cursor: int | None = None, saved: bool = False, unreviewed: bool = False,
-           pid: int = Depends(require_hub)):
+           pid: int = Depends(require_boards)):
     with session() as s:
         board = owned(s, pid, bid)
         query = select(MoodPin).where(MoodPin.board_id == bid, MoodPin.hidden == False)
@@ -255,10 +259,12 @@ def detail(bid: int, cursor: int | None = None, saved: bool = False, unreviewed:
 
 
 @router.patch('/{bid}')
-def edit(bid: int, data: BoardEdit, pid: int = Depends(require_hub)):
+def edit(bid: int, data: BoardEdit, pid: int = Depends(require_boards)):
     with session() as s:
         board = owned(s, pid, bid)
         changes = data.model_dump(exclude_unset=True)
+        if is_child(s, pid) and (changes.get('child_friendly') is False or changes.get('strictness') == 'balanced'):
+            raise HTTPException(403, 'Boards on a child profile always stay child-friendly.')
         for key, value in changes.items():
             if value is None:
                 raise HTTPException(422, 'Board fields cannot be null')
@@ -300,7 +306,7 @@ def delete_profile(s, pid):
 
 
 @router.delete('/{bid}')
-def remove(bid: int, pid: int = Depends(require_hub)):
+def remove(bid: int, pid: int = Depends(require_boards)):
     with session() as s:
         owned(s, pid, bid)
         ids = select(MoodPin.id).where(MoodPin.board_id == bid)
@@ -320,7 +326,7 @@ def remove(bid: int, pid: int = Depends(require_hub)):
 
 
 @router.post('/{bid}/refresh')
-def refresh(bid: int, pid: int = Depends(require_hub)):
+def refresh(bid: int, pid: int = Depends(require_boards)):
     with session() as s:
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
         board = owned(s, pid, bid)
@@ -339,7 +345,7 @@ def refresh(bid: int, pid: int = Depends(require_hub)):
 
 
 @router.post('/{bid}/reshuffle')
-def reshuffle(bid: int, pid: int = Depends(require_hub)):
+def reshuffle(bid: int, pid: int = Depends(require_boards)):
     """Replace every image that is not saved or marked Fits, then queue the curator to refill the board.
     Replaced images keep only their link, so the same picture is never found again; the curator is not
     taught anything from them (unlike Not a fit)."""
@@ -369,7 +375,7 @@ def reshuffle(bid: int, pid: int = Depends(require_hub)):
 
 
 @router.patch('/{bid}/pins/{pin_id}')
-def edit_pin(bid: int, pin_id: int, data: PinEdit, pid: int = Depends(require_hub)):
+def edit_pin(bid: int, pin_id: int, data: PinEdit, pid: int = Depends(require_boards)):
     with session() as s:
         owned(s, pid, bid)
         pin = s.get(MoodPin, pin_id)
@@ -395,7 +401,7 @@ def edit_pin(bid: int, pin_id: int, data: PinEdit, pid: int = Depends(require_hu
 
 
 @router.put('/{bid}/pins/{pin_id}/feedback')
-def review_pin(bid: int, pin_id: int, data: PinFeedback, pid: int = Depends(require_hub)):
+def review_pin(bid: int, pin_id: int, data: PinFeedback, pid: int = Depends(require_boards)):
     """Teach the board's curator. 'bad' also hides the pin (recoverable); clearing restores it."""
     with session() as s:
         board = owned(s, pid, bid)
@@ -530,7 +536,7 @@ def remove_reference(bid: int, pid: int = Depends(require_hub)):
 
 
 @router.get('/{bid}/reference/media')
-def reference_media(bid: int, pid: int = Depends(require_hub)):
+def reference_media(bid: int, pid: int = Depends(require_boards)):
     with session() as s:
         owned(s, pid, bid)
         reference = s.get(MoodReference, bid)
@@ -541,7 +547,7 @@ def reference_media(bid: int, pid: int = Depends(require_hub)):
 
 
 @router.get('/{bid}/pins/{pin_id}/media')
-def media(bid: int, pin_id: int, pid: int = Depends(require_hub)):
+def media(bid: int, pin_id: int, pid: int = Depends(require_boards)):
     with session() as s:
         owned(s, pid, bid)
         pin = s.get(MoodPin, pin_id)
@@ -603,7 +609,7 @@ def thumb_sweep(limit: int = 50) -> int:
 
 
 @router.get('/{bid}/pins/{pin_id}/thumb')
-def thumb(bid: int, pin_id: int, pid: int = Depends(require_hub)):
+def thumb(bid: int, pin_id: int, pid: int = Depends(require_boards)):
     with session() as s:
         owned(s, pid, bid)
         pin = s.get(MoodPin, pin_id)
@@ -756,9 +762,15 @@ def seed_list(text):
     return [q.strip()[:150] for q in re.split(r'[,;\n]+', text or '') if q.strip()][:20]
 
 
+CHILD_RULE = ('CHILD-FRIENDLY BOARD: keep only images a parent would happily show a 6-year-old. Reject anything with '
+              'violence, weapons, blood or injury, horror or scary imagery, nudity, swimwear or suggestive poses, '
+              'romance or kissing, drugs, alcohol, smoking or gambling, rude gestures, or text with adult language. '
+              'When unsure, reject.')
+
+
 def board_rules(board):
     """The owner's tuning, phrased for the judge. Kept separate from the free-text instructions."""
-    parts = []
+    parts = [CHILD_RULE] if getattr(board, 'child_friendly', False) else []
     if board.avoid.strip():
         parts.append('Always reject images showing any of these (owner\'s avoid list): ' + board.avoid.strip())
     if board.media == 'photos':
@@ -795,7 +807,9 @@ def collect(bid, lease, revision):
             return
         interests = [v.strip()[:250] for v in re.split(r'[,;\n]+', board.interests) if v.strip()]
         instructions = (board.instructions + board_rules(board) + feedback_lessons(s, bid)).strip()
-        seeds, media, min_width, strict = seed_list(board.seed_searches), board.media, board.min_width, board.strictness != 'balanced'
+        seeds, media, min_width = seed_list(board.seed_searches), board.media, board.min_width
+        child = bool(board.child_friendly)
+        strict = child or board.strictness != 'balanced'
         context = board.name + ' — ' + board.interests
         offset = board.source_offset
         query = interests[(offset // 30) % len(interests)]
@@ -819,7 +833,7 @@ def collect(bid, lease, revision):
         seen_candidates = set()
         for search_query in queries:
             milestone('search', 'Searching images: ' + search_query, query=search_query)
-            found = moodboard_sources.search(search_query, limit=max(1, 30 // len(queries)), offset=page_offset)
+            found = moodboard_sources.search(search_query, limit=max(1, 30 // len(queries)), offset=page_offset, safe_only=child)
             searched += 1
             for item in found:
                 key = item.get('source_url')
@@ -874,7 +888,7 @@ def collect(bid, lease, revision):
         # Acquire SQLite writer lock before checking lease, preventing deletion/edit races.
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
         board = s.get(MoodBoard, bid)
-        if not board or board.lease != lease or board.revision != revision or not hub_allowed(s, board.profile_id):
+        if not board or board.lease != lease or board.revision != revision or not boards_allowed(s, board.profile_id):
             return
         count = stored(s, bid)
         visible = s.exec(select(func.count()).select_from(MoodPin).where(MoodPin.board_id == bid, MoodPin.hidden == False)).one()
@@ -928,7 +942,7 @@ def dispatch_due():
             .order_by(MoodBoard.next_run)).all()
         board = None
         for candidate in candidates:
-            if not hub_allowed(s, candidate.profile_id):
+            if not boards_allowed(s, candidate.profile_id):
                 continue
             visible = s.exec(select(func.count()).select_from(MoodPin).where(MoodPin.board_id == candidate.id, MoodPin.hidden == False)).one()
             total = stored(s, candidate.id)

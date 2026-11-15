@@ -8,8 +8,8 @@
 	let more = $state(false);
 	let narrow = $state(false);
 	const path = $derived(page.url.pathname);
-	const primary = $derived(MOBILE_PRIMARY.filter(e => session.hubAllowed || !isHubPath(e.href)));
-	const rest = $derived(ALL_ENTRIES.filter((e) => !MOBILE_PRIMARY.includes(e) && (session.hubAllowed || !isHubPath(e.href))));
+	const primary = $derived(MOBILE_PRIMARY.filter(e => session.canOpen(e.href) || !isHubPath(e.href)));
+	const rest = $derived(ALL_ENTRIES.filter((e) => !MOBILE_PRIMARY.includes(e) && (session.canOpen(e.href) || !isHubPath(e.href))));
 	const moreActive = $derived(rest.some((e) => e.active(path)));
 
 	$effect(() => {
