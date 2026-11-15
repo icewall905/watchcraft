@@ -8,6 +8,20 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Mood Board polish, TV-mode remote keys, browser extension (`e88c4d0`, 2026-11-15)
+
+- Range `7d15f92..e88c4d0`: remote-control keys only in TV mode (setting under Appearance); WatchCraft browser
+  extension (Chrome/Firefox zips under `/extensions/`, per-profile bearer keys in the additive `extensionkey`
+  table, `/api/ext/v1/` exempt from the password cookie); Mood Board overview, image viewer (zoom/share/
+  download, vision notes in the additive `moodpinnote` table), curator tuning columns on `moodboard`
+  (`avoid`, `seed_searches`, `media`, `min_width`, `strictness`, guarded ALTERs).
+- Backup `/root/compose/watchcraft-backups/20261115-moodpolish-e88c4d0` (online DB quick_check ok, config hashes,
+  previous source, `new-files.txt` for the 9 new files); rollback images `watchcraft:rollback-20261115-moodpolish-*`,
+  `rollback.sh`. rsync of the 33 changed files.
+- All four services run `sha256:3dc01de5944667f5a65de5913bc423ae30d2fd162fffbe10e51be0c04484bbf4`, zero restarts,
+  no tracebacks; health, `/boards`, both extension zips 200; new columns and tables present; `/api/ext/v1/boards`
+  without a key 401. Extension not yet tried in a real browser (V-102).
+
 ## Deployment record — Mood Board vision on the worker model (`7d15f92`, 2026-11-15)
 
 - Vision judging/search planning on `role='worker'` (`10.0.10.9`, vision-capable) with 900 s timeouts, per-batch
