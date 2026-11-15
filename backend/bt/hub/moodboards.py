@@ -118,8 +118,11 @@ def feedback_lessons(s, bid):
     for verdict, limit in (('bad', FEEDBACK_BAD), ('good', FEEDBACK_GOOD)):
         rows += s.exec(select(MoodFeedback).where(MoodFeedback.board_id == bid, MoodFeedback.verdict == verdict)
                        .order_by(MoodFeedback.created_at.desc()).limit(limit)).all()
+    from ..knowledge.render import section_text
+    board = s.get(MoodBoard, bid)
+    woven = (section_text(s, board.profile_id, ['moodboards'], board_id=bid) or '') if board else ''
     if not rows:
-        return ''
+        return '\n\n' + woven if woven else ''
     def line(f):
         title = ' '.join((f.title or '').split())[:160] or 'untitled image'
         return f'- "{title}"' + (f' — owner says: {" ".join(f.note.split())[:300]}' if f.note.strip() else '')
@@ -130,7 +133,7 @@ def feedback_lessons(s, bid):
         text += '\nRejected as not fitting this board:\n' + '\n'.join(bad)
     if good:
         text += '\nConfirmed good fits:\n' + '\n'.join(good)
-    return text
+    return text + ('\n\n' + woven if woven else '')
 
 
 class PinEdit(BaseModel):

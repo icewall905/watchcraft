@@ -120,6 +120,8 @@ def _process_profile(rt: Runtime, pid: int, batch: list[Feedback], content_type:
         from .memory import select_memory
         core, lessons = select_memory(s, pid, lessons, content_type=content_type)
         items, channels = _items(s, batch)
+        from ..knowledge import teachings
+        tombstones = teachings.rejected(s, pid, {"articles", "news"} if content_type == "article" else {"videos", "shorts"})
     meaningful = [it for it in items if content_type == "article" or it["rating"] != 0
                   or it["chips"] or (it["text"] or "").strip()]
     learnable_ids = {it["feedback_id"] for it in meaningful}
@@ -143,7 +145,7 @@ def _process_profile(rt: Runtime, pid: int, batch: list[Feedback], content_type:
         rt.event("learn", f"🧠 Learning from {len(batch)} new {content_type} feedback item(s) ({prof.name if prof else pid})",
                  "info", profile_id=pid, payload={"feedback_ids": [f.id for f in batch], "content_type": content_type})
         msgs = prompts.learn_messages(prof.name if prof else str(pid), cats, lessons, meaningful, core=core,
-                                      content_type=content_type)
+                                      content_type=content_type, rejected=teachings.rejected_block(tombstones))
         try:
             out = rt.llm.chat_json(msgs, json_schema=prompts.LEARN_SCHEMA, max_tokens=2500, schema_name="lessons",
                                    abort=rt.check)
@@ -211,13 +213,16 @@ def _process_profile(rt: Runtime, pid: int, batch: list[Feedback], content_type:
                 if any((fb := s.get(Feedback, fid)) is None or latest_by_item.get(fb.item_id) != fid
                        for fid in citations):
                     continue
+            # The person rejected this conclusion, or one resting on the same feedback: never relearn it.
+            if teachings.blocked(tombstones, text, {f"fb:{i}" for i in citations}):
+                continue
             target = norm_existing.get((_norm(text), cid, ch))
             if target is not None:
                 target.updated_at = now()
                 target.source_feedback_ids = sorted(set((target.source_feedback_ids or []) + citations))
                 target.weight = round(min(3.0, (target.weight or 1.0) + 0.25), 2)
                 s.add(target)
-                learned.append((target, "reinforced"))
+                learned.append((target, "reinforced", x.get("reason")))
             else:
                 if content_type == "article":
                     cid, ch = None, None
@@ -227,14 +232,17 @@ def _process_profile(rt: Runtime, pid: int, batch: list[Feedback], content_type:
                 s.flush()
                 knowledge.register(s, le)
                 norm_existing[(_norm(text), cid, ch)] = le
-                learned.append((le, "new"))
+                learned.append((le, "new", x.get("reason")))
         trust = _adjust_trust(s, pid, batch)
+        teachings.sync(s, pid)
+        for le, _how, reason in learned:
+            teachings.record_reason(s, "lesson", le.id, reason)
         for f in batch:
             row = s.get(Feedback, f.id)
             row.processed = True
             s.add(row)
         s.commit()
-    for le, how in learned:
+    for le, how, _reason in learned:
         rt.event("learn", f'🧠 Learned{"" if how == "new" else f" ({how})"}: "{le.text}"', "success",
                  profile_id=pid, category_id=le.category_id,
                  payload={"lesson_id": le.id, "how": how, "channel_id": le.channel_id, "content_type": content_type})

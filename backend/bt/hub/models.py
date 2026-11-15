@@ -478,6 +478,7 @@ class HubLesson(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     profile_id: int = Field(index=True)
     text: str = T()
+    reason: str = T()        # the learner's one-sentence why, shown beside the lesson
     scope: str = ''          # '' = all hub items, or a type such as meme / news / article
     polarity: int = 1        # 1 more like this, -1 less like this
     weight: float = 1.0

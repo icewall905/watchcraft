@@ -30,6 +30,13 @@ def _migrate_shared_learning_columns(connection) -> None:
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_memorycore_profile_type_id ON memorycore (profile_id, content_type, id)")
 
 
+def _migrate_knowledge_columns(connection) -> None:
+    """Additive: the hub learner's one-sentence reason for each lesson."""
+    have = {c["name"] for c in inspect(connection).get_columns("hublesson")}
+    if have and "reason" not in have:
+        connection.exec_driver_sql("ALTER TABLE hublesson ADD COLUMN reason TEXT DEFAULT ''")
+
+
 @event.listens_for(engine, "connect")
 def _pragmas(conn, _):
     cur = conn.cursor()
@@ -48,7 +55,9 @@ def init_db() -> None:
         from . import curation  # noqa: F401  (registers v1 + hub tables)
         from .hub import migrate, models as _hub_models  # noqa: F401
         from .music import models as _music_models  # noqa: F401
+        from .knowledge import models as _knowledge_models  # noqa: F401
         SQLModel.metadata.create_all(connection)
+        _migrate_knowledge_columns(connection)
         board_columns = {c['name'] for c in inspect(connection).get_columns('moodboard')}
         for name, definition in (('target_images', 'INTEGER NOT NULL DEFAULT 100'),
                                  ('avoid', "VARCHAR NOT NULL DEFAULT ''"),
