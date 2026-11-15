@@ -199,6 +199,8 @@
   try { const after = following(p); await boardsApi.pin(p.board_id, p.id, patch); if (owner !== stamp() || !allowed()) return; if (patch.hidden || patch.board_id) pins = pins.filter(v => v.id !== p.id); else pins = pins.map(v => v.id === p.id ? {...v, ...patch} : v); if (found) found = patch.hidden ? found.filter(v => v.id !== p.id) : found.map(v => v.id === p.id ? {...v, ...patch, board_name: patch.board_id ? boards.find(b => b.id === patch.board_id)?.name ?? v.board_name : v.board_name} : v); if (preview?.id === p.id) preview = patch.hidden || patch.board_id ? after : {...preview, ...patch}; moving = null; }
   catch (e) { if (owner === stamp()) error = message(e); } finally { if (owner === stamp()) busy = null; }
  }
+ // Remove from the board without a verdict: the curator learns nothing from it (Not a fit teaches it).
+ async function remove(p: BoardPin) { await pinAction(p, {hidden: true}); if (!pins.some(v => v.id === p.id)) notice = 'Removed from the board. Your curator was not told.'; }
  let extOpen = $state(false), extKeys = $state<ExtensionKey[]>([]), extNew = $state(''), extBrowser = $state<'chrome' | 'firefox'>('chrome'), extBusy = $state(false), extCopied = $state('');
  async function openExtension() {
   extOpen = true; extNew = ''; extCopied = ''; error = '';
@@ -398,6 +400,7 @@
       <div class="review-row" role="group" aria-label={`Review ${pin.title}`}>
        <button class="rv good" class:on={pin.feedback === 'good'} aria-pressed={pin.feedback === 'good'} disabled={busy === pin.id} onclick={() => review(pin, pin.feedback === 'good' ? '' : 'good')}>{@render icon('check')}Fits</button>
        <button class="rv bad" disabled={busy === pin.id} onclick={() => { reviewing = pin; reviewNote = ''; }}>{@render icon('x')}Not a fit</button>
+       <button class="rv remove" disabled={busy === pin.id} title="Remove from this board without teaching the curator" aria-label={`Remove ${pin.title}`} onclick={() => remove(pin)}>Remove</button>
       </div></div>
     </article>
    {/snippet}
@@ -510,7 +513,7 @@
 {#if preview}<PinViewer pin={preview} pins={found ?? pins} boardName={boards.find(b => b.id === preview?.board_id)?.name ?? ''} busy={busy === preview.id}
  onClose={() => { preview = null; moving = null; }} onNavigate={(p) => { preview = p; moving = null; }}
  onSave={(p) => pinAction(p, {saved: !p.saved})} onFits={(p) => review(p, p.feedback === 'good' ? '' : 'good')}
- onNotFit={(p) => { reviewing = p; reviewNote = ''; }} onHide={(p) => pinAction(p, {hidden: true})}>
+ onNotFit={(p) => { reviewing = p; reviewNote = ''; }} onHide={(p) => remove(p)}>
  {#snippet actions()}
   {#if boards.length > 1}
    {#if moving}<div class="move-form"><label>Destination board<select bind:value={moveTo}>{#each boards.filter(b => b.id !== preview?.board_id) as b}<option value={b.id}>{b.name}</option>{/each}</select></label><button class="btn primary" disabled={!moveTo || busy !== null} onclick={() => preview && pinAction(preview, {board_id: Number(moveTo)})}>Move image</button></div>
@@ -531,7 +534,9 @@
  .new-board,.find,.pill{gap:.45rem}
  .new-board{border-radius:var(--r-pill);padding:.7rem 1.2rem;box-shadow:0 10px 30px -12px var(--accent-glow)}
 
- .review-row{display:flex;gap:.4rem;margin-top:.45rem}
+ .review-row{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.45rem}
+ .rv.remove{margin-left:auto;border-color:transparent}
+ .rv.remove:hover{border-color:var(--line)}
  .rv{display:inline-flex;align-items:center;gap:.3rem;padding:.3rem .7rem;border-radius:var(--r-pill);border:1px solid var(--line);background:transparent;color:var(--muted);font:inherit;font-size:.8rem;cursor:pointer}
  .rv:hover{color:var(--text);background:var(--surface-hi)}
  .rv.good.on{color:#3ddc97;border-color:rgba(61,220,151,.5);background:rgba(61,220,151,.1)}

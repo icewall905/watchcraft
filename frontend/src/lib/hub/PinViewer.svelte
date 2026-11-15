@@ -145,7 +145,7 @@
    <div class="review" role="group" aria-label="Teach the curator">
     <button class="btn pill" class:on={pin.feedback === 'good'} aria-pressed={pin.feedback === 'good'} disabled={busy} onclick={() => onFits(pin)}>✓ Fits this board</button>
     <button class="btn pill" disabled={busy} onclick={() => onNotFit(pin)}>✕ Not a fit</button>
-    <button class="btn pill" disabled={busy} onclick={() => onHide(pin)}>Hide</button>
+    <button class="btn pill" disabled={busy} title="Remove from this board without teaching the curator" onclick={() => onHide(pin)}>Remove</button>
    </div>
    {@render actions?.()}
    {#if status}<p class="status" role="status">{status}</p>{/if}

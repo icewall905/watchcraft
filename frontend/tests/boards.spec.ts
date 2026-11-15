@@ -87,7 +87,7 @@ test('browse local pins save move hide and respect refresh cooldown',async({page
  const viewer=page.getByRole('dialog');
  await expect(viewer.getByRole('heading',{name:'Bonsai detail'})).toBeVisible(); // moving keeps browsing: next image opens
  await viewer.getByRole('button',{name:'Next image'}).click();await expect(viewer.getByRole('heading',{name:'Stone garden path'})).toBeVisible();
- await viewer.getByRole('button',{name:'Hide',exact:true}).click();
+ await viewer.getByRole('button',{name:'Remove',exact:true}).click();
  await expect(viewer.getByRole('heading',{name:'Bonsai detail'})).toBeVisible();await page.keyboard.press('Escape');
  await expect(page.getByRole('dialog')).toHaveCount(0);
  await expect(page.getByRole('button',{name:'View Stone garden path',exact:true})).toHaveCount(0);
@@ -214,10 +214,17 @@ test('review pins: confirm fits and teach the curator what does not fit',async({
  const bonsai=page.getByRole('group',{name:'Review Bonsai detail'}).getByRole('button',{name:'Fits'});
  await bonsai.click();await expect(bonsai).toHaveAttribute('aria-pressed','true');
  await expect(page.getByRole('button',{name:'View Bonsai detail'})).toBeVisible();
+ // Remove takes an image off the board without a verdict for the curator.
+ await page.getByRole('button',{name:'All',exact:true}).click();
+ const puts=writes.filter(w=>w.method==='PUT').length;
+ await page.getByRole('button',{name:'Remove Bonsai detail'}).click();
+ await expect(page.getByRole('button',{name:'View Bonsai detail'})).toHaveCount(0);
+ await expect(page.getByText('Your curator was not told.')).toBeVisible();
+ expect(writes.at(-1)).toMatchObject({method:'PATCH',path:'/api/hub/boards/1/pins/2',body:{hidden:true}});
+ expect(writes.filter(w=>w.method==='PUT').length).toBe(puts);
  // Saved lists hearted images and every image marked Fits.
  await page.getByRole('button',{name:/^Saved/}).click();
  await expect(page.getByRole('button',{name:'View Quiet courtyard'})).toBeVisible();
- await expect(page.getByRole('button',{name:'View Bonsai detail'})).toBeVisible();
 });
 
 test('the grid never reshuffles: loading more, hiding and reviewing keep every image in place',async({page})=>{
