@@ -8,6 +8,15 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — browser extension "New board…" (`f121768`, 2026-11-15)
+
+- `POST /api/ext/v1/boards` (key auth; same name reuses the board) and extension 1.1.0 with a New board… popup.
+  Code only. Backup `/root/compose/watchcraft-backups/20261115-extnewboard-f121768` (online DB quick_check ok,
+  config hashes, previous source of 9 files, `new-files.txt` for 2); rollback images
+  `watchcraft:rollback-20261115-extnewboard-*`, `rollback.sh`. rsync of the 12 changed files.
+- All four services run `sha256:eca7cc038ff0a49cb7615744945197ff269f880b728a044b3de2ff2d6dc55290`, zero restarts, no
+  tracebacks; health, `/boards`, both zips (1.1.0, `newboard.*` inside) 200; board create without key 401.
+
 ## Deployment record — Mood Board polish, TV-mode remote keys, browser extension (`e88c4d0`, 2026-11-15)
 
 - Range `7d15f92..e88c4d0`: remote-control keys only in TV mode (setting under Appearance); WatchCraft browser
