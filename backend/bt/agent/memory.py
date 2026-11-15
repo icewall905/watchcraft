@@ -84,6 +84,11 @@ def select_memory(s, pid, lessons, content_type="video"):
     New source lessons are corrections until the next successful consolidation.
     """
     lessons = [le for le in lessons if le.profile_id == pid and le.content_type == content_type]
+    from ..knowledge import render as knowledge
+    woven = knowledge.section_text(s, pid, knowledge.ARTICLE if content_type == "article" else knowledge.VIDEO)
+    if woven is not None:
+        # One brain: the profile's living knowledge is the core; lessons not woven in yet stay corrections.
+        return woven, lessons
     core = latest(s, pid, content_type)
     if not core:
         return "", lessons
@@ -302,7 +307,21 @@ def process(rt):
     try:
         with session() as s:
             pids = list(s.exec(select(Profile.id).order_by(Profile.id)).all())
+        from ..knowledge import render as knowledge, weave
         for pid in pids:
+            rt.check()
+            try:
+                woven = weave.weave(pid, abort=rt.check)
+                if woven.get("status") not in ("unchanged", "no model"):
+                    state["profiles"].append({"profile_id": pid, "knowledge": woven})
+            except Interrupt:
+                raise
+            except Exception as e:  # noqa: BLE001 — knowledge stays at its previous version
+                rt.event("learn", f"⚠️ Knowledge weave for profile {pid}: {str(e)[:200]}", "warn", profile_id=pid)
+            with session() as s:
+                has_knowledge = knowledge.current(s, pid) is not None
+            if has_knowledge:
+                continue  # its knowledge replaces the per-type core memory
             for content_type in ("video", "article"):
                 result = compact_profile(rt, pid, int(cfg["max_core_tokens"]) * 4, content_type=content_type)
                 if result.get("status") != "unchanged" or result.get("lessons"):

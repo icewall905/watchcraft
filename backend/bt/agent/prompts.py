@@ -360,8 +360,9 @@ LEARN_SCHEMA = {
                     "channel_id": {"type": ["string", "null"]},
                     "replaces_lesson_id": {"type": ["integer", "null"]},
                     "source_feedback_ids": {"type": "array", "items": {"type": "integer"}},
+                    "reason": {"type": "string"},
                 },
-                "required": ["text", "category_id", "channel_id", "replaces_lesson_id", "source_feedback_ids"],
+                "required": ["text", "category_id", "channel_id", "replaces_lesson_id", "source_feedback_ids", "reason"],
                 "additionalProperties": False,
             },
         },
@@ -388,6 +389,7 @@ guide future video picking according to their evidence strength.
 - One disliked/boring video establishes at most a tentative, video-specific inference. Do not infer a
   categorical subject dislike, channel ban or broad identity trait from that single example.
 - source_feedback_ids: cite ONLY the supplied feedback items that actually support THIS new lesson.
+- reason: one plain sentence telling the user what they did that taught this (e.g. "You disliked two loud reaction videos").
   Never attach an entire mixed batch. Do not invent IDs.
 - A rating of 1 with the exact chip "Approved rejection" is a deliberate correction: the family wants the
   AI-rejected video added anyway, so that rejection was too strict or mismatched their taste. Treat it as
@@ -418,7 +420,7 @@ Output ONLY the JSON object."""
 
 
 def learn_messages(profile_name: str, categories: list, lessons: list, items: list[dict], core: str = "",
-                  content_type: str = "video") -> list[dict]:
+                  content_type: str = "video", rejected: str = "") -> list[dict]:
     cats = "\n".join(f"- id {c.id}: {c.name} — {_clip(c.brief, 200)}" for c in categories) or "(none)"
     from ..db import session
     from .knowledge import describe
@@ -443,5 +445,7 @@ def learn_messages(profile_name: str, categories: list, lessons: list, items: li
         system, categories_text = LEARN_SYSTEM, cats
     user = (f"PROFILE: {profile_name}\n\nCATEGORIES:\n{categories_text}\n\n"
             f"NEW FEEDBACK (rating: -1 dislike, 0 note, 1 like, 2 love):\n{fb}")
+    if rejected:
+        user += "\n\n" + rejected
     from .memory import apply
     return apply([{"role": "system", "content": system}, {"role": "user", "content": user}], core, "EXISTING LESSONS:\n" + existing)

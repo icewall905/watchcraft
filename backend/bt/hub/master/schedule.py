@@ -240,6 +240,12 @@ def night_pass(pid: int, claimed: int, day: str) -> dict:
     try:
         with session() as s:
             out['preferences'] = prefs.collect(s, pid)
+        if not judge.video_busy():
+            try:
+                from ...knowledge import weave
+                out['knowledge'] = weave.weave(pid)
+            except Exception:  # noqa: BLE001 — yesterday's knowledge stays in service
+                log.exception('knowledge weave for profile %s failed', pid)
         with session() as s:
             out['rules'] = pipeline.run(s, pid)
         with session() as s:

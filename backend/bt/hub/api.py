@@ -2714,6 +2714,11 @@ def delete_profile_data(s: Session, pid: int) -> None:
     for model in (CaptureJob, CuratorDiscovery, ItemState, Alert, SavedSearch, Briefing, Collection, Topic, PageRevision, SourceCheck, SitemapEntry, WatcherRevision, Source, Curator, ScoutRun, ScoutPlan, ScoutReportIssue, MemeTrendState,
                   ItemVerdict, Edition, HubLesson, HubPreferenceCore, MasterQueue):
         s.exec(delete(model).where(model.profile_id == pid))
+    from ..knowledge.models import KnowledgeChat, ProfileKnowledge, Teaching
+    for model in (Teaching, ProfileKnowledge, KnowledgeChat):
+        s.exec(delete(model).where(model.profile_id == pid))
+    s.exec(delete(Setting).where(Setting.key.like(f'knowledge:mood:{pid}:%')))
+    s.exec(delete(Setting).where(Setting.key == f'knowledge:music:{pid}'))
     from ..music import service as music_service
     music_service.delete_profile(s, pid)
     s.exec(delete(Setting).where(Setting.key.in_([f'watchcraft_master_nightly:{pid}', f'watchcraft_master_catchup:{pid}', f'watchcraft_master_manual:{pid}'])))

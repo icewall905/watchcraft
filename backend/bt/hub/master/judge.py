@@ -119,7 +119,9 @@ def reader(s: Session, pid: int, include_articles: bool = True) -> str:
         parts.append('Often dismisses items about: ' + ', '.join(taste.disliked[:10]))
     base = '\n'.join(parts)[:3000] or 'No stated interests yet: judge general quality.'
     from ..article_preferences import context
-    article_memory = context(s, pid) if include_articles else ''
+    # With woven knowledge the core above already carries the article sections; don't repeat them.
+    article_memory = context(s, pid, include_core=not (core and 'knowledge_version' in (core.sources or {}))) \
+        if include_articles else ''
     return base + ('\n\n' + article_memory if article_memory else '')
 
 

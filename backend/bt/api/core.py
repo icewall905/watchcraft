@@ -946,6 +946,8 @@ def delete_lesson(lid: int, pid: int = Depends(profile_id), s: Session = Depends
     if not lesson or lesson.profile_id != pid:
         _404()
     content_type = lesson.content_type
+    from ..knowledge import teachings
+    teachings.tombstone_deleted(s, pid, "lesson", lesson.id)  # deleting is rejecting: never relearn it
     s.exec(delete(LessonEvidenceState).where(LessonEvidenceState.lesson_id == lid))
     s.exec(delete(LessonRevision).where(LessonRevision.lesson_id == lid, LessonRevision.profile_id == pid))
     s.delete(lesson)
