@@ -146,6 +146,12 @@ def owned(s, pid, bid):
     return board
 
 
+def liked():
+    """Favourites: saved with the heart, or marked "Fits" for the curator. Both belong in the Saved list."""
+    good = select(MoodFeedback.pin_id).where(MoodFeedback.verdict == 'good')
+    return (MoodPin.saved == True) | MoodPin.id.in_(good)
+
+
 def board_json(s, board):
     result = board.model_dump(exclude={'lease', 'build_started', 'revision', 'source_offset'})
     result['pin_count'] = s.exec(select(func.count()).select_from(MoodPin).where(
@@ -161,7 +167,7 @@ def board_json(s, board):
     result['preview_urls'] = [f'/api/hub/boards/{board.id}/pins/{i}/media' for i in recent]
     result['cover_url'] = result['preview_urls'][0] if recent else None
     result['saved_count'] = s.exec(select(func.count()).select_from(MoodPin).where(
-        MoodPin.board_id == board.id, MoodPin.hidden == False, MoodPin.saved == True)).one()
+        MoodPin.board_id == board.id, MoodPin.hidden == False, liked())).one()
     result['last_added'] = s.exec(select(func.max(MoodPin.created_at)).where(
         MoodPin.board_id == board.id, MoodPin.hidden == False)).one()
     return result
@@ -229,7 +235,7 @@ def detail(bid: int, cursor: int | None = None, saved: bool = False, unreviewed:
         if cursor is not None:
             query = query.where(MoodPin.id < cursor)
         if saved:
-            query = query.where(MoodPin.saved == True)
+            query = query.where(liked())
         pins = s.exec(query.order_by(MoodPin.id.desc()).limit(PAGE_SIZE + 1)).all()
         more = len(pins) > PAGE_SIZE
         pins = pins[:PAGE_SIZE]

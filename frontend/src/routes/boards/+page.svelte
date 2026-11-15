@@ -6,6 +6,7 @@
  import Modal from '$lib/components/Modal.svelte';
  import BoardImage from '$lib/hub/BoardImage.svelte';
  import PinViewer from '$lib/hub/PinViewer.svelte';
+ import PinColumns from '$lib/hub/PinColumns.svelte';
  import { boardsApi, type MoodBoard, type BoardPin, type BoardInput, type PinterestImport, type FoundPin, type BoardSearch, type ExtensionKey } from '$lib/hub/boards';
  let boards = $state<MoodBoard[]>([]), selected = $state<number | null>(null), pins = $state<BoardPin[]>([]);
  let loading = $state(false), more = $state(false), error = $state(''), notice = $state(''), savedOnly = $state(false), reviewOnly = $state(false);
@@ -13,7 +14,7 @@
  let cursor = $state<string | null>(null), hasMore = $state(false), editing = $state(false), editId = $state<number | null>(null);
  let name = $state(''), interests = $state(''), instructions = $state(''), enabled = $state(true), interval = $state(12), saving = $state(false);
  let targetImages = $state(100), avoid = $state(''), seeds = $state(''), media = $state<'any' | 'photos' | 'gifs'>('any'), minWidth = $state(0), strictness = $state<'strict' | 'balanced'>('strict');
- let waiting = $state<BoardPin[]>([]);
+ let waiting = $state<BoardPin[]>([]), layout = $state(0); // `layout` re-flows the grid only when the list is replaced
  // After removing the open image from view, keep browsing: show the next one instead of closing.
  function following(p: BoardPin) { const list = found ?? pins; const i = list.findIndex(v => v.id === p.id); return list[i + 1] ?? list[i - 1] ?? null; }
  function showWaiting() { const ids = new Set(pins.map(p => p.id)); pins = [...waiting.filter(w => !ids.has(w.id)), ...pins]; waiting = []; window.scrollTo({top: 0, behavior: 'smooth'}); }
@@ -83,7 +84,7 @@
    } else {
     const seen = new Set(append ? pins.map(p => p.id) : []);
     const fresh = data.pins.filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
-    pins = append ? [...pins, ...fresh] : fresh; cursor = data.next_cursor; hasMore = data.has_more; waiting = [];
+    if (!append) layout++; pins = append ? [...pins, ...fresh] : fresh; cursor = data.next_cursor; hasMore = data.has_more; waiting = [];
    }
   } catch (e) { if (!signal.aborted && token === generation && owner === stamp() && allowed()) error = message(e); }
   finally { if (token === generation && owner === stamp()) { loading = false; more = false; controller = null; } }
@@ -195,7 +196,7 @@
 
  async function pinAction(p: BoardPin, patch: {saved?: boolean; hidden?: boolean; board_id?: number}) {
   if (!allowed() || busy !== null) return; busy = p.id; const owner = stamp();
-  try { const after = following(p); await boardsApi.pin(p.board_id, p.id, patch); if (owner !== stamp() || !allowed()) return; if (patch.hidden || patch.board_id || (savedOnly && patch.saved === false)) pins = pins.filter(v => v.id !== p.id); else pins = pins.map(v => v.id === p.id ? {...v, ...patch} : v); if (found) found = patch.hidden ? found.filter(v => v.id !== p.id) : found.map(v => v.id === p.id ? {...v, ...patch, board_name: patch.board_id ? boards.find(b => b.id === patch.board_id)?.name ?? v.board_name : v.board_name} : v); if (preview?.id === p.id) preview = patch.hidden || patch.board_id ? after : {...preview, ...patch}; moving = null; }
+  try { const after = following(p); await boardsApi.pin(p.board_id, p.id, patch); if (owner !== stamp() || !allowed()) return; if (patch.hidden || patch.board_id) pins = pins.filter(v => v.id !== p.id); else pins = pins.map(v => v.id === p.id ? {...v, ...patch} : v); if (found) found = patch.hidden ? found.filter(v => v.id !== p.id) : found.map(v => v.id === p.id ? {...v, ...patch, board_name: patch.board_id ? boards.find(b => b.id === patch.board_id)?.name ?? v.board_name : v.board_name} : v); if (preview?.id === p.id) preview = patch.hidden || patch.board_id ? after : {...preview, ...patch}; moving = null; }
   catch (e) { if (owner === stamp()) error = message(e); } finally { if (owner === stamp()) busy = null; }
  }
  let extOpen = $state(false), extKeys = $state<ExtensionKey[]>([]), extNew = $state(''), extBrowser = $state<'chrome' | 'firefox'>('chrome'), extBusy = $state(false), extCopied = $state('');
@@ -221,7 +222,7 @@
    const after = following(p);
    const result = await boardsApi.review(p.board_id, p.id, {verdict, note});
    if (owner !== stamp() || !allowed()) return;
-   const gone = verdict === 'bad' || (reviewOnly && verdict !== '');
+   const gone = verdict === 'bad'; // Fits stays where it is (also in To review) so nothing jumps.
    pins = gone ? pins.filter(v => v.id !== p.id) : pins.map(v => v.id === p.id ? result.pin : v);
    if (found) found = verdict === 'bad' ? found.filter(v => v.id !== p.id) : found.map(v => v.id === p.id ? {...v, ...result.pin} : v);
    boards = boards.map(b => b.id === result.board.id ? result.board : b);
@@ -288,8 +289,8 @@
     {#if searchInfo.pins_total > searchInfo.indexed}<span class="muted">Still learning your images: {searchInfo.indexed} of {searchInfo.pins_total} searchable so far.</span>{/if}
    </div>
    {#if found.length}
-    <div class="masonry">
-     {#each found as pin (pin.id)}
+    <PinColumns items={found} resetKey={query}>
+     {#snippet item(pin)}
       <article class="pin">
        <div class="frame">
         <button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} width={pin.width} height={pin.height} /></button>
@@ -298,8 +299,8 @@
        </div>
        <div class="caption"><button class="pin-title" onclick={() => { preview = pin; }}>{pin.title}</button><button class="pin-meta board-link" onclick={() => { clearSearch(); choose(pin.board_id); }}>on {pin.board_name}</button></div>
       </article>
-     {/each}
-    </div>
+     {/snippet}
+    </PinColumns>
    {:else}<div class="empty"><h2>Nothing found yet</h2><p>{searchInfo.indexed ? 'Try describing the picture differently, for example its colours, pattern or object.' : 'Your images are still being prepared for search. Try again in a few minutes.'}</p></div>{/if}
   </section>
  {:else if searchInfo && !searchInfo.available}
@@ -349,7 +350,7 @@
      <span class="spacer"></span>
      <div class="segmented" role="group" aria-label="Show">
       <button class:on={!savedOnly && !reviewOnly} aria-pressed={!savedOnly && !reviewOnly} onclick={() => { if (savedOnly || reviewOnly) { savedOnly = false; reviewOnly = false; void load(); } }}>All</button>
-      <button class:on={savedOnly} aria-pressed={savedOnly} onclick={() => { if (!savedOnly) { savedOnly = true; reviewOnly = false; void load(); } }}>{@render icon('heart')}Saved{savedOnly ? ' only' : ''}</button>
+      <button class:on={savedOnly} aria-pressed={savedOnly} title="Saved and marked Fits" onclick={() => { if (!savedOnly) { savedOnly = true; reviewOnly = false; void load(); } }}>{@render icon('heart')}Saved{savedOnly ? ' only' : ''}</button>
       <button class:on={reviewOnly} aria-pressed={reviewOnly} onclick={() => { if (!reviewOnly) { reviewOnly = true; savedOnly = false; void load(); } }}>{@render icon('check')}To review</button>
      </div>
      <button class="btn pill icon-only" aria-label={`Edit ${board.name} curator`} title="Edit curator" onclick={() => edit(board)}>{@render icon('gear')}</button>
@@ -382,11 +383,11 @@
 
  {#if loading}<div class="masonry skeleton" role="status" aria-label="Gathering your images…">{#each [14, 20, 11, 17, 22, 13, 18, 12] as h}<div class="ghost" style:height="{h}rem"></div>{/each}</div>
  {:else if !boards.length}<div class="empty"><div class="empty-art" aria-hidden="true"><span></span><span></span><span></span></div><h2>What inspires you?</h2><p>Give a hobby, interest or idea its own board. Its curator will find images and GIFs for you to collect.</p><button class="btn primary" onclick={() => edit()}>Create your first board</button></div>
- {:else if !pins.length}<div class="empty"><div class="empty-art" aria-hidden="true"><span></span><span></span><span></span></div><h2>{reviewOnly ? 'All caught up' : savedOnly ? 'Your favourites belong here' : 'Make room for inspiration'}</h2>{#if reviewOnly}<p>Every image on this board has been reviewed. New finds will show up here.</p>{:else}<p>{savedOnly ? 'Save an image from this board to find it here later.' : curatorActive ? 'Your curator is working. Matching images will appear automatically.' : board?.last_status === 'no_matches' ? 'No matching images were found. You can refine your curator’s instructions or try another search when it is ready.' : board?.last_status === 'error' ? 'Your curator could not finish. See its activity above for the reason.' : 'Your board is ready. Ask its curator to find images, add your own, then save the ones you love.'}</p>{#if !savedOnly}<button class="btn primary" disabled={findDisabled} onclick={refresh}>{findLabel}</button>{/if}{/if}</div>
+ {:else if !pins.length}<div class="empty"><div class="empty-art" aria-hidden="true"><span></span><span></span><span></span></div><h2>{reviewOnly ? 'All caught up' : savedOnly ? 'Your favourites belong here' : 'Make room for inspiration'}</h2>{#if reviewOnly}<p>Every image on this board has been reviewed. New finds will show up here.</p>{:else}<p>{savedOnly ? 'Save an image or mark it Fits to find it here later.' : curatorActive ? 'Your curator is working. Matching images will appear automatically.' : board?.last_status === 'no_matches' ? 'No matching images were found. You can refine your curator’s instructions or try another search when it is ready.' : board?.last_status === 'error' ? 'Your curator could not finish. See its activity above for the reason.' : 'Your board is ready. Ask its curator to find images, add your own, then save the ones you love.'}</p>{#if !savedOnly}<button class="btn primary" disabled={findDisabled} onclick={refresh}>{findLabel}</button>{/if}{/if}</div>
  {:else}
   {#if waiting.length}<button class="new-pill" onclick={showWaiting}>↑ {waiting.length} new image{waiting.length === 1 ? '' : 's'}</button>{/if}
-  <div class="masonry">
-   {#each pins as pin (pin.id)}
+  <PinColumns items={pins} resetKey={`${selected}|${layout}`}>
+   {#snippet item(pin)}
     <article class="pin">
      <div class="frame">
       <button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} width={pin.width} height={pin.height} /></button>
@@ -399,8 +400,8 @@
        <button class="rv bad" disabled={busy === pin.id} onclick={() => { reviewing = pin; reviewNote = ''; }}>{@render icon('x')}Not a fit</button>
       </div></div>
     </article>
-   {/each}
-  </div>
+   {/snippet}
+  </PinColumns>
   {#if hasMore}<div class="load-more" bind:this={sentinel}><button class="btn pill" disabled={more} onclick={() => load(true)}>{more ? 'Loading…' : 'More inspiration'}</button></div>{/if}
  {/if}
  {/if}
@@ -646,7 +647,7 @@
  .retry{font-size:.8rem}
 
  .masonry{columns:5 15rem;column-gap:1rem}
- .pin{break-inside:avoid;margin:0 0 1.2rem;animation:rise .45s var(--ease) both}
+ .pin{margin:0 0 1.2rem;animation:rise .45s var(--ease) both}
  @keyframes rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
  @media(prefers-reduced-motion:reduce){.pin{animation:none}}
  .frame{position:relative;border-radius:var(--r-lg);overflow:hidden;background:var(--surface);isolation:isolate}

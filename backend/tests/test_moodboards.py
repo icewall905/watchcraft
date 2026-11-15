@@ -629,3 +629,15 @@ def test_board_list_has_preview_collage_and_counts(client):
     row = client.get('/api/hub/boards').json()['boards'][0]
     assert len(row['preview_urls']) == 4 and row['preview_urls'][0].endswith(f"/pins/{pins[-1]['id']}/media")
     assert row['cover_url'] == row['preview_urls'][0] and row['saved_count'] == 1 and row['last_added']
+
+
+def test_saved_list_keeps_pins_marked_fits(client):
+    b = make(client)
+    seed(b['id'], 3)
+    pins = client.get(f"/api/hub/boards/{b['id']}").json()['pins']
+    client.patch(f"/api/hub/boards/{b['id']}/pins/{pins[0]['id']}", json={'saved': True})
+    client.put(f"/api/hub/boards/{b['id']}/pins/{pins[1]['id']}/feedback", json={'verdict': 'good'})
+    client.put(f"/api/hub/boards/{b['id']}/pins/{pins[2]['id']}/feedback", json={'verdict': 'bad'})
+    liked = client.get(f"/api/hub/boards/{b['id']}?saved=true").json()
+    assert {p['id'] for p in liked['pins']} == {pins[0]['id'], pins[1]['id']}
+    assert liked['board']['saved_count'] == 2

@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { freshPage } from './helpers';
 const board=(id:number,name:string)=>({id,name,interests:'Japanese gardens, bonsai',instructions:'',enabled:true,interval_hours:12,target_images:100,reference_url:null as string|null,reference_name:'',pin_count:3,last_status:'ok',error:'',retry_after:0,last_result:''});
 const pin=(id:number,title:string,bid=1,gif=false)=>({id,board_id:bid,title,image_url:`/api/hub/boards/${bid}/pins/${id}/media`,source_url:`https://commons.wikimedia.org/wiki/File:Garden${id}.jpg`,media_type:gif?'gif':'image',attribution:'Garden photographer',license:'CC BY-SA 4.0',saved:false});
-async function setup(page:Page,empty=false,tweak?:(rows:any[])=>void){
+async function setup(page:Page,empty=false,tweak?:(rows:any[])=>void,pageSize=0){
  let boards=empty?[]:[board(1,'Garden inspiration'),board(2,'Pottery ideas')];
  let pins=[pin(3,'Quiet courtyard'),pin(2,'Bonsai detail',1,true),pin(1,'Stone garden path')];
  tweak?.(pins);
@@ -24,7 +24,9 @@ async function setup(page:Page,empty=false,tweak?:(rows:any[])=>void){
   if(path.includes('/pins/')){const pid=Number(path.split('/').at(-1)),row=pins.find(p=>p.id===pid)!;Object.assign(row,body);row.image_url=`/api/hub/boards/${row.board_id}/pins/${row.id}/media`;if(body.hidden)pins=pins.filter(p=>p.id!==pid);return route.fulfill({json:{pin:row}});}
   if(method==='PATCH'){const b=boards.find(b=>b.id===id)!;Object.assign(b,body);return route.fulfill({json:{board:b}});}
   if(method==='DELETE'){boards=boards.filter(b=>b.id!==id);return route.fulfill({json:{ok:true}});}
-  let rows=pins.filter(p=>p.board_id===id);if(url.searchParams.get('saved')==='true')rows=rows.filter(p=>p.saved);if(url.searchParams.get('unreviewed')==='true')rows=rows.filter((p:any)=>!p.feedback);
+  let rows=pins.filter(p=>p.board_id===id);if(url.searchParams.get('saved')==='true')rows=rows.filter((p:any)=>p.saved||p.feedback==='good');if(url.searchParams.get('unreviewed')==='true')rows=rows.filter((p:any)=>!p.feedback);
+  const cur=url.searchParams.get('cursor');if(cur)rows=rows.filter(p=>p.id<Number(cur));
+  if(pageSize&&rows.length>pageSize){rows=rows.slice(0,pageSize);return route.fulfill({json:{board:boards.find(b=>b.id===id),pins:rows,next_cursor:String(rows.at(-1)!.id),has_more:true}});}
   return route.fulfill({json:{board:boards.find(b=>b.id===id),pins:rows,next_cursor:null,has_more:false}});
  });return writes;
 }
@@ -208,6 +210,31 @@ test('review pins: confirm fits and teach the curator what does not fit',async({
  await page.getByRole('button',{name:'To review'}).click();
  await expect(page.getByRole('button',{name:'View Bonsai detail'})).toBeVisible();
  await expect(page.getByRole('button',{name:'View Quiet courtyard'})).toHaveCount(0);
+ // Marking Fits while reviewing keeps the image where it is.
+ const bonsai=page.getByRole('group',{name:'Review Bonsai detail'}).getByRole('button',{name:'Fits'});
+ await bonsai.click();await expect(bonsai).toHaveAttribute('aria-pressed','true');
+ await expect(page.getByRole('button',{name:'View Bonsai detail'})).toBeVisible();
+ // Saved lists hearted images and every image marked Fits.
+ await page.getByRole('button',{name:/^Saved/}).click();
+ await expect(page.getByRole('button',{name:'View Quiet courtyard'})).toBeVisible();
+ await expect(page.getByRole('button',{name:'View Bonsai detail'})).toBeVisible();
+});
+
+test('the grid never reshuffles: loading more, hiding and reviewing keep every image in place',async({page})=>{
+ await setup(page,false,rows=>{rows.splice(0,rows.length,...Array.from({length:24},(_,i)=>({...pin(24-i,`Tile ${24-i}`),width:300,height:[200,520,330,410,260,600][i%6]})));},12);
+ await page.setViewportSize({width:1280,height:900});await freshPage(page,'/boards?board=1');
+ await expect(page.getByRole('button',{name:'View Tile 13',exact:true})).toBeVisible();
+ const spots=async()=>page.evaluate(()=>Object.fromEntries([...document.querySelectorAll('article.pin')].map(a=>{const r=a.getBoundingClientRect();return[a.querySelector('.pin-title')!.textContent,Math.round(r.left)];})));
+ const before=await spots();expect(new Set(Object.values(before)).size).toBeGreaterThan(2);
+ await page.getByRole('button',{name:'More inspiration'}).click();
+ await expect(page.getByRole('button',{name:'View Tile 1',exact:true})).toBeAttached();
+ const after=await spots();for(const [title,x] of Object.entries(before))expect(after[title],title).toBe(x);
+ await page.getByRole('group',{name:'Review Tile 20'}).getByRole('button',{name:'Fits'}).click();
+ await page.getByRole('group',{name:'Review Tile 22'}).getByRole('button',{name:'Not a fit'}).click();
+ await page.getByRole('button',{name:'Remove and teach curator'}).click();
+ await expect(page.getByRole('button',{name:'View Tile 22',exact:true})).toHaveCount(0);
+ const later=await spots();for(const [title,x] of Object.entries(later))expect(x,title).toBe(after[title]);
+ expect(Object.keys(later)).toHaveLength(23);
 });
 
 test('image viewer: why it was picked, zoom, keyboard browsing, download',async({page})=>{
