@@ -115,6 +115,14 @@ class NavEngine {
 	private physicallyTyped = new WeakSet<HTMLElement>();
 	private lastMove = 0;
 	private installed = false;
+	/**
+	 * Remote-control behaviour (TV mode): arrows move focus between controls, Enter/Space activate them and
+	 * Backspace means Back (closing dialogs). In desktop mode the keyboard behaves like a normal web page:
+	 * arrows scroll, Backspace only edits text, Escape still closes the top dialog, and component key
+	 * handlers (player, image viewer) keep working.
+	 */
+	remote = true;
+	setRemote(on: boolean) { this.remote = on; }
 
 	/** Called when back is pressed and no scope handles it (router back). */
 	backFallback: () => void = () => history.back();
@@ -130,7 +138,7 @@ class NavEngine {
 		window.addEventListener(
 			'keyup',
 			(e) => {
-				if ((e.key === ' ' || e.key === 'Enter') && !isTextInput(document.activeElement)) e.preventDefault();
+				if (this.remote && (e.key === ' ' || e.key === 'Enter') && !isTextInput(document.activeElement)) e.preventDefault();
 			},
 			true
 		);
@@ -550,6 +558,7 @@ class NavEngine {
 		const typing = isTextInput(active);
 		if (typing && active && e.key.length === 1 && e.key !== ' ') this.physicallyTyped.add(active);
 		if (!key) return;
+		if (!this.remote && (e.key === 'Backspace' || (key !== 'back' && key !== 'playpause' && typing))) return;
 		document.documentElement.dataset.modality = 'keys';
 		this.lastKeyAt = Date.now();
 
@@ -566,6 +575,7 @@ class NavEngine {
 		for (let i = this.handlers.length - 1; i >= 0; i--) {
 			if (this.handlers[i](key, e)) return consume();
 		}
+		if (!this.remote && key !== 'back') return; // native page behaviour for arrows, Enter and Space
 		switch (key) {
 			case 'up':
 			case 'down':

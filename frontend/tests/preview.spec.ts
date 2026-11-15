@@ -1,8 +1,10 @@
 import { test, expect } from '@playwright/test';
+import { remoteKeys } from './helpers';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import sharp from 'sharp';
+test.beforeEach(async ({ page }) => { await remoteKeys(page); }); // remote-key navigation is TV/opt-in only
 
 // The PWA thumbnail cache otherwise bypasses page.route after a reload.
 // These tests supply deterministic thumbnail bytes; offline.spec covers the worker.

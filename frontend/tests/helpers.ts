@@ -42,3 +42,8 @@ export async function freshPage(page: Page, url = '/') {
 	}, profiles[0].id);
 	await page.reload();
 }
+
+/** Opt a spec into TV-remote keys (arrows move focus, Backspace = Back), which are off in desktop mode by default. */
+export async function remoteKeys(page: Page) {
+	await page.addInitScript(() => { try { localStorage.setItem('wc.remoteKeys', 'on'); } catch { /* opaque origin */ } });
+}

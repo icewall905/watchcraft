@@ -37,6 +37,8 @@
 	let navigationStartIndex = baseIndex;
 
 	nav.install();
+	// Remote-style keys (arrows move focus, Backspace = Back) only in TV mode unless changed under Appearance.
+	$effect(() => nav.setRemote(deviceMode.remote));
 	nav.backFallback = () => {
 		if (page.url.pathname === '/') return;
 		if (page.url.pathname.startsWith('/watch/')) {

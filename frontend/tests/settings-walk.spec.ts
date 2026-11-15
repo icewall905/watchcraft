@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { freshPage, resetBackend } from './helpers';
+import { freshPage, resetBackend, remoteKeys } from './helpers';
+test.beforeEach(async ({ page }) => { await remoteKeys(page); }); // remote-key navigation is TV/opt-in only
 
 // Every control on every Settings tab must be reachable with the arrow keys alone.
 const TABS = ['categories', 'feeds', 'curator', 'memory', 'ai', 'search', 'notify', 'player', 'appearance', 'storage', 'sponsorblock', 'extras', 'cookies', 'profiles', 'screens', 'keys'];

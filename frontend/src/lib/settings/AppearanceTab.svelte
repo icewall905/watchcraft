@@ -53,6 +53,19 @@
 </Section>
 </div>
 
+<div class="device-section">
+<Section title="Remote-control keys" intro="Arrow keys move between buttons, Enter selects and Backspace goes back or closes dialogs, like a TV remote. Saved in this browser only.">
+	<div class="themes" aria-label="Remote-control keys">
+		{#each [{ id: 'auto' as const, name: 'Automatic', description: 'On in TV mode, off in desktop mode.' }, { id: 'on' as const, name: 'Always on', description: 'Use the remote-style keys in desktop mode too.' }, { id: 'off' as const, name: 'Always off', description: 'Normal keyboard: arrows scroll, Backspace only edits text, Escape closes dialogs.' }] as option}
+			<button class="theme-card" class:selected={deviceMode.remoteKeys === option.id} aria-pressed={deviceMode.remoteKeys === option.id}
+				use:focusable={{ group: 'remote-keys', id: `remote-${option.id}`, onSelect: () => deviceMode.setRemoteKeys(option.id) }}>
+				<span class="details"><span class="name">{option.name}</span><span class="small muted">{option.description}</span></span>
+			</button>
+		{/each}
+	</div>
+</Section>
+</div>
+
 {#if session.hubAllowed}
 <div class="device-section">
 <Section title="Home activity shelf" intro="Show research activity and recent discoveries on this profile's home page.">

@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { freshPage } from './helpers';
+import { freshPage, remoteKeys } from './helpers';
+test.beforeEach(async ({ page }) => { await remoteKeys(page); }); // remote-key navigation is TV/opt-in only
 
 test('opening the player directly handles an absent previous URL', async ({ page }) => {
 	const errors: string[] = [];

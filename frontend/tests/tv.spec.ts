@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { resetBackend } from './helpers';
+import { resetBackend, remoteKeys } from './helpers';
+test.beforeEach(async ({ page }) => { await remoteKeys(page); }); // remote-key navigation is TV/opt-in only
 
 // TV mode is the default home experience: a deliberately small drawer, remote-first focus,
 // and no desktop chrome. These checks run at projector size with the same autoplay policy
