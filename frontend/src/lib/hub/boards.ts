@@ -14,7 +14,7 @@ export interface BoardPin {
  width?: number; height?: number; vision_seen?: string; vision_why?: string;
 }
 export type BoardInput = Pick<MoodBoard, 'name' | 'interests' | 'instructions' | 'enabled' | 'interval_hours'> & {target_images: number; avoid: string; seed_searches: string; media: 'any' | 'photos' | 'gifs'; min_width: number; strictness: 'strict' | 'balanced'};
-export type BoardImageInput = {url?: string; data_base64?: string; title?: string};
+export type BoardImageInput = {url?: string; data_base64?: string; title?: string; source_url?: string};
 export interface BoardPage { board: MoodBoard; pins: BoardPin[]; next_cursor: string | null; has_more: boolean }
 export interface PinterestImport { id: number; board_id: number; status: string; imported: number; skipped: number; total: number; error: string }
 export interface FoundPin extends BoardPin { board_name: string; similarity: number }
@@ -31,7 +31,7 @@ export const boardsApi = {
  update: (id: number, body: BoardInput) => request<{board: MoodBoard}>(`${base}/${id}`, {method: 'PATCH', body, toast: false}),
  reshuffle: (id: number) => request<{replaced: number; kept: number; board: MoodBoard}>(`${base}/${id}/reshuffle`, {method: 'POST', body: {}, toast: false}),
  refresh: (id: number) => request<{status: 'queued' | 'collecting' | 'cooldown'; queued: boolean; retry_after: number; last_result: string; board: MoodBoard}>(`${base}/${id}/refresh`, {method: 'POST', body: {}, toast: false}),
- addImage: (id: number, body: BoardImageInput) => request<{pin: BoardPin}>(`${base}/${id}/images`, {method: 'POST', body, toast: false}),
+ addImage: (id: number, body: BoardImageInput) => request<{pin: BoardPin; existing?: boolean}>(`${base}/${id}/images`, {method: 'POST', body, toast: false}),
  setReference: (id: number, body: BoardImageInput) => request<{board: MoodBoard}>(`${base}/${id}/reference`, {method: 'POST', body, toast: false}),
  removeReference: (id: number) => request<{board: MoodBoard}>(`${base}/${id}/reference`, {method: 'DELETE', toast: false}),
  pin: (id: number, pin: number, body: {saved?: boolean; hidden?: boolean; board_id?: number}) => request<{pin: BoardPin}>(`${base}/${id}/pins/${pin}`, {method: 'PATCH', body, toast: false}),

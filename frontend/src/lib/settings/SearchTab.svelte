@@ -38,7 +38,7 @@
 	<TextField label="Flickr API key" type="password" hint="Optional. Flickr is used only with a key. Shown as ******** once saved." bind:value={mb.value.flickr_api_key} />
 	<TextField label="Tumblr API key" type="password" hint="Optional. Tumblr is used only with a key. Shown as ******** once saved." bind:value={mb.value.tumblr_api_key} />
 	<Stepper label="Time limit per source" hint="A slow source is skipped for that run." min={5} max={60} step={5} format={(v) => `${v} s`} bind:value={mb.value.source_timeout_s} />
-	<p class="muted small">Instagram, TikTok, Facebook, X and Pinterest search offer no public access, so they are not searched. Public Pinterest boards can still be imported on a board.</p>
+	<p class="muted small">Instagram, TikTok, Facebook and X offer no public access, so they are not searched. Pinterest does not allow automated search (its robots.txt blocks bots), so curators do not search it. On a board, use <strong>Search Pinterest</strong> to open Pinterest in your browser and paste the images you like, or import a public Pinterest board. Everything you add is stored on this server.</p>
 	<SaveBar stack={1} label="Save image sources" dirty={mb.dirty} busy={mb.busy} onsave={() => mb.save('Mood Board sources saved')} onreset={() => mb.reset()} />
 </Section>
 {/if}

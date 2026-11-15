@@ -4,8 +4,10 @@ Web search is configured SearXNG with Wikimedia Commons fallback. Social sources
 Bluesky, Mastodon; Flickr/Tumblr with an API key) use public read APIs only and run in
 parallel with a per-source deadline. Results are interleaved and deduplicated; each keeps its
 original post link, provider attribution and rights text. Captured raster pixels are judged by
-the board curator. Instagram, TikTok, Facebook, X and Pinterest search have no public API and
-are deliberately not scraped.
+the board curator. Instagram, TikTok, Facebook and X have no public API and are not scraped.
+Pinterest search is not scraped either: its robots.txt disallows every non-allowlisted bot. Boards
+instead link out to Pinterest's own search in the user's browser and accept pasted pin/image links
+(``moodboards.add_image_for``); public board RSS import lives in ``moodboard_imports``.
 """
 import html
 import json
