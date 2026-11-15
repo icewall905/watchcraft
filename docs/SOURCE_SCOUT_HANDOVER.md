@@ -8,6 +8,17 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — stable Mood Board grid, Saved includes Fits, Remove (`d675d27`, 2026-11-15)
+
+- Range `f16d882..d675d27`: fixed-placement columns (`PinColumns.svelte`) instead of CSS `columns`, so loading
+  more, background finds, hiding and reviewing never move images; Saved filter/count = saved or marked Fits;
+  Fits keeps the image in place; grid/viewer Remove hides an image without curator feedback. Code only.
+- Backup `/root/compose/watchcraft-backups/20261115-stablegrid-d675d27` (online DB quick_check ok, config hashes,
+  previous source of 3 files, `new-files.txt` for 1); rollback images `watchcraft:rollback-20261115-stablegrid-*`,
+  `rollback.sh`. rsync of the 4 changed app files.
+- All four services run `sha256:f2bf75249b8c11fc3fa837296104fcd5014c37e466012464b68960554fb0f32e`, zero restarts, no
+  tracebacks; health and `/boards` 200; new bundle served. Board 2's Saved list now holds 7 saved + 13 Fits.
+
 ## Deployment record — browser extension "New board…" (`f121768`, 2026-11-15)
 
 - `POST /api/ext/v1/boards` (key auth; same name reuses the board) and extension 1.1.0 with a New board… popup.
