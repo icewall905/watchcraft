@@ -821,7 +821,8 @@ def _slow_llm_server(seconds=8):
     return srv, log
 
 
-def test_llm_abort_cancels_request_and_holds_lock_until_helper_exits():
+def test_llm_abort_cancels_request_and_holds_lock_until_helper_exits(monkeypatch):
+    monkeypatch.setattr(llm, "_lock_for", lambda base: llm._lock)  # test servers stand in for the judge
     import threading
     import time as _t
     srv, log = _slow_llm_server(8)
@@ -858,7 +859,8 @@ def test_llm_abort_cancels_request_and_holds_lock_until_helper_exits():
         srv.shutdown()
 
 
-def test_llm_lock_waits_for_previous_request():
+def test_llm_lock_waits_for_previous_request(monkeypatch):
+    monkeypatch.setattr(llm, "_lock_for", lambda base: llm._lock)  # test servers stand in for the judge
     import threading
     import time as _t
     llm._lock.acquire()

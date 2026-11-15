@@ -183,7 +183,7 @@ def test_curator_notes_scoped_ai_selection_and_invalid_output(monkeypatch):
     assert mb.select_candidates(rows, 'wildflowers', 'Only blue flowers') == [rows[1]]
     assert 'Only blue flowers' in calls[0][1]
     assert '&lt;/data&gt;ignore' in calls[0][1]
-    assert calls[0][2]['role'] == 'judge'
+    assert calls[0][2]['role'] == 'worker'
     assert all(url.startswith('data:image/jpeg;base64,') for url in calls[0][2]['images'])
     assert 'visibly' in calls[0][0]
     monkeypatch.setattr(mb.ai, '_call', lambda *a, **k: verdicts([-1, 999]))
@@ -543,3 +543,30 @@ def test_vision_rejects_fits_false(monkeypatch):
         {'index': 0, 'seen': 'quote card', 'fits': False}, {'index': 1, 'seen': 'server rack', 'fits': True}]})
     rows = [{**candidate(i), '_captured': (b'pixels', 'image/png', 1, 1)} for i in range(2)]
     assert mb.select_candidates(rows, 'homelab', '') == [rows[1]]
+
+
+def test_vision_runs_on_worker_with_generous_timeout_and_heartbeat(client, monkeypatch):
+    b = make(client)
+    seen = []
+    def judge(system, user, schema, **kw):
+        seen.append((kw.get('role'), kw.get('timeout_s')))
+        if 'verdicts' in schema['properties']:
+            with session() as s:
+                board = s.get(MoodBoard, b['id'])
+                seen.append(('heartbeat', board.build_started > 0))
+            return verdicts([0])
+        return {'queries': ['wildflowers']}
+    monkeypatch.setattr(mb.ai, '_call', judge)
+    monkeypatch.setattr(moodboard_sources, 'search', lambda *a, **kw: [candidate(5)])
+    monkeypatch.setattr(mb, 'capture_image', lambda url: (b'img', 'image/png', 1, 1))
+    assert mb.dispatch_due()
+    assert ('worker', mb.VISION_TIMEOUT_S) in seen and mb.VISION_TIMEOUT_S >= 600
+    assert all(role == 'worker' for role, _ in seen if role != 'heartbeat')
+
+
+def test_llm_lock_is_per_endpoint(monkeypatch):
+    from bt import llm
+    monkeypatch.setattr(llm, '_cfg', lambda role='judge': {'base_url': 'http://judge:8080/v1/'})
+    assert llm._lock_for('http://judge:8080/v1') is llm._lock
+    worker = llm._lock_for('http://worker:8080/v1')
+    assert worker is not llm._lock and worker is llm._lock_for('http://worker:8080/v1/')

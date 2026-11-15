@@ -61,7 +61,7 @@ class VisionCallFailed(NotesUnavailable):
     """Vision is configured, but the model did not return a usable verdict (busy, timeout, bad output)."""
 
 
-VISION_TIMEOUT_S = 180  # Five 1024px images on a shared single-slot server can queue well past 90 s.
+VISION_TIMEOUT_S = 900  # Background work on the worker model: wait as long as it takes, within reason.
 
 
 class BoardCreate(BaseModel):
@@ -536,7 +536,7 @@ def select_candidates(candidates, interests, instructions, progress=None, refere
                 'All fits=false is correct when none qualify.' + reference_note,
                 'Interests: ' + ai._esc(interests) + '\nCurator instructions: ' + ai._esc(instructions) +
                 '\n<data>' + ai._esc(json.dumps(rows)) + '</data>', schema,
-                max_tokens=1200, images=images, role='judge', timeout_s=VISION_TIMEOUT_S)
+                max_tokens=1200, images=images, role='worker', timeout_s=VISION_TIMEOUT_S)
             verdicts = result.get('verdicts')
             if not isinstance(verdicts, list) or any(
                     not isinstance(v, dict) or type(v.get('index')) is not int or not 0 <= v['index'] < len(batch)
@@ -567,7 +567,7 @@ def discovery_queries(interest, instructions, reference_data=None):
                        'Include specific requested patterns or objects, but never paste full instructions '
                        'or combine every interest into one over-constrained query. Return search phrases only.',
                        '<data>Interest: ' + ai._esc(interest) + '\nInstructions: ' + ai._esc(instructions) + '</data>',
-                       schema, max_tokens=250, role='worker', **extra)
+                       schema, max_tokens=250, role='worker', timeout_s=VISION_TIMEOUT_S, **extra)
         phrases = out.get('queries')
         if isinstance(phrases, list):
             phrases = list(dict.fromkeys(v.strip()[:150] for v in phrases[:3] if isinstance(v, str) and v.strip()))
@@ -577,6 +577,12 @@ def discovery_queries(interest, instructions, reference_data=None):
         pass
     # If planning fails, keep a concrete primary topic rather than broad modifiers.
     return [re.split(r'[,;\n]+', interest.split(' — ', 1)[-1])[0].strip()[:150]]
+
+
+def heartbeat(bid, lease):
+    with session() as s:
+        s.exec(update(MoodBoard).where(MoodBoard.id == bid, MoodBoard.lease == lease).values(build_started=time.time()))
+        s.commit()
 
 
 def collect(bid, lease, revision):
@@ -634,6 +640,7 @@ def collect(bid, lease, revision):
             except Exception:
                 failures += 1
         def progress(start, end):
+            heartbeat(bid, lease)  # Slow worker batches must not look like a dead run (30 min stale lease).
             milestone('judge', f'Vision reviewing images {start + 1}–{end} of {len(captured)} against your instructions.',
                       reviewed=start, candidates=len(captured))
         selected = (select_candidates(captured, context, instructions, progress, reference_data=reference_data)

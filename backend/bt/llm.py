@@ -18,7 +18,20 @@ import httpx
 
 log = logging.getLogger("bt.llm")
 
-_lock = threading.Lock()  # concurrency 1 (shared GPU)
+_lock = threading.Lock()  # concurrency 1 per server (single-slot GPU); this one guards the judge's endpoint
+_endpoint_locks: dict[str, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _lock_for(base_url: str) -> threading.Lock:
+    """One lock per inference server: a worker or vision model on its own GPU must not queue behind the judge.
+
+    A worker without its own endpoint shares the judge's URL and therefore its lock."""
+    base = (base_url or "").strip().rstrip("/")
+    if base == (_cfg().get("base_url") or "").strip().rstrip("/"):
+        return _lock
+    with _locks_guard:
+        return _endpoint_locks.setdefault(base, threading.Lock())
 _schema_unsupported: set[str] = set()  # base_urls that rejected response_format=json_schema
 
 
@@ -169,9 +182,10 @@ class LlmTruncated(LlmError):
     """Completion hit max_tokens before producing usable content (e.g. a thinking model ran out)."""
 
 
-def _acquire(abort: Callable[[], None] | None) -> None:
+def _acquire(abort: Callable[[], None] | None, lock: threading.Lock | None = None) -> None:
     """Take the GPU-concurrency lock; abortable while waiting."""
-    while not _lock.acquire(timeout=0.5):
+    lock = lock or _lock
+    while not lock.acquire(timeout=0.5):
         if abort:
             abort()
 
@@ -189,17 +203,18 @@ def _post(cfg: dict, body: dict, abort: Callable[[], None] | None = None) -> htt
     # Only video-curator calls carry this context; do not label unrelated Hub
     # or interactive inference as a video-curation measurement.
     from .agent import timing
+    lock = _lock_for(cfg["base_url"])
     if timing.current_trace():
         with timing.span("model_wait"):
-            _acquire(abort)
+            _acquire(abort, lock)
     else:
-        _acquire(abort)
+        _acquire(abort, lock)
     if abort is None:
         try:
             with httpx.Client(timeout=timeout) as c:
                 return c.post(url, json=body, headers=headers)
         finally:
-            _lock.release()
+            lock.release()
 
     box: dict = {}
     ready = threading.Event()
@@ -222,13 +237,13 @@ def _post(cfg: dict, body: dict, abort: Callable[[], None] | None = None) -> htt
             try:
                 loop.close()
             finally:
-                _lock.release()
+                lock.release()
 
     th = threading.Thread(target=run, daemon=True, name="llm-request")
     try:
         th.start()
     except BaseException:
-        _lock.release()
+        lock.release()
         raise
     ready.wait()
     try:
