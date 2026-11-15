@@ -4,18 +4,22 @@ export interface MoodBoard {
  id: number; name: string; interests: string; instructions: string; enabled: boolean; interval_hours: number;
  pin_count: number; target_images: number; reference_url: string | null; reference_name: string; last_run?: number | null; last_status?: string; error?: string;
  retry_after?: number; last_result?: string; cover_url?: string | null;
+ preview_urls?: string[]; saved_count?: number; last_added?: number | null; created_at?: number;
+ avoid?: string; seed_searches?: string; media?: 'any' | 'photos' | 'gifs'; min_width?: number; strictness?: 'strict' | 'balanced';
 }
 export interface BoardPin {
  id: number; board_id: number; title: string; image_url: string; source_url: string;
  media_type: string; attribution?: string; license?: string; saved: boolean;
  feedback?: '' | 'good' | 'bad'; feedback_note?: string;
+ width?: number; height?: number; vision_seen?: string; vision_why?: string;
 }
-export type BoardInput = Pick<MoodBoard, 'name' | 'interests' | 'instructions' | 'enabled' | 'interval_hours'> & {target_images: number};
+export type BoardInput = Pick<MoodBoard, 'name' | 'interests' | 'instructions' | 'enabled' | 'interval_hours'> & {target_images: number; avoid: string; seed_searches: string; media: 'any' | 'photos' | 'gifs'; min_width: number; strictness: 'strict' | 'balanced'};
 export type BoardImageInput = {url?: string; data_base64?: string; title?: string};
 export interface BoardPage { board: MoodBoard; pins: BoardPin[]; next_cursor: string | null; has_more: boolean }
 export interface PinterestImport { id: number; board_id: number; status: string; imported: number; skipped: number; total: number; error: string }
 export interface FoundPin extends BoardPin { board_name: string; similarity: number }
 export interface BoardSearch { available: boolean; reason: string; indexed: number; pins_total: number; pins: FoundPin[] }
+export interface ExtensionKey { id: number; name: string; hint: string; created_at: number; last_used: number | null }
 const base = '/hub/boards';
 export const boardsApi = {
  pinterest: (id: number, url: string) => request<{import: PinterestImport}>(`${base}/${id}/pinterest`, {method: 'POST', body: {url}, toast: false}),
@@ -31,5 +35,8 @@ export const boardsApi = {
  removeReference: (id: number) => request<{board: MoodBoard}>(`${base}/${id}/reference`, {method: 'DELETE', toast: false}),
  pin: (id: number, pin: number, body: {saved?: boolean; hidden?: boolean; board_id?: number}) => request<{pin: BoardPin}>(`${base}/${id}/pins/${pin}`, {method: 'PATCH', body, toast: false}),
  review: (id: number, pin: number, body: {verdict: '' | 'good' | 'bad'; note?: string}) => request<{pin: BoardPin; board: MoodBoard}>(`${base}/${id}/pins/${pin}/feedback`, {method: 'PUT', body, toast: false}),
+ extKeys: () => request<{keys: ExtensionKey[]}>('/ext/keys', {toast: false}),
+ createExtKey: (name: string) => request<{key: string; info: ExtensionKey}>('/ext/keys', {method: 'POST', body: {name}, toast: false}),
+ revokeExtKey: (id: number) => request<unknown>(`/ext/keys/${id}`, {method: 'DELETE', toast: false}),
  remove: (id: number) => request<unknown>(`${base}/${id}`, {method: 'DELETE', toast: false})
 };

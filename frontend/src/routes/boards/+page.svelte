@@ -1,15 +1,22 @@
 <script lang="ts">
  import { onMount, untrack } from 'svelte';
+ import { page } from '$app/state';
+ import { goto } from '$app/navigation';
  import { session } from '$lib/stores/session.svelte';
  import Modal from '$lib/components/Modal.svelte';
  import BoardImage from '$lib/hub/BoardImage.svelte';
- import { boardsApi, type MoodBoard, type BoardPin, type BoardInput, type PinterestImport, type FoundPin, type BoardSearch } from '$lib/hub/boards';
+ import PinViewer from '$lib/hub/PinViewer.svelte';
+ import { boardsApi, type MoodBoard, type BoardPin, type BoardInput, type PinterestImport, type FoundPin, type BoardSearch, type ExtensionKey } from '$lib/hub/boards';
  let boards = $state<MoodBoard[]>([]), selected = $state<number | null>(null), pins = $state<BoardPin[]>([]);
  let loading = $state(false), more = $state(false), error = $state(''), notice = $state(''), savedOnly = $state(false), reviewOnly = $state(false);
  let sentinel = $state<HTMLDivElement>();
  let cursor = $state<string | null>(null), hasMore = $state(false), editing = $state(false), editId = $state<number | null>(null);
  let name = $state(''), interests = $state(''), instructions = $state(''), enabled = $state(true), interval = $state(12), saving = $state(false);
- let targetImages = $state(100);
+ let targetImages = $state(100), avoid = $state(''), seeds = $state(''), media = $state<'any' | 'photos' | 'gifs'>('any'), minWidth = $state(0), strictness = $state<'strict' | 'balanced'>('strict');
+ let waiting = $state<BoardPin[]>([]);
+ // After removing the open image from view, keep browsing: show the next one instead of closing.
+ function following(p: BoardPin) { const list = found ?? pins; const i = list.findIndex(v => v.id === p.id); return list[i + 1] ?? list[i - 1] ?? null; }
+ function showWaiting() { const ids = new Set(pins.map(p => p.id)); pins = [...waiting.filter(w => !ids.has(w.id)), ...pins]; waiting = []; window.scrollTo({top: 0, behavior: 'smooth'}); }
  let preview = $state<BoardPin | null>(null), moving = $state<number | null>(null), moveTo = $state(''), busy = $state<number | null>(null);
  let refreshing = $state(false), clock = $state(Date.now());
  let retryDeadlines = $state<Record<number, number>>({});
@@ -43,7 +50,7 @@
  const allowed = () => session.hubAllowed && session.ready && !session.needsLogin && !session.choosing && !session.profile?.pin_locked;
  const stamp = () => `${session.profileId}:${session.version}`;
  const message = (e: unknown) => e instanceof Error ? e.message : 'Could not load your boards.';
- function clear() { clearSearch(); importOpen = false; importing = false; importJob = null; pinterestUrl = ''; imageOpen = false; imageBusy = false; imageUrl = ''; imageTitle = ''; imageFile = null; controller?.abort(); controller = null; generation++; boards = []; pins = []; selected = null; preview = null; editing = false; moving = null; saving = false; busy = null; deleteConfirm = false; notice = ''; error = ''; loading = false; more = false; hasMore = false; cursor = null; pollUntil = 0; refreshing = false; retryDeadlines = {}; }
+ function clear() { clearSearch(); waiting = []; importOpen = false; importing = false; importJob = null; pinterestUrl = ''; imageOpen = false; imageBusy = false; imageUrl = ''; imageTitle = ''; imageFile = null; controller?.abort(); controller = null; generation++; boards = []; pins = []; selected = null; preview = null; editing = false; moving = null; saving = false; busy = null; deleteConfirm = false; notice = ''; error = ''; loading = false; more = false; hasMore = false; cursor = null; pollUntil = 0; refreshing = false; retryDeadlines = {}; }
  async function load(append = false, quiet = false) {
   if (!allowed() || (append && (loading || more || !hasMore || !selected))) return;
   controller?.abort(); controller = new AbortController(); const signal = controller.signal, token = ++generation, owner = stamp();
@@ -53,7 +60,7 @@
    const list = await boardsApi.list(signal);
    if (signal.aborted || token !== generation || owner !== stamp() || !allowed()) return;
    boards = list.boards; rememberRetry(boards);
-   if (!boards.some(b => b.id === selected)) selected = boards[0]?.id ?? null;
+   if (selected && !boards.some(b => b.id === selected)) { selected = null; void goto('/boards', {replaceState: true, keepFocus: true}); }
    if (!selected) { pins = []; hasMore = false; return; }
    const data = await boardsApi.detail(selected, {saved: savedOnly, unreviewed: reviewOnly, cursor: append ? cursor ?? undefined : undefined}, signal);
    if (signal.aborted || token !== generation || owner !== stamp() || !allowed()) return;
@@ -62,23 +69,36 @@
    if (signal.aborted || token !== generation || owner !== stamp() || !allowed()) return;
    importJob = imported.import;
    if (importJob && ['queued', 'importing'].includes(importJob.status)) pollUntil = Date.now() + 180000;
-   const seen = new Set(append ? pins.map(p => p.id) : []);
-   const fresh = data.pins.filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
-   pins = append ? [...pins, ...fresh] : fresh; cursor = data.next_cursor; hasMore = data.has_more;
+   if (quiet && !append && pins.length) {
+    // Background poll: keep what is on screen (and every page already scrolled to). Only genuinely new pins
+    // are added; unchanged pins keep their object so no tile re-renders or refetches its image.
+    const known = new Map(pins.map(p => [p.id, p]));
+    const newest = Math.max(...pins.map(p => p.id));
+    const incoming = data.pins.filter(p => p.id > newest && !known.has(p.id));
+    pins = pins.map(p => { const u = data.pins.find(v => v.id === p.id); return u && (u.saved !== p.saved || u.feedback !== p.feedback) ? u : p; });
+    if (incoming.length) {
+     if (window.scrollY > 400) waiting = [...incoming, ...waiting.filter(w => !incoming.some(i => i.id === w.id))];
+     else pins = [...incoming, ...pins];
+    }
+   } else {
+    const seen = new Set(append ? pins.map(p => p.id) : []);
+    const fresh = data.pins.filter(p => { if (seen.has(p.id)) return false; seen.add(p.id); return true; });
+    pins = append ? [...pins, ...fresh] : fresh; cursor = data.next_cursor; hasMore = data.has_more; waiting = [];
+   }
   } catch (e) { if (!signal.aborted && token === generation && owner === stamp() && allowed()) error = message(e); }
   finally { if (token === generation && owner === stamp()) { loading = false; more = false; controller = null; } }
  }
  $effect(() => {
   const key = `${session.profileId}:${session.version}:${session.profile?.pin_locked}:${session.needsLogin}:${session.choosing}:${session.ready}:${session.hubAllowed}`;
-  if (key !== identity) { identity = key; untrack(() => { clear(); if (allowed()) void load(); }); }
+  if (key !== identity) { identity = key; untrack(() => { clear(); selected = urlBoard(); if (allowed()) void load(); }); }
  });
  onMount(() => {
   let lastPoll = 0;
   const timer = window.setInterval(() => {
    clock = Date.now();
-   if (allowed() && (active(board?.last_status) || clock < pollUntil) && clock - lastPoll >= 5000 && document.visibilityState !== 'hidden' && !loading && !more && !controller) { lastPoll = clock; void load(false, true); }
+   if (allowed() && (active(board?.last_status) || (!selected && boards.some(b => active(b.last_status))) || clock < pollUntil) && clock - lastPoll >= 5000 && document.visibilityState !== 'hidden' && !loading && !more && !controller) { lastPoll = clock; void load(false, true); }
   }, 1000);
-  const wake = () => { clock = Date.now(); if (document.visibilityState !== 'hidden' && allowed() && (active(board?.last_status) || clock < pollUntil) && !loading && !more && !controller) void load(false, true); };
+  const wake = () => { clock = Date.now(); if (document.visibilityState !== 'hidden' && allowed() && (active(board?.last_status) || (!selected && boards.some(b => active(b.last_status))) || clock < pollUntil) && !loading && !more && !controller) void load(false, true); };
   document.addEventListener('visibilitychange', wake);
   return () => { window.clearInterval(timer); document.removeEventListener('visibilitychange', wake); controller?.abort(); };
  });
@@ -96,12 +116,26 @@
   catch (e) { if (owner === stamp() && selected === id && allowed()) error = message(e); }
   finally { if (owner === stamp() && selected === id) importing = false; }
  }
- function choose(id: number) { importOpen = false; importing = false; selected = id; importJob = null; pins = []; preview = null; notice = ''; void load(); }
- function edit(b?: MoodBoard) { editId = b?.id ?? null; name = b?.name ?? ''; interests = b?.interests ?? ''; instructions = b?.instructions ?? ''; enabled = b?.enabled ?? true; interval = b?.interval_hours ?? 12; targetImages = b?.target_images ?? 100; error = ''; editing = true; }
+ const urlBoard = () => Number(page.url.searchParams.get('board')) || null;
+ // The open board lives in the URL (?board=7): browser Back returns to the overview, links can be shared.
+ function choose(id: number | null) { void goto(id ? `/boards?board=${id}` : '/boards', {keepFocus: true, noScroll: false}); }
+ function open(id: number | null) { importOpen = false; importing = false; selected = id; importJob = null; pins = []; preview = null; notice = ''; waiting = []; savedOnly = false; reviewOnly = false; void load(); if (!id) window.scrollTo({top: 0}); }
+ $effect(() => { const id = urlBoard(); untrack(() => { if (id !== selected && identity) open(id); }); });
+ let boardFilter = $state(''), boardSort = $state<'recent' | 'name' | 'size'>('recent');
+ try { const saved = localStorage.getItem('wc-boards-sort'); if (saved === 'name' || saved === 'size' || saved === 'recent') boardSort = saved; } catch { /* storage unavailable */ }
+ $effect(() => { const v = boardSort; try { localStorage.setItem('wc-boards-sort', v); } catch { /* storage unavailable */ } });
+ const shownBoards = $derived.by(() => {
+  const q = boardFilter.trim().toLowerCase();
+  const rows = q ? boards.filter(b => `${b.name} ${b.interests}`.toLowerCase().includes(q)) : [...boards];
+  const recent = (b: MoodBoard) => Math.max(b.last_added ?? 0, b.created_at ?? 0);
+  return rows.sort(boardSort === 'name' ? (a, b) => a.name.localeCompare(b.name) : boardSort === 'size' ? (a, b) => (b.pin_count ?? 0) - (a.pin_count ?? 0) : (a, b) => recent(b) - recent(a));
+ });
+ const hue = (id: number) => (id * 67) % 360;
+ function edit(b?: MoodBoard) { editId = b?.id ?? null; name = b?.name ?? ''; interests = b?.interests ?? ''; instructions = b?.instructions ?? ''; enabled = b?.enabled ?? true; interval = b?.interval_hours ?? 12; targetImages = b?.target_images ?? 100; avoid = b?.avoid ?? ''; seeds = b?.seed_searches ?? ''; media = b?.media ?? 'any'; minWidth = b?.min_width ?? 0; strictness = b?.strictness ?? 'strict'; error = ''; editing = true; }
  async function saveBoard(e: SubmitEvent) {
   e.preventDefault(); if (!allowed() || saving) return; saving = true; const owner = stamp();
-  const body: BoardInput = {name: name.trim(), interests: interests.trim(), instructions: instructions.trim(), enabled, interval_hours: Number(interval), target_images: Number(targetImages)};
-  try { const result = editId ? await boardsApi.update(editId, body) : await boardsApi.create(body); if (owner !== stamp() || !allowed()) return; selected = result.board.id; editing = false; await load(); notice = editId ? 'Board updated.' : active(result.board.last_status) ? 'Board created. Follow its curator’s progress below.' : 'Board created. Find images to start filling it.'; }
+  const body: BoardInput = {name: name.trim(), interests: interests.trim(), instructions: instructions.trim(), enabled, interval_hours: Number(interval), target_images: Number(targetImages), avoid: avoid.trim(), seed_searches: seeds.trim(), media, min_width: Number(minWidth), strictness};
+  try { const result = editId ? await boardsApi.update(editId, body) : await boardsApi.create(body); if (owner !== stamp() || !allowed()) return; selected = result.board.id; void goto(`/boards?board=${result.board.id}`, {keepFocus: true}); editing = false; await load(); notice = editId ? 'Board updated.' : active(result.board.last_status) ? 'Board created. Follow its curator’s progress below.' : 'Board created. Find images to start filling it.'; }
   catch (e) { if (owner === stamp() && allowed()) error = message(e); }
   finally { if (owner === stamp()) saving = false; }
  }
@@ -161,21 +195,37 @@
 
  async function pinAction(p: BoardPin, patch: {saved?: boolean; hidden?: boolean; board_id?: number}) {
   if (!allowed() || busy !== null) return; busy = p.id; const owner = stamp();
-  try { await boardsApi.pin(p.board_id, p.id, patch); if (owner !== stamp() || !allowed()) return; if (patch.hidden || patch.board_id || (savedOnly && patch.saved === false)) pins = pins.filter(v => v.id !== p.id); else pins = pins.map(v => v.id === p.id ? {...v, ...patch} : v); if (found) found = patch.hidden ? found.filter(v => v.id !== p.id) : found.map(v => v.id === p.id ? {...v, ...patch, board_name: patch.board_id ? boards.find(b => b.id === patch.board_id)?.name ?? v.board_name : v.board_name} : v); if (preview?.id === p.id) preview = patch.hidden || patch.board_id ? null : {...preview, ...patch}; moving = null; }
+  try { const after = following(p); await boardsApi.pin(p.board_id, p.id, patch); if (owner !== stamp() || !allowed()) return; if (patch.hidden || patch.board_id || (savedOnly && patch.saved === false)) pins = pins.filter(v => v.id !== p.id); else pins = pins.map(v => v.id === p.id ? {...v, ...patch} : v); if (found) found = patch.hidden ? found.filter(v => v.id !== p.id) : found.map(v => v.id === p.id ? {...v, ...patch, board_name: patch.board_id ? boards.find(b => b.id === patch.board_id)?.name ?? v.board_name : v.board_name} : v); if (preview?.id === p.id) preview = patch.hidden || patch.board_id ? after : {...preview, ...patch}; moving = null; }
   catch (e) { if (owner === stamp()) error = message(e); } finally { if (owner === stamp()) busy = null; }
  }
+ let extOpen = $state(false), extKeys = $state<ExtensionKey[]>([]), extNew = $state(''), extBrowser = $state<'chrome' | 'firefox'>('chrome'), extBusy = $state(false), extCopied = $state('');
+ async function openExtension() {
+  extOpen = true; extNew = ''; extCopied = ''; error = '';
+  extBrowser = /firefox/i.test(navigator.userAgent) ? 'firefox' : 'chrome';
+  try { extKeys = (await boardsApi.extKeys()).keys; } catch (e) { error = message(e); }
+ }
+ async function createKey() {
+  extBusy = true; error = '';
+  try { const r = await boardsApi.createExtKey(extBrowser === 'firefox' ? 'Firefox' : 'Chrome'); extNew = r.key; extKeys = [r.info, ...extKeys]; }
+  catch (e) { error = message(e); } finally { extBusy = false; }
+ }
+ async function revokeKey(k: ExtensionKey) {
+  try { await boardsApi.revokeExtKey(k.id); extKeys = extKeys.filter(v => v.id !== k.id); } catch (e) { error = message(e); }
+ }
+ async function copy(text: string, what: string) { try { await navigator.clipboard.writeText(text); extCopied = what; } catch { extCopied = ''; } }
  let reviewing = $state<BoardPin | null>(null), reviewNote = $state('');
  const REASONS = ['Off-topic for this board', 'Text, quote or poster image', 'Advert or stock photo', 'Low quality or blurry'];
  async function review(p: BoardPin, verdict: '' | 'good' | 'bad', note = '') {
   if (!allowed() || busy !== null) return; busy = p.id; const owner = stamp();
   try {
+   const after = following(p);
    const result = await boardsApi.review(p.board_id, p.id, {verdict, note});
    if (owner !== stamp() || !allowed()) return;
    const gone = verdict === 'bad' || (reviewOnly && verdict !== '');
    pins = gone ? pins.filter(v => v.id !== p.id) : pins.map(v => v.id === p.id ? result.pin : v);
    if (found) found = verdict === 'bad' ? found.filter(v => v.id !== p.id) : found.map(v => v.id === p.id ? {...v, ...result.pin} : v);
    boards = boards.map(b => b.id === result.board.id ? result.board : b);
-   if (preview?.id === p.id) preview = verdict === 'bad' ? null : result.pin;
+   if (preview?.id === p.id) preview = verdict === 'bad' ? after : result.pin;
    reviewing = null; reviewNote = '';
    notice = verdict === 'bad' ? 'Removed. Your curator will avoid images like this.' : verdict === 'good' ? 'Thanks. Your curator will look for more like this.' : '';
   } catch (e) { if (owner === stamp()) error = message(e); } finally { if (owner === stamp()) busy = null; }
@@ -188,7 +238,7 @@
  const tone = $derived(curatorActive ? 'busy' : board?.last_status === 'error' ? 'bad' : board?.last_status === 'ok' || board?.last_status === 'target_reached' ? 'good' : 'idle');
  function pickFile(file: File | null | undefined) { imageFile = file ?? null; if (imageFile) imageUrl = ''; }
  function dropFile(e: DragEvent) { e.preventDefault(); dragging = false; pickFile(e.dataTransfer?.files?.[0]); }
- async function removeBoard() { if (!selected || !allowed()) return; const owner = stamp(); try { await boardsApi.remove(selected); if (owner !== stamp() || !allowed()) return; deleteConfirm = false; selected = null; await load(); } catch(e) { if (owner === stamp()) error = message(e); } }
+ async function removeBoard() { if (!selected || !allowed()) return; const owner = stamp(); try { await boardsApi.remove(selected); if (owner !== stamp() || !allowed()) return; deleteConfirm = false; selected = null; void goto('/boards', {keepFocus: true}); await load(); } catch(e) { if (owner === stamp()) error = message(e); } }
 </script>
 
 <svelte:head><title>Mood boards · WatchCraft</title></svelte:head>
@@ -202,6 +252,7 @@
   {:else if name === 'heart'}<path d="M20.8 5.6a5 5 0 0 0-7.1 0L12 7.3l-1.7-1.7a5 5 0 1 0-7.1 7.1L12 21.5l8.8-8.8a5 5 0 0 0 0-7.1z"/>
   {:else if name === 'gear'}<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>
   {:else if name === 'upload'}<path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
+  {:else if name === 'puzzle'}<path d="M10 3h4v3a2 2 0 1 0 4 0V3h3v7h-3a2 2 0 1 0 0 4h3v7h-7v-3a2 2 0 1 0-4 0v3H3v-7h3a2 2 0 1 0 0-4H3V3h7z"/>
   {:else if name === 'check'}<path d="M5 12l5 5L20 7"/>
   {:else if name === 'x'}<path d="M6 6l12 12M18 6L6 18"/>
   {:else if name === 'search'}<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>
@@ -212,7 +263,7 @@
 <section class="boards-page">
  <header class="page-heading">
   <div><p class="eyebrow">Your collections</p><h1>Mood boards</h1><p class="lede">A cosy place for everything that catches your eye.</p></div>
-  <button class="btn primary new-board" onclick={() => edit()}>{@render icon('plus')}New board</button>
+  <div class="heading-actions"><button class="btn pill" onclick={openExtension}>{@render icon('puzzle')}Browser extension</button><button class="btn primary new-board" onclick={() => edit()}>{@render icon('plus')}New board</button></div>
  </header>
  {#if error && !editing && !imageOpen && !importOpen}<div class="feedback error" role="alert"><span>{error}</span><button class="btn" onclick={() => load()}>Try again</button></div>{/if}
  {#if notice}<p class="feedback good" role="status">{notice}<button class="dismiss" aria-label="Dismiss message" onclick={() => { notice = ''; }}>×</button></p>{/if}
@@ -223,14 +274,12 @@
    <button class="btn primary pill" disabled={searching || !query.trim()}>{searching ? 'Searching…' : 'Search'}</button>
    {#if found}<button type="button" class="btn pill" onclick={clearSearch}>Clear</button>{/if}
   </form>
-  <nav class="board-rail" aria-label="Your mood boards">
-   {#each boards as b (b.id)}
-    <button class="board-chip" class:chosen={selected === b.id} aria-pressed={selected === b.id} onclick={() => choose(b.id)}>
-     <span class="cover">{#if b.cover_url}<BoardImage url={b.cover_url} alt="" />{:else}<span class="cover-letter">{b.name.slice(0, 1)}</span>{/if}</span>
-     <span class="chip-text"><span class="chip-name">{b.name}</span><span class="chip-count">{b.pin_count ?? 0} images</span></span>
-    </button>
-   {/each}
-  </nav>
+  {#if selected && board}
+   <nav class="board-nav" aria-label="Board navigation">
+    <button class="btn pill back" onclick={() => choose(null)}>← All boards</button>
+    {#if boards.length > 1}<label class="switch"><span class="sr-only">Switch board</span><select value={selected} onchange={(e) => choose(Number(e.currentTarget.value))}>{#each [...boards].sort((a, b) => a.name.localeCompare(b.name)) as b (b.id)}<option value={b.id}>{b.name}</option>{/each}</select></label>{/if}
+   </nav>
+  {/if}
  {/if}
 
  {#if found && searchInfo}
@@ -243,7 +292,7 @@
      {#each found as pin (pin.id)}
       <article class="pin">
        <div class="frame">
-        <button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} /></button>
+        <button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} width={pin.width} height={pin.height} /></button>
         {#if pin.media_type === 'gif'}<span class="badge">GIF</span>{/if}
         <button class="save" class:saved={pin.saved} disabled={busy === pin.id} aria-label={pin.saved ? `Unsave ${pin.title}` : `Save ${pin.title}`} aria-pressed={pin.saved} onclick={() => pinAction(pin, {saved: !pin.saved})}>{@render icon('heart')}<span>{pin.saved ? 'Saved' : 'Save'}</span></button>
        </div>
@@ -257,7 +306,32 @@
   <p class="feedback" role="status">Image search is not available: {searchInfo.reason}<button class="dismiss" aria-label="Dismiss message" onclick={clearSearch}>×</button></p>
  {/if}
 
- {#if !found}
+ {#if !found && !selected && boards.length}
+  <section class="overview" aria-label="All boards">
+   <div class="overview-bar">
+    <h2>{boards.length} board{boards.length === 1 ? '' : 's'}</h2>
+    {#if boards.length > 4}<label class="board-filter">{@render icon('search')}<input type="search" aria-label="Filter boards" placeholder="Filter boards" bind:value={boardFilter} /></label>{/if}
+    <label class="sort"><span class="sr-only">Sort boards</span><select bind:value={boardSort} aria-label="Sort boards"><option value="recent">Recently updated</option><option value="name">A–Z</option><option value="size">Most images</option></select></label>
+   </div>
+   <div class="board-grid">
+    {#each shownBoards as b (b.id)}
+     <button class="board-card" onclick={() => choose(b.id)} aria-label={`Open ${b.name}, ${b.pin_count ?? 0} images`} style:--hue={hue(b.id)}>
+      <span class="collage n{Math.min(4, b.preview_urls?.length ?? 0)}" aria-hidden="true">
+       {#each (b.preview_urls ?? []).slice(0, 4) as url (url)}<span class="cell"><BoardImage {url} alt="" fit /></span>{:else}<span class="monogram">{b.name.slice(0, 1).toUpperCase()}</span>{/each}
+      </span>
+      <span class="card-body">
+       <span class="card-name">{b.name}</span>
+       <span class="card-meta">{b.pin_count ?? 0} images{#if b.saved_count} · {@render icon('heart')}{b.saved_count}{/if}</span>
+       {#if active(b.last_status)}<span class="card-status busy">Curator searching…</span>
+       {:else if b.last_status === 'error'}<span class="card-status bad">Needs attention</span>
+       {:else if !b.enabled}<span class="card-status">Paused</span>{/if}
+      </span>
+     </button>
+    {:else}<p class="muted">No boards match “{boardFilter}”.</p>{/each}
+    <button class="board-card add" onclick={() => edit()}><span class="collage add-art" aria-hidden="true">{@render icon('plus')}</span><span class="card-body"><span class="card-name">New board</span><span class="card-meta">Start a new collection</span></span></button>
+   </div>
+  </section>
+ {:else if !found}
  {#if board}
   <section class="board-hero">
    <div class="hero-main">
@@ -310,11 +384,12 @@
  {:else if !boards.length}<div class="empty"><div class="empty-art" aria-hidden="true"><span></span><span></span><span></span></div><h2>What inspires you?</h2><p>Give a hobby, interest or idea its own board. Its curator will find images and GIFs for you to collect.</p><button class="btn primary" onclick={() => edit()}>Create your first board</button></div>
  {:else if !pins.length}<div class="empty"><div class="empty-art" aria-hidden="true"><span></span><span></span><span></span></div><h2>{reviewOnly ? 'All caught up' : savedOnly ? 'Your favourites belong here' : 'Make room for inspiration'}</h2>{#if reviewOnly}<p>Every image on this board has been reviewed. New finds will show up here.</p>{:else}<p>{savedOnly ? 'Save an image from this board to find it here later.' : curatorActive ? 'Your curator is working. Matching images will appear automatically.' : board?.last_status === 'no_matches' ? 'No matching images were found. You can refine your curator’s instructions or try another search when it is ready.' : board?.last_status === 'error' ? 'Your curator could not finish. See its activity above for the reason.' : 'Your board is ready. Ask its curator to find images, add your own, then save the ones you love.'}</p>{#if !savedOnly}<button class="btn primary" disabled={findDisabled} onclick={refresh}>{findLabel}</button>{/if}{/if}</div>
  {:else}
+  {#if waiting.length}<button class="new-pill" onclick={showWaiting}>↑ {waiting.length} new image{waiting.length === 1 ? '' : 's'}</button>{/if}
   <div class="masonry">
    {#each pins as pin (pin.id)}
     <article class="pin">
      <div class="frame">
-      <button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} /></button>
+      <button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} width={pin.width} height={pin.height} /></button>
       {#if pin.media_type === 'gif'}<span class="badge">GIF</span>{/if}
       <button class="save" class:saved={pin.saved} disabled={busy === pin.id} aria-label={pin.saved ? `Unsave ${pin.title}` : `Save ${pin.title}`} aria-pressed={pin.saved} onclick={() => pinAction(pin, {saved: !pin.saved})}>{@render icon('heart')}<span>{pin.saved ? 'Saved' : 'Save'}</span></button>
      </div>
@@ -331,19 +406,39 @@
  {/if}
 </section>
 
-{#if editing}<Modal title={editId ? 'Edit board curator' : 'Create a mood board'} onClose={() => { if (!saving) editing = false; }}>
+{#if editing}<Modal portal title={editId ? 'Edit board curator' : 'Create a mood board'} onClose={() => { if (!saving) editing = false; }}>
  <form onsubmit={saveBoard} class="board-form">
-  <label>Board name<input required maxlength="100" bind:value={name} placeholder="My garden ideas" /></label>
-  <label>Interests and hobbies<input required maxlength="1000" bind:value={interests} placeholder="Cottage gardens, wildflowers, tiny greenhouses" /><small>Separate interests with commas.</small></label>
-  <label>What should your curator look for?<textarea rows="4" maxlength="2000" bind:value={instructions} placeholder="Dresses with heart patterns only. Or: usable sewing patterns for a child’s hooded cape."></textarea><small>Your curator checks images with the configured vision model. Be specific: uncertain matches are excluded. Narrow requests may find fewer images.</small></label>
-  <label>Image target<span class="target-row"><input type="range" min="10" max="1000" step="10" aria-hidden="true" tabindex="-1" bind:value={targetImages} /><input class="target-num" type="number" min="1" max="1000" step="1" required bind:value={targetImages} /></span><small>The curator keeps searching until the board holds this many images (up to 1,000).</small></label>
-  <div class="form-grid"><label class="check"><input type="checkbox" bind:checked={enabled} />Find new images automatically</label><label>Check every<select bind:value={interval}><option value={6}>6 hours</option><option value={12}>12 hours</option><option value={24}>day</option><option value={72}>3 days</option><option value={168}>week</option></select></label></div>
+  <fieldset><legend>The board</legend>
+   <label>Board name<input required maxlength="100" bind:value={name} placeholder="My garden ideas" /></label>
+   <label>Interests and hobbies<input required maxlength="1000" bind:value={interests} placeholder="Cottage gardens, wildflowers, tiny greenhouses" /><small>The board's subject. Separate interests with commas.</small></label>
+  </fieldset>
+  <fieldset><legend>Teach the curator</legend>
+   <label>What to look for<textarea rows="3" maxlength="2000" bind:value={instructions} placeholder="Real home setups with visible hardware and tidy cabling."></textarea><small>Checked against every image with the vision model.</small></label>
+   <label>What to avoid<textarea rows="2" maxlength="1000" bind:value={avoid} placeholder="Quote cards and text graphics, gaming chairs, product renders, people's faces"></textarea><small>Any image showing these is rejected, even if it otherwise fits.</small></label>
+   <label>Seed searches<textarea rows="3" maxlength="1000" bind:value={seeds} placeholder={'10 inch mini rack\nraspberry pi cluster\nhomelab cable management'}></textarea><small>Your own search phrases, one per line. Used first, before the curator's own ideas.</small></label>
+  </fieldset>
+  <details class="tuning" open={media !== 'any' || minWidth > 0 || strictness !== 'strict'}>
+   <summary>More tuning</summary>
+   <div class="choice" role="radiogroup" aria-label="How strict">
+    <span class="choice-label">How strict</span>
+    <label class="opt"><input type="radio" name="strictness" value="strict" bind:group={strictness} /><span><strong>Strict</strong><small>Only clear matches that meet every instruction.</small></span></label>
+    <label class="opt"><input type="radio" name="strictness" value="balanced" bind:group={strictness} /><span><strong>Balanced</strong><small>Clear matches of the subject; preferences may be partly met.</small></span></label>
+   </div>
+   <div class="form-grid">
+    <label>Image type<select bind:value={media}><option value="any">Photos and GIFs</option><option value="photos">Photos only</option><option value="gifs">GIFs only</option></select></label>
+    <label>Minimum size<select bind:value={minWidth}><option value={0}>Any size</option><option value={600}>600 px wide or more</option><option value={1000}>1000 px wide or more</option><option value={1600}>1600 px wide or more</option></select></label>
+   </div>
+  </details>
+  <fieldset><legend>Schedule</legend>
+   <label>Image target<span class="target-row"><input type="range" min="10" max="1000" step="10" aria-hidden="true" tabindex="-1" bind:value={targetImages} /><input class="target-num" type="number" min="1" max="1000" step="1" required bind:value={targetImages} /></span><small>The curator keeps searching until the board holds this many images (up to 1,000).</small></label>
+   <div class="form-grid"><label class="check"><input type="checkbox" bind:checked={enabled} />Find new images automatically</label><label>Check every<select bind:value={interval}><option value={6}>6 hours</option><option value={12}>12 hours</option><option value={24}>day</option><option value={72}>3 days</option><option value={168}>week</option></select></label></div>
+  </fieldset>
   {#if error}<p role="alert" class="error">{error}</p>{/if}
   <div class="form-actions">{#if editId}<button type="button" class="btn danger" onclick={() => { editing = false; deleteConfirm = true; }}>Delete board</button>{/if}<button class="btn" type="button" onclick={() => { editing = false; }}>Cancel</button><button class="btn primary" disabled={saving}>{saving ? 'Saving…' : editId ? 'Save changes' : 'Create board'}</button></div>
  </form>
 </Modal>{/if}
 
-{#if imageOpen}<Modal title={imageMode === 'reference' ? 'Add visual inspiration' : 'Add an image to this board'} onClose={() => { if (!imageBusy) imageOpen = false; }}>
+{#if imageOpen}<Modal portal title={imageMode === 'reference' ? 'Add visual inspiration' : 'Add an image to this board'} onClose={() => { if (!imageBusy) imageOpen = false; }}>
  <form class="board-form" onsubmit={submitBoardImage}>
   <p class="muted">{imageMode === 'reference' ? 'Show the curator an example of the look you love. It guides searches and stays separate from the board pins.' : 'Save your own find straight to this board. GIFs are welcome.'}</p>
   <label class="dropzone" class:dragging class:has-file={!!imageFile} ondragover={(e) => { e.preventDefault(); dragging = true; }} ondragleave={() => { dragging = false; }} ondrop={dropFile}>
@@ -361,8 +456,8 @@
  </form>
 </Modal>{/if}
 
-{#if importOpen}<Modal title="Import a Pinterest board" onClose={() => { if (!importing) importOpen = false; }}><form class="board-form" onsubmit={importPinterest}><p class="muted">Import up to 25 of the latest pins exposed by a public board’s feed into this board. Images are saved locally with their original Pinterest links. Existing pins are skipped.</p><label>Public board link<input type="url" required maxlength="1000" bind:value={pinterestUrl} placeholder="https://www.pinterest.com/username/board-name/" /></label><small>Private boards, short links and full-history imports need a Pinterest connection and are not supported by this public feed import.</small>{#if error}<p class="error" role="alert">{error}</p>{/if}<div class="form-actions"><button type="button" class="btn" onclick={() => { importOpen = false; }}>Cancel</button><button class="btn primary" disabled={importing}>{importing ? 'Queuing…' : 'Import pins'}</button></div></form></Modal>{/if}
-{#if reviewing}<Modal title="Why doesn't this fit?" onClose={() => { if (busy === null) reviewing = null; }}>
+{#if importOpen}<Modal portal title="Import a Pinterest board" onClose={() => { if (!importing) importOpen = false; }}><form class="board-form" onsubmit={importPinterest}><p class="muted">Import up to 25 of the latest pins exposed by a public board’s feed into this board. Images are saved locally with their original Pinterest links. Existing pins are skipped.</p><label>Public board link<input type="url" required maxlength="1000" bind:value={pinterestUrl} placeholder="https://www.pinterest.com/username/board-name/" /></label><small>Private boards, short links and full-history imports need a Pinterest connection and are not supported by this public feed import.</small>{#if error}<p class="error" role="alert">{error}</p>{/if}<div class="form-actions"><button type="button" class="btn" onclick={() => { importOpen = false; }}>Cancel</button><button class="btn primary" disabled={importing}>{importing ? 'Queuing…' : 'Import pins'}</button></div></form></Modal>{/if}
+{#if reviewing}<Modal title="Why doesn't this fit?" portal onClose={() => { if (busy === null) reviewing = null; }}>
  <form class="board-form" onsubmit={(e) => { e.preventDefault(); if (reviewing) void review(reviewing, 'bad', reviewNote.trim()); }}>
   <p class="muted">The image is removed from the board and your curator learns to skip images like it.</p>
   <div class="reason-chips" role="group" aria-label="Common reasons">{#each REASONS as reason}<button type="button" class="chip" class:on={reviewNote === reason} aria-pressed={reviewNote === reason} onclick={() => { reviewNote = reviewNote === reason ? '' : reason; }}>{reason}</button>{/each}</div>
@@ -370,25 +465,57 @@
   <div class="form-actions"><button type="button" class="btn" onclick={() => { reviewing = null; }}>Cancel</button><button class="btn primary" disabled={busy !== null}>Remove and teach curator</button></div>
  </form>
 </Modal>{/if}
-{#if deleteConfirm}<Modal title="Delete this board?" onClose={() => { deleteConfirm = false; }}><p>This removes the board and its saved pins.</p><div class="form-actions"><button class="btn" onclick={() => { deleteConfirm = false; }}>Keep board</button><button class="btn danger" onclick={removeBoard}>Delete board</button></div></Modal>{/if}
-
-{#if preview}<Modal title={preview.title} size="lg" onClose={() => { preview = null; moving = null; }}>
- <div class="preview">
-  <div class="preview-image"><BoardImage url={preview.image_url} alt={preview.title} animated={preview.media_type === 'gif'} eager /></div>
-  <aside class="preview-side">
-   <button class="btn primary save-big" class:saved={preview.saved} disabled={busy === preview.id} onclick={() => preview && pinAction(preview, {saved: !preview.saved})}>{@render icon('heart')}{preview.saved ? 'Unsave' : 'Save'}</button>
-   <p class="credit">{preview.attribution ?? ''}{#if preview.license} · {preview.license}{/if}</p>
-   {#if /^https?:\/\//i.test(preview.source_url)}<a class="source" href={preview.source_url} target="_blank" rel="noopener noreferrer">{@render icon('link')}View original source</a>{:else}<span class="muted source">{@render icon('upload')}Uploaded image</span>{/if}
-   <div class="preview-actions">
-    {#if boards.length > 1}<button class="btn pill" onclick={() => { moving = preview?.id ?? null; moveTo = String(boards.find(b => b.id !== preview?.board_id)?.id ?? ''); }}>Move to board</button>{/if}
-    <button class="btn pill" class:on={preview.feedback === 'good'} aria-pressed={preview.feedback === 'good'} disabled={busy === preview.id} onclick={() => preview && review(preview, preview.feedback === 'good' ? '' : 'good')}>{@render icon('check')}Fits this board</button>
-    <button class="btn pill" disabled={busy === preview.id} onclick={() => { reviewing = preview; reviewNote = ''; }}>{@render icon('x')}Not a fit</button>
-    <button class="btn pill" disabled={busy === preview.id} onclick={() => preview && pinAction(preview, {hidden: true})}>Hide image</button>
-   </div>
-   {#if moving}<div class="move-form"><label>Destination board<select bind:value={moveTo}>{#each boards.filter(b => b.id !== preview?.board_id) as b}<option value={b.id}>{b.name}</option>{/each}</select></label><button class="btn primary" disabled={!moveTo || busy !== null} onclick={() => preview && pinAction(preview, {board_id: Number(moveTo)})}>Move image</button></div>{/if}
-  </aside>
+{#if extOpen}<Modal portal size="lg" title="Add images from any website" onClose={() => { extOpen = false; }}>
+ <div class="ext">
+  <p class="muted">With the WatchCraft extension, right-click any image on the web, choose <strong>WatchCraft</strong> and pick a board. The image is saved here with a link to where you found it.</p>
+  <div class="segmented ext-tabs" role="tablist" aria-label="Browser">
+   <button role="tab" aria-selected={extBrowser === 'chrome'} class:on={extBrowser === 'chrome'} onclick={() => { extBrowser = 'chrome'; }}>Chrome, Edge, Brave</button>
+   <button role="tab" aria-selected={extBrowser === 'firefox'} class:on={extBrowser === 'firefox'} onclick={() => { extBrowser = 'firefox'; }}>Firefox</button>
+  </div>
+  <ol class="steps">
+   <li><strong>Download the extension</strong>
+    <p><a class="btn primary pill" href="/extensions/watchcraft-{extBrowser}.zip" download>{@render icon('upload')}Download for {extBrowser === 'firefox' ? 'Firefox' : 'Chrome'}</a></p></li>
+   {#if extBrowser === 'chrome'}
+    <li><strong>Unzip it</strong><p class="muted">Extract the zip into a folder you will keep, for example <code>Documents/watchcraft-extension</code>. Chrome loads it from there.</p></li>
+    <li><strong>Load it in Chrome</strong><p class="muted">Open <code>chrome://extensions</code>, switch on <em>Developer mode</em> (top right), click <em>Load unpacked</em> and choose the folder. In Edge use <code>edge://extensions</code>, in Brave <code>brave://extensions</code>.</p></li>
+   {:else}
+    <li><strong>Install it in Firefox</strong>
+     <p class="muted">Regular Firefox only keeps add-ons signed by Mozilla. Pick one:</p>
+     <ul class="muted">
+      <li><em>Try it now:</em> open <code>about:debugging#/runtime/this-firefox</code>, click <em>Load Temporary Add-on…</em> and choose the zip. It stays until Firefox restarts.</li>
+      <li><em>Keep it:</em> in Firefox Developer Edition, Nightly or ESR, set <code>xpinstall.signatures.required</code> to <code>false</code> in <code>about:config</code>, then open <code>about:addons</code>, click the gear and <em>Install Add-on From File…</em></li>
+     </ul></li>
+   {/if}
+   <li><strong>Connect it to WatchCraft</strong>
+    <p class="muted">The extension opens its settings after installing (or click its icon). Paste this address and a connection key:</p>
+    <div class="copy-row"><code>{location.origin}</code><button class="btn pill" onclick={() => copy(location.origin, 'address')}>{extCopied === 'address' ? 'Copied' : 'Copy address'}</button></div>
+    {#if extNew}
+     <div class="copy-row key"><code>{extNew}</code><button class="btn primary pill" onclick={() => copy(extNew, 'key')}>{extCopied === 'key' ? 'Copied' : 'Copy key'}</button></div>
+     <p class="muted small">Shown once. It can only list your boards and add images to them, for this profile.</p>
+    {:else}<p><button class="btn pill" disabled={extBusy} onclick={createKey}>{extBusy ? 'Creating…' : 'Create connection key'}</button></p>{/if}
+   </li>
+  </ol>
+  {#if extKeys.length}
+   <section class="ext-keys" aria-label="Connected browsers"><h3>Connected browsers</h3>
+    <ul>{#each extKeys as k (k.id)}<li><span>{k.name} <span class="muted">…{k.hint} · {k.last_used ? 'last used ' + new Date(k.last_used * 1000).toLocaleDateString() : 'not used yet'}</span></span><button class="link-btn" onclick={() => revokeKey(k)}>Revoke</button></li>{/each}</ul>
+   </section>
+  {/if}
+  {#if error}<p class="error" role="alert">{error}</p>{/if}
  </div>
 </Modal>{/if}
+{#if deleteConfirm}<Modal portal title="Delete this board?" onClose={() => { deleteConfirm = false; }}><p>This removes the board and its saved pins.</p><div class="form-actions"><button class="btn" onclick={() => { deleteConfirm = false; }}>Keep board</button><button class="btn danger" onclick={removeBoard}>Delete board</button></div></Modal>{/if}
+
+{#if preview}<PinViewer pin={preview} pins={found ?? pins} boardName={boards.find(b => b.id === preview?.board_id)?.name ?? ''} busy={busy === preview.id}
+ onClose={() => { preview = null; moving = null; }} onNavigate={(p) => { preview = p; moving = null; }}
+ onSave={(p) => pinAction(p, {saved: !p.saved})} onFits={(p) => review(p, p.feedback === 'good' ? '' : 'good')}
+ onNotFit={(p) => { reviewing = p; reviewNote = ''; }} onHide={(p) => pinAction(p, {hidden: true})}>
+ {#snippet actions()}
+  {#if boards.length > 1}
+   {#if moving}<div class="move-form"><label>Destination board<select bind:value={moveTo}>{#each boards.filter(b => b.id !== preview?.board_id) as b}<option value={b.id}>{b.name}</option>{/each}</select></label><button class="btn primary" disabled={!moveTo || busy !== null} onclick={() => preview && pinAction(preview, {board_id: Number(moveTo)})}>Move image</button></div>
+   {:else}<button class="btn pill" onclick={() => { moving = preview?.id ?? null; moveTo = String(boards.find(b => b.id !== preview?.board_id)?.id ?? ''); }}>Move to another board</button>{/if}
+  {/if}
+ {/snippet}
+</PinViewer>{/if}
 
 <style>
  .boards-page{--mb-rose:#ff8fab;--mb-peach:#ffb547;--mb-card:rgba(255,255,255,.04);max-width:1680px;margin:auto;padding:clamp(1rem,3vw,2.5rem);overflow-x:clip}
@@ -411,6 +538,22 @@
  .reason-chips{display:flex;flex-wrap:wrap;gap:.4rem}
  .chip{padding:.35rem .8rem;border-radius:var(--r-pill);border:1px solid var(--line);background:var(--mb-card);color:var(--text);font:inherit;font-size:.85rem;cursor:pointer}
  .chip.on{border-color:var(--mb-rose);background:rgba(255,143,171,.15)}
+ .new-pill{position:sticky;top:.8rem;z-index:5;display:block;margin:0 auto .8rem;padding:.55rem 1.1rem;border-radius:var(--r-pill);border:1px solid var(--mb-rose);background:rgba(20,16,30,.9);color:var(--text);font:inherit;cursor:pointer;box-shadow:0 8px 24px -10px rgba(0,0,0,.6);animation:pop .25s var(--ease)}
+ @keyframes pop{from{transform:translateY(-6px);opacity:0}}
+ .heading-actions{display:flex;gap:.6rem;flex-wrap:wrap}
+ .ext{display:grid;gap:1rem}
+ .ext p{margin:.3rem 0}
+ .ext-tabs{justify-self:start}
+ .steps{margin:0;padding-left:1.3rem;display:grid;gap:1rem}
+ .steps li::marker{color:var(--mb-rose);font-weight:700}
+ .steps ul{margin:.3rem 0 0;padding-left:1.1rem;display:grid;gap:.4rem}
+ .steps code,.copy-row code{background:rgba(255,255,255,.06);padding:.1rem .4rem;border-radius:.4rem;font-size:.85em;overflow-wrap:anywhere}
+ .copy-row{display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin:.4rem 0}
+ .copy-row code{flex:1 1 14rem;padding:.5rem .7rem}
+ .ext-keys h3{margin:0 0 .4rem;font-size:.95rem}
+ .ext-keys ul{list-style:none;margin:0;padding:0;display:grid;gap:.4rem}
+ .ext-keys li{display:flex;justify-content:space-between;gap:1rem;align-items:center;padding:.5rem .7rem;border:1px solid var(--line);border-radius:var(--r-md)}
+ .small{font-size:.8rem}
  .board-search{display:flex;gap:.6rem;align-items:center;margin-top:1.4rem;flex-wrap:wrap}
  .search-field{flex:1 1 18rem;display:flex;align-items:center;gap:.55rem;padding:.2rem 1rem;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--mb-card);color:var(--muted)}
  .search-field:focus-within{border-color:var(--mb-rose)}
@@ -419,6 +562,37 @@
  .results-head{display:flex;flex-direction:column;gap:.2rem;margin:.4rem 0 1rem}
  .board-link{border:0;background:none;padding:0;cursor:pointer;text-align:left;font:inherit}
  .board-link:hover{color:var(--mb-rose)}
+ .board-nav{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap;margin:1.1rem 0 .4rem}
+ .board-nav .back{gap:.3rem}
+ .switch select,.sort select{background:var(--surface-solid);border:1px solid var(--line);border-radius:var(--r-pill);color:var(--text);padding:.5rem 2rem .5rem .9rem;font:inherit;max-width:min(70vw,20rem)}
+ .overview{margin-top:1.4rem}
+ .overview-bar{display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;margin-bottom:1rem}
+ .overview-bar h2{margin:0 auto 0 0;font-size:1.1rem}
+ .board-filter{display:flex;align-items:center;gap:.5rem;padding:.1rem .9rem;border:1px solid var(--line);border-radius:var(--r-pill);background:var(--mb-card);color:var(--muted);min-width:0;flex:0 1 16rem}
+ .board-filter input{border:0;background:none;color:var(--text);font:inherit;padding:.5rem 0;outline:none;min-width:0;width:100%}
+ .board-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,13.5rem),1fr));gap:1rem}
+ .board-card{display:flex;flex-direction:column;text-align:left;padding:0;border:1px solid var(--line);border-radius:var(--r-lg);background:var(--mb-card);color:var(--text);overflow:hidden;cursor:pointer;font:inherit;transition:transform .2s var(--ease),border-color .2s var(--ease),box-shadow .2s var(--ease)}
+ .board-card:hover,.board-card:focus-visible{transform:translateY(-3px);border-color:var(--mb-rose);box-shadow:0 14px 30px -18px rgba(0,0,0,.8)}
+ .collage{display:grid;gap:2px;aspect-ratio:4/3;background:linear-gradient(135deg,hsl(var(--hue,330) 70% 70% / .35),hsl(calc(var(--hue,330) + 40) 80% 60% / .25));overflow:hidden}
+ .collage.n2{grid-template-columns:1fr 1fr}
+ .collage.n3{grid-template-columns:2fr 1fr;grid-template-rows:1fr 1fr}
+ .collage.n3 .cell:first-child{grid-row:span 2}
+ .collage.n4{grid-template-columns:2fr 1fr;grid-template-rows:1fr 1fr 1fr}
+ .collage.n4 .cell:first-child{grid-row:span 3}
+ .cell{overflow:hidden;min-height:0;background:rgba(0,0,0,.25)}
+ .cell :global(.media){width:100%;height:100%}
+ .cell :global(img){width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;object-fit:cover}
+ .monogram{display:grid;place-items:center;font-size:3rem;font-weight:800;color:rgba(255,255,255,.85);letter-spacing:-.04em}
+ .card-body{display:grid;gap:.2rem;padding:.75rem .9rem .9rem}
+ .card-name{font-weight:700;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+ .card-meta{display:flex;align-items:center;gap:.3rem;color:var(--muted);font-size:.82rem}
+ .card-meta :global(.i){width:.85em;height:.85em;color:var(--mb-rose)}
+ .card-status{font-size:.75rem;color:var(--muted)}
+ .card-status.busy{color:var(--mb-peach)}
+ .card-status.bad{color:var(--danger,#ff929d)}
+ .board-card.add{border-style:dashed;background:transparent}
+ .add-art{display:grid;place-items:center;background:rgba(255,255,255,.03);font-size:2rem;color:var(--muted)}
+ .add-art :global(.i){width:2.2rem;height:2.2rem}
  .board-rail{display:flex;gap:.6rem;overflow-x:auto;padding:1.5rem .1rem 1.1rem;scrollbar-width:none;scroll-snap-type:x proximity}
  .board-rail::-webkit-scrollbar{display:none}
  .board-chip{display:flex;align-items:center;gap:.65rem;padding:.35rem 1rem .35rem .35rem;border-radius:var(--r-pill);border:1px solid var(--line);background:var(--mb-card);color:var(--text);white-space:nowrap;cursor:pointer;scroll-snap-align:start;transition:background .2s var(--ease),border-color .2s var(--ease),transform .2s var(--ease)}
@@ -507,17 +681,31 @@
  .dismiss{border:0;background:none;color:var(--muted);font-size:1.2rem;cursor:pointer;line-height:1}
  .error{color:var(--danger,#ff929d)}
 
- .board-form{display:grid;gap:1rem}
+ .board-form{display:grid;gap:1rem;min-width:0}
+ .board-form fieldset{display:grid;gap:.9rem;margin:0;padding:0;border:0;min-width:0}
+ .board-form legend{padding:0;margin-bottom:.2rem;font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;color:var(--mb-rose);font-weight:700}
+ .board-form label{min-width:0}
+ .board-form textarea{resize:vertical}
+ .tuning{border:1px solid var(--line);border-radius:var(--r-md);padding:.2rem .9rem}
+ .tuning[open]{padding-bottom:.9rem}
+ .tuning summary{cursor:pointer;padding:.6rem 0;font-weight:600}
+ .tuning>*+*{margin-top:.8rem}
+ .choice{display:grid;gap:.5rem}
+ .choice-label{font-size:.9rem}
+ .opt{display:flex!important;align-items:flex-start;gap:.6rem;padding:.6rem .7rem;border:1px solid var(--line);border-radius:var(--r-md);cursor:pointer}
+ .opt:has(input:checked){border-color:var(--mb-rose);background:rgba(255,143,171,.08)}
+ .opt input{margin-top:.2rem;accent-color:var(--mb-rose)}
+ .opt span{display:grid;gap:.15rem}
  .board-form p{margin:0}
  .board-form label,.move-form label{display:grid;gap:.4rem;font-size:.9rem}
  .board-form small{color:var(--muted)}
  .board-form .check{display:flex;align-items:center;gap:.6rem}
  .check input{width:auto}
  .form-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;align-items:end}
- .board-form input:not([type=checkbox]):not([type=range]),.board-form textarea,.board-form select,.move-form select{width:100%;background:var(--surface-solid);border:1px solid var(--line-strong);border-radius:var(--r-md);padding:.7rem;color:var(--text);font:inherit}
+ .board-form :where(input:not([type=checkbox]):not([type=range]):not([type=radio]),textarea,select),.move-form select{width:100%;box-sizing:border-box;min-width:0;background:var(--surface-solid);border:1px solid var(--line-strong);border-radius:var(--r-md);padding:.7rem;color:var(--text);font:inherit}
  .board-form input:focus,.board-form textarea:focus,.board-form select:focus{outline:2px solid var(--mb-rose);outline-offset:1px}
- .target-row{display:flex;align-items:center;gap:.8rem}
- .target-row input[type=range]{flex:1;accent-color:var(--mb-rose)}
+ .target-row{display:flex;align-items:center;gap:.8rem;min-width:0}
+ .target-row input[type=range]{flex:1;min-width:0;accent-color:var(--mb-rose)}
  .board-form .target-num{width:6rem;flex:none;text-align:center;font-variant-numeric:tabular-nums}
  .dropzone{display:grid!important;place-items:center;gap:.35rem!important;text-align:center;padding:1.6rem 1rem;border:2px dashed var(--line-strong);border-radius:var(--r-lg);background:rgba(255,255,255,.02);cursor:pointer;transition:border-color .2s,background .2s}
  .dropzone :global(.i){width:1.8rem;height:1.8rem;color:var(--mb-rose)}

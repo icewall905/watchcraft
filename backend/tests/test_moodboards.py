@@ -570,3 +570,62 @@ def test_llm_lock_is_per_endpoint(monkeypatch):
     assert llm._lock_for('http://judge:8080/v1') is llm._lock
     worker = llm._lock_for('http://worker:8080/v1')
     assert worker is not llm._lock and worker is llm._lock_for('http://worker:8080/v1/')
+
+
+def test_curator_pins_keep_vision_description_and_reason(client, monkeypatch):
+    b = make(client)
+    def judge(system, user, schema, **kw):
+        if 'verdicts' in schema['properties']:
+            return {'verdicts': [{'index': 0, 'seen': 'Blue cornflowers in a meadow', 'fits': True,
+                                  'why': 'Wildflowers, and they are blue as instructed.'}]}
+        return {'queries': ['wildflowers']}
+    monkeypatch.setattr(mb.ai, '_call', judge)
+    monkeypatch.setattr(moodboard_sources, 'search', lambda *a, **kw: [candidate(5)])
+    monkeypatch.setattr(mb, 'capture_image', lambda url: (b'img', 'image/png', 1, 1))
+    assert mb.dispatch_due()
+    pin = client.get(f"/api/hub/boards/{b['id']}").json()['pins'][0]
+    assert pin['vision_seen'] == 'Blue cornflowers in a meadow'
+    assert pin['vision_why'].startswith('Wildflowers')
+    seed(b['id'], 1)
+    manual = [p for p in client.get(f"/api/hub/boards/{b['id']}").json()['pins'] if p['id'] != pin['id']][0]
+    assert manual['vision_seen'] == '' and manual['vision_why'] == ''
+    assert client.delete(f"/api/hub/boards/{b['id']}").status_code == 200
+    with session() as s:
+        assert not s.exec(select(mb.MoodPinNote)).all()
+
+
+def test_board_tuning_avoid_seeds_media_size_and_strictness(client, monkeypatch):
+    b = make(client, name='Homelab', interests='homelab', avoid='quote cards, gaming chairs',
+             seed_searches='mini rack 10 inch\nraspberry pi cluster', media='photos', min_width=800, strictness='balanced')
+    assert b['avoid'] == 'quote cards, gaming chairs' and b['media'] == 'photos' and b['min_width'] == 800
+    assert client.post('/api/hub/boards', json={'name': 'x', 'interests': 'y', 'media': 'video'}).status_code == 422
+    searched, prompts = [], []
+    def judge(system, user, schema, **kw):
+        if 'verdicts' in schema['properties']:
+            prompts.append((system, user))
+            return verdicts(range(schema['properties']['verdicts']['maxItems']))
+        return {'queries': ['home server rack', 'Mini rack 10 inch']}
+    monkeypatch.setattr(mb.ai, '_call', judge)
+    monkeypatch.setattr(moodboard_sources, 'search', lambda q, **kw: searched.append(q) or [candidate(len(searched) * 10 + i) for i in range(3)])
+    sizes = iter([(b'a', 'image/png', 1200, 900), (b'b', 'image/gif', 1200, 900), (b'c', 'image/png', 400, 300)] * 10)
+    monkeypatch.setattr(mb, 'capture_image', lambda url: next(sizes))
+    assert mb.dispatch_due()
+    assert searched[:2] == ['mini rack 10 inch', 'raspberry pi cluster'] and searched[2] == 'home server rack'
+    assert len(searched) == 3  # duplicate planned phrase dropped
+    system, user = prompts[0]
+    assert 'avoid list' in user and 'quote cards, gaming chairs' in user and 'Still photographs only' in user
+    assert 'may be partly met' in system and 'satisfies ALL' not in system
+    pins = client.get(f"/api/hub/boards/{b['id']}").json()['pins']
+    assert pins and all(p['width'] >= 800 and p['media_type'] == 'image' for p in pins)
+    edited = client.patch(f"/api/hub/boards/{b['id']}", json={'strictness': 'strict', 'seed_searches': 'nas build'}).json()['board']
+    assert edited['strictness'] == 'strict' and edited['seed_searches'] == 'nas build'
+
+
+def test_board_list_has_preview_collage_and_counts(client):
+    b = make(client)
+    seed(b['id'], 6)
+    pins = client.get(f"/api/hub/boards/{b['id']}").json()['pins']
+    client.patch(f"/api/hub/boards/{b['id']}/pins/{pins[-1]['id']}", json={'saved': True})
+    row = client.get('/api/hub/boards').json()['boards'][0]
+    assert len(row['preview_urls']) == 4 and row['preview_urls'][0].endswith(f"/pins/{pins[-1]['id']}/media")
+    assert row['cover_url'] == row['preview_urls'][0] and row['saved_count'] == 1 and row['last_added']

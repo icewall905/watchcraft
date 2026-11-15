@@ -555,6 +555,11 @@ class MoodBoard(SQLModel, table=True):
     revision: int = 0
     source_offset: int = 0
     target_images: int = 100
+    avoid: str = ''           # Hard rejects for the vision judge ("text graphics, gaming chairs")
+    seed_searches: str = ''   # Owner's own search phrases, used before AI-planned ones
+    media: str = 'any'        # any | photos | gifs
+    min_width: int = 0        # Skip captured images narrower than this (px)
+    strictness: str = 'strict'  # strict | balanced
     created_at: float = Field(default_factory=time.time)
 
 
@@ -580,6 +585,27 @@ class MoodAsset(SQLModel, table=True):
     pin_id: int = Field(primary_key=True)
     mime: str
     data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+
+
+class ExtensionKey(SQLModel, table=True):
+    """Browser-extension connection key for one profile. Only a SHA-256 of the key is stored.
+
+    Scope: list that profile's Mood Boards and add images to them. Nothing else."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    profile_id: int = Field(index=True)
+    name: str = ''
+    key_hash: str = Field(index=True, unique=True)
+    hint: str = ''  # last 4 characters, to tell keys apart
+    created_at: float = Field(default_factory=time.time)
+    last_used: float = 0
+
+
+class MoodPinNote(SQLModel, table=True):
+    """Why the curator kept a pin: the vision model's own description and reason, shown in the viewer."""
+    pin_id: int = Field(primary_key=True)
+    seen: str = ''
+    why: str = ''
+    created_at: float = Field(default_factory=time.time)
 
 
 class MoodFeedback(SQLModel, table=True):

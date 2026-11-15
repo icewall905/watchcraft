@@ -49,8 +49,15 @@ def init_db() -> None:
         from .hub import migrate, models as _hub_models  # noqa: F401
         from .music import models as _music_models  # noqa: F401
         SQLModel.metadata.create_all(connection)
-        if 'target_images' not in {c['name'] for c in inspect(connection).get_columns('moodboard')}:
-            connection.exec_driver_sql("ALTER TABLE moodboard ADD COLUMN target_images INTEGER NOT NULL DEFAULT 100")
+        board_columns = {c['name'] for c in inspect(connection).get_columns('moodboard')}
+        for name, definition in (('target_images', 'INTEGER NOT NULL DEFAULT 100'),
+                                 ('avoid', "VARCHAR NOT NULL DEFAULT ''"),
+                                 ('seed_searches', "VARCHAR NOT NULL DEFAULT ''"),
+                                 ('media', "VARCHAR NOT NULL DEFAULT 'any'"),
+                                 ('min_width', 'INTEGER NOT NULL DEFAULT 0'),
+                                 ('strictness', "VARCHAR NOT NULL DEFAULT 'strict'")):
+            if name not in board_columns:
+                connection.exec_driver_sql(f'ALTER TABLE moodboard ADD COLUMN "{name}" {definition}')
         # Additive shared-learning type columns. Existing rows are videos by default;
         # keep the legacy video_id column unchanged for old feedback and callers.
         _migrate_shared_learning_columns(connection)

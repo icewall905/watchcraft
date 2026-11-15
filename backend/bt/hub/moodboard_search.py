@@ -154,9 +154,11 @@ def search_response(q: str, pid: int, board_id: int | None, limit: int) -> dict:
     with session() as s:
         pins = {p.id: p for p in s.exec(select(MoodPin).where(MoodPin.id.in_([i for i, _ in ranked] or [0]))).all()}
         names = dict(s.exec(select(MoodBoard.id, MoodBoard.name).where(MoodBoard.profile_id == pid)).all())
+        from .moodboards import note_map
+        notes = note_map(s, list(pins))
     out = []
     for pin_id, score in ranked:
         pin = pins.get(pin_id)
         if pin:
-            out.append({**pin_json(pin), 'board_name': names.get(pin.board_id, ''), 'similarity': score})
+            out.append({**pin_json(pin, note=notes.get(pin_id)), 'board_name': names.get(pin.board_id, ''), 'similarity': score})
     return {**base, 'pins': out}
