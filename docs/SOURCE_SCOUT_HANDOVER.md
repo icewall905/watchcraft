@@ -8,6 +8,15 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Mood Board icon action row (`508510d`, 2026-11-15)
+
+- One icon row per image (thumbs up = Fits, thumbs down = Not a fit, heart = Save, trash = Remove); heart moved off
+  the image overlay. Frontend only (`boards/+page.svelte`). Backup `/root/compose/watchcraft-backups/
+  20261115-iconrow-508510d` (online DB quick_check ok, config hashes, previous source); rollback images
+  `watchcraft:rollback-20261115-iconrow-*`, `rollback.sh`.
+- All four services run `sha256:e851aeb8704a0a596a8fa44cb9015307fb0e135ad853c870c85a0a5d1ea4b306`, zero restarts, no
+  tracebacks; health and `/boards` 200; new bundle served.
+
 ## Deployment record — stable Mood Board grid, Saved includes Fits, Remove (`d675d27`, 2026-11-15)
 
 - Range `f16d882..d675d27`: fixed-placement columns (`PinColumns.svelte`) instead of CSS `columns`, so loading
