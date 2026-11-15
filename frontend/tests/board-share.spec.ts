@@ -106,3 +106,32 @@ test('the header lists every public link for revoking', async ({ page, request }
   await expect(dialog.getByText('You have no public links.')).toBeVisible();
  } finally { await cleanup(request, s); }
 });
+
+test('sharing an image file opens the share sheet straight from the tap', async ({ page, request }) => {
+ const s = await seed(request);
+ try {
+  // Like Safari/Chrome: the share sheet is refused unless it opens right after the tap.
+  await page.addInitScript(() => {
+   let tapped = 0; const w = window as unknown as { shared: unknown[] };
+   w.shared = [];
+   addEventListener('click', () => { tapped = performance.now(); }, true);
+   Object.defineProperty(navigator, 'canShare', { value: (d: { files?: File[] }) => !!d.files?.length, configurable: true });
+   Object.defineProperty(navigator, 'share', { configurable: true, value: async (d: { files?: File[] }) => {
+    if (performance.now() - tapped > 150) throw new DOMException('Must be handling a user gesture', 'NotAllowedError');
+    w.shared.push({ name: d.files?.[0]?.name, type: d.files?.[0]?.type, size: d.files?.[0]?.size });
+   } });
+  });
+  // A full-size image takes a while to arrive.
+  await page.route('**/pins/*/media', async route => { await new Promise(r => setTimeout(r, 600)); await route.continue(); });
+  await freshPage(page, `/boards?board=${s.board.id}`);
+  await page.getByRole('button', { name: 'View Red square 1', exact: true }).click();
+  const viewer = page.getByRole('dialog', { name: 'Red square 1' });
+  await viewer.getByRole('button', { name: 'Share', exact: true }).click();
+  const button = page.getByRole('button', { name: 'Share file with an app…' });
+  await expect(button).toBeVisible();
+  await page.waitForTimeout(1500);
+  await button.click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { shared: unknown[] }).shared)).toEqual([{ name: 'Red-square-1.png', type: 'image/png', size: expect.any(Number) }]);
+  await expect(page.getByText('Could not share this image.')).toHaveCount(0);
+ } finally { await cleanup(request, s); }
+});

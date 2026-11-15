@@ -93,16 +93,36 @@
    status = 'Download started.';
   } catch { status = 'Could not download this image.'; }
  }
+ // The share sheet must open straight from the tap: Safari and Chrome drop the tap's permission
+ // ("NotAllowedError") if we first wait for a multi-megabyte download. So the file is prepared as
+ // soon as the image opens, and the tap only hands it over.
+ let shareFile = $state<{id: number; file: File} | null>(null);
+ $effect(() => {
+  const id = pin.id, url = pin.image_url;
+  if (onShare || typeof navigator === 'undefined' || !('share' in navigator)) return;
+  let live = true;
+  boardMediaBlob(url).then(blob => { if (live) shareFile = {id, file: new File([blob], filename(blob), {type: blob.type || 'image/jpeg'})}; }).catch(() => {});
+  return () => { live = false; };
+ });
+ const why = (e: unknown) => { const err = e as Error; return [err?.name, err?.message].filter(Boolean).join(': ').slice(0, 120); };
  async function share() {
+  const link = uploaded ? undefined : pin.source_url;
+  let file = shareFile?.id === pin.id ? shareFile.file : null;
   try {
-   const blob = await boardMediaBlob(pin.image_url);
-   const file = new File([blob], filename(blob), {type: blob.type});
-   const link = uploaded ? undefined : pin.source_url;
-   if (navigator.canShare?.({files: [file]})) { await navigator.share({files: [file], title: pin.title, text: link}); return; }
-   if (navigator.share && link) { await navigator.share({title: pin.title, url: link}); return; }
-   if (link && navigator.clipboard) { await navigator.clipboard.writeText(link); status = 'Link to the original copied.'; return; }
-   status = 'Sharing is not available here. Use Download instead.';
-  } catch (e) { if ((e as Error)?.name !== 'AbortError') status = 'Could not share this image.'; }
+   if (!file && 'share' in navigator) { const blob = await boardMediaBlob(pin.image_url); file = new File([blob], filename(blob), {type: blob.type || 'image/jpeg'}); }
+   if (file && navigator.canShare?.({files: [file]})) await navigator.share({files: [file], title: pin.title});
+   else if ('share' in navigator && link) await navigator.share({title: pin.title, url: link});
+   else if (link && navigator.clipboard) { await navigator.clipboard.writeText(link); status = 'Link to the original copied.'; }
+   else status = 'Sharing is not available here. Use Download instead.';
+  } catch (e) {
+   const name = (e as Error)?.name;
+   if (name === 'AbortError') return;
+   console.warn('Share failed', e);
+   // The tap's permission ran out while the image downloaded; it is ready now.
+   if (name === 'NotAllowedError' && !shareFile && file) { shareFile = {id: pin.id, file}; status = 'Image ready. Tap Share again.'; return; }
+   try { if (link && navigator.clipboard) { await navigator.clipboard.writeText(link); status = `Could not open the share sheet (${why(e)}). Link to the original copied instead.`; return; } } catch { /* fall through */ }
+   status = `Could not share this image (${why(e)}). Use Download instead.`;
+  }
  }
 </script>
 

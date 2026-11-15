@@ -62,15 +62,25 @@
   try { await navigator.share({title: pin?.title || board?.name, url: created}); }
   catch (e) { if ((e as Error)?.name !== 'AbortError') error = 'Sharing is not available here. Copy the link instead.'; }
  }
+ // Prepared up front: the share sheet must open straight from the tap, or browsers refuse it.
+ let prepared: File | null = null;
+ async function prepareFile() {
+  if (!pin) return null;
+  const blob = await boardMediaBlob(pin.image_url);
+  const ext = (blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
+  return new File([blob], `${(pin.title || 'image').replace(/[^\w.-]+/g, '-').slice(0, 60)}.${ext}`, {type: blob.type || 'image/jpeg'});
+ }
+ $effect(() => { if (pin && typeof navigator !== 'undefined' && 'share' in navigator) prepareFile().then(f => { prepared = f; }).catch(() => {}); });
  async function shareFile() {
   if (!pin) return;
   try {
-   const blob = await boardMediaBlob(pin.image_url);
-   const ext = (blob.type.split('/')[1] || 'jpg').replace('jpeg', 'jpg');
-   const file = new File([blob], `${(pin.title || 'image').replace(/[^\w.-]+/g, '-').slice(0, 60)}.${ext}`, {type: blob.type});
-   if (navigator.canShare?.({files: [file]})) await navigator.share({files: [file], title: pin.title});
+   const file = prepared ?? (prepared = await prepareFile());
+   if (file && navigator.canShare?.({files: [file]})) await navigator.share({files: [file], title: pin.title});
    else error = 'This device cannot share files. Use Download in the viewer instead.';
-  } catch (e) { if ((e as Error)?.name !== 'AbortError') error = 'Could not share this image.'; }
+  } catch (e) {
+   const name = (e as Error)?.name;
+   if (name !== 'AbortError') error = name === 'NotAllowedError' ? 'Image ready. Tap Share file again.' : `Could not share this image (${[name, (e as Error)?.message].filter(Boolean).join(': ').slice(0, 120)}).`;
+  }
  }
  async function revoke(l: ShareLink) {
   busy = true; error = '';
