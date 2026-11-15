@@ -8,6 +8,17 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Mood Board grid previews + preloading (`dbc00ad`, 2026-11-15)
+
+- Additive `moodthumb` table: 560 px WebP previews (empty data = serve original, for animated/small images), made
+  lazily on `GET /api/hub/boards/{bid}/pins/{id}/thumb?v=` and backfilled 50 per Mood Board scheduler tick; cached
+  `private, max-age=31536000, immutable` with `Vary: X-Profile-Id, Cookie`. `/media` stays `no-store`. Frontend
+  preloads every loaded preview (4 at a time, idle time) and re-shows cached tiles instantly.
+- Backup `/root/compose/watchcraft-backups/20261115-thumbs-dbc00ad` (online DB quick_check ok, config hashes,
+  previous source, `new-files.txt`); rollback images `watchcraft:rollback-20261115-thumbs-*`, `rollback.sh`.
+- All four services run `sha256:9791c784a8baa7d6de6c1209c3b68b358e35d39a876ce05abdf129f1833042cb`, zero restarts, no
+  tracebacks; health and `/boards` 200. After 60 s the backfill had 100/378 previews (avg ~40 KB vs ~870 KB originals).
+
 ## Deployment record — Mood Board Reshuffle (`874c971`, 2026-11-15)
 
 - `POST /api/hub/boards/{bid}/reshuffle`: hides every visible pin that is neither saved nor marked Fits, drops their
