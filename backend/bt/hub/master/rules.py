@@ -33,6 +33,7 @@ class ProfileRules:
     muted_terms: list[str] = field(default_factory=list)  # whole words or phrases
     hidden_formats: set[int] = field(default_factory=set)
     hidden_communities: set[str] = field(default_factory=set)
+    kid_unsafe: set[int] = field(default_factory=set)  # child profiles: items that failed the kid-safe check
 
 
 @dataclass
@@ -49,8 +50,15 @@ def load(s: Session, pid: int) -> ProfileRules:
     topics = s.exec(select(Topic).where(Topic.profile_id == pid, Topic.muted == True)).all()  # noqa: E712
     hidden_trends = select(MemeTrendState.trend_id).where(MemeTrendState.profile_id == pid, MemeTrendState.hidden == True)  # noqa: E712
     hidden = s.exec(select(MemeTrend.target_kind, MemeTrend.target_key).where(MemeTrend.id.in_(hidden_trends))).all()
+    child = bool(p and p.role == 'child')
+    kid_unsafe: set[int] = set()
+    if child:
+        from ..kidsafe import VERSION
+        from ..models import KidSafeVerdict
+        kid_unsafe = set(s.exec(select(KidSafeVerdict.item_id).where(KidSafeVerdict.safe == False,  # noqa: E712
+                                                                      KidSafeVerdict.version == VERSION)).all())
     return ProfileRules(
-        child=bool(p and p.role == 'child'),
+        child=child, kid_unsafe=kid_unsafe,
         hidden_languages={x for x in (prefs.get('hidden_meme_languages') or []) if isinstance(x, str)},
         muted_terms=[k.lower() for t in topics for k in (t.keywords or [t.name]) if isinstance(k, str) and k.strip()],
         hidden_formats={int(k) for kind, k in hidden if kind == 'format' and k.isdigit()},
@@ -112,6 +120,8 @@ def check(item: ContentItem, ex: MemeExample | None, rules: ProfileRules, now: f
         return RuleResult(reject=True, quality=0, reasons=[f'hidden language {language}'])
     if meta.get('sensitive') and rules.child:
         return RuleResult(reject=True, quality=0, reasons=['sensitive'])
+    if rules.child and item.id in rules.kid_unsafe:
+        return RuleResult(reject=True, quality=0, reasons=['not kid-safe'])
     if ex and ex.dup_of:
         return RuleResult(reject=True, quality=0, reasons=['duplicate'])
     if ex and (ex.format_id in rules.hidden_formats or ex.community and ex.community in rules.hidden_communities):

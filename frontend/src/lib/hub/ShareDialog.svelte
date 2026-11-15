@@ -18,7 +18,7 @@
  let expires = $state<'' | '1' | '7' | '30'>('7');
  let includeSource = $state(false);
  let created = $state('');
- const canLink = $derived(session.hubAllowed);
+ const canLink = $derived(session.grownUp);
  const what = $derived(pin ? 'this image' : 'this board');
  const title = $derived(board ? (pin ? 'Share image' : `Share “${board.name}”`) : 'Public links');
 

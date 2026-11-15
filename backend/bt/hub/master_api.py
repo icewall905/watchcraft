@@ -43,6 +43,19 @@ def _refs(found: dict[int, dict], refs: list[int]) -> list[dict]:
             for n, i in enumerate(refs, 1)]
 
 
+def _kid_entry(e: dict, found: dict[int, dict]) -> dict:
+    """Edition entry for a child: editorial text drops out when it cites an item the child cannot see."""
+    refs = e.get('summary_refs') or []
+    out = {k: v for k, v in e.items() if k != 'summary_refs'}
+    out['item'] = found[e['item_id']]
+    if any(r not in found for r in refs):
+        for k in ('summary', 'why', 'note'):
+            out.pop(k, None)
+    elif refs:
+        out['summary_refs'] = _refs(found, refs)
+    return out
+
+
 def _set_aside_count(s: Session, pid: int, now: float) -> int:
     return s.exec(select(func.count()).select_from(ItemVerdict).join(ContentItem, ContentItem.id == ItemVerdict.item_id)
                   .where(ItemVerdict.profile_id == pid, ItemVerdict.tier == 'set_aside', views.visible(pid, ItemVerdict.item_id),
@@ -68,11 +81,17 @@ def today(preview: bool = False, stories: int = 8, reads: int = 6, memes: int = 
         refs = [*ed.intro_refs, *(r for sec in ed.sections for e in sec.get('entries', []) for r in e.get('summary_refs', []))]
         visible = views.visible_set(s, pid, set(entry_ids) | set(refs))
         found = _items(s, pid, list(visible))
+        kid = views.child(pid)
+        # A child never reads editorial text written partly from items it may not see.
+        intro, intro_refs = ed.intro, ed.intro_refs
+        if kid and any(r not in found for r in intro_refs):
+            intro, intro_refs = '', []
         sections = []
         for sec in ed.sections:
             out = {k: v for k, v in sec.items() if k != 'entries'}
             if 'entries' in sec:
-                out['entries'] = [{**{k: v for k, v in e.items() if k not in ('summary_refs',)},
+                out['entries'] = [_kid_entry(e, found) if kid else
+                                  {**{k: v for k, v in e.items() if k not in ('summary_refs',)},
                                    'item': found[e['item_id']],
                                    **({'summary_refs': _refs(found, e['summary_refs'])} if e.get('summary_refs') else {})}
                                   for e in sec['entries'] if e['item_id'] in found]
@@ -94,9 +113,9 @@ def today(preview: bool = False, stories: int = 8, reads: int = 6, memes: int = 
             s.add(ed)
             s.commit()
         return {'day': ed.day, 'built_at': ed.built_at, 'updated_at': ed.updated_at,
-                'intro': ed.intro, 'intro_refs': _refs(found, ed.intro_refs), 'sections': sections,
+                'intro': intro, 'intro_refs': _refs(found, intro_refs), 'sections': sections,
                 'rerun': get_kv(f'watchcraft_master_manual:{pid}', {}, s=s),
-                'set_aside': _set_aside_count(s, pid, now), 'curated': views.has_verdicts(s, pid)}
+                'set_aside': 0 if kid else _set_aside_count(s, pid, now), 'curated': views.has_verdicts(s, pid)}
 
 
 @router.post('/today/rerun')

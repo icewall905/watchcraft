@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KidSafeBadge from '$lib/hub/KidSafeBadge.svelte';
 	import '@fontsource-variable/inter';
 	import '@fontsource-variable/newsreader';
 	import '../app.css';
@@ -111,8 +112,13 @@
 		{#if !fullscreen}<TopBar />{:else if page.url.pathname.startsWith('/watch/')}<PlaybackPicker floating />{/if}
 		<main class:fullscreen data-area={hubArea ? 'hub' : undefined}>
 			{#if !session.canOpen(page.url.pathname) && isHubPath(page.url.pathname)}
+				{#if session.isChild}
+				<div class="page"><h1>Not available on kid profiles</h1><p>This part of the Hub is for grown-ups. Ask a grown-up if you need it.</p><a class="btn primary" href="/today" use:focusable>Back to Today</a></div>
+				{:else}
 				<div class="page"><h1>Hub is unavailable for this profile</h1><p>Discovery, external sources and research are disabled. Switch to an adult profile to use the Hub.</p><a class="btn primary" href="/tv" use:focusable>Back to TV</a></div>
+				{/if}
 			{:else}{#key session.version}
+				{#if session.isChild && isHubPath(page.url.pathname)}<div class="kid-safe-bar"><KidSafeBadge /></div>{/if}
 				{@render children()}
 			{/key}{/if}
 		</main>

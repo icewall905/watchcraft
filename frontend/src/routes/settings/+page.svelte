@@ -71,7 +71,7 @@
 		{:else}
 			{#key tab}
 				<div class="pane">
-					{#if !session.isAdmin && !['categories', 'feeds', 'profiles', 'keys', 'appearance', ...(session.hubAllowed ? ['curator'] : [])].includes(tab)}
+					{#if !session.isAdmin && !['categories', 'feeds', 'profiles', 'keys', 'appearance', ...(session.grownUp ? ['curator'] : [])].includes(tab)}
 						<h2>Administrator access required</h2><p class="muted">Switch to an administrator profile to change shared server settings.</p>
 					{:else if tab === 'categories'}<CategoriesTab />
 					{:else if tab === 'feeds'}<FeedsTab />

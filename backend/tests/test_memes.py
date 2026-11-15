@@ -259,13 +259,15 @@ def test_meme_api_is_profile_scoped(client):
     assert body['total'] == 0 and client.get('/api/hub/memes/items', headers=H).json()['total'] == 1
 
 
-def test_child_profiles_blocked_from_meme_routes(client):
+def test_child_profiles_see_no_household_or_unchecked_memes(client):
     _seed_meme('https://m.test/@p/2', 'household meme', _images()[4], '#p')
     _analyze_all()
     assert client.patch('/api/profiles/1', json={'pin': '4826'}).status_code == 200
     child = client.post('/api/profiles', json={'name': 'Kid', 'role': 'child'}).json()
-    assert client.get('/api/hub/memes/items', headers={'X-Profile-Id': str(child['id'])}).status_code == 403
-    assert client.get('/api/hub/memes/trends', headers={'X-Profile-Id': str(child['id'])}).status_code == 403
+    kid = {'X-Profile-Id': str(child['id'])}
+    assert client.get('/api/hub/memes/items', headers=kid).json()['total'] == 0
+    assert client.get('/api/hub/memes/trends', headers=kid).json()['trends'] == []
+    assert client.post('/api/hub/memes/refresh', headers=kid).status_code == 403
 
 
 def test_meme_template_is_an_ordinary_curator(client):

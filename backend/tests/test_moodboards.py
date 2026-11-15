@@ -790,4 +790,4 @@ def test_child_profiles_get_their_own_always_child_friendly_boards(client):
     assert client.post(f"{base}/reference", headers=kid, json=body).status_code == 403
     assert client.post(f"{base}/pinterest", headers=kid, json={'url': 'https://www.pinterest.com/a/b/'}).status_code == 403
     assert client.post('/api/ext/keys', headers=kid, json={}).status_code == 403
-    assert client.get('/api/hub/today', headers=kid).status_code in (403, 404)  # the rest of the Hub stays closed
+    assert client.post('/api/hub/items/import', headers=kid, json={'url': 'https://example.org/'}).status_code == 403  # adult tools stay closed

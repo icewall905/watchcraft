@@ -364,7 +364,7 @@ test('child friendly: grown-ups can switch it on; child profiles always have it 
  await page.getByText('More tuning').click();await expect(page.getByRole('radio',{name:/Balanced/})).toBeDisabled();
  await page.getByRole('button',{name:'Save changes'}).click();
  expect(writes.at(-1)).toMatchObject({method:'PATCH',body:{child_friendly:true,strictness:'strict'}});
- // A child profile: Mood Boards open, other Hub pages stay hidden, only the curator adds images.
+ // A child profile: Mood Boards and the kid-safe Hub open, Music stays hidden, only the curator adds images.
  await page.route('**/api/profiles',async route=>{if(route.request().method()!=='GET')return route.fallback();const res=await route.fetch();const list=await res.json();return route.fulfill({json:list.map((p:any,i:number)=>i===0?{...p,role:'child'}:p)});});
  await page.reload();
  await expect(page.getByRole('heading',{name:'Garden inspiration'})).toBeVisible();
@@ -374,7 +374,8 @@ test('child friendly: grown-ups can switch it on; child profiles always have it 
  await page.getByLabel("Search your boards by what's in the picture").fill('cat');await page.getByRole('button',{name:'Search',exact:true}).click();
  await expect(page.getByRole('region',{name:'Search Pinterest'})).toHaveCount(0);
  await expect(page.getByRole('link',{name:'Mood Board',exact:true}).first()).toBeVisible();
- await expect(page.getByRole('link',{name:'News',exact:true})).toHaveCount(0);
+ await expect(page.getByRole('link',{name:'News',exact:true}).first()).toBeVisible();
+ await expect(page.getByRole('navigation',{name:'Main',exact:true}).locator('a[href="/music"]')).toHaveCount(0);
  await page.getByRole('button',{name:'New board'}).first().click();
  await expect(page.getByLabel(/Child friendly/)).toBeChecked();await expect(page.getByLabel(/Child friendly/)).toBeDisabled();
 });

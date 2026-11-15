@@ -84,9 +84,13 @@ def rank(c: Curator, items: list[dict]) -> list[tuple[float, str]]:
     meme_indices = [n for n, item in enumerate(items) if item.get('type') == 'meme']
     other_indices = [n for n, item in enumerate(items) if item.get('type') not in ARTICLE_TYPES and item.get('type') != 'meme']
     article_memory = ''
-    if article_indices:
-        with session() as s:
+    from ..access import is_child
+    with session() as s:
+        kid = is_child(s, c.profile_id)
+        if article_indices:
             article_memory = context(s, c.profile_id)
+    from .kidsafe import TEXT_RULE
+    kid_rule = (' This curator belongs to a child profile. ' + TEXT_RULE + ' Score 0 for anything that is not kid-safe.') if kid else ''
     for indices in (article_indices, meme_indices, other_indices):
         for start in range(0, len(indices), 15):
             positions = indices[start:start + 15]
@@ -126,7 +130,7 @@ def rank(c: Curator, items: list[dict]) -> list[tuple[float, str]]:
                     evidence.append(str(item.get('coverage') or ''))
                     rows.append({**item, 'coverage': '; '.join(x for x in evidence if x)})
                 batch = rows
-            res = _call(system,
+            res = _call(system + kid_rule,
                         f'Interest: {c.instructions or c.name}\nKeywords: {", ".join(c.keywords)}\nAvoid: {", ".join(c.exclusions)}'
                         + memory_text + f'\n\n{_data(batch)}', schema, role='worker')
             for row in res.get('scores', []):
@@ -194,10 +198,34 @@ def heuristic_draft(goal: str, kind: str) -> dict:
             'interval_hours': 0 if kind == 'research' else 24}
 
 
-def draft(goal: str, kind: str = 'watch') -> dict:
+KID_DRAFT = ('This curator is for a child profile (about 10-12 years old). Only plan age-appropriate topics and '
+             'family-friendly search queries; never plan queries about people\'s private lives, violence, adult or '
+             'scary subjects. Use only providers from [web_search, bing_news, wikipedia]; no feeds.')
+
+
+def _kid_draft(d: dict, kind: str) -> dict:
+    from .providers import KID_PROVIDERS
+    return {**d, 'providers': [p for p in d['providers'] if p in KID_PROVIDERS] or ['web_search', 'wikipedia'], 'feeds': [],
+            'content_types': [t for t in d['content_types'] if t in ('news', 'article', 'web', 'recipe', 'pattern', 'document')]}
+
+
+def draft(goal: str, kind: str = 'watch', kid: bool = False) -> dict:
     base = heuristic_draft(goal, kind)
+    if kid:
+        base = _kid_draft(base, kind)
     if not enabled():
         return {**base, 'ai': False}
+    if kid:
+        try:
+            res = _call('You configure a content-discovery agent for a child from their request. Produce a short name, a '
+                        'one-sentence description, an emoji icon, 2-6 family-friendly web search queries, 3-8 lowercase '
+                        'relevance keywords, exclusions, content types from [news, article, web, recipe, pattern, document], '
+                        'providers, and interval_hours (0 manual, 6, 24, 168). ' + KID_DRAFT,
+                        f'<data>{_esc(goal[:2000])}</data>', DRAFT_SCHEMA, 1200)
+        except Exception as e:  # noqa: BLE001
+            log.info('draft AI failed: %s', e)
+            return {**base, 'ai': False}
+        return _kid_draft(_draft_result(base, res, kind), kind)
     try:
         res = _call('You configure a content-discovery agent from a user\'s request. Produce a short name, a one-sentence '
                     'description, an emoji icon, 2-6 precise web search queries, 3-8 lowercase relevance keywords (any match '
@@ -211,6 +239,10 @@ def draft(goal: str, kind: str = 'watch') -> dict:
     except Exception as e:  # noqa: BLE001
         log.info('draft AI failed: %s', e)
         return {**base, 'ai': False}
+    return _draft_result(base, res, kind)
+
+
+def _draft_result(base: dict, res: dict, kind: str) -> dict:
     from .providers import TYPE_KEYS
     clean_list = lambda v, n: [str(x).strip()[:200] for x in (v or []) if str(x).strip()][:n]  # noqa: E731
     return {**base, 'ai': True,
@@ -286,12 +318,19 @@ def fallback_digest(items: list[ContentItem]) -> str:
 
 def research_report(cid: int) -> Curator | None:
     with session() as s:
-        from ..access import hub_allowed
+        from ..access import hub_worker_allowed as hub_allowed
         c = s.get(Curator, cid)
         if not c or not hub_allowed(s, c.profile_id):
             return None
         items = s.exec(select(ContentItem).join(CuratorDiscovery, CuratorDiscovery.item_id == ContentItem.id)
                        .where(CuratorDiscovery.curator_id == cid).order_by(CuratorDiscovery.score.desc(), CuratorDiscovery.found_at.desc()))
+        from ..access import is_child
+        kid = is_child(s, c.profile_id)
+        if kid:
+            from .kidsafe import safe_set
+            items = list(items)
+            safe = safe_set(s, [i.id for i in items])
+            items = [i for i in items if i.id in safe]
         items = list(islice((i for i in items if person_match(c, i.model_dump())), 40))
         if not items:
             c.report, c.report_at = '', time.time()
@@ -306,7 +345,9 @@ def research_report(cid: int) -> Curator | None:
                                       'Synthesize findings into a coherent summary, not a list of search results. Cover: overview, key facts, recent developments, notable '
                                       'relations, open questions. Group related findings when they come from the same publisher, '
                                       'and make clear when a claim is only reported by one source. Do not speculate about private '
-                                      'lives or sensitive personal data.', 450)
+                                      'lives or sensitive personal data.'
+                                      + (' The reader is a child (about 10-12): write simply and keep it age-appropriate; '
+                                         'leave out anything violent, sexual, scary or upsetting.' if kid else ''), 450)
             except Exception as e:  # noqa: BLE001
                 log.info('report AI failed: %s', e)
                 c.report = 'AI summary unavailable. Retry generating the report; source findings remain available below.'
@@ -319,7 +360,7 @@ def research_report(cid: int) -> Curator | None:
 
 def generate_briefing(bid: int) -> BriefingIssue | None:
     from . import activity, narrate
-    from ..access import hub_allowed
+    from ..access import hub_worker_allowed as hub_allowed
     from ..models import Profile
     with session() as s:
         owner = s.get(Briefing, bid)
@@ -341,7 +382,7 @@ def generate_briefing(bid: int) -> BriefingIssue | None:
 def _generate_briefing(bid: int, progress, tone: str = 'friendly', run_id: str = '') -> BriefingIssue | None:
     from . import narrate
     with session() as s:
-        from ..access import hub_allowed
+        from ..access import hub_worker_allowed as hub_allowed
         b = s.get(Briefing, bid)
         if not b or not hub_allowed(s, b.profile_id):
             return None
@@ -363,6 +404,12 @@ def _generate_briefing(bid: int, progress, tone: str = 'friendly', run_id: str =
             if topic_ids and item.id not in topic_items and not any(k in f'{item.title} {item.summary}'.lower() for k in kws):
                 continue
             ids.add(item.id); items.append(item)
+        from ..access import is_child
+        kid = is_child(s, b.profile_id)
+        if kid:
+            from .kidsafe import safe_set
+            safe = safe_set(s, [i.id for i in items])
+            items = [i for i in items if i.id in safe]
         limit = 12 if b.length == 'concise' else 30
         items = items[:limit]
     progress('selected', narrate.say(tone, 'briefing.selected', seed=run_id,
@@ -376,7 +423,9 @@ def _generate_briefing(bid: int, progress, tone: str = 'friendly', run_id: str =
             progress('writing', narrate.say(tone, 'briefing.writing', seed=run_id, new=narrate.phrase(len(items), 'discovery', 'discoveries')))
             content = _cited(items, f'Write the "{b.name}" briefing: what is worth knowing from these new discoveries, '
                              'most important first. Group related items from the same publisher or source domain, avoid '
-                             'repeating the same development, and distinguish confirmed facts from interpretation.',
+                             'repeating the same development, and distinguish confirmed facts from interpretation.'
+                             + (' The reader is a child (about 10-12): write simply, keep it age-appropriate and leave out '
+                                'anything violent, sexual, scary or upsetting.' if kid else ''),
                              180 if b.length == 'concise' else 500)
             used_ai = True
         except Exception as e:  # noqa: BLE001

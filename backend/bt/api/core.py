@@ -147,22 +147,21 @@ def patch_profile(pid: int, body: ProfilePatch, request: Request, response: Resp
     s.flush()
     validate_household(s)
     if body.role == 'child':
-        # Retain existing findings/configuration, but stop queued and scheduled
-        # external work as soon as the profile becomes restricted.
-        from ..hub.models import Briefing, Curator, ScoutPlan, ScoutReportConfig
-        report_config = s.get(ScoutReportConfig, pid)
-        if report_config:
-            report_config.frequency, report_config.next_run, report_config.show_home = 'manual', None, False
-            s.add(report_config)
+        # Retain existing findings/configuration. Hub work carries on under the kid-safe lock:
+        # topic curators with a kid-safe source keep running (other sources are skipped at run
+        # time, nothing is unlinked); curators about people, sites or organisations, or with no
+        # kid-safe source, pause. Source Scout plans fetch arbitrary sites and stop.
+        from ..hub.models import Curator, CuratorSource, ScoutPlan, Source
+        from ..hub.providers import KID_PROVIDERS
         for plan in s.exec(select(ScoutPlan).where(ScoutPlan.profile_id == pid)).all():
             plan.enabled = False
             s.add(plan)
         for curator in s.exec(select(Curator).where(Curator.profile_id == pid)).all():
-            curator.enabled, curator.next_run = False, 1e12
-            s.add(curator)
-        for briefing in s.exec(select(Briefing).where(Briefing.profile_id == pid)).all():
-            briefing.frequency, briefing.next_run = 'manual', None
-            s.add(briefing)
+            kid_source = s.exec(select(Source.id).join(CuratorSource, CuratorSource.source_id == Source.id).where(
+                CuratorSource.curator_id == curator.id, Source.provider.in_(KID_PROVIDERS), Source.url == '')).first()
+            if curator.subject_type not in ('', 'topic') or kid_source is None:
+                curator.enabled, curator.next_run = False, 1e12
+                s.add(curator)
     s.commit()
     if body.pin is not None:
         first_id = s.exec(select(Profile.id).order_by(Profile.id)).first()
@@ -763,7 +762,7 @@ class FeedbackIn(BaseModel):
 @router.post("/feedback")
 def add_feedback(body: FeedbackIn, pid: int = Depends(profile_id), s: Session = Depends(get_session)):
     if body.content_type == "article":
-        from ..access import hub_allowed
+        from ..access import hub_worker_allowed as hub_allowed
         from ..hub.api import can_see
         from ..hub.models import ContentItem, ItemState
         article = s.get(ContentItem, body.item_id) if body.item_id is not None else None

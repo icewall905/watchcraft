@@ -695,3 +695,14 @@ class MoodShareNotice(SQLModel, table=True):
     count: int = 1
     seen: bool = False
     created_at: float = Field(default_factory=time.time)
+
+
+class KidSafeVerdict(SQLModel, table=True):
+    """Household-wide kid-safety check of one Hub item. Child profiles only ever see items with
+    a current, safe verdict: no verdict (model off, error, not judged yet) means hidden."""
+    item_id: int = Field(primary_key=True)
+    safe: bool = False
+    image_checked: bool = False  # the item's picture was seen by the vision model and passed
+    reason: str = ''
+    version: int = 0
+    judged_at: float = Field(default_factory=time.time)

@@ -21,7 +21,7 @@ from sqlalchemy.dialects.sqlite import insert
 from sqlmodel import select
 
 from .. import curation
-from ..access import hub_allowed
+from ..access import hub_worker_allowed
 from ..db import get_kv, save_setting, session
 from ..models import Profile, Setting
 from . import slots
@@ -65,8 +65,8 @@ def _open_sql(now):
 
 def _eligible_sql(s, q):
     """Every exclusion SQL can decide, so ineligible rows never crowd out older candidates."""
-    allowed = [pid for pid in s.exec(select(Profile.id).where(Profile.role.in_(('adult', 'admin')))).all()
-               if hub_allowed(s, pid)]
+    allowed = [pid for pid in s.exec(select(Profile.id).where(Profile.role.in_(('adult', 'admin', 'child')))).all()
+               if hub_worker_allowed(s, pid)]
     types = cast(Curator.content_types, String)
     return q.where(
         CuratorDiscovery.profile_id.in_(allowed or [-1]),
@@ -93,7 +93,7 @@ def _rows(s, now, pid=None, unchecked=True, limit=None, offset=0, eligible=False
          .join(CapturedPage, CapturedPage.item_id == ContentItem.id)
          .outerjoin(CaptureJob, (CaptureJob.item_id == ContentItem.id) & (CaptureJob.profile_id == CuratorDiscovery.profile_id))
          .where(ContentItem.type == 'web', ContentItem.body != '', published >= now - WINDOW,
-                Profile.role.in_(('adult', 'admin'))))
+                Profile.role.in_(('adult', 'admin', 'child'))))
     if pid is not None:
         q = q.where(CuratorDiscovery.profile_id == pid)
     if unchecked:
@@ -116,7 +116,7 @@ def _reason(s, row, now, allowed):
     if not str(url).startswith('https://'):
         return 'not_https'
     if pid not in allowed:
-        allowed[pid] = hub_allowed(s, pid)
+        allowed[pid] = hub_worker_allowed(s, pid)
     if not allowed[pid]:
         return 'profile_unavailable'
     if not enabled or kind != 'watch' or (types and not set(types) & set(ARTICLE_TYPES)):
@@ -366,7 +366,7 @@ def audit_tick(now=None) -> bool:
         with session() as s:
             pids = s.exec(select(Curator.profile_id).where(Curator.enabled.is_(True)).distinct()).all()
             for pid in pids:
-                if hub_allowed(s, pid):
+                if hub_worker_allowed(s, pid):
                     profiles[str(pid)] = {'checked_at': now, 'curators': audit(s, pid, now)}
             state = get_kv(AUDIT_KEY, {}, s=s)
             save_setting(AUDIT_KEY, {**state, 'profiles': profiles}, s=s)
@@ -379,7 +379,7 @@ def audit_tick(now=None) -> bool:
 def coverage(s, pid) -> dict:
     """This profile's last audit only, limited to curators it still owns and runs. For shelf/API use."""
     own = get_kv(AUDIT_KEY, {}, s=s).get('profiles', {}).get(str(pid), {})
-    if not hub_allowed(s, pid):
+    if not hub_worker_allowed(s, pid):
         return {'checked_at': None, 'curators': []}
     rows = []
     for row in own.get('curators', []):

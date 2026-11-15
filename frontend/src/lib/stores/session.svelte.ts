@@ -3,6 +3,9 @@ import { api, PROFILE_KEY, onUnauthorized, onProfileLocked } from '../api';
 import { thumbnailPreference } from './thumbnailPreference.svelte';
 import type { Category, Profile, Settings } from '../types';
 
+/** Hub areas a child profile cannot open. */
+const KID_LOCKED_PATHS = ['/music', '/sources'];
+
 class Session {
 	ready = $state(false);
 	authRequired = $state(false);
@@ -25,14 +28,19 @@ class Session {
 		...((this.profile?.prefs?.player ?? {}) as Partial<Settings['player']>)
 	});
 	isAdmin = $derived(this.profile?.role === 'admin' && !this.profile?.pin_locked);
-	hubAllowed = $derived(!!this.profile && this.profile.role !== 'child' && !this.profile.pin_locked);
+	/** Full Hub: grown-up profiles. Children use the Hub under the server's kid-safe lock. */
+	grownUp = $derived(!!this.profile && this.profile.role !== 'child' && !this.profile.pin_locked);
 	isChild = $derived(this.profile?.role === 'child');
+	/** Hub pages: grown-ups, plus child profiles (kid-safe content only, adult-only tools hidden). */
+	hubAllowed = $derived(!!this.profile && !this.profile.pin_locked);
 	/** Mood Boards: grown-ups, plus child profiles (whose boards are always child-friendly). */
-	boardsAllowed = $derived(this.hubAllowed || (!!this.profile && this.profile.role === 'child' && !this.profile.pin_locked));
-	/** Whether this profile may open a Hub page. Children get Mood Boards only. */
+	boardsAllowed = $derived(this.hubAllowed);
+	/** Whether this profile may open a Hub page. Music and source management stay grown-up only. */
 	canOpen(path: string): boolean {
 		const p = path.split(/[?#]/)[0];
-		return this.hubAllowed || (this.boardsAllowed && (p === '/boards' || p.startsWith('/boards/')));
+		if (this.grownUp) return true;
+		if (!this.hubAllowed) return false;
+		return !KID_LOCKED_PATHS.some((x) => p === x || p.startsWith(x + '/'));
 	}
 	needsLogin = $derived(this.authRequired && !this.authenticated);
 

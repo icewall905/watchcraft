@@ -13,6 +13,8 @@
 	import ErrorBox from './ErrorBox.svelte';
 	import { scheduleOptions, errMsg, emptyCurator, toneOptions } from './ui';
 	import type { Collection, CuratorInput, Registry, Source, Topic } from './types';
+	import { session } from '$lib/stores/session.svelte';
+	import { KID_PROVIDERS, isKidProvider } from './kid';
 
 	type Suggestion = { provider: string; url: string; name: string };
 	let { initial, providerKeys = [], suggestions = [], submitLabel = 'Save curator', onsave, oncancel }: {
@@ -191,8 +193,9 @@
 		if (!f.name.trim()) { formError = 'Give the curator a name.'; return; }
 		busy = true;
 		try {
-			const ids = [...selIds];
-			for (const key of provSel) {
+			// Kid profiles: only kid-safe keyword searches (the server refuses anything else).
+			const ids = session.isChild ? [] : [...selIds];
+			for (const key of session.isChild ? provSel.filter(isKidProvider) : provSel) {
 				let row = sources.find((s) => s.provider === key && !s.url);
 				if (!row) { row = await hub.createSource({ provider: key }); sources = [...sources, row]; }
 				if (!ids.includes(row.id)) ids.push(row.id);
@@ -243,6 +246,15 @@
 
 	<fieldset>
 		<legend>Where to look</legend>
+		{#if session.isChild}
+		<p class="muted small">Kid-safe sources only, with strict safe search. Everything found is checked before you see it.</p>
+		{#each KID_PROVIDERS.map(prov).filter((p) => !!p) as p (p!.key)}
+			<label class="opt" class:off={!p!.available}>
+				<input type="checkbox" disabled={!p!.available} checked={provSel.includes(p!.key)} onchange={() => (provSel = toggleIn(provSel, p!.key))} use:focusable />
+				<span>{p!.label} <span class="faint">{p!.available ? p!.description : p!.reason}</span></span>
+			</label>
+		{/each}
+		{:else}
 		<p class="muted small">Only what you tick below is visited. <a href="/sources" use:focusable>Manage sources</a></p>
 		{#if suggestions.length}
 			<div class="sugg">
@@ -288,6 +300,7 @@
 				{/if}
 			</div>
 		{/each}
+		{/if}
 	</fieldset>
 
 	<fieldset>

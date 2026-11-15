@@ -11,16 +11,21 @@
 	import { errMsg, statusOf } from '$lib/hub/ui';
 	import ErrorBox from '$lib/hub/ErrorBox.svelte';
 	import type { Curator, ProviderInfo } from '$lib/hub/types';
+	import { session } from '$lib/stores/session.svelte';
+	import { KID_PROVIDERS, isKidProvider } from '$lib/hub/kid';
 
-	const TYPES = [
+	const ALL_TYPES = [
 		{ value: 'topic', label: 'Topic', hint: 'e.g. solid-state batteries' },
 		{ value: 'organization', label: 'Organisation', hint: 'e.g. Acme Corp' },
 		{ value: 'person', label: 'Person (public role)', hint: 'e.g. CEO of Acme' },
 		{ value: 'domain', label: 'Domain', hint: 'e.g. example.com' },
 		{ value: 'product', label: 'Product or software', hint: 'e.g. nginx 1.25' }
 	];
+	// Kid profiles research topics only, through kid-safe sources.
+	const TYPES = session.isChild ? ALL_TYPES.filter((t) => t.value === 'topic') : ALL_TYPES;
 	const DEFAULTS = ['web_search', 'wikipedia', 'hackernews', 'github_search'];
-	const defaultsFor = (t: string) => [...DEFAULTS, ...(t === 'product' ? ['nvd'] : []), ...(t === 'domain' ? ['rdap'] : [])];
+	const defaultsFor = (t: string) => session.isChild ? [...KID_PROVIDERS]
+		: [...DEFAULTS, ...(t === 'product' ? ['nvd'] : []), ...(t === 'domain' ? ['rdap'] : [])];
 
 	let briefs = $state<Curator[]>([]);
 	let providers = $state<ProviderInfo[]>([]);
@@ -35,7 +40,7 @@
 	let busy = $state(false);
 	let formErr = $state('');
 
-	const queryProviders = $derived(providers.filter((p) => p.mode === 'query' && !p.needs_url || p.key === 'rdap'));
+	const queryProviders = $derived(providers.filter((p) => (p.mode === 'query' && !p.needs_url || p.key === 'rdap') && (!session.isChild || isKidProvider(p.key))));
 
 	async function load() {
 		try { [briefs, providers] = await Promise.all([hub.curators('research'), hub.registry().then((r) => r.providers)]); error = ''; if (!briefs.length) showNew = true; }
@@ -111,7 +116,7 @@
 						</label>
 					{/each}
 				</div>
-				{#if providers.find((p) => p.key === 'web_search' && !p.available)}<span class="hint"><a href="/settings?tab=search" use:focusable>Set up web search</a> for much better coverage.</span>{/if}
+				{#if !session.isChild && providers.find((p) => p.key === 'web_search' && !p.available)}<span class="hint"><a href="/settings?tab=search" use:focusable>Set up web search</a> for much better coverage.</span>{/if}
 			</div>
 			<Toggle label="Keep watching" hint="Re-run daily and flag new findings. Off = one-off research." bind:checked={watch} group="rs" />
 			{#if formErr}<ErrorBox message={formErr} />{/if}

@@ -9,7 +9,7 @@ from sqlalchemy import func, text, update, or_
 from sqlmodel import select
 
 from .. import curation
-from ..access import hub_allowed
+from ..access import hub_worker_allowed
 from ..db import get_settings, session
 from ..downloader.service import VID_RE
 from ..models import Download, Profile, Video
@@ -85,7 +85,7 @@ def promotion_profiles(s, iid):
     pids = set(s.exec(select(CuratorDiscovery.profile_id).where(CuratorDiscovery.item_id == iid)).all())
     pids.update(s.exec(select(ItemState.profile_id).where(ItemState.item_id == iid)).all())
     return sorted(pid for pid in pids if (profile := s.get(Profile, pid))
-                  and profile.role in ('adult', 'admin') and hub_allowed(s, pid))
+                  and profile.role in ('adult', 'admin', 'child') and hub_worker_allowed(s, pid))
 
 
 def queue_master(pids, iid):
@@ -144,24 +144,24 @@ def visible(s, pid, iid):
 
 
 def refill(limit=50):
-    """Backfill without duplicating jobs; child and deleted profiles are excluded."""
+    """Backfill without duplicating jobs; deleted profiles are excluded; child profiles capture in kid-safe mode."""
     with session() as s:
         s.exec(text('BEGIN IMMEDIATE'))
         rows = s.exec(select(CuratorDiscovery.profile_id, CuratorDiscovery.item_id)
                       .join(Profile, Profile.id == CuratorDiscovery.profile_id)
-                      .where(Profile.role.in_(('adult', 'admin')))
+                      .where(Profile.role.in_(('adult', 'admin', 'child')))
                       .where(~select(CaptureJob.item_id).where(CaptureJob.profile_id == CuratorDiscovery.profile_id,
                               CaptureJob.item_id == CuratorDiscovery.item_id).exists())
                       .distinct().order_by(CuratorDiscovery.item_id).limit(limit)).all()
         for pid, iid in rows:
-            if hub_allowed(s, pid): enqueue(s, pid, iid)
+            if hub_worker_allowed(s, pid): enqueue(s, pid, iid)
         states = s.exec(select(ItemState.profile_id, ItemState.item_id)
                         .join(Profile, Profile.id == ItemState.profile_id)
-                        .where(Profile.role.in_(('adult', 'admin')))
+                        .where(Profile.role.in_(('adult', 'admin', 'child')))
                         .where(~select(CaptureJob.item_id).where(CaptureJob.profile_id == ItemState.profile_id,
                                CaptureJob.item_id == ItemState.item_id).exists()).limit(limit)).all()
         for pid, iid in states:
-            if hub_allowed(s, pid) and not s.get(CaptureJob, (pid, iid)): enqueue(s, pid, iid)
+            if hub_worker_allowed(s, pid) and not s.get(CaptureJob, (pid, iid)): enqueue(s, pid, iid)
         s.commit()
 
 
@@ -263,7 +263,7 @@ def save_asset(pid, iid, kind, url, data, mime):
     if not _valid_asset(kind, mime, data): raise ValueError('Asset does not match its advertised format.')
     with session() as s:
         s.exec(text('BEGIN IMMEDIATE'))
-        if not hub_allowed(s, pid) or not visible(s, pid, iid):
+        if not hub_worker_allowed(s, pid) or not visible(s, pid, iid):
             raise ValueError('Profile no longer has access to this item.')
         old = s.get(CapturedAsset, (iid, kind))
         used = s.exec(select(func.coalesce(func.sum(CapturedAsset.size), 0))).one()
@@ -321,7 +321,7 @@ def run(pid, iid, lease):
     from .engine import index, _safe_error
     with session() as s:
         job, item = s.get(CaptureJob, (pid, iid)), s.get(ContentItem, iid)
-        if not job or job.lease != lease or not item or not hub_allowed(s, pid) or not visible(s, pid, iid):
+        if not job or job.lease != lease or not item or not hub_worker_allowed(s, pid) or not visible(s, pid, iid):
             return
         url, typ, title, image, body = item.url, item.type, item.title, item.image, item.body
         video_id = str(item.meta.get('video_id', ''))
@@ -359,7 +359,7 @@ def run(pid, iid, lease):
             pass  # The public API already supplied the post body and attachment metadata.
         elif typ == 'video' and VID_RE.fullmatch(video_id):
             with session() as s:
-                if not hub_allowed(s, pid) or not visible(s, pid, iid): return
+                if not hub_worker_allowed(s, pid) or not visible(s, pid, iid): return
                 video = s.get(Video, video_id)
                 if not video:
                     video = Video(id=video_id)
@@ -460,7 +460,7 @@ def run(pid, iid, lease):
             errors.append('Cleanup: worker review failed; original text retained.')
     summary = ''
     with session() as s:
-        if not hub_allowed(s, pid) or not visible(s, pid, iid): return
+        if not hub_worker_allowed(s, pid) or not visible(s, pid, iid): return
     if body and ai.enabled():
         try:
             summary = full_summary(title, body)
@@ -473,7 +473,7 @@ def run(pid, iid, lease):
     with session() as s:
         s.exec(text('BEGIN IMMEDIATE'))
         job, item = s.get(CaptureJob, (pid, iid)), s.get(ContentItem, iid)
-        if not job or job.lease != lease or not item or not hub_allowed(s, pid) or not visible(s, pid, iid): return
+        if not job or job.lease != lease or not item or not hub_worker_allowed(s, pid) or not visible(s, pid, iid): return
         if page is not None or has_document:
             snapshot = s.get(CapturedPage, iid) or CapturedPage(item_id=iid)
             snapshot.links, snapshot.captured_at = links, time.time()
@@ -516,8 +516,8 @@ def dispatch():
     now = time.time()
     if ai.enabled():
         with session() as s:
-            allowed = [p.id for p in s.exec(select(Profile).where(Profile.role.in_(('adult', 'admin')))).all()
-                       if hub_allowed(s, p.id)]
+            allowed = [p.id for p in s.exec(select(Profile).where(Profile.role.in_(('adult', 'admin', 'child')))).all()
+                       if hub_worker_allowed(s, p.id)]
             legacy = s.exec(select(CaptureJob, ContentItem).join(ContentItem, ContentItem.id == CaptureJob.item_id)
                             .where(CaptureJob.profile_id.in_(allowed), or_(
                                    select(CuratorDiscovery.id).where(CuratorDiscovery.profile_id == CaptureJob.profile_id, CuratorDiscovery.item_id == ContentItem.id).exists(),
@@ -526,7 +526,7 @@ def dispatch():
                                    ContentItem.body != '', ~select(ArticleText.item_id).where(ArticleText.item_id == ContentItem.id).exists())
                             .order_by(ContentItem.id.desc()).limit(10)).all()
             for pending, item in legacy:
-                if hub_allowed(s, pending.profile_id) and visible(s, pending.profile_id, item.id) and not s.get(ArticleText, item.id):
+                if hub_worker_allowed(s, pending.profile_id) and visible(s, pending.profile_id, item.id) and not s.get(ArticleText, item.id):
                     s.add(ArticleText(item_id=item.id, raw_body=item.body, backfill=True))
                     enqueue(s, pending.profile_id, item.id, retry=True, cleanup_only=True)
                     pending.next_run = now
@@ -556,7 +556,7 @@ def dispatch():
             s.rollback()
             # An idle capture lane may re-check one historical web capture.
             return article_upgrade.probe_tick()
-        if not hub_allowed(s, job.profile_id) or not visible(s, job.profile_id, job.item_id):
+        if not hub_worker_allowed(s, job.profile_id) or not visible(s, job.profile_id, job.item_id):
             job.status, job.error = 'failed', 'Profile no longer has access to this item.'
             s.add(job); s.commit(); return False
         job.status, job.lease, job.updated_at = 'running', now + LEASE, now
