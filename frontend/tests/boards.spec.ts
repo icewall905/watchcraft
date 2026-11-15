@@ -197,10 +197,10 @@ test('search finds images across boards by what the picture shows',async({page})
 
 test('review pins: confirm fits and teach the curator what does not fit',async({page})=>{
  const writes=await setup(page);await freshPage(page,'/boards?board=1');
- const fits=page.getByRole('group',{name:'Review Quiet courtyard'}).getByRole('button',{name:'Fits'});
+ const fits=page.getByRole('group',{name:'Actions for Quiet courtyard'}).getByRole('button',{name:'Fits'});
  await fits.click();await expect(fits).toHaveAttribute('aria-pressed','true');
  expect(writes.at(-1)).toMatchObject({method:'PUT',body:{verdict:'good'}});
- await page.getByRole('group',{name:'Review Stone garden path'}).getByRole('button',{name:'Not a fit'}).click();
+ await page.getByRole('group',{name:'Actions for Stone garden path'}).getByRole('button',{name:'Not a fit'}).click();
  await page.getByRole('button',{name:'Text, quote or poster image'}).click();
  await expect(page.getByLabel('Tell the curator (optional)')).toHaveValue('Text, quote or poster image');
  await page.getByRole('button',{name:'Remove and teach curator'}).click();
@@ -211,7 +211,7 @@ test('review pins: confirm fits and teach the curator what does not fit',async({
  await expect(page.getByRole('button',{name:'View Bonsai detail'})).toBeVisible();
  await expect(page.getByRole('button',{name:'View Quiet courtyard'})).toHaveCount(0);
  // Marking Fits while reviewing keeps the image where it is.
- const bonsai=page.getByRole('group',{name:'Review Bonsai detail'}).getByRole('button',{name:'Fits'});
+ const bonsai=page.getByRole('group',{name:'Actions for Bonsai detail'}).getByRole('button',{name:'Fits'});
  await bonsai.click();await expect(bonsai).toHaveAttribute('aria-pressed','true');
  await expect(page.getByRole('button',{name:'View Bonsai detail'})).toBeVisible();
  // Remove takes an image off the board without a verdict for the curator.
@@ -236,8 +236,8 @@ test('the grid never reshuffles: loading more, hiding and reviewing keep every i
  await page.getByRole('button',{name:'More inspiration'}).click();
  await expect(page.getByRole('button',{name:'View Tile 1',exact:true})).toBeAttached();
  const after=await spots();for(const [title,x] of Object.entries(before))expect(after[title],title).toBe(x);
- await page.getByRole('group',{name:'Review Tile 20'}).getByRole('button',{name:'Fits'}).click();
- await page.getByRole('group',{name:'Review Tile 22'}).getByRole('button',{name:'Not a fit'}).click();
+ await page.getByRole('group',{name:'Actions for Tile 20'}).getByRole('button',{name:'Fits'}).click();
+ await page.getByRole('group',{name:'Actions for Tile 22'}).getByRole('button',{name:'Not a fit'}).click();
  await page.getByRole('button',{name:'Remove and teach curator'}).click();
  await expect(page.getByRole('button',{name:'View Tile 22',exact:true})).toHaveCount(0);
  const later=await spots();for(const [title,x] of Object.entries(later))expect(x,title).toBe(after[title]);

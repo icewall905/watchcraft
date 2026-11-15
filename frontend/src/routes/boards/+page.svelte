@@ -258,6 +258,9 @@
   {:else if name === 'puzzle'}<path d="M10 3h4v3a2 2 0 1 0 4 0V3h3v7h-3a2 2 0 1 0 0 4h3v7h-7v-3a2 2 0 1 0-4 0v3H3v-7h3a2 2 0 1 0 0-4H3V3h7z"/>
   {:else if name === 'check'}<path d="M5 12l5 5L20 7"/>
   {:else if name === 'x'}<path d="M6 6l12 12M18 6L6 18"/>
+  {:else if name === 'up'}<path d="M7 10v11"/><path d="M15 5.9 14 10h5.8a2 2 0 0 1 1.9 2.6l-2.3 8a2 2 0 0 1-1.9 1.4H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.8a2 2 0 0 0 1.8-1.1L12 2a3.1 3.1 0 0 1 3 3.9z"/>
+  {:else if name === 'down'}<path d="M17 14V3"/><path d="M9 18.1 10 14H4.2a2 2 0 0 1-1.9-2.6l2.3-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.8a2 2 0 0 0-1.8 1.1L12 22a3.1 3.1 0 0 1-3-3.9z"/>
+  {:else if name === 'trash'}<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
   {:else if name === 'search'}<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>
   {:else if name === 'link'}<path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7"/><path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/>{/if}
  </svg>
@@ -297,9 +300,9 @@
        <div class="frame">
         <button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} width={pin.width} height={pin.height} /></button>
         {#if pin.media_type === 'gif'}<span class="badge">GIF</span>{/if}
-        <button class="save" class:saved={pin.saved} disabled={busy === pin.id} aria-label={pin.saved ? `Unsave ${pin.title}` : `Save ${pin.title}`} aria-pressed={pin.saved} onclick={() => pinAction(pin, {saved: !pin.saved})}>{@render icon('heart')}<span>{pin.saved ? 'Saved' : 'Save'}</span></button>
-       </div>
-       <div class="caption"><button class="pin-title" onclick={() => { preview = pin; }}>{pin.title}</button><button class="pin-meta board-link" onclick={() => { clearSearch(); choose(pin.board_id); }}>on {pin.board_name}</button></div>
+         </div>
+       <div class="caption"><button class="pin-title" onclick={() => { preview = pin; }}>{pin.title}</button><button class="pin-meta board-link" onclick={() => { clearSearch(); choose(pin.board_id); }}>on {pin.board_name}</button>
+        <div class="actions" role="group" aria-label={`Actions for ${pin.title}`}><span class="gap"></span><button class="act heart" class:on={pin.saved} disabled={busy === pin.id} title={pin.saved ? 'Saved — click to unsave' : 'Save'} aria-label={pin.saved ? `Unsave ${pin.title}` : `Save ${pin.title}`} aria-pressed={pin.saved} onclick={() => pinAction(pin, {saved: !pin.saved})}>{@render icon('heart')}</button></div></div>
       </article>
      {/snippet}
     </PinColumns>
@@ -394,13 +397,14 @@
      <div class="frame">
       <button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} width={pin.width} height={pin.height} /></button>
       {#if pin.media_type === 'gif'}<span class="badge">GIF</span>{/if}
-      <button class="save" class:saved={pin.saved} disabled={busy === pin.id} aria-label={pin.saved ? `Unsave ${pin.title}` : `Save ${pin.title}`} aria-pressed={pin.saved} onclick={() => pinAction(pin, {saved: !pin.saved})}>{@render icon('heart')}<span>{pin.saved ? 'Saved' : 'Save'}</span></button>
      </div>
      <div class="caption"><button class="pin-title" onclick={() => { preview = pin; }}>{pin.title}</button>{#if pin.attribution}<span class="pin-meta">{pin.attribution}</span>{/if}
-      <div class="review-row" role="group" aria-label={`Review ${pin.title}`}>
-       <button class="rv good" class:on={pin.feedback === 'good'} aria-pressed={pin.feedback === 'good'} disabled={busy === pin.id} onclick={() => review(pin, pin.feedback === 'good' ? '' : 'good')}>{@render icon('check')}Fits</button>
-       <button class="rv bad" disabled={busy === pin.id} onclick={() => { reviewing = pin; reviewNote = ''; }}>{@render icon('x')}Not a fit</button>
-       <button class="rv remove" disabled={busy === pin.id} title="Remove from this board without teaching the curator" aria-label={`Remove ${pin.title}`} onclick={() => remove(pin)}>Remove</button>
+      <div class="actions" role="group" aria-label={`Actions for ${pin.title}`}>
+       <button class="act up" class:on={pin.feedback === 'good'} aria-pressed={pin.feedback === 'good'} aria-label="Fits" title="Fits this board — the curator looks for more like it" disabled={busy === pin.id} onclick={() => review(pin, pin.feedback === 'good' ? '' : 'good')}>{@render icon('up')}</button>
+       <button class="act down" aria-label="Not a fit" title="Not a fit — remove it and teach the curator" disabled={busy === pin.id} onclick={() => { reviewing = pin; reviewNote = ''; }}>{@render icon('down')}</button>
+       <span class="gap"></span>
+       <button class="act heart" class:on={pin.saved} disabled={busy === pin.id} title={pin.saved ? 'Saved — click to unsave' : 'Save'} aria-label={pin.saved ? `Unsave ${pin.title}` : `Save ${pin.title}`} aria-pressed={pin.saved} onclick={() => pinAction(pin, {saved: !pin.saved})}>{@render icon('heart')}</button>
+       <button class="act remove" title="Remove from this board without teaching the curator" aria-label={`Remove ${pin.title}`} disabled={busy === pin.id} onclick={() => remove(pin)}>{@render icon('trash')}</button>
       </div></div>
     </article>
    {/snippet}
@@ -534,13 +538,18 @@
  .new-board,.find,.pill{gap:.45rem}
  .new-board{border-radius:var(--r-pill);padding:.7rem 1.2rem;box-shadow:0 10px 30px -12px var(--accent-glow)}
 
- .review-row{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.45rem}
- .rv.remove{margin-left:auto;border-color:transparent}
- .rv.remove:hover{border-color:var(--line)}
- .rv{display:inline-flex;align-items:center;gap:.3rem;padding:.3rem .7rem;border-radius:var(--r-pill);border:1px solid var(--line);background:transparent;color:var(--muted);font:inherit;font-size:.8rem;cursor:pointer}
- .rv:hover{color:var(--text);background:var(--surface-hi)}
- .rv.good.on{color:#3ddc97;border-color:rgba(61,220,151,.5);background:rgba(61,220,151,.1)}
- .rv.bad:hover{color:var(--danger,#ff929d);border-color:rgba(255,146,157,.5)}
+ .actions{display:flex;align-items:center;gap:.3rem;margin-top:.4rem}
+ .actions .gap{flex:1}
+ .act{display:inline-grid;place-items:center;width:2.1rem;height:2.1rem;padding:0;border-radius:50%;border:1px solid var(--line);background:transparent;color:var(--muted);cursor:pointer;transition:color .15s,background .15s,border-color .15s,transform .15s var(--ease)}
+ .act :global(.i){width:1.05rem;height:1.05rem}
+ .act:hover:not(:disabled){color:var(--text);background:var(--surface-hi)}
+ .act:active:not(:disabled){transform:scale(.92)}
+ .act:disabled{opacity:.5;cursor:wait}
+ .act.up.on{color:#3ddc97;border-color:rgba(61,220,151,.55);background:rgba(61,220,151,.12)}
+ .act.up.on :global(.i){fill:rgba(61,220,151,.25)}
+ .act.down:hover:not(:disabled),.act.remove:hover:not(:disabled){color:var(--danger,#ff929d);border-color:rgba(255,146,157,.5)}
+ .act.heart.on{color:var(--mb-rose);border-color:rgba(255,143,171,.55);background:rgba(255,143,171,.12)}
+ .act.heart.on :global(.i){fill:currentColor}
  .pill.on{border-color:rgba(61,220,151,.5);color:#3ddc97}
  .reason-chips{display:flex;flex-wrap:wrap;gap:.4rem}
  .chip{padding:.35rem .8rem;border-radius:var(--r-pill);border:1px solid var(--line);background:var(--mb-card);color:var(--text);font:inherit;font-size:.85rem;cursor:pointer}
@@ -662,11 +671,6 @@
  .frame:hover::after,.frame:focus-within::after{opacity:1}
  .frame:hover .picture :global(img){transform:scale(1.03)}
  .badge{position:absolute;left:.6rem;bottom:.6rem;font-size:.65rem;font-weight:800;letter-spacing:.08em;padding:.2rem .45rem;border-radius:.4rem;background:rgba(0,0,0,.6);color:#fff;pointer-events:none}
- .save{position:absolute;top:.6rem;right:.6rem;z-index:1;display:inline-flex;align-items:center;gap:.35rem;padding:.5rem .85rem;border:0;border-radius:var(--r-pill);background:var(--mb-rose);color:#2a0612;font:inherit;font-weight:700;font-size:.8rem;cursor:pointer;opacity:0;transform:translateY(-4px);transition:opacity .2s,transform .2s var(--ease),background .2s}
- .frame:hover .save,.frame:focus-within .save,.save.saved{opacity:1;transform:none}
- .save.saved{background:rgba(20,17,46,.85);color:var(--mb-rose)}
- .save.saved :global(.i){fill:currentColor}
- @media(hover:none){.save{opacity:1;transform:none;padding:.45rem;font-size:0;gap:0}.save :global(.i){width:1.1rem;height:1.1rem}}
  .caption{padding:.5rem .3rem 0;display:grid;gap:.1rem}
  .pin-title{text-align:left;padding:0;border:0;background:none;color:var(--text);font:inherit;font-weight:600;font-size:.88rem;line-height:1.35;cursor:pointer;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
  .pin-meta{font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
