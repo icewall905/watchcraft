@@ -467,7 +467,7 @@
 </Modal>{/if}
 {#if extOpen}<Modal portal size="lg" title="Add images from any website" onClose={() => { extOpen = false; }}>
  <div class="ext">
-  <p class="muted">With the WatchCraft extension, right-click any image on the web, choose <strong>WatchCraft</strong> and pick a board. The image is saved here with a link to where you found it.</p>
+  <p class="muted">With the WatchCraft extension, right-click any image on the web, choose <strong>WatchCraft</strong> and pick a board, or <strong>New board…</strong> to start one from that image. The image is saved here with a link to where you found it.</p>
   <div class="segmented ext-tabs" role="tablist" aria-label="Browser">
    <button role="tab" aria-selected={extBrowser === 'chrome'} class:on={extBrowser === 'chrome'} onclick={() => { extBrowser = 'chrome'; }}>Chrome, Edge, Brave</button>
    <button role="tab" aria-selected={extBrowser === 'firefox'} class:on={extBrowser === 'firefox'} onclick={() => { extBrowser = 'firefox'; }}>Firefox</button>
@@ -491,10 +491,11 @@
     <div class="copy-row"><code>{location.origin}</code><button class="btn pill" onclick={() => copy(location.origin, 'address')}>{extCopied === 'address' ? 'Copied' : 'Copy address'}</button></div>
     {#if extNew}
      <div class="copy-row key"><code>{extNew}</code><button class="btn primary pill" onclick={() => copy(extNew, 'key')}>{extCopied === 'key' ? 'Copied' : 'Copy key'}</button></div>
-     <p class="muted small">Shown once. It can only list your boards and add images to them, for this profile.</p>
+     <p class="muted small">Shown once. It can only list and create boards and add images to them, for this profile.</p>
     {:else}<p><button class="btn pill" disabled={extBusy} onclick={createKey}>{extBusy ? 'Creating…' : 'Create connection key'}</button></p>{/if}
    </li>
   </ol>
+  <p class="muted small"><strong>Updating:</strong> download again and replace the old files. Chrome: unzip over the same folder, then click the reload arrow on the extension's card. Firefox: load the new zip. The connection stays.</p>
   {#if extKeys.length}
    <section class="ext-keys" aria-label="Connected browsers"><h3>Connected browsers</h3>
     <ul>{#each extKeys as k (k.id)}<li><span>{k.name} <span class="muted">…{k.hint} · {k.last_used ? 'last used ' + new Date(k.last_used * 1000).toLocaleDateString() : 'not used yet'}</span></span><button class="link-btn" onclick={() => revokeKey(k)}>Revoke</button></li>{/each}</ul>

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New mood board · WatchCraft</title>
+<style>
+ :root{color-scheme:light dark;--bg:#14121c;--card:#1e1b29;--text:#f2eefc;--muted:#a59fb8;--line:#3a3550;--accent:#ff8fab;--bad:#ff929d}
+ @media (prefers-color-scheme: light){:root{--bg:#f6f4fb;--card:#fff;--text:#1b1726;--muted:#6b6580;--line:#ddd8ea;--bad:#b42335}}
+ *{box-sizing:border-box}
+ body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,sans-serif;padding:16px}
+ .head{display:flex;gap:12px;align-items:center}
+ .head img{width:64px;height:64px;object-fit:cover;border-radius:10px;border:1px solid var(--line);flex:none;background:var(--card)}
+ h1{margin:0;font-size:1.15rem} p{margin:.2rem 0 0;color:var(--muted);font-size:.85rem}
+ label{display:grid;gap:5px;margin-top:14px;font-weight:600}
+ input[type=text],textarea{font:inherit;font-weight:400;padding:9px 11px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:var(--text);width:100%}
+ textarea{resize:vertical;min-height:3.6em}
+ small{color:var(--muted);font-weight:400}
+ .check{display:flex;gap:8px;align-items:flex-start;font-weight:500}
+ .check input{margin-top:.3em}
+ .row{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
+ button{font:inherit;font-weight:600;padding:9px 18px;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--text);cursor:pointer}
+ button[type=submit]{background:var(--accent);border-color:var(--accent);color:#1b1020}
+ button:disabled{opacity:.6;cursor:wait}
+ #status{margin-top:10px;min-height:1.4em;color:var(--bad)}
+</style>
+</head>
+<body>
+<form id="form">
+ <div class="head"><img id="preview" alt=""><div><h1>New mood board</h1><p>The image is added to it right away.</p></div></div>
+ <label>Board name<input id="name" type="text" required maxlength="100" autocomplete="off" placeholder="Summer dresses"></label>
+ <label>What should it collect? <small>Optional. Helps the curator; defaults to the name.</small><textarea id="interests" maxlength="1000" placeholder="flowy summer dresses, floral prints, linen"></textarea></label>
+ <label class="check"><input id="curate" type="checkbox" checked><span>Let the AI curator find more images like this <small>(you can change this later)</small></span></label>
+ <div class="row"><button type="button" id="cancel">Cancel</button><button type="submit" id="save">Create and add</button></div>
+ <div id="status" role="status"></div>
+</form>
+<script src="newboard.js"></script>
+</body>
+</html>

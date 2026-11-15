@@ -259,6 +259,7 @@ test('browser extension: download links, install steps and a connection key',asy
  await page.route('**/api/ext/keys**',async route=>{const m=route.request().method();if(m==='POST'){const info={id:1,name:'Chrome',hint:'w9Zk',created_at:1,last_used:null};keys=[info];return route.fulfill({json:{key:'wcx_secretkeyw9Zk',info}});}if(m==='DELETE'){keys=[];return route.fulfill({json:{ok:true}});}return route.fulfill({json:{keys}});});
  await freshPage(page,'/boards');
  await page.getByRole('button',{name:'Browser extension'}).click();
+ await expect(page.getByRole('dialog')).toContainText('New board…');await expect(page.getByRole('dialog')).toContainText('Updating:');
  const dialog=page.getByRole('dialog',{name:'Add images from any website'});
  await expect(dialog.getByRole('link',{name:'Download for Chrome'})).toHaveAttribute('href','/extensions/watchcraft-chrome.zip');
  await expect(dialog).toContainText('Load unpacked');

@@ -1,4 +1,4 @@
-// WatchCraft browser extension: right-click an image → WatchCraft → Add to <board>.
+// WatchCraft browser extension: right-click an image → WatchCraft → Add to <board> (or New board…).
 // Works in Chrome (service worker) and Firefox (event page); uses the promise-based chrome.* API.
 const MENU_ROOT = 'wc-root';
 
@@ -37,6 +37,7 @@ async function rebuildMenus() {
       chrome.contextMenus.create({ id: `wc-board-${b.id}`, parentId: MENU_ROOT, title: `Add to ${b.name.replace(/&/g, '&&')}`, contexts: ['image'] });
     }
   }
+  if (!problem) chrome.contextMenus.create({ id: 'wc-new', parentId: MENU_ROOT, title: 'New board…', contexts: ['image'] });
   chrome.contextMenus.create({ id: 'wc-sep', parentId: MENU_ROOT, type: 'separator', contexts: ['image'] });
   chrome.contextMenus.create({ id: 'wc-refresh', parentId: MENU_ROOT, title: 'Refresh board list', contexts: ['image'] });
   chrome.contextMenus.create({ id: 'wc-open', parentId: MENU_ROOT, title: 'Open Mood Boards', contexts: ['image'] });
@@ -78,33 +79,68 @@ async function flash(ok, title, message) {
   } catch { /* notifications blocked */ }
 }
 
-async function addImage(boardId, boardTitle, info, tab) {
+// Sends the clicked image to a board; throws on failure. Returns the server's answer ({board, title}).
+async function saveImage(boardId, info, tab) {
   const src = info.srcUrl || '';
   const title = (tab && tab.title) ? tab.title.slice(0, 300) : '';
   const page = info.pageUrl || (tab && tab.url) || '';
   const pageUrl = /^https?:/i.test(page) ? page : undefined;
-  try {
-    let body;
-    if (src.startsWith('data:image/')) {
-      body = { data_base64: src.split(',')[1], title, page_url: pageUrl };
-    } else {
-      try {
-        return report(await api(`/boards/${boardId}/images`, { method: 'POST', body: JSON.stringify({ url: src, title, page_url: pageUrl }) }));
-      } catch (e) {
-        if (e.status !== 422) throw e;
-        // WatchCraft could not fetch it; copy it from the page the user is looking at.
-        const [result] = await chrome.scripting.executeScript({
-          target: { tabId: tab.id, frameIds: [info.frameId || 0] }, func: grabFromPage, args: [src],
-        });
-        if (!result || !result.result || !result.result.data) throw new Error((result && result.result && result.result.error) || 'Could not copy the image from this page.');
-        body = { data_base64: result.result.data, source_url: src, title, page_url: pageUrl };
-      }
+  let body;
+  if (src.startsWith('data:image/')) {
+    body = { data_base64: src.split(',')[1], title, page_url: pageUrl };
+  } else {
+    try {
+      return await api(`/boards/${boardId}/images`, { method: 'POST', body: JSON.stringify({ url: src, title, page_url: pageUrl }) });
+    } catch (e) {
+      if (e.status !== 422) throw e;
+      // WatchCraft could not fetch it; copy it from the page the user is looking at.
+      const [result] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id, frameIds: [info.frameId || 0] }, func: grabFromPage, args: [src],
+      });
+      if (!result || !result.result || !result.result.data) throw new Error((result && result.result && result.result.error) || 'Could not copy the image from this page.');
+      body = { data_base64: result.result.data, source_url: src, title, page_url: pageUrl };
     }
-    report(await api(`/boards/${boardId}/images`, { method: 'POST', body: JSON.stringify(body) }));
+  }
+  return api(`/boards/${boardId}/images`, { method: 'POST', body: JSON.stringify(body) });
+}
+
+async function addImage(boardId, boardTitle, info, tab) {
+  try {
+    const result = await saveImage(boardId, info, tab);
+    await flash(true, `Added to ${result.board || boardTitle}`, result.title || 'Image saved to your mood board.');
   } catch (e) {
     await flash(false, 'Could not add image', e.message || String(e));
   }
-  function report(result) { return flash(true, `Added to ${result.board || boardTitle}`, result.title || 'Image saved to your mood board.'); }
+}
+
+// Opens the small "New mood board" window for the image the user right-clicked.
+async function openNewBoard(info, tab) {
+  const q = new URLSearchParams({ src: info.srcUrl || '', page: info.pageUrl || (tab && tab.url) || '',
+    frame: String(info.frameId || 0), tab: String(tab ? tab.id : -1), title: (tab && tab.title) || '' });
+  const url = chrome.runtime.getURL(`newboard.html?${q}`);
+  try { await chrome.windows.create({ url, type: 'popup', width: 460, height: 540 }); }
+  catch { await chrome.tabs.create({ url }); }
+}
+
+// Creates (or reuses, same name) the board, refreshes the menu, then adds the image. Answers the dialog.
+async function newBoard(msg) {
+  const job = msg.job || {};
+  let board;
+  try {
+    board = (await api('/boards', { method: 'POST', body: JSON.stringify({ name: msg.name, interests: msg.interests || '', curate: !!msg.curate }) })).board;
+  } catch (e) {
+    return { ok: false, error: e.message || String(e) };
+  }
+  rebuildMenus();
+  const info = { srcUrl: job.srcUrl, pageUrl: job.pageUrl, frameId: job.frameId };
+  const tab = { id: job.tabId, title: job.tabTitle, url: job.pageUrl };
+  try {
+    const result = await saveImage(board.id, info, tab);
+    await flash(true, `Added to ${result.board || board.name}`, result.title || 'Image saved to your new mood board.');
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: `Board “${board.name}” is ready, but the image could not be added: ${e.message || e}` };
+  }
 }
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -112,6 +148,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (id === 'wc-setup') return chrome.runtime.openOptionsPage();
   if (id === 'wc-refresh') return rebuildMenus();
   if (id === 'wc-open') { const { server } = await settings(); if (server) chrome.tabs.create({ url: `${server}/boards` }); else chrome.runtime.openOptionsPage(); return; }
+  if (id === 'wc-new') return openNewBoard(info, tab);
   if (id.startsWith('wc-board-')) await addImage(Number(id.slice(9)), '', info, tab);
 });
 
@@ -121,4 +158,8 @@ chrome.storage.onChanged.addListener((changes) => { if (changes.server || change
 chrome.action.onClicked.addListener(() => chrome.runtime.openOptionsPage());
 chrome.alarms.create('wc-refresh', { periodInMinutes: 30 });
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'wc-refresh') rebuildMenus(); });
-chrome.runtime.onMessage.addListener((msg) => { if (msg === 'rebuild') rebuildMenus(); });
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg === 'rebuild') { rebuildMenus(); return false; }
+  if (msg && msg.type === 'new-board' && sender.id === chrome.runtime.id) { newBoard(msg).then(sendResponse); return true; }
+  return false;
+});

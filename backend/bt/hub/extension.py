@@ -2,7 +2,7 @@
 
 The extension authenticates with a per-profile connection key (Bearer). Keys are created and revoked by
 a signed-in, Hub-allowed profile on the Mood Board page; only their SHA-256 is stored. A key can list that
-profile's boards and add images to them; nothing else. `/api/ext/v1/` is exempt from the household
+profile's boards, create one, and add images to them; nothing else. `/api/ext/v1/` is exempt from the household
 passphrase cookie because the extension cannot hold it; the key is required instead.
 """
 import hashlib
@@ -94,6 +94,27 @@ def ext_boards(pid: int = Depends(key_profile)):
         counts = dict(s.exec(select(MoodPin.board_id, func.count()).where(MoodPin.profile_id == pid, MoodPin.hidden == False)
                              .group_by(MoodPin.board_id)).all())
         return {'profile': profile.name if profile else '', 'boards': [{'id': b.id, 'name': b.name, 'pin_count': counts.get(b.id, 0)} for b in rows]}
+
+
+class ExtBoardCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    interests: str = Field(default='', max_length=1000)
+    curate: bool = True
+
+
+@router.post('/v1/boards')
+def ext_create_board(data: ExtBoardCreate, pid: int = Depends(key_profile)):
+    """Create a board from the right-click menu. Same name as an existing board → that board is reused."""
+    name = data.name.strip()
+    if not name:
+        raise HTTPException(422, 'Give the board a name.')
+    with session() as s:
+        same = s.exec(select(MoodBoard).where(MoodBoard.profile_id == pid, func.lower(MoodBoard.name) == name.lower())).first()
+        if same:
+            return {'board': {'id': same.id, 'name': same.name}, 'created': False}
+    board = moodboards.create(moodboards.BoardCreate(name=name, interests=data.interests.strip() or name,
+                                                     enabled=data.curate), pid=pid)['board']
+    return {'board': {'id': board['id'], 'name': board['name']}, 'created': True}
 
 
 @router.post('/v1/boards/{bid}/images')

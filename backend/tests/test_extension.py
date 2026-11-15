@@ -61,3 +61,25 @@ def test_extension_cannot_touch_other_profiles_boards(client):
         s.commit()
     r = client.post(f"/api/ext/v1/boards/{b['id']}/images", headers={'Authorization': f'Bearer {key}'}, json={'data_base64': png()})
     assert r.status_code == 404
+
+
+def test_extension_creates_board_then_adds_image(client):
+    key = client.post('/api/ext/keys', json={}).json()['key']
+    auth = {'Authorization': f'Bearer {key}'}
+    assert client.post('/api/ext/v1/boards', headers=auth, json={'name': '  '}).status_code == 422
+    r = client.post('/api/ext/v1/boards', headers=auth, json={'name': 'Star dresses', 'curate': False})
+    assert r.status_code == 200, r.text
+    assert r.json()['created']
+    bid = r.json()['board']['id']
+    with session() as s:
+        board = s.get(mb.MoodBoard, bid)
+        assert board.interests == 'Star dresses' and not board.enabled and board.last_status == ''
+    again = client.post('/api/ext/v1/boards', headers=auth, json={'name': 'star DRESSES', 'interests': 'x'}).json()
+    assert again == {'board': {'id': bid, 'name': 'Star dresses'}, 'created': False}
+    curated = client.post('/api/ext/v1/boards', headers=auth, json={'name': 'Gardens', 'interests': 'cottage gardens'}).json()
+    with session() as s:
+        board = s.get(mb.MoodBoard, curated['board']['id'])
+        assert board.interests == 'cottage gardens' and board.enabled and board.last_status == 'queued'
+    assert client.post(f'/api/ext/v1/boards/{bid}/images', headers=auth, json={'data_base64': png()}).json()['board'] == 'Star dresses'
+    assert [b['name'] for b in client.get('/api/ext/v1/boards', headers=auth).json()['boards']] == ['Gardens', 'Star dresses']
+    assert client.post('/api/ext/v1/boards', json={'name': 'No key'}).status_code == 401
