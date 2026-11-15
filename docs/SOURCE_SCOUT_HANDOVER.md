@@ -8,6 +8,17 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — kid-safe Hub for child profiles (`0ec5d18`, 2026-11-15)
+
+- Merge of 6435937: child profiles get every Hub area except Music and Sources behind a server-enforced kid-safe lock
+  (route allowlist; per-item `kidsafeverdict`, fail closed; child curators limited to safe-search web, Bing News,
+  Wikipedia). Additive table only.
+- Backup `/root/compose/watchcraft-backups/20261115-kidsafe-0ec5d18` (online DB quick_check ok, config hashes,
+  previous source, `new-files.txt`); rollback images `watchcraft:rollback-20261115-kidsafe-*`, `rollback.sh`.
+  Pruned `20261115-reshuffle-874c971` and its rollback tags (`PRUNE-MANIFEST-20261115T195017Z.txt`).
+- All four services run `sha256:3c92d244701286a6002384bfa80826eb908f3b8f9d54981d3dff1f5c1d31b3d7`, zero restarts,
+  no tracebacks; health and `/library` 200; as a child profile `/api/hub/items` 200, `/api/hub/items/import` 403.
+
 ## Deployment record — curator learning, board Share, Pinterest search, child boards, share-sheet fix (`1bdbf34`, 2026-11-15)
 
 - Range `dbc00ad..1bdbf34`: merged curator learning (ce7cdd7; new `profileknowledge`, `teaching`, `knowledgechat`
