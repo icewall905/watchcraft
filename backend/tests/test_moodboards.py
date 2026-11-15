@@ -678,3 +678,52 @@ def test_reshuffle_replaces_only_unliked_images_and_frees_storage(client, monkey
         s.add(board)
         s.commit()
     assert client.post(f"{base}/reshuffle").status_code == 409
+
+
+def big_png(w=1600, h=1200):
+    out = BytesIO()
+    Image.effect_noise((w, h), 60).convert('RGB').save(out, format='PNG')
+    return out.getvalue()
+
+
+def test_grid_previews_are_small_cached_and_cleaned_up(client):
+    from bt.hub.models import MoodThumb
+    b = make(client, enabled=False)
+    seed(b['id'], 2)
+    with session() as s:
+        for a in s.exec(select(MoodAsset)).all():
+            a.data = big_png()
+            s.add(a)
+        s.commit()
+    pins = client.get(f"/api/hub/boards/{b['id']}").json()['pins']
+    assert pins[0]['thumb_url'].startswith(f"/api/hub/boards/{b['id']}/pins/{pins[0]['id']}/thumb?v=")
+    r = client.get(pins[0]['thumb_url'])  # made lazily on first use
+    assert r.status_code == 200 and r.headers['content-type'] == 'image/webp'
+    assert 'immutable' in r.headers['cache-control'] and 'X-Profile-Id' in r.headers['vary']
+    with Image.open(BytesIO(r.content)) as img:
+        assert img.width == mb.THUMB_WIDTH and img.height == 420
+    assert len(r.content) < len(client.get(pins[0]['image_url']).content) / 4
+    assert mb.thumb_sweep() == 1  # the other one is backfilled
+    assert mb.thumb_sweep() == 0
+    other = client.post('/api/profiles', json={'name': 'Thumb other'}).json()
+    assert client.get(pins[0]['thumb_url'], headers={'X-Profile-Id': str(other['id'])}).status_code == 404
+    client.post(f"/api/hub/boards/{b['id']}/reshuffle")
+    with session() as s:
+        assert not s.exec(select(MoodThumb)).all()
+    assert client.get(pins[0]['thumb_url']).status_code == 404
+
+
+def test_small_or_animated_images_serve_the_original_as_preview(client):
+    b = make(client, enabled=False)
+    seed(b['id'], 1)  # tiny stub bytes: not decodable, original is served
+    pin = client.get(f"/api/hub/boards/{b['id']}").json()['pins'][0]
+    r = client.get(pin['thumb_url'])
+    assert r.status_code == 200 and r.content == b'image' and 'immutable' in r.headers['cache-control']
+    frames = [Image.new('RGB', (900, 600), c) for c in ('red', 'blue')]
+    out = BytesIO()
+    frames[0].save(out, format='GIF', save_all=True, append_images=frames[1:])
+    assert mb.make_thumb(out.getvalue()) is None
+    assert client.delete(f"/api/hub/boards/{b['id']}").status_code == 200
+    from bt.hub.models import MoodThumb
+    with session() as s:
+        assert not s.exec(select(MoodThumb)).all()

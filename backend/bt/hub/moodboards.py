@@ -22,7 +22,7 @@ from ..access import hub_allowed, require_hub
 from ..db import get_settings, session
 from . import ai, activity
 from ..models import AgentEvent
-from .models import MoodAsset, MoodBoard, MoodFeedback, MoodPin, MoodPinNote, MoodPinVector, MoodImport, MoodReference
+from .models import MoodAsset, MoodBoard, MoodFeedback, MoodPin, MoodPinNote, MoodPinVector, MoodImport, MoodReference, MoodThumb
 
 router = APIRouter(prefix='/hub/boards', tags=['Mood boards'])
 IMAGE_TYPES = ('image/jpeg', 'image/png', 'image/gif', 'image/webp')
@@ -185,6 +185,8 @@ def pin_json(pin, feedback=None, note=None):
     result['vision_seen'] = note.seen if note else ''
     result['vision_why'] = note.why if note else ''
     result['image_url'] = f'/api/hub/boards/{pin.board_id}/pins/{pin.id}/media'
+    # Versioned so a reused pin id can never hit a stale browser-cached preview.
+    result['thumb_url'] = f'/api/hub/boards/{pin.board_id}/pins/{pin.id}/thumb?v={int(pin.created_at or 0)}'
     result['feedback'] = feedback.verdict if feedback else ''
     result['feedback_note'] = feedback.note if feedback else ''
     return result
@@ -283,6 +285,7 @@ def delete_profile(s, pid):
     """Called inside household deletion's existing transaction."""
     ids = select(MoodPin.id).where(MoodPin.profile_id == pid)
     s.exec(delete(MoodAsset).where(MoodAsset.pin_id.in_(ids)))
+    s.exec(delete(MoodThumb).where(MoodThumb.pin_id.in_(ids)))
     s.exec(delete(MoodPinVector).where(MoodPinVector.pin_id.in_(ids)))
     s.exec(delete(MoodFeedback).where(MoodFeedback.profile_id == pid))
     s.exec(delete(MoodPinNote).where(MoodPinNote.pin_id.in_(ids)))
@@ -302,6 +305,7 @@ def remove(bid: int, pid: int = Depends(require_hub)):
         owned(s, pid, bid)
         ids = select(MoodPin.id).where(MoodPin.board_id == bid)
         s.exec(delete(MoodAsset).where(MoodAsset.pin_id.in_(ids)))
+        s.exec(delete(MoodThumb).where(MoodThumb.pin_id.in_(ids)))
         s.exec(delete(MoodPinVector).where(MoodPinVector.pin_id.in_(ids)))
         s.exec(delete(MoodFeedback).where((MoodFeedback.board_id == bid) | MoodFeedback.pin_id.in_(ids)))
         s.exec(delete(MoodPinNote).where(MoodPinNote.pin_id.in_(ids)))
@@ -349,6 +353,7 @@ def reshuffle(bid: int, pid: int = Depends(require_hub)):
         if ids:
             s.exec(update(MoodPin).where(MoodPin.id.in_(ids)).values(hidden=True))
             s.exec(delete(MoodAsset).where(MoodAsset.pin_id.in_(ids)))
+            s.exec(delete(MoodThumb).where(MoodThumb.pin_id.in_(ids)))
             s.exec(delete(MoodPinVector).where(MoodPinVector.pin_id.in_(ids)))
             s.exec(delete(MoodPinNote).where(MoodPinNote.pin_id.in_(ids)))
         kept = s.exec(select(func.count()).select_from(MoodPin).where(MoodPin.board_id == bid, MoodPin.hidden == False)).one()
@@ -547,6 +552,72 @@ def media(bid: int, pin_id: int, pid: int = Depends(require_hub)):
             raise HTTPException(404, 'Image not available')
         return Response(asset.data, media_type=asset.mime,
                         headers={'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff'})
+
+
+THUMB_WIDTH = 560  # sharp on 2x screens for ~280 px grid columns
+THUMB_CACHE = {'Cache-Control': 'private, max-age=31536000, immutable', 'Vary': 'X-Profile-Id, Cookie',
+               'X-Content-Type-Options': 'nosniff'}
+
+
+def make_thumb(data: bytes) -> tuple[bytes, int, int] | None:
+    """Small WebP preview, or None when the original should be shown (animated, already small, undecodable)."""
+    try:
+        with Image.open(BytesIO(data)) as image:
+            if getattr(image, 'is_animated', False) or image.width * image.height > 40_000_000:
+                return None
+            if image.width <= THUMB_WIDTH and len(data) <= 120_000:
+                return None
+            image.thumbnail((THUMB_WIDTH, THUMB_WIDTH * 4))
+            preview = image.convert('RGBA' if 'A' in image.getbands() else 'RGB')
+            out = BytesIO()
+            preview.save(out, format='WEBP', quality=75, method=4)
+            return out.getvalue(), preview.width, preview.height
+    except Exception:
+        return None
+
+
+def ensure_thumb(s, pin_id: int) -> MoodThumb | None:
+    """Stored preview for a pin, generated on first use. None if the pin has no stored picture."""
+    thumb = s.get(MoodThumb, pin_id)
+    if thumb is not None:
+        return thumb
+    asset = s.get(MoodAsset, pin_id)
+    if not asset:
+        return None
+    made = make_thumb(asset.data)
+    thumb = MoodThumb(pin_id=pin_id, mime='image/webp' if made else '', data=made[0] if made else b'',
+                      width=made[1] if made else 0, height=made[2] if made else 0)
+    s.merge(thumb)
+    s.commit()
+    return thumb
+
+
+def thumb_sweep(limit: int = 50) -> int:
+    """Backfill previews for stored pins, newest first. Returns how many were made."""
+    with session() as s:
+        ids = s.exec(select(MoodAsset.pin_id).where(MoodAsset.pin_id.not_in(select(MoodThumb.pin_id)))
+                     .order_by(MoodAsset.pin_id.desc()).limit(limit)).all()
+        for pin_id in ids:
+            ensure_thumb(s, pin_id)
+    return len(ids)
+
+
+@router.get('/{bid}/pins/{pin_id}/thumb')
+def thumb(bid: int, pin_id: int, pid: int = Depends(require_hub)):
+    with session() as s:
+        owned(s, pid, bid)
+        pin = s.get(MoodPin, pin_id)
+        if not pin or pin.board_id != bid or pin.profile_id != pid:
+            raise HTTPException(404, 'Pin not found')
+        preview = ensure_thumb(s, pin_id)
+        if preview is None:
+            raise HTTPException(404, 'Image not available')
+        if preview.data:
+            return Response(preview.data, media_type=preview.mime, headers=THUMB_CACHE)
+        asset = s.get(MoodAsset, pin_id)
+        if not asset:
+            raise HTTPException(404, 'Image not available')
+        return Response(asset.data, media_type=asset.mime, headers=THUMB_CACHE)
 
 
 def capture_image(url):
@@ -901,4 +972,8 @@ async def scheduler():
             await asyncio.to_thread(moodboard_search.sweep)
         except Exception:
             log.exception('Mood Board image indexing tick failed')
+        try:
+            await asyncio.to_thread(thumb_sweep)
+        except Exception:
+            log.exception('Mood Board preview tick failed')
         await asyncio.sleep(2 if worked else 30)

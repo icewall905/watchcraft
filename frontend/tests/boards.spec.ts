@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { freshPage } from './helpers';
 const board=(id:number,name:string)=>({id,name,interests:'Japanese gardens, bonsai',instructions:'',enabled:true,interval_hours:12,target_images:100,reference_url:null as string|null,reference_name:'',pin_count:3,last_status:'ok',error:'',retry_after:0,last_result:''});
-const pin=(id:number,title:string,bid=1,gif=false)=>({id,board_id:bid,title,image_url:`/api/hub/boards/${bid}/pins/${id}/media`,source_url:`https://commons.wikimedia.org/wiki/File:Garden${id}.jpg`,media_type:gif?'gif':'image',attribution:'Garden photographer',license:'CC BY-SA 4.0',saved:false});
+const pin=(id:number,title:string,bid=1,gif=false)=>({id,board_id:bid,title,image_url:`/api/hub/boards/${bid}/pins/${id}/media`,thumb_url:`/api/hub/boards/${bid}/pins/${id}/thumb?v=1`,source_url:`https://commons.wikimedia.org/wiki/File:Garden${id}.jpg`,media_type:gif?'gif':'image',attribution:'Garden photographer',license:'CC BY-SA 4.0',saved:false});
 async function setup(page:Page,empty=false,tweak?:(rows:any[])=>void,pageSize=0){
  let boards=empty?[]:[board(1,'Garden inspiration'),board(2,'Pottery ideas')];
  let pins=[pin(3,'Quiet courtyard'),pin(2,'Bonsai detail',1,true),pin(1,'Stone garden path')];
@@ -10,7 +10,7 @@ async function setup(page:Page,empty=false,tweak?:(rows:any[])=>void,pageSize=0)
  const writes:{method:string;path:string;body:Record<string,unknown>}[]=[];
  await page.route('**/api/hub/boards**',async route=>{
   const req=route.request(),url=new URL(req.url()),path=url.pathname,method=req.method();
-  if(path.endsWith('/media')){const id=Number(path.split('/').at(-2));return route.fulfill({contentType:'image/svg+xml',body:`<svg xmlns="http://www.w3.org/2000/svg" width="320" height="${240+id*55}" viewBox="0 0 320 400"><rect width="320" height="400" fill="#c1d4c8"/><circle cx="150" cy="160" r="${65+id*5}" fill="#446f59"/><path d="M40 400Q130 220 280 400" fill="#d7ccac"/><path d="M160 340L150 140" stroke="#5e4a3c" stroke-width="12"/></svg>`});}
+  if(path.endsWith('/media')||path.endsWith('/thumb')){const id=Number(path.split('/').at(-2));return route.fulfill({contentType:'image/svg+xml',body:`<svg xmlns="http://www.w3.org/2000/svg" width="320" height="${240+id*55}" viewBox="0 0 320 400"><rect width="320" height="400" fill="#c1d4c8"/><circle cx="150" cy="160" r="${65+id*5}" fill="#446f59"/><path d="M40 400Q130 220 280 400" fill="#d7ccac"/><path d="M160 340L150 140" stroke="#5e4a3c" stroke-width="12"/></svg>`});}
   const body=method==='POST'||method==='PATCH'||method==='PUT'?req.postDataJSON()??{}:{};
   if(method!=='GET')writes.push({method,path,body});
   if(path==='/api/hub/boards/search'){const q=url.searchParams.get('q')||'';const hits=q.includes('star')?[{...pin(5,'Product 123',2),board_name:'Pottery ideas',similarity:0.71}]:[];return route.fulfill({json:{available:true,reason:'',indexed:4,pins_total:5,pins:hits}});}
@@ -333,4 +333,25 @@ test('reshuffle replaces everything not hearted or thumbs-up, after confirming',
  await expect(page.getByRole('button',{name:'View Quiet courtyard'})).toBeVisible();
  await expect(page.getByRole('button',{name:'View Bonsai detail'})).toBeVisible();
  expect(writes.at(-1)).toMatchObject({method:'POST',path:'/api/hub/boards/1/reshuffle'});
+});
+
+test('grid uses small previews, preloads them gently, and never refetches while scrolling',async({page})=>{
+ await setup(page,false,rows=>{rows.splice(0,rows.length,...Array.from({length:30},(_,i)=>({...pin(30-i,`Tile ${30-i}`),width:300,height:[200,520,330,410][i%4]})));});
+ const hits:Record<string,number>={};let inflight=0,peak=0;
+ page.on('request',r=>{const u=new URL(r.url());if(/\/(thumb|media)$/.test(u.pathname)){hits[u.pathname]=(hits[u.pathname]??0)+1;inflight++;peak=Math.max(peak,inflight);}});
+ page.on('requestfinished',r=>{if(/\/(thumb|media)$/.test(new URL(r.url()).pathname))inflight--;});
+ page.on('requestfailed',r=>{if(/\/(thumb|media)$/.test(new URL(r.url()).pathname))inflight--;});
+ await page.setViewportSize({width:1280,height:800});await freshPage(page,'/boards?board=1');
+ // Every preview is fetched in the background, including tiles far below the fold.
+ await expect.poll(()=>Object.keys(hits).filter(k=>k.endsWith('/thumb')).length,{timeout:15000}).toBe(30);
+ expect(Object.keys(hits).some(k=>k.endsWith('/media'))).toBe(false);
+ // Reaching a tile shows its already-downloaded preview at once; scrolling back up refetches nothing.
+ const last=page.getByRole('button',{name:'View Tile 1',exact:true});
+ await last.scrollIntoViewIfNeeded();await expect(last.locator('img').first()).toBeVisible({timeout:1500});
+ await page.evaluate(()=>window.scrollTo(0,0));await page.waitForTimeout(300);
+ await page.getByRole('button',{name:'View Tile 1',exact:true}).scrollIntoViewIfNeeded();await page.waitForTimeout(300);
+ expect(Object.values(hits).every(n=>n===1)).toBe(true);
+ // The viewer loads the full image.
+ await page.getByRole('button',{name:'View Tile 30',exact:true}).click();
+ await expect.poll(()=>hits['/api/hub/boards/1/pins/30/media']??0).toBe(1);
 });

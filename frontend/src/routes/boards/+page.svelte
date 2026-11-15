@@ -7,6 +7,7 @@
  import BoardImage from '$lib/hub/BoardImage.svelte';
  import PinViewer from '$lib/hub/PinViewer.svelte';
  import PinColumns from '$lib/hub/PinColumns.svelte';
+ import { preloadImages, stopPreloading } from '$lib/hub/preload';
  import { boardsApi, type MoodBoard, type BoardPin, type BoardInput, type PinterestImport, type FoundPin, type BoardSearch, type ExtensionKey } from '$lib/hub/boards';
  let boards = $state<MoodBoard[]>([]), selected = $state<number | null>(null), pins = $state<BoardPin[]>([]);
  let loading = $state(false), more = $state(false), error = $state(''), notice = $state(''), savedOnly = $state(false), reviewOnly = $state(false);
@@ -106,7 +107,7 @@
  $effect(() => {
   const node = sentinel;
   if (!node || !hasMore || loading || more) return;
-  const observer = new IntersectionObserver(entries => { if (entries.some(e => e.isIntersecting)) void load(true); }, {rootMargin: '400px'});
+  const observer = new IntersectionObserver(entries => { if (entries.some(e => e.isIntersecting)) void load(true); }, {rootMargin: '1500px'});
   observer.observe(node);
   return () => observer.disconnect();
  });
@@ -180,6 +181,9 @@
   catch (e) { if (owner === stamp() && selected === id) error = message(e); }
   finally { if (owner === stamp() && selected === id) imageBusy = false; }
  }
+ // Download every loaded preview in the background (a few at a time) so scrolling never shows a blank tile.
+ $effect(() => { const urls = (found ?? pins).map(p => p.thumb_url ?? p.image_url); preloadImages(urls); });
+ $effect(() => () => stopPreloading());
  let reshuffleOpen = $state(false), reshuffling = $state(false);
  const replaceable = $derived(board ? Math.max(0, (board.pin_count ?? 0) - (board.saved_count ?? 0)) : 0);
  // Swap every image that is not hearted or thumbs-up for new finds. The curator is not taught from them.
@@ -314,7 +318,7 @@
      {#snippet item(pin)}
       <article class="pin">
        <div class="frame">
-        <button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} width={pin.width} height={pin.height} /></button>
+        <button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.thumb_url ?? pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} width={pin.width} height={pin.height} /></button>
         {#if pin.media_type === 'gif'}<span class="badge">GIF</span>{/if}
          </div>
        <div class="caption"><button class="pin-title" onclick={() => { preview = pin; }}>{pin.title}</button><button class="pin-meta board-link" onclick={() => { clearSearch(); choose(pin.board_id); }}>on {pin.board_name}</button>
@@ -412,7 +416,7 @@
    {#snippet item(pin)}
     <article class="pin">
      <div class="frame">
-      <button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} width={pin.width} height={pin.height} /></button>
+      <button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.thumb_url ?? pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} width={pin.width} height={pin.height} /></button>
       {#if pin.media_type === 'gif'}<span class="badge">GIF</span>{/if}
      </div>
      <div class="caption"><button class="pin-title" onclick={() => { preview = pin; }}>{pin.title}</button>{#if pin.attribution}<span class="pin-meta">{pin.attribution}</span>{/if}

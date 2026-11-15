@@ -587,6 +587,15 @@ class MoodAsset(SQLModel, table=True):
     data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
 
 
+class MoodThumb(SQLModel, table=True):
+    """Small WebP preview for the board grid. Empty `data` means "serve the original" (animated or undecodable)."""
+    pin_id: int = Field(primary_key=True)
+    mime: str = ''
+    width: int = 0
+    height: int = 0
+    data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+
+
 class ExtensionKey(SQLModel, table=True):
     """Browser-extension connection key for one profile. Only a SHA-256 of the key is stored.
 

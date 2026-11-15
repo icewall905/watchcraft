@@ -8,7 +8,7 @@ export interface MoodBoard {
  avoid?: string; seed_searches?: string; media?: 'any' | 'photos' | 'gifs'; min_width?: number; strictness?: 'strict' | 'balanced';
 }
 export interface BoardPin {
- id: number; board_id: number; title: string; image_url: string; source_url: string;
+ id: number; board_id: number; title: string; image_url: string; thumb_url?: string; source_url: string;
  media_type: string; attribution?: string; license?: string; saved: boolean;
  feedback?: '' | 'good' | 'bad'; feedback_note?: string;
  width?: number; height?: number; vision_seen?: string; vision_why?: string;

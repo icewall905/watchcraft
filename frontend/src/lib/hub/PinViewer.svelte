@@ -112,7 +112,7 @@
        onwheel={wheel} ondblclick={dbl} onpointerdown={(e) => { if (scale === 1) swipe = e.clientX; down(e); }}
        onpointermove={move} onpointerup={up} onpointercancel={up}>
    <div class="layer" style:transform="translate({x}px, {y}px) scale({scale})">
-    {#key pin.id}<BoardImage url={pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} width={pin.width} height={pin.height} eager fit />{/key}
+    {#key pin.id}<BoardImage url={pin.image_url} placeholder={pin.thumb_url ?? ''} alt={pin.title} animated={pin.media_type === 'gif'} width={pin.width} height={pin.height} eager fit />{/key}
    </div>
    {#if prev}<button class="nav left" aria-label="Previous image" onclick={(e) => { e.stopPropagation(); onNavigate(prev); }} onpointerdown={(e) => e.stopPropagation()}>‹</button>{/if}
    {#if next}<button class="nav right" aria-label="Next image" onclick={(e) => { e.stopPropagation(); onNavigate(next); }} onpointerdown={(e) => e.stopPropagation()}>›</button>{/if}
