@@ -45,7 +45,7 @@ export type ProviderInfo = {
 	capabilities: string[]; available: boolean; reason: string; description: string;
 };
 export type Registry = { types: TypeInfo[]; providers: ProviderInfo[] };
-export type Counts = { discover_unread: number; alerts_new: number; news_today: number };
+export type Counts = { discover_unread: number; alerts_new: number; news_today: number; boards_shared_new?: number };
 export type Collection = { id: number; name: string; description: string; icon: string; color: string; view: string; pinned: boolean; count: number };
 export type Source = {
 	id: number; provider: string; name: string; url: string; enabled: boolean; last_success: number | null;

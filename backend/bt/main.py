@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import auth
-from .hub import api as hub_api, engine as hub_engine, master_api as hub_master_api, sharing as hub_sharing, moodboards, moodboard_imports, extension as hub_extension
+from .hub import api as hub_api, engine as hub_engine, master_api as hub_master_api, sharing as hub_sharing, moodboards, moodboard_imports, extension as hub_extension, moodboard_share
 from .knowledge import api as knowledge_api
 from .api import agent as agent_api
 from .music import api as music_api, service as music_service
@@ -57,6 +57,8 @@ app.include_router(hub_api.router, prefix="/api")
 app.include_router(moodboards.router, prefix="/api")
 app.include_router(hub_extension.router, prefix="/api")
 app.include_router(moodboard_imports.router, prefix="/api")
+app.include_router(moodboard_share.router, prefix="/api")
+app.include_router(moodboard_share.public_router, prefix="/api")
 app.include_router(hub_master_api.router, prefix="/api")
 app.include_router(knowledge_api.router, prefix="/api")
 app.include_router(hub_sharing.router, prefix="/api")
@@ -88,4 +90,7 @@ if STATIC_DIR.exists():
         if path and f.is_file() and STATIC_DIR.resolve() in f.parents:
             headers = {"Cache-Control": "no-cache"} if path in ("sw.js", "service-worker.js", "manifest.webmanifest") else {}
             return FileResponse(f, headers=headers)
-        return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+        headers = {"Cache-Control": "no-cache"}
+        if path.startswith("s/"):  # Public Mood Board links: the token is in the path.
+            headers.update({"X-Robots-Tag": "noindex, nofollow, noarchive", "Referrer-Policy": "no-referrer"})
+        return FileResponse(STATIC_DIR / "index.html", headers=headers)

@@ -260,6 +260,40 @@ are visible on the board and in Agent Activity, including real search/review/add
 refresh response includes a retry countdown and last result instead of a generic cooldown message.
 Collection is bounded to 50 boards/profile and 1,000 pins/board.
 
+### Sharing (`bt/hub/moodboard_share.py`)
+
+**Share** in the board toolbar or the image viewer opens a dialog with two options:
+
+- **To a profile** copies images to another Hub-allowed household profile, pictures included, so nothing reads
+  across profiles afterwards.
+  - One image lands in the recipient's auto-created, curator-off "Shared with you" board.
+  - A whole board becomes a new paused board, "<name> · from <sender>", holding the visible images.
+  - Feedback, notes and vectors are never copied.
+  - The recipient gets a `moodsharenotice`. It appears as the `boards_shared_new` badge in `/hub/counts` and as a
+    banner on `/boards`.
+  - Routes: `GET /api/hub/mood-share/targets`, `POST /api/hub/mood-share/boards/{bid}/to-profile {to, pin_id?}`,
+    `GET /api/hub/mood-share/notices`, `POST /api/hub/mood-share/notices/seen {ids}`.
+- **Get link** (grown-up profiles only) creates `/s/wcs_<43 chars>` for one image or a whole board.
+  - Optional expiry: 1, 7 or 30 days.
+  - Original source links appear only if the owner opts in.
+  - The token is shown once; only its SHA-256 is stored (`moodsharelink`).
+  - `GET /api/hub/mood-share/links[?board_id=]` lists links, and the dialog and "Shared links" revoke them through
+    `DELETE /api/hub/mood-share/links/{id}`.
+
+The public page `/s/[token]` bypasses the app shell and reads `/api/public/mood/{token}` (and
+`/{token}/pins/{id}/media`). These routes are exempt from the household passphrase and send no cookies or
+profile headers.
+
+- **What they return:** only the linked image or the board's visible images (id, title, size, media type, and
+  source if opted in). No profile data, notes, feedback, other boards or listing.
+- **Every request re-checks** the token, expiry, owner Hub access, board ownership, and that the board or pin
+  existed before the link (to guard against id reuse). Revoking is therefore immediate.
+- **Headers:** `no-store`, `X-Robots-Tag: noindex`, `no-referrer`, `nosniff`.
+- **Rate limits** are per-IP, in memory and per process:
+  - pages: 60 per minute
+  - media: 600 per minute
+  - bad tokens: 20 per 10 minutes, then 429
+
 Image sources are toggled under the `moodboard_sources` setting (`PUT /api/settings/moodboard_sources`):
 `web`, `reddit` (public search, SFW image/gallery posts), `bluesky` (public AppView post search, image embeds,
 moderation-labelled posts skipped) and `mastodon` (hashtag timeline on `mastodon_instance`, default

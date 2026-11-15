@@ -70,7 +70,11 @@
 		else nav.setRoute(key);
 	});
 
+	// Public share links (/s/<token>) render alone: no sign-in, profile, agents or app chrome.
+	const publicShare = page.url.pathname.startsWith('/s/');
+
 	onMount(() => {
+		if (publicShare) return;
 		deviceMode.init();
 		session.init();
 		agent.start();
@@ -94,7 +98,9 @@
 	const fullscreen = $derived(page.url.pathname.startsWith('/watch/') || page.url.pathname === '/shorts');
 </script>
 
-{#if !session.ready}
+{#if publicShare}
+	{@render children()}
+{:else if !session.ready}
 	<div class="splash"><img src="/logo.png" alt="" width="96" height="96" /></div>
 {:else if session.needsLogin}
 	<Login />

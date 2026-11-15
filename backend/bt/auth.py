@@ -35,7 +35,9 @@ class AuthMiddleware:
         if scope["type"] == "http":
             p = scope["path"]
             # /api/ext/v1/ is the browser extension: it authenticates with its own key (bt/hub/extension.py).
-            if p.startswith("/api/") and p not in OPEN and not p.startswith("/api/ext/v1/") and not _authed(Request(scope)):
+            # /api/public/ serves capability links (bt/hub/moodboard_share.py): the token in the path is the credential.
+            if (p.startswith("/api/") and p not in OPEN and not p.startswith(("/api/ext/v1/", "/api/public/"))
+                    and not _authed(Request(scope))):
                 return await JSONResponse({"detail": "auth required"}, status_code=401)(scope, receive, send)
         await self.app(scope, receive, send)
 

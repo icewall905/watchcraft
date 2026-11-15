@@ -666,3 +666,32 @@ class MoodReference(SQLModel, table=True):
     name: str = ''
     mime: str
     data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+
+
+class MoodShareLink(SQLModel, table=True):
+    """Public, revocable link to one Mood Board image or a whole board. Only a SHA-256 of the token is stored;
+    deleting the row revokes it at once (every public request looks it up again)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    profile_id: int = Field(index=True)
+    kind: str  # 'pin' | 'board'
+    board_id: int = Field(index=True)
+    pin_id: Optional[int] = None
+    token_hash: str = Field(index=True, unique=True)
+    hint: str = ''  # last 4 characters, to tell links apart
+    include_source: bool = False  # owner chose to show the original image/page links
+    expires_at: Optional[float] = None
+    created_at: float = Field(default_factory=time.time)
+    views: int = 0
+    last_viewed: float = 0
+
+
+class MoodShareNotice(SQLModel, table=True):
+    """Tells a recipient profile that another household profile copied images onto one of their boards."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    recipient_id: int = Field(index=True)
+    sender_id: int
+    kind: str  # 'pin' | 'board'
+    board_id: int
+    count: int = 1
+    seen: bool = False
+    created_at: float = Field(default_factory=time.time)
