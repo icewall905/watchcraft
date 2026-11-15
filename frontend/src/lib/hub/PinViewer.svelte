@@ -6,10 +6,11 @@
  import type { BoardPin } from '$lib/hub/boards';
 
  type Pin = BoardPin & {board_name?: string};
- let { pin, pins, boardName = '', busy = false, onClose, onNavigate, onSave, onFits, onNotFit, onHide, actions }: {
+ let { pin, pins, boardName = '', busy = false, onClose, onNavigate, onSave, onFits, onNotFit, onHide, onShare, actions }: {
   pin: Pin; pins: Pin[]; boardName?: string; busy?: boolean;
   onClose: () => void; onNavigate: (p: Pin) => void;
   onSave: (p: Pin) => void; onFits: (p: Pin) => void; onNotFit: (p: Pin) => void; onHide: (p: Pin) => void;
+  onShare?: (p: Pin) => void;  // Opens the household/link share dialog; without it, the device share sheet.
   actions?: Snippet;
  } = $props();
 
@@ -140,7 +141,7 @@
    <div class="primary">
     <button class="btn primary" class:saved={pin.saved} aria-pressed={pin.saved} disabled={busy} onclick={() => onSave(pin)}>{pin.saved ? '♥ Saved' : '♡ Save'}</button>
     <button class="btn" onclick={download}>Download</button>
-    <button class="btn" onclick={share}>Share</button>
+    <button class="btn" onclick={() => onShare ? onShare(pin) : share()}>Share</button>
    </div>
    <div class="review" role="group" aria-label="Teach the curator">
     <button class="btn pill" class:on={pin.feedback === 'good'} aria-pressed={pin.feedback === 'good'} disabled={busy} onclick={() => onFits(pin)}>✓ Fits this board</button>

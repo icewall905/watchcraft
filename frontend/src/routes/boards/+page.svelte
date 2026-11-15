@@ -7,6 +7,8 @@
  import BoardImage from '$lib/hub/BoardImage.svelte';
  import PinViewer from '$lib/hub/PinViewer.svelte';
  import PinColumns from '$lib/hub/PinColumns.svelte';
+ import ShareDialog from '$lib/hub/ShareDialog.svelte';
+ import ShareNotices from '$lib/hub/ShareNotices.svelte';
  import { boardsApi, type MoodBoard, type BoardPin, type BoardInput, type PinterestImport, type FoundPin, type BoardSearch, type ExtensionKey } from '$lib/hub/boards';
  let boards = $state<MoodBoard[]>([]), selected = $state<number | null>(null), pins = $state<BoardPin[]>([]);
  let loading = $state(false), more = $state(false), error = $state(''), notice = $state(''), savedOnly = $state(false), reviewOnly = $state(false);
@@ -18,6 +20,7 @@
  // After removing the open image from view, keep browsing: show the next one instead of closing.
  function following(p: BoardPin) { const list = found ?? pins; const i = list.findIndex(v => v.id === p.id); return list[i + 1] ?? list[i - 1] ?? null; }
  function showWaiting() { const ids = new Set(pins.map(p => p.id)); pins = [...waiting.filter(w => !ids.has(w.id)), ...pins]; waiting = []; window.scrollTo({top: 0, behavior: 'smooth'}); }
+ let sharing = $state<{board?: {id: number; name: string}; pin?: BoardPin} | null>(null);
  let preview = $state<BoardPin | null>(null), moving = $state<number | null>(null), moveTo = $state(''), busy = $state<number | null>(null);
  let refreshing = $state(false), clock = $state(Date.now());
  let retryDeadlines = $state<Record<number, number>>({});
@@ -285,9 +288,10 @@
 <section class="boards-page">
  <header class="page-heading">
   <div><p class="eyebrow">Your collections</p><h1>Mood boards</h1><p class="lede">A cosy place for everything that catches your eye.</p></div>
-  <div class="heading-actions"><button class="btn pill" onclick={openExtension}>{@render icon('puzzle')}Browser extension</button><button class="btn primary new-board" onclick={() => edit()}>{@render icon('plus')}New board</button></div>
+  <div class="heading-actions"><button class="btn pill" onclick={() => { sharing = {}; }}>{@render icon('link')}Shared links</button><button class="btn pill" onclick={openExtension}>{@render icon('puzzle')}Browser extension</button><button class="btn primary new-board" onclick={() => edit()}>{@render icon('plus')}New board</button></div>
  </header>
  {#if error && !editing && !imageOpen && !importOpen}<div class="feedback error" role="alert"><span>{error}</span><button class="btn" onclick={() => load()}>Try again</button></div>{/if}
+ {#if !selected}<ShareNotices onOpen={(id) => choose(id)} />{/if}
  {#if notice}<p class="feedback good" role="status">{notice}<button class="dismiss" aria-label="Dismiss message" onclick={() => { notice = ''; }}>×</button></p>{/if}
 
  {#if boards.length}
@@ -369,6 +373,7 @@
      <button class="btn pill" onclick={() => openImage('manual')}>{@render icon('plus')}Add image</button>
      <button class="btn pill" onclick={() => openImage('reference')}>{@render icon('eye')}{board.reference_url ? 'Change inspiration image' : 'Add inspiration image'}</button>
      <button class="btn pill" onclick={() => { error = ''; importOpen = true; }}>{@render icon('pin')}Import Pinterest</button>
+     <button class="btn pill" onclick={() => { sharing = {board: {id: board.id, name: board.name}}; }}>{@render icon('upload')}Share</button>
      <span class="spacer"></span>
      <div class="segmented" role="group" aria-label="Show">
       <button class:on={!savedOnly && !reviewOnly} aria-pressed={!savedOnly && !reviewOnly} onclick={() => { if (savedOnly || reviewOnly) { savedOnly = false; reviewOnly = false; void load(); } }}>All</button>
@@ -539,7 +544,8 @@
 {#if preview}<PinViewer pin={preview} pins={found ?? pins} boardName={boards.find(b => b.id === preview?.board_id)?.name ?? ''} busy={busy === preview.id}
  onClose={() => { preview = null; moving = null; }} onNavigate={(p) => { preview = p; moving = null; }}
  onSave={(p) => pinAction(p, {saved: !p.saved})} onFits={(p) => review(p, p.feedback === 'good' ? '' : 'good')}
- onNotFit={(p) => { reviewing = p; reviewNote = ''; }} onHide={(p) => remove(p)}>
+ onNotFit={(p) => { reviewing = p; reviewNote = ''; }} onHide={(p) => remove(p)}
+ onShare={(p) => { sharing = {board: {id: p.board_id, name: boards.find(b => b.id === p.board_id)?.name ?? ''}, pin: p}; }}>
  {#snippet actions()}
   {#if boards.length > 1}
    {#if moving}<div class="move-form"><label>Destination board<select bind:value={moveTo}>{#each boards.filter(b => b.id !== preview?.board_id) as b}<option value={b.id}>{b.name}</option>{/each}</select></label><button class="btn primary" disabled={!moveTo || busy !== null} onclick={() => preview && pinAction(preview, {board_id: Number(moveTo)})}>Move image</button></div>
@@ -547,6 +553,7 @@
   {/if}
  {/snippet}
 </PinViewer>{/if}
+{#if sharing}<ShareDialog board={sharing.board} pin={sharing.pin} onClose={() => { sharing = null; }} />{/if}
 
 <style>
  .boards-page{--mb-rose:#ff8fab;--mb-peach:#ffb547;--mb-card:rgba(255,255,255,.04);max-width:1680px;margin:auto;padding:clamp(1rem,3vw,2.5rem);overflow-x:clip}

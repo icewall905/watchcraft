@@ -151,7 +151,9 @@ def counts(pid: int = Depends(profile_id)):
         news = s.exec(select(func.count(func.distinct(ContentItem.id))).where(
             ContentItem.id.in_(found), ContentItem.type.in_(['news', 'article']),
             func.coalesce(ContentItem.published_at, ContentItem.first_seen) >= time.time() - 86400)).one()
-        return {'discover_unread': unread, 'alerts_new': alerts, 'news_today': news}
+        from .moodboard_share import unseen_count
+        return {'discover_unread': unread, 'alerts_new': alerts, 'news_today': news,
+                'boards_shared_new': unseen_count(s, pid) if hub_allowed(s, pid) else 0}
 
 
 # ---------- items
@@ -2698,6 +2700,8 @@ def delete_profile_data(s: Session, pid: int) -> None:
     """Called when a profile is deleted. Shared ContentItems stay (other profiles may reference them)."""
     from . import moodboards
     moodboards.delete_profile(s, pid)
+    from . import moodboard_share
+    moodboard_share.delete_profile(s, pid)
     from .models import ArticleShare
     s.exec(delete(ArticleShare).where(ArticleShare.profile_id == pid))
     cids = list(s.exec(select(Curator.id).where(Curator.profile_id == pid)).all())

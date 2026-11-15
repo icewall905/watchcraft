@@ -1,4 +1,4 @@
-export type CountKey = 'discover_unread' | 'alerts_new';
+export type CountKey = 'discover_unread' | 'alerts_new' | 'boards_shared_new';
 export type NavEntry = {
 	href: string; label: string; icon: string; countKey?: CountKey;
 	active: (pathname: string) => boolean;
@@ -19,7 +19,7 @@ export const SETTINGS = entry('/settings', 'Settings', 'settings');
 
 export const SECTIONS: NavSection[] = [
 	{ key: 'watch', title: 'Watch', items: [TV, SHORTS, MUSIC, entry('/subscriptions', 'Subscriptions', 'subs')] },
-	{ key: 'explore', title: 'Explore', items: [entry('/today', 'Today', 'news'), DISCOVER, entry('/news', 'News', 'news'), entry('/memes', 'Meme Radar', 'meme'), entry('/boards', 'Mood Board', 'library'), LIBRARY, entry('/knowledge', 'Knowledge', 'book'), entry('/briefings', 'Briefings', 'briefing'), ALERTS] },
+	{ key: 'explore', title: 'Explore', items: [entry('/today', 'Today', 'news'), DISCOVER, entry('/news', 'News', 'news'), entry('/memes', 'Meme Radar', 'meme'), entry('/boards', 'Mood Board', 'library', 'boards_shared_new'), LIBRARY, entry('/knowledge', 'Knowledge', 'book'), entry('/briefings', 'Briefings', 'briefing'), ALERTS] },
 	{ key: 'research', title: 'Research', items: [entry('/research', 'Research', 'research'), entry('/scout-report', 'Scout Report', 'briefing')] },
 	{ key: 'workshop', title: 'Workshop', quiet: true, items: [entry('/team', 'Agent Activity', 'team'), entry('/curators', 'Curators', 'curator'), entry('/sources', 'Sources', 'source'), entry('/agent', 'Video AI', 'agent'), entry('/stats', 'Statistics', 'chart')] }
 ];
