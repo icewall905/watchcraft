@@ -8,6 +8,16 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Mood Board Reshuffle (`874c971`, 2026-11-15)
+
+- `POST /api/hub/boards/{bid}/reshuffle`: hides every visible pin that is neither saved nor marked Fits, drops their
+  stored picture/vector/note (the link stays so the image is never found again; the 1,000 limit now counts stored
+  pictures only), queues the curator. Confirm dialog + toolbar button. Code only.
+- Backup `/root/compose/watchcraft-backups/20261115-reshuffle-874c971` (online DB quick_check ok, config hashes,
+  previous source); rollback images `watchcraft:rollback-20261115-reshuffle-*`, `rollback.sh`.
+- All four services run `sha256:c35efbff27bcea7601b39b97cf6a6b35264df58fef0a0cbecbecea443c13616d`, zero restarts, no
+  tracebacks; health and `/boards` 200; reshuffle route registered; new bundle served.
+
 ## Deployment record — Mood Board icon action row (`508510d`, 2026-11-15)
 
 - One icon row per image (thumbs up = Fits, thumbs down = Not a fit, heart = Save, trash = Remove); heart moved off
