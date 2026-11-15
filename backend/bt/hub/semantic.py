@@ -123,6 +123,10 @@ def _visible(s, pid: int, ids: list[int]) -> set[int]:
                        .where(CuratorDiscovery.profile_id == pid, CuratorDiscovery.item_id.in_(ids))).all())
     found |= set(s.exec(select(ItemState.item_id)
                         .where(ItemState.profile_id == pid, ItemState.item_id.in_(ids))).all())
+    from ..access import is_child
+    if is_child(s, pid):
+        from .kidsafe import safe_set
+        found &= safe_set(s, found)
     return found
 
 

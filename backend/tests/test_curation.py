@@ -1663,7 +1663,7 @@ def test_report_preview_shapes(client, monkeypatch):
     child = client.post('/api/profiles', json={'name': 'Kid', 'role': 'child'}, headers={'X-Profile-Id': '1'}).json()
     headers = {'X-Profile-Id': str(child['id'])}
     response = client.get('/api/hub/scout-report/preview', headers=headers)
-    assert response.status_code in (403, 404)
+    assert response.status_code == 200 and response.json()['enabled'] is False  # the child's own (empty) report
 
 
 

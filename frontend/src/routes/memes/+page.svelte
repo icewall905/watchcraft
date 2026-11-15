@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { session } from '$lib/stores/session.svelte';
 	import { onMount, untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
@@ -335,7 +336,7 @@
 	{#if sweepNote}<p class="small muted" role="status">{sweepNote}</p>{/if}
 
 	<div class="tabs" role="tablist" aria-label="Meme Radar views">
-		{#each TABS as [k, name]}
+		{#each TABS.filter(([k]) => !session.isChild || k !== 'set-aside') as [k, name]}
 			<button role="tab" aria-selected={tab === k} class="chip tab" class:on={tab === k} use:focusable onclick={() => setTab(k)}>{name}</button>
 		{/each}
 		{#if feed && !loading && !error}<span class="faint small count">{total} meme{total === 1 ? '' : 's'}</span>{/if}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { session } from '$lib/stores/session.svelte';
 	import { page } from '$app/state';
 	import { focusable } from '$lib/nav';
 	import { hub, ago, host } from '$lib/hub/api';
@@ -189,9 +190,11 @@
 					<div class="hstack" data-nav-row="verdict" aria-label="Curator selection">
 						<span class="small muted">{verdict.tier === 'set_aside' ? 'Set aside' : verdict.tier === 'feature' ? 'Featured today' : verdict.tier === 'reject' ? 'Excluded by your rules' : 'Kept for you'}</span>
 						<WhyPopover reasons={verdict.reasons} />
+						{#if !session.isChild}
 						<button class="btn ghost" disabled={overruling} use:focusable onclick={() => overrule('promote')}>Promote</button>
 						<button class="btn ghost" disabled={overruling} use:focusable onclick={() => overrule('demote')}>Set aside</button>
 						{#if verdict.overruled}<button class="btn ghost" disabled={overruling} use:focusable onclick={() => overrule('clear')}>Use curator selection</button>{/if}
+						{/if}
 					</div>
 				{/if}
 

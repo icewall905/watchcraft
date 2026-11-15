@@ -7,7 +7,7 @@ from sqlalchemy import delete, func, update
 from sqlalchemy.dialects.sqlite import insert
 from sqlmodel import select
 
-from ...access import hub_allowed
+from ...access import hub_worker_allowed
 from ...db import get_kv, get_settings, save_setting, session
 from ...models import Profile
 from ..models import Curator, MasterQueue
@@ -44,7 +44,7 @@ def catch_up(now: float | None = None) -> None:
     with session() as s:
         pids = s.exec(select(Curator.profile_id).where(Curator.enabled == True).distinct()).all()  # noqa: E712
         for pid in pids:
-            if not hub_allowed(s, pid) or s.get(MasterQueue, pid):
+            if not hub_worker_allowed(s, pid) or s.get(MasterQueue, pid):
                 continue
             key = f'watchcraft_master_catchup:{pid}'
             if now - get_kv(key, {}, s=s).get('at', 0) < CATCHUP:
@@ -123,13 +123,23 @@ def _manual_rebuild(s, pid: int, out: dict, band: bool = True) -> None:
     save_setting(key, {**state, 'completed_at': time.time()}, s=s)
 
 
+def _kid_safe(pid: int, limit: int = 60) -> dict | None:
+    """Child profiles: check what their curators found against the kid-safe bar first."""
+    from ...access import is_child
+    from .. import kidsafe
+    with session() as s:
+        if not is_child(s, pid):
+            return None
+        return kidsafe.judge_pending(s, limit=limit, pids=[pid])
+
+
 def light_pass(pid: int, claimed: int) -> dict:
     """Rules for everything new, the model for the uncertain few, then tiers again with its scores."""
     if not get_settings()['hub_master'].get('enabled', True):
         release(pid)
         return {'skipped': 'master disabled'}
     with session() as s:
-        if not hub_allowed(s, pid):
+        if not hub_worker_allowed(s, pid):
             s.exec(delete(MasterQueue).where(MasterQueue.profile_id == pid))
             s.commit()
             return {'skipped': 'hub not allowed'}
@@ -141,6 +151,7 @@ def light_pass(pid: int, claimed: int) -> dict:
             core = prefs.rebuild_core(s, pid)
             s.commit()
             out['preference_core_chars'] = len(core.text)
+        out['kid_safe'] = _kid_safe(pid)
         with session() as s:
             out['rules'] = pipeline.run(s, pid)
         with session() as s:
@@ -216,7 +227,7 @@ def nightly_due(now: float | None = None) -> list[int]:
             queued = s.get(MasterQueue, pid)
             if queued and queued.due_at > (now or time.time()):
                 continue
-            if get_kv(f'{NIGHT_KEY}:{pid}', {}, s=s).get('day') != day and hub_allowed(s, pid):
+            if get_kv(f'{NIGHT_KEY}:{pid}', {}, s=s).get('day') != day and hub_worker_allowed(s, pid):
                 ready.append(pid)
         return ready
 
@@ -233,7 +244,7 @@ def night_pass(pid: int, claimed: int, day: str) -> dict:
         release(pid)
         return {'skipped': 'master disabled'}
     with session() as s:
-        if not hub_allowed(s, pid):
+        if not hub_worker_allowed(s, pid):
             s.exec(delete(MasterQueue).where(MasterQueue.profile_id == pid))
             s.commit()
             return {'skipped': 'hub not allowed'}
@@ -246,6 +257,7 @@ def night_pass(pid: int, claimed: int, day: str) -> dict:
                 out['knowledge'] = weave.weave(pid)
             except Exception:  # noqa: BLE001 — yesterday's knowledge stays in service
                 log.exception('knowledge weave for profile %s failed', pid)
+        out['kid_safe'] = _kid_safe(pid, limit=200)
         with session() as s:
             out['rules'] = pipeline.run(s, pid)
         with session() as s:

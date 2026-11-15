@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { session } from '$lib/stores/session.svelte';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
@@ -289,6 +290,7 @@
 		</div>
 
 		<aside>
+			{#if !session.isChild}
 			<section class="box web">
 				<h2>Search the web</h2>
 				<p class="faint small">Runs the query live against external providers. Nothing is saved unless you choose to.</p>
@@ -325,6 +327,7 @@
 					</ul>
 				{/if}
 			</section>
+			{/if}
 
 			<section class="box">
 				<h2>Saved searches</h2>

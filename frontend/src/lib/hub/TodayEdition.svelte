@@ -234,7 +234,7 @@
 			<section class="quiet-section" data-nav-row><QuietLine text={`${alerts.count} alert${alerts.count === 1 ? '' : 's'} waiting`} href="/alerts" linkLabel="Review alerts" tone="warn" /></section>
 		{/if}
 		<div class="edition-end">
-			<SetAsideLink count={edition.set_aside} href="/today/set-aside" />
+			{#if !session.isChild}<SetAsideLink count={edition.set_aside} href="/today/set-aside" />{/if}
 			{#if hasContent}<EmptyCalm />{:else}<EmptyCalm title={edition.curated ? "That's everything for today" : 'Your first edition is taking shape'} detail={edition.curated ? undefined : 'As your curators finish a pass, the stories that fit will gather here.'} />{/if}
 		</div>
 	{/if}

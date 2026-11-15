@@ -4,7 +4,7 @@ import time
 from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
-from ..access import hub_allowed
+from ..access import hub_worker_allowed
 from .article_cleanup import VERSION as CLEANUP_VERSION
 from .models import (ArticleText, CaptureJob, ContentItem, CuratorDiscovery,
                      ItemState, ItemVerdict, StoryItem, Topic)
@@ -29,7 +29,7 @@ def _empty(now: float, reason: str) -> dict:
 def snapshot(s: Session, pid: int, now: float | None = None) -> dict:
     """Summarize current, locally readable article inventory without loading article bodies."""
     now = time.time() if now is None else now
-    if not hub_allowed(s, pid):
+    if not hub_worker_allowed(s, pid):
         return _empty(now, 'Hub access is unavailable for this profile.')
 
     # Match news_supply's approved, recent candidate universe and archive gates.
@@ -42,6 +42,10 @@ def snapshot(s: Session, pid: int, now: float | None = None) -> dict:
     muted_terms = [str(term).lower() for topic in muted
                    for term in (topic.keywords or [topic.name])]
     visible = select(CuratorDiscovery.item_id).where(CuratorDiscovery.profile_id == pid)
+    from ..access import is_child
+    if is_child(s, pid):
+        from . import kidsafe
+        visible = kidsafe.safe_ids().where(kidsafe.KidSafeVerdict.item_id.in_(visible))
     rows = s.exec(
         select(ContentItem.id, ContentItem.title, ContentItem.summary, ContentItem.publisher,
                ContentItem.first_seen, published,

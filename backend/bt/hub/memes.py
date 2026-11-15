@@ -17,7 +17,7 @@ from sqlmodel import Session, select
 
 from PIL import Image
 
-from ..access import hub_allowed
+from ..access import hub_allowed, is_child
 from ..db import get_kv, save_setting, session
 from .extract import drop_links
 from .models import (CapturedAsset, ContentItem, Curator, CuratorDiscovery, CuratorSource, ItemState, MemeExample,
@@ -536,8 +536,14 @@ def trend_dict(s: Session, t: MemeTrend, pid: int) -> dict:
                   CuratorDiscovery.item_id.in_(list(members) or [-1]))).all())
     visible |= set(s.exec(select(ItemState.item_id).where(ItemState.profile_id == pid,
                    ItemState.item_id.in_(list(members) or [-1]))).all())
+    if is_child(s, pid):
+        from .kidsafe import image_set
+        visible &= image_set(s, visible)
+        exemplar = exemplar if exemplar in visible else None
+        name = ''  # names are written from the whole household's memes, not kid-checked
     featured = next((m for m in members if m in visible), None)
-    return {'id': t.id, 'target_kind': t.target_kind, 'target_key': t.target_key, 'name': name[:120], 'kind': kind,
+    key = '' if t.target_kind == 'community' and is_child(s, pid) else t.target_key
+    return {'id': t.id, 'target_kind': t.target_kind, 'target_key': key, 'name': name[:120], 'kind': kind,
             'state': t.state, 'prev_state': t.prev_state, 'first_observed': t.first_observed,
             'last_observed': t.last_observed, 'observations': t.observations, 'metrics': t.metrics,
             'evidence': t.evidence, 'updated_at': t.updated_at, 'example_ids': [m for m in members if m in visible][:6],

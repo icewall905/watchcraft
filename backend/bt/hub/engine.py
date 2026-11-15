@@ -11,7 +11,7 @@ from sqlalchemy import delete, text, update
 from sqlmodel import Session, select
 
 from .. import curation
-from ..access import hub_allowed
+from ..access import hub_worker_allowed
 from ..db import engine as db_engine, get_settings, session
 from . import activity, ai, polling, slots, narrate, watchers
 from .models import (Alert, Briefing, CollectionItem, ContentItem, Curator, CuratorDiscovery, CuratorRun,
@@ -43,7 +43,7 @@ def record_page_revision(src: Source, data: dict, observed_at: float | None = No
         current = s.get(Source, src.id)
         if (not current or current.profile_id != src.profile_id or not current.enabled
                 or current.url != src.url or (current.config or {}) != (src.config or {})
-                or not hub_allowed(s, src.profile_id)):
+                or not hub_worker_allowed(s, src.profile_id)):
             return None  # a run that started before a rule change must not record old-rule text
         last = s.exec(select(PageRevision).where(PageRevision.source_id == src.id)
                       .order_by(PageRevision.id.desc()).limit(1)).first()
@@ -74,7 +74,7 @@ def page_change_alert(c: Curator, src: Source, data: dict, before: str) -> bool:
     reason = (f"{change['added_chars']} characters added, {change['removed_chars']} removed"
               + (f': “{added[:160]}”' if added else '.'))
     with session() as s:
-        if not hub_allowed(s, c.profile_id):
+        if not hub_worker_allowed(s, c.profile_id):
             return False
         item = upsert(s, dict(data), 'page_watch')
         if not item:
@@ -96,7 +96,7 @@ def track_sitemap(src: Source, items: list[dict], curator_id: int, run_start: fl
     with session() as s:
         s.exec(text('BEGIN IMMEDIATE'))
         current = s.get(Source, src.id)
-        if not current or current.profile_id != src.profile_id or current.url != src.url or not hub_allowed(s, src.profile_id):
+        if not current or current.profile_id != src.profile_id or current.url != src.url or not hub_worker_allowed(s, src.profile_id):
             return []
         now = time.time()
         known = dict(s.exec(select(SitemapEntry.url, SitemapEntry.lastmod).where(SitemapEntry.source_id == src.id)).all())
@@ -137,7 +137,7 @@ def record_source_check(src: Source, trigger: str, count: int, error: str = '', 
     with session() as s:
         s.exec(text('BEGIN IMMEDIATE'))
         row = s.get(Source, src.id)
-        if not row or row.profile_id != src.profile_id or row.url != src.url or not hub_allowed(s, src.profile_id):
+        if not row or row.profile_id != src.profile_id or row.url != src.url or not hub_worker_allowed(s, src.profile_id):
             return False
         now = checked_at if checked_at is not None else time.time()
         if row.last_checked is not None and row.last_checked > now:
@@ -326,7 +326,7 @@ def _feed_needs_keywords(provider: str) -> bool:
 def claim(cid: int, trigger: str = 'schedule') -> bool:
     with session() as s:
         curator = s.get(Curator, cid)
-        if not curator or not hub_allowed(s, curator.profile_id):
+        if not curator or not hub_worker_allowed(s, curator.profile_id):
             return False
         cond = [Curator.id == cid, Curator.next_run <= time.time()]
         if trigger == 'schedule':
@@ -467,15 +467,29 @@ def _news_boost(s, curator: Curator, now: float | None) -> dict:
     return news_supply.interest_decision(s, curator, now, cache=True)
 
 
+def _kid(pid: int) -> bool:
+    from ..access import is_child
+    with session() as s:
+        return is_child(s, pid)
+
+
 def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
     cid = c.id
+    kid = _kid(c.profile_id)
     sources = _sources(cid)
     errors, candidates = [], []
+    if kid and c.subject_type not in ('', 'topic'):
+        raise ValueError('Kid profiles can follow topics only.')
+    if kid:
+        from .providers import KID_PROVIDERS
+        locked = [x for x in sources if x.provider not in KID_PROVIDERS or x.url]
+        sources = [x for x in sources if x not in locked]
+        errors += [{'source': x.name or x.provider, 'message': 'Not available on kid profiles.'} for x in locked]
     activity.emit(c, r.id, 'started', narrate.say(c.tone, 'curator.started', seed=str(r.id),
                                                   sources=narrate.phrase(len(sources), 'source')))
     # A meme curator with no working public source finds one itself instead of failing every run.
     from . import memes
-    if memes.is_meme_curator(c):
+    if memes.is_meme_curator(c) and not kid:
         note = memes.ensure_source(c)
         if note:
             activity.emit(c, r.id, 'source_repaired', narrate.say(c.tone, 'curator.source_repaired',
@@ -498,9 +512,11 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
         got, failed, checked_at, shared, total = 0, None, None, False, None
         for q in (queries if prov.mode == 'query' else ['']):
             with session() as s:
-                if not hub_allowed(s, c.profile_id):
+                if not hub_worker_allowed(s, c.profile_id):
                     raise ValueError('Hub access was restricted during the run.')
             try:
+                if kid and prov.mode != 'query':
+                    raise ValueError('Not available on kid profiles.')
                 if prov.mode == 'feed':
                     result = polling.fetch(prov, src.url, _safe_error, force=r.trigger == 'manual', config=src.config or None)
                     checked_at, shared = result.fetched_at, result.shared
@@ -508,7 +524,7 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
                         raise ValueError(result.error)
                     fetched = result.items
                 else:
-                    fetched = prov.run(src.url, q, src.config)
+                    fetched = prov.run(src.url, q, src.config, safe=True) if kid else prov.run(src.url, q, src.config)
                 if src.provider == 'page_watch':
                     before = record_page_revision(src, fetched[0], checked_at)
                     # Text seen under different rules is not a page change worth an alert.
@@ -616,7 +632,7 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
     new = 0
     with session() as s:
         c = s.get(Curator, cid)
-        if not c or not hub_allowed(s, c.profile_id):
+        if not c or not hub_worker_allowed(s, c.profile_id):
             raise ValueError('Hub access was restricted during the run.')
         for src, q, d, score, reason in fresh:
             if score < c.min_score or (c.kind == 'research' and score <= 0):
@@ -645,6 +661,13 @@ def _execute(c: Curator, r: CuratorRun) -> CuratorRun:
     activity.emit(c, r.id, 'completed', narrate.say(c.tone, 'curator.completed', seed=str(r.id),
                         new=narrate.phrase(new, 'new item'), seen=narrate.phrase(len(candidates), 'source item'),
                         issues=narrate.phrase(len(errors), 'issue')), status=status)
+    if new and kid:
+        try:
+            from . import kidsafe
+            with session() as s:
+                kidsafe.judge_pending(s, pids=[c.profile_id])
+        except Exception:  # noqa: BLE001 — unjudged items simply stay hidden from the child
+            log.exception('kid-safe check failed for profile %s', c.profile_id)
     if new:
         try:
             from .master import schedule as master

@@ -6,7 +6,7 @@ from sqlalchemy import update
 from sqlalchemy.dialects.sqlite import insert
 from sqlmodel import select
 
-from ..access import hub_allowed
+from ..access import hub_worker_allowed
 from ..db import get_kv, save_setting, session
 from ..models import Setting
 from .models import Curator
@@ -62,7 +62,7 @@ def maintain(now: float | None = None) -> dict:
     with session() as s:
         pids = s.exec(select(Curator.profile_id).where(Curator.enabled.is_(True)).distinct()).all()
         for pid in pids:
-            if not hub_allowed(s, pid):
+            if not hub_worker_allowed(s, pid):
                 continue
             inventory = snapshot(s, pid, now)['articles']
             low = {r['id']: r for r in inventory['interests'] if r['needs_refill']}

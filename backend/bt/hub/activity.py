@@ -4,7 +4,7 @@ from datetime import timezone
 from sqlalchemy import text
 from sqlmodel import select
 
-from ..access import boards_allowed, hub_allowed
+from ..access import boards_allowed, hub_worker_allowed
 from ..db import session
 from ..models import AgentEvent
 from .models import Briefing, Curator, MoodBoard
@@ -52,7 +52,7 @@ def _emit(owner, model, owner_key, run_id, step, message, details, guard=None):
     with session() as s:
         s.exec(text('BEGIN IMMEDIATE'))
         row = s.get(model, owner.id)
-        allowed = boards_allowed if model.__name__ == 'MoodBoard' else hub_allowed
+        allowed = boards_allowed if model.__name__ == 'MoodBoard' else hub_worker_allowed
         if not row or row.profile_id != owner.profile_id or not allowed(s, owner.profile_id):
             return
         if guard is not None and not guard(row):

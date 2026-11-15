@@ -74,10 +74,70 @@ def require_boards(pid: int = Depends(profile_id)) -> int:
     return pid
 
 
-def require_hub(pid: int = Depends(profile_id)) -> int:
+# Hub routes a child profile may call, as (method, path below /hub). Everything else is
+# grown-up only, so a new route stays closed to children until it is reviewed and listed here.
+# Reads on these routes are kid-safe filtered server-side (see hub/kidsafe.py).
+CHILD_HUB_ROUTES = frozenset({
+    ('GET', '/shelf'), ('GET', '/registry'), ('GET', '/counts'),
+    ('GET', '/items'), ('GET', '/items/{iid}'), ('GET', '/items/{iid}/image'),
+    ('GET', '/items/{iid}/assets/{kind}'), ('HEAD', '/items/{iid}/assets/{kind}'),
+    ('POST', '/items/{iid}/curator-feedback'), ('POST', '/items/{iid}/state'), ('POST', '/items/state'),
+    ('POST', '/items/{iid}/feedback'), ('GET', '/items/{iid}/why'), ('GET', '/stories/{sid}'),
+    ('GET', '/news'), ('POST', '/news/seen'),
+    ('GET', '/collections'), ('POST', '/collections'), ('PATCH', '/collections/{cid}'), ('DELETE', '/collections/{cid}'),
+    ('POST', '/collections/{cid}/items/{iid}'), ('DELETE', '/collections/{cid}/items/{iid}'),
+    ('GET', '/team'), ('GET', '/sources'), ('POST', '/sources'),
+    ('GET', '/curators'), ('GET', '/curators/templates'), ('POST', '/curators/draft'), ('POST', '/curators'),
+    ('GET', '/curators/{cid}'), ('PATCH', '/curators/{cid}'), ('DELETE', '/curators/{cid}'),
+    ('POST', '/curators/{cid}/{action}'),
+    ('GET', '/topics'), ('POST', '/topics'), ('GET', '/topics/{tid}'), ('PATCH', '/topics/{tid}'),
+    ('DELETE', '/topics/{tid}'), ('POST', '/topics/{tid}/items/{iid}'), ('DELETE', '/topics/{tid}/items/{iid}'),
+    ('GET', '/scout-report/config'), ('PUT', '/scout-report/config'), ('GET', '/scout-report/issues'),
+    ('GET', '/scout-report/preview'), ('POST', '/scout-report/generate'),
+    ('GET', '/briefings'), ('POST', '/briefings'), ('PATCH', '/briefings/{bid}'), ('DELETE', '/briefings/{bid}'),
+    ('POST', '/briefings/{bid}/generate'), ('GET', '/briefings/{bid}/issues'),
+    ('GET', '/alerts'), ('POST', '/alerts/{aid}/state'),
+    ('GET', '/search'), ('GET', '/search/semantic'), ('GET', '/search/semantic/status'),
+    ('GET', '/saved-searches'), ('POST', '/saved-searches'), ('DELETE', '/saved-searches/{sid}'),
+    ('GET', '/memes/items'), ('GET', '/memes/facets'), ('GET', '/memes/trends'), ('POST', '/memes/trends/{tid}/state'),
+    ('GET', '/memes/formats'), ('GET', '/memes/formats/{fid}'), ('GET', '/memes/items/{iid}/similar'),
+    ('POST', '/memes/languages/{code}/hide'),
+    ('GET', '/today'), ('POST', '/today/rerun'),
+})
+# Curator actions a child may take; 'duplicate' copies sources, 'report' is the kid-safe report.
+CHILD_CURATOR_ACTIONS = frozenset({'run', 'pause', 'resume', 'report', 'duplicate'})
+KID_LOCKED = 'Not available on kid profiles.'
+
+
+def hub_worker_allowed(s: Session, pid: int) -> bool:
+    """Background Hub work for this profile: grown-ups, and child profiles in kid-safe mode."""
+    p = s.get(Profile, pid)
+    return bool(p and (grown_up_access(s, p) or p.role == 'child'))
+
+
+def _hub_path(request: Request) -> str:
+    route = request.scope.get('route')
+    path = getattr(route, 'path', '') or request.url.path
+    i = path.find('/hub/')
+    return path[i + 4:] if i >= 0 else ''
+
+
+def require_hub(request: Request, pid: int = Depends(profile_id)) -> int:
+    with session() as s:
+        if hub_allowed(s, pid):
+            return pid
+        if is_child(s, pid):
+            if (request.method, _hub_path(request)) in CHILD_HUB_ROUTES:
+                return pid
+            raise HTTPException(403, KID_LOCKED)
+        raise HTTPException(403, 'Hub discovery and research are unavailable for this profile.')
+
+
+def require_grown_up(pid: int = Depends(profile_id)) -> int:
+    """Hub features that stay closed to child profiles even inside an allowed router."""
     with session() as s:
         if not hub_allowed(s, pid):
-            raise HTTPException(403, 'Hub discovery and research are unavailable for this profile.')
+            raise HTTPException(403, KID_LOCKED if is_child(s, pid) else 'Hub discovery and research are unavailable for this profile.')
     return pid
 
 

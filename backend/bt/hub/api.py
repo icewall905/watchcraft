@@ -13,15 +13,15 @@ from sqlalchemy import case, func, or_, text
 from sqlmodel import Session, delete, select
 
 from .. import curation
-from ..access import hub_allowed, require_admin, require_hub
+from ..access import CHILD_CURATOR_ACTIONS, KID_LOCKED, hub_allowed, is_child, require_admin, require_hub
 from ..api.core import profile_id
 from ..config import DATA_DIR
 from ..db import get_settings, save_setting, session
 from ..models import AgentEvent, Download, Profile, Setting
-from . import activity, ai, engine, memes, polling, repair, scout, slots, watchers
+from . import activity, ai, engine, kidsafe, memes, polling, repair, scout, slots, watchers
 from .models import (Alert, Briefing, BriefingIssue, CaptureJob, CapturedAsset, CapturedPage, Collection, CollectionItem, ContentItem, Curator, CuratorDiscovery,
                      CuratorRun, CuratorSource, Edition, HubLesson, HubPreferenceCore, ItemState, ItemVerdict, MasterQueue, MemeExample, MemeFormat, MemeTrend, MemeTrendState, PageRevision, SavedSearch, ScoutPlan, ScoutRun, ScoutReportConfig, ScoutReportIssue, SitemapEntry, Source, SourceCheck, Topic, TopicItem, WatcherRevision)
-from .models import StoryItem, MoodBoard, MoodPin
+from .models import StoryItem, MoodBoard, MoodPin, KidSafeVerdict
 from .master import views as curation_views
 from .master.cluster import same_story, title_key
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
@@ -55,14 +55,25 @@ def owned(s: Session, model, oid: int, pid: int):
 
 
 def visible_ids(pid: int):
-    """Item ids this profile may see: found by its curators, or touched by it."""
-    return select(CuratorDiscovery.item_id).where(CuratorDiscovery.profile_id == pid).union(
+    """Item ids this profile may see: found by its curators, or touched by it. A child profile
+    sees only those that passed the kid-safe check."""
+    found = select(CuratorDiscovery.item_id).where(CuratorDiscovery.profile_id == pid).union(
         select(ItemState.item_id).where(ItemState.profile_id == pid))
+    if curation_views.child(pid):
+        return kidsafe.safe_ids().where(KidSafeVerdict.item_id.in_(found))
+    return found
 
 
 def can_see(s: Session, pid: int, item_id: int) -> bool:
-    return bool(s.exec(select(CuratorDiscovery.id).where(CuratorDiscovery.profile_id == pid, CuratorDiscovery.item_id == item_id)).first()
+    seen = bool(s.exec(select(CuratorDiscovery.id).where(CuratorDiscovery.profile_id == pid, CuratorDiscovery.item_id == item_id)).first()
                 or s.get(ItemState, (pid, item_id)))
+    return seen and (not is_child(s, pid) or kidsafe.is_safe(s, item_id))
+
+
+def kid_guard(s: Session, pid: int) -> None:
+    """Grown-up-only branch of an endpoint children may otherwise call."""
+    if is_child(s, pid):
+        raise HTTPException(403, KID_LOCKED)
 
 
 def state_dict(st: ItemState | None) -> dict:
@@ -83,10 +94,26 @@ def serialize(s: Session, pid: int, items: list[ContentItem]) -> list[dict]:
         finds.setdefault(d.item_id, []).append((d, name))
     images = set(s.exec(select(CapturedAsset.item_id).where(CapturedAsset.kind == 'image', CapturedAsset.item_id.in_(ids))).all())
     videos = set(s.exec(select(CapturedAsset.item_id).where(CapturedAsset.kind == 'video', CapturedAsset.item_id.in_(ids))).all())
+    kid = is_child(s, pid)
+    if kid:
+        # Defence in depth: whatever query produced these, a child gets only kid-safe items, and
+        # pictures only once the vision model checked them. Clips are never vision-checked.
+        safe, pictured = kidsafe.safe_set(s, ids), kidsafe.image_set(s, ids)
+        items = [i for i in items if i.id in safe]
+        images &= pictured
+        videos = set()
     out = []
     for i in items:
         f = sorted(finds.get(i.id, []), key=lambda x: -(x[0].score or 0))
-        out.append({**i.model_dump(exclude={'body'}), 'state': state_dict(states.get(i.id)),
+        row = i.model_dump(exclude={'body'})
+        if kid:
+            row['kid_safe'] = True
+            if i.id not in pictured:
+                row['image'] = ''
+                meta = dict(row.get('meta') or {})
+                meta.pop('media', None)
+                row['meta'] = meta
+        out.append({**row, 'state': state_dict(states.get(i.id)),
                     'score': f[0][0].score if f else None, 'reason': f[0][0].reason if f else '',
                     'curator_names': list(dict.fromkeys(n for _, n in f)),
                     'curator_ids': list(dict.fromkeys(d.curator_id for d, _ in f)),
@@ -144,6 +171,8 @@ def counts(pid: int = Depends(profile_id)):
             # Only what the curator chose to feature: a badge is an invitation, not a backlog.
             found = select(ItemVerdict.item_id).where(ItemVerdict.profile_id == pid, ItemVerdict.tier == 'feature',
                                                       curation_views.visible(pid, ItemVerdict.item_id))
+        if is_child(s, pid):
+            found = kidsafe.safe_ids().where(KidSafeVerdict.item_id.in_(found))
         unread = s.exec(select(func.count(func.distinct(ContentItem.id))).where(
             ContentItem.id.in_(found), ContentItem.id.not_in(read))).one()
         alerts = s.exec(select(func.count()).select_from(Alert).where(Alert.profile_id == pid, Alert.state == 'new',
@@ -202,6 +231,8 @@ def item_query(pid: int, *, section='discover', q='', type='', provider='', cura
         stmt = stmt.where(ContentItem.id.in_(visible_ids(pid)))
     else:
         stmt = stmt.where(ContentItem.id.in_(select(CuratorDiscovery.item_id).where(CuratorDiscovery.profile_id == pid)))
+        if curation_views.child(pid):
+            stmt = stmt.where(kidsafe.ok(ContentItem.id))
         stmt = stmt.where(or_(st.dismissed == None, st.dismissed == False))  # noqa: E711
     if section == 'library':
         stmt = stmt.where(or_(st.saved == True, st.favorite == True, st.read_later == True, st.archived == True))
@@ -269,7 +300,7 @@ def items(section: str = 'discover', q: str = '', type: str = '', provider: str 
                           until=until, collection=collection, topic=topic)
         # Feeds show what the curator kept; what you saved yourself is never filtered.
         mine = section == 'library' or saved or favorite or read_later or archived or collection or topic
-        if curation != 'all' and not mine:
+        if (curation != 'all' or curation_views.child(pid)) and not mine:
             stmt = stmt.where(curation_views.curated(pid, ContentItem.id))
         total = s.exec(select(func.count()).select_from(stmt.subquery())).one()
         if sort == 'best':
@@ -312,7 +343,7 @@ def item(iid: int, pid: int = Depends(profile_id)):
         if not it or not can_see(s, pid, iid):
             raise HTTPException(404, 'Item not found')
         out = serialize(s, pid, [it])[0]
-        out['body'] = it.body
+        out['body'] = it.body[:kidsafe.BODY] if is_child(s, pid) else it.body  # a child reads what was judged
         job = s.get(CaptureJob, (pid, iid))
         out['capture'] = job.model_dump() if job else None
         video_id = it.meta.get('video_id') if it.type == 'video' else None
@@ -469,6 +500,13 @@ def item_image(iid: int, pid: int = Depends(profile_id)):
         item = s.get(ContentItem, iid)
         if not item or not item.image or not can_see(s, pid, iid):
             raise HTTPException(404, 'No picture for this item.')
+        if is_child(s, pid):
+            # Only the captured bytes the vision model saw; the remote picture may differ.
+            asset = s.get(CapturedAsset, (iid, 'image')) if kidsafe.image_ok(s, iid) else None
+            if not asset:
+                raise HTTPException(404, 'No picture for this item.')
+            return Response(asset.data, media_type=asset.mime, headers={'Cache-Control': 'private, no-store',
+                                                                         'X-Content-Type-Options': 'nosniff'})
         url = item.image
     try:
         url = curation.canonical(url)
@@ -505,6 +543,8 @@ def item_asset(iid: int, kind: str, request: Request, pid: int = Depends(profile
     with session() as s:
         asset = s.get(CapturedAsset, (iid, kind))
         if not asset or not can_see(s, pid, iid):
+            raise HTTPException(404, 'Asset not found')
+        if is_child(s, pid) and not (kind == 'image' and kidsafe.image_ok(s, iid)):
             raise HTTPException(404, 'Asset not found')
         data, mime = asset.data, asset.mime
     headers = {'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox',
@@ -782,7 +822,7 @@ def news(days: int = 7, topic: int | None = None, curation: str = 'curated', mod
             owned(s, Topic, topic, pid)
         topics = s.exec(select(Topic).where(Topic.profile_id == pid, Topic.kind == 'news')).all()
         base = item_query(pid, section='news', topic=None).where(when >= since)
-        if curation != 'all':
+        if curation != 'all' or curation_views.child(pid):
             base = base.where(curation_views.curated(pid, ContentItem.id))
         for t in topics:
             if t.muted:
@@ -1110,6 +1150,11 @@ def sources(pid: int = Depends(profile_id)):
 @router.post('/sources')
 def create_source(body: SourceIn, pid: int = Depends(profile_id)):
     with session() as s:
+        if is_child(s, pid):
+            from .providers import KID_PROVIDERS
+            # A child may add only the fixed-host keyword searches; never a URL to fetch.
+            if (body.provider or '') not in KID_PROVIDERS or (body.url or '').strip():
+                raise HTTPException(403, KID_LOCKED)
         src = get_or_create_source(s, pid, body.provider or '', body.url or '', body.name or '')
         s.commit(); s.refresh(src)
         return source_dict(s, src)
@@ -1356,7 +1401,8 @@ def _finds(s: Session, pid: int, curator_id: int, limit: int = 3) -> list[dict]:
     rows = s.exec(select(ContentItem, CuratorDiscovery, Source)
                   .join(CuratorDiscovery, CuratorDiscovery.item_id == ContentItem.id)
                   .outerjoin(Source, (Source.id == CuratorDiscovery.source_id) & (Source.profile_id == pid))
-                  .where(CuratorDiscovery.curator_id == curator_id, CuratorDiscovery.profile_id == pid)
+                  .where(CuratorDiscovery.curator_id == curator_id, CuratorDiscovery.profile_id == pid,
+                         *([kidsafe.ok(ContentItem.id)] if is_child(s, pid) else []))
                   .order_by(CuratorDiscovery.found_at.desc()).limit(limit)).all()
     return [{'id': item.id, 'title': item.title, 'found_at': discovery.found_at,
              'url': item.url, 'summary': item.summary[:350], 'publisher': item.publisher,
@@ -1753,13 +1799,38 @@ class CuratorIn(BaseModel):
 def curator_dict(s, c: Curator) -> dict:
     n = s.exec(select(func.count()).select_from(CuratorDiscovery).where(CuratorDiscovery.curator_id == c.id)).one()
     sids = list(s.exec(select(CuratorSource.source_id).where(CuratorSource.curator_id == c.id)).all())
-    return {**c.model_dump(exclude={'provider', 'source'}), 'source_ids': sids, 'discovery_count': n,
-            'next_run': c.next_run if c.next_run < 1e11 else None}
+    out = {**c.model_dump(exclude={'provider', 'source'}), 'source_ids': sids, 'discovery_count': n,
+           'next_run': c.next_run if c.next_run < 1e11 else None}
+    if is_child(s, c.profile_id):
+        if c.report_refs and len(kidsafe.safe_set(s, c.report_refs)) < len(set(c.report_refs)):
+            out.update(report='', report_at=None, report_refs=[])  # written from items a child may not see
+        if c.report and not c.report_refs:
+            out['report'] = ''  # an unavailable-AI notice is fine; prose without citations is not checkable
+    return out
+
+
+def _kid_curator(s, data: dict, sids: list[int] | None, pid: int, current: Curator | None = None) -> None:
+    """Kid-safe lock on a child's curator: topics only, kid providers only."""
+    if not is_child(s, pid):
+        return
+    if current is not None and current.subject_type not in ('', 'topic') and data.get('subject_type') in (None, current.subject_type):
+        raise HTTPException(403, 'Kid profiles can follow topics, not people, sites or organisations.')
+    from .providers import KID_PROVIDERS
+    if data.get('subject_type') not in (None, '', 'topic'):
+        raise HTTPException(403, 'Kid profiles can follow topics, not people, sites or organisations.')
+    if 'subject_type' in data:
+        data['subject_type'] = 'topic'
+    data.pop('aliases', None)
+    for sid in sids or []:
+        src = s.get(Source, sid)
+        if not src or src.profile_id != pid or src.provider not in KID_PROVIDERS or src.url:
+            raise HTTPException(403, KID_LOCKED)
 
 
 def apply(s, c: Curator, body: CuratorIn, pid: int) -> None:
     data = body.model_dump(exclude_unset=True)
     sids = data.pop('source_ids', None)
+    _kid_curator(s, data, sids, pid, c if c.id is not None else None)
     if data.get('tone') is None:
         data.pop('tone', None)  # null keeps the current voice; the column stays a valid tone
     for k in ('queries', 'keywords', 'exclusions', 'alert_keywords', 'aliases', 'tuned_up', 'tuned_down'):
@@ -1808,7 +1879,9 @@ class DraftIn(BaseModel):
 @router.post('/curators/draft')
 def draft(body: DraftIn, pid: int = Depends(profile_id)):
     """Propose a curator from natural language. Nothing is stored until the user approves."""
-    d = ai.draft(body.goal, body.kind)
+    with session() as s:
+        kid = is_child(s, pid)
+    d = ai.draft(body.goal, body.kind, kid=kid)
     with session() as s:
         existing = {x.provider: x.id for x in s.exec(select(Source).where(Source.profile_id == pid, Source.url == '')).all()}
     # Only feeds carry a URL to approve. Providers are already offered as tick boxes through
@@ -1848,7 +1921,9 @@ def curator(cid: int, pid: int = Depends(profile_id)):
         from itertools import islice
         from .research import person_match
         out['recent'] = serialize(s, pid, list(islice((i for i in recent if person_match(c, i.model_dump())), 60)))
-        if c.kind == 'research' and c.subject_type == 'person' and c.report_refs:
+        if is_child(s, pid):
+            pass  # curator_dict already withheld a report a child may not read
+        elif c.kind == 'research' and c.subject_type == 'person' and c.report_refs:
             refs = [s.get(ContentItem, iid) for iid in c.report_refs]
             if any(i is None or not person_match(c, i.model_dump()) for i in refs):
                 # Old reports can contain unrelated identities. Require regeneration
@@ -1886,6 +1961,8 @@ def delete_curator(cid: int, pid: int = Depends(profile_id)):
 def curator_action(cid: int, action: str, pid: int = Depends(profile_id)):
     with session() as s:
         c = owned(s, Curator, cid, pid)
+        if is_child(s, pid) and (action not in CHILD_CURATOR_ACTIONS or c.subject_type not in ('', 'topic')):
+            raise HTTPException(403, KID_LOCKED)
         if action == 'run':
             if c.last_status in ('running', 'queued') and c.next_run > time.time():
                 raise HTTPException(409, 'Already running')
@@ -2074,10 +2151,23 @@ def report_config_update(body: ReportConfigInput, pid: int = Depends(profile_id)
         return row.model_dump()
 
 
+def _kid_issue(s: Session, pid: int, issue: dict) -> dict:
+    """A stored Scout Report as a child may read it: only kid-safe findings, no meme or alert lines."""
+    if not is_child(s, pid):
+        return issue
+    sections = dict(issue.get('sections') or {})
+    findings = sections.get('findings') or []
+    safe = kidsafe.safe_set(s, [f.get('id') for f in findings if isinstance(f, dict)])
+    sections['findings'] = [f for f in findings if isinstance(f, dict) and f.get('id') in safe]
+    sections['memes'], sections['alerts'] = [], []
+    sections['stories'] = [x for x in sections.get('stories') or [] if isinstance(x, dict) and x.get('kind') not in ('meme', 'alerts')]
+    return {**issue, 'sections': sections, 'item_ids': [f['id'] for f in sections['findings']]}
+
+
 @router.get('/scout-report/issues')
 def report_issues(pid: int = Depends(profile_id)):
     with session() as s:
-        return [i.model_dump() for i in s.exec(select(ScoutReportIssue).where(ScoutReportIssue.profile_id == pid)
+        return [_kid_issue(s, pid, i.model_dump()) for i in s.exec(select(ScoutReportIssue).where(ScoutReportIssue.profile_id == pid)
                                                 .order_by(ScoutReportIssue.created_at.desc()).limit(50)).all()]
 
 
@@ -2090,10 +2180,11 @@ def report_preview(pid: int = Depends(profile_id)):
             return {'enabled': False, 'issue': None}
         issue = s.exec(select(ScoutReportIssue).where(ScoutReportIssue.profile_id == pid, ScoutReportIssue.curator_id == None)
                        .order_by(ScoutReportIssue.created_at.desc()).limit(1)).first()
-        out = {'enabled': True, 'issue': issue.model_dump() if issue else None,
+        issue_out = _kid_issue(s, pid, issue.model_dump()) if issue else None
+        out = {'enabled': True, 'issue': issue_out,
                'frequency': config.frequency, 'next_run': config.next_run if config.next_run and config.frequency != 'manual' else None}
         if issue:
-            sections = issue.sections or {}
+            sections = issue_out['sections'] or {}
             out['counts'] = {'findings': len(sections.get('findings') or []),
                              'runs': (sections.get('runs') or {}).get('count', 0),
                              'attention': (sections.get('runs') or {}).get('failed', 0) + len(sections.get('alerts') or []),
@@ -2104,7 +2195,9 @@ def report_preview(pid: int = Depends(profile_id)):
 @router.post('/scout-report/generate')
 def report_generate(body: ReportGenerateInput, pid: int = Depends(profile_id)):
     from . import scout_report
-    return scout_report.generate(pid, body.period, body.curator_id)
+    issue = scout_report.generate(pid, body.period, body.curator_id)
+    with session() as s:
+        return _kid_issue(s, pid, issue)
 
 
 # ---------- briefings
@@ -2182,7 +2275,11 @@ def generate_briefing(bid: int, pid: int = Depends(profile_id)):
 def issues(bid: int, pid: int = Depends(profile_id)):
     with session() as s:
         owned(s, Briefing, bid, pid)
-        return s.exec(select(BriefingIssue).where(BriefingIssue.briefing_id == bid).order_by(BriefingIssue.created_at.desc()).limit(50)).all()
+        rows = s.exec(select(BriefingIssue).where(BriefingIssue.briefing_id == bid).order_by(BriefingIssue.created_at.desc()).limit(50)).all()
+        if is_child(s, pid):
+            # Written prose cannot be partly filtered: a child reads only issues built from kid-safe items.
+            rows = [r for r in rows if len(kidsafe.safe_set(s, r.item_ids or [])) == len(set(r.item_ids or []))]
+        return rows
 
 
 # ---------- alerts
@@ -2308,11 +2405,15 @@ def search(q: str = '', type: str = '', provider: str = '', scope: str = 'all', 
             # The video library is household media, not one profile's findings: searching
             # "octopus" must find the octopus videos whoever's playlist collected them.
             # Channels this profile blocked stay out.
-            from ..models import ProfileChannel, Video
+            from ..models import Candidate, Category, ProfileChannel, Video
             blocked = select(ProfileChannel.channel_id).where(ProfileChannel.profile_id == pid, ProfileChannel.blocked == True)  # noqa: E712
+            vq = select(Video).where(Video.channel_id.not_in(blocked), or_(Video.title.like(like), Video.channel_name.like(like)))
+            if is_child(s, pid):
+                # A child searches only videos its own kid-safe categories accepted, not household media.
+                vq = vq.where(Video.id.in_(select(Candidate.video_id).join(Category, Category.id == Candidate.category_id).where(
+                    Category.profile_id == pid, Category.kid_safe == True, Candidate.status == 'accepted')))  # noqa: E712
             videos = [{'id': v.id, 'title': v.title, 'channel_name': v.channel_name, 'thumbnail': f'/api/thumb/{v.id}'}
-                      for v in s.exec(select(Video).where(Video.channel_id.not_in(blocked),
-                                                          or_(Video.title.like(like), Video.channel_name.like(like)))
+                      for v in s.exec(vq
                                       .order_by(Video.published_at.desc().nulls_last()).limit(24)).all()]
         return {'items': serialize(s, pid, rows), 'total': total, 'videos': videos,
                 'curators': [{'id': c.id, 'name': c.name, 'kind': c.kind} for c in s.exec(select(Curator).where(
@@ -2385,11 +2486,15 @@ def delete_saved_search(sid: int, pid: int = Depends(profile_id)):
 
 def _visible_to(col, pid: int):
     """Profile visibility for meme items: found by its curators or touched by it. Two INs keep
-    the join graph clean; a union of differently-shaped selects makes SQLA warn about crosses."""
+    the join graph clean; a union of differently-shaped selects makes SQLA warn about crosses.
+    A child sees only memes whose picture passed the kid-safe check."""
     meme_ids = select(ContentItem.id).where(ContentItem.type == 'meme')
     found = select(CuratorDiscovery.item_id).where(CuratorDiscovery.profile_id == pid, CuratorDiscovery.item_id.in_(meme_ids))
     touched = select(ItemState.item_id).where(ItemState.profile_id == pid, ItemState.item_id.in_(meme_ids))
-    return or_(col.in_(found), col.in_(touched))
+    seen = or_(col.in_(found), col.in_(touched))
+    if curation_views.child(pid):
+        return seen & col.in_(kidsafe.safe_ids().where(KidSafeVerdict.image_checked == True))  # noqa: E712
+    return seen
 
 
 def _attach_meme(s: Session, rows: list[dict]) -> None:
@@ -2493,7 +2598,7 @@ def meme_items(view: str = 'examples', q: str = '', community: str = '', provide
                 stmt = stmt.where(or_(MemeExample.format_id == None, MemeExample.format_id.not_in(hidden)))  # noqa: E711
         if view == 'saved':
             stmt = stmt.where(st.saved == True)  # noqa: E711
-        elif view == 'examples' and curation != 'all':
+        elif view == 'examples' and (curation != 'all' or curation_views.child(pid)):
             from .meme_quality import candidate_clause
             stmt = stmt.where(curation_views.curated(pid, ContentItem.id),
                               MemeExample.has_media == True, candidate_clause(ContentItem, has_media=MemeExample.has_media))  # noqa: E712
@@ -2598,19 +2703,20 @@ def meme_formats(q: str = '', sort: str = 'new', offset: int = 0, limit: int = 3
     with session() as s:
         grouped = select(MemeExample.format_id).where(_visible_to(MemeExample.item_id, pid))
         stmt = select(MemeFormat).where(MemeFormat.example_count >= 2, MemeFormat.id.in_(grouped))
-        if q:
+        if q and not is_child(s, pid):  # names are not kid-checked, so a child cannot search them
             stmt = stmt.where(MemeFormat.name.ilike(f'%{q[:100]}%'))
         total = s.exec(select(func.count()).select_from(stmt.subquery())).one()
         order = MemeFormat.created_at.desc() if sort == 'new' else MemeFormat.last_seen.desc()
         rows = s.exec(stmt.order_by(order).offset(max(0, offset)).limit(limit)).all()
         out = []
+        kid = is_child(s, pid)
         for f in rows:
-            d = {'id': f.id, 'name': f.name, 'kind': f.kind, 'example_count': f.example_count,
+            d = {'id': f.id, 'name': '' if kid else f.name, 'kind': f.kind, 'example_count': f.example_count,
                  'community_count': f.community_count, 'first_seen': f.first_seen, 'last_seen': f.last_seen,
                  'created_at': f.created_at}
             trend = s.exec(select(MemeTrend).where(MemeTrend.target_kind == 'format', MemeTrend.target_key == str(f.id))).first()
             d['state'] = trend.state if trend else 'newly_observed'
-            d['featured_item_id'] = f.exemplar_item_id
+            d['featured_item_id'] = f.exemplar_item_id if not kid or kidsafe.image_ok(s, f.exemplar_item_id or 0) else None
             out.append(d)
         return {'formats': out, 'total': total}
 
@@ -2627,8 +2733,10 @@ def meme_format(fid: int, pid: int = Depends(profile_id)):
         if not members:
             raise HTTPException(404, 'Format not found')
         out = serialize(s, pid, list(members))
+        if not out:
+            raise HTTPException(404, 'Format not found')
         _attach_meme(s, out)
-        return {'id': f.id, 'name': f.name, 'kind': f.kind, 'example_count': f.example_count,
+        return {'id': f.id, 'name': '' if is_child(s, pid) else f.name, 'kind': f.kind, 'example_count': f.example_count,
                 'community_count': f.community_count, 'first_seen': f.first_seen, 'last_seen': f.last_seen,
                 'items': out}
 

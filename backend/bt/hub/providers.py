@@ -54,8 +54,13 @@ class Provider:
             return False, 'Configure SearXNG or Brave under Settings → Search & sources.'
         return True, ''
 
-    def run(self, url: str, q: str = '', config: dict | None = None) -> list[dict]:
-        """Fetch with the source's watcher rules when this provider supports them."""
+    def run(self, url: str, q: str = '', config: dict | None = None, safe: bool = False) -> list[dict]:
+        """Fetch with the source's watcher rules when this provider supports them. `safe` is the
+        kid-safe lock: only KID_PROVIDERS run, with the search engine's strictest safe search."""
+        if safe:
+            if self.key not in KID_PROVIDERS:
+                raise ValueError('This source is not available on kid profiles.')
+            return self.fetch(url, q, safe=True) if self.key in SAFE_SEARCH else self.fetch(url, q)
         return self.fetch(url, q, config or {}) if self.configurable or self.key in watchers.CONFIGURABLE else self.fetch(url, q)
 
     def info(self) -> dict:
@@ -459,7 +464,7 @@ def reddit_memes(url: str, _q: str = '') -> list[dict]:
     return out
 
 
-def bing_news(_url: str, q: str = '') -> list[dict]:
+def bing_news(_url: str, q: str = '', safe: bool = False) -> list[dict]:
     """Bing News search RSS for one curator query: current reporting from many outlets.
 
     Licensed for personal, non-commercial RSS readers. Links are click-tracking redirects whose
@@ -467,7 +472,7 @@ def bing_news(_url: str, q: str = '') -> list[dict]:
     from urllib.parse import parse_qs
     if not q.strip():
         return []
-    feed = 'https://www.bing.com/news/search?' + urlencode({'q': q.strip()[:200], 'format': 'rss', 'setlang': 'en'})
+    feed = 'https://www.bing.com/news/search?' + urlencode({'q': q.strip()[:200], 'format': 'rss', 'setlang': 'en', **({'adlt': 'strict'} if safe else {})})
     out = []
     for item in parse_feed(curation.fetch(feed), feed):
         link = item.get('url') or ''
@@ -874,12 +879,13 @@ def sitemap(url: str, _q: str = '', config: dict | None = None) -> list[dict]:
     return watchers.crawl_sitemap(url, config)
 
 
-def web_search(_url: str, q: str) -> list[dict]:
+def web_search(_url: str, q: str, safe: bool = False) -> list[dict]:
     cfg = get_settings()['search']
     if cfg['provider'] == 'searxng' and cfg['searxng_url']:
         base = cfg['searxng_url'].rstrip('/')
+        params = {'q': q, 'format': 'json', **({'safesearch': 2} if safe else {})}
         # Trusted admin config (often LAN): no redirect following, bounded response.
-        r = httpx.get(f'{base}/search', params={'q': q, 'format': 'json'}, timeout=20, follow_redirects=False,
+        r = httpx.get(f'{base}/search', params=params, timeout=20, follow_redirects=False,
                       headers={'User-Agent': 'WatchCraft/0.2'})
         r.raise_for_status()
         if len(r.content) > 3_000_000:
@@ -887,7 +893,7 @@ def web_search(_url: str, q: str) -> list[dict]:
         rows = [(x.get('url'), x.get('title'), x.get('content'), x.get('publishedDate'), x.get('thumbnail') or x.get('img_src'))
                 for x in r.json().get('results', [])[:20]]
     elif cfg['provider'] == 'brave' and cfg['brave_api_key']:
-        data = json.loads(curation.fetch('https://api.search.brave.com/res/v1/web/search?' + urlencode({'q': q, 'count': 20}),
+        data = json.loads(curation.fetch('https://api.search.brave.com/res/v1/web/search?' + urlencode({'q': q, 'count': 20, **({'safesearch': 'strict'} if safe else {})}),
                                          headers={'X-Subscription-Token': cfg['brave_api_key']}))
         rows = [(x.get('url'), x.get('title'), x.get('description'), x.get('page_age'), (x.get('thumbnail') or {}).get('src'))
                 for x in (data.get('web') or {}).get('results', [])[:20]]
@@ -904,6 +910,11 @@ def web_search(_url: str, q: str) -> list[dict]:
 
 from .lemmy import lemmy
 from .social_trends import mastodon_trends
+
+# Kid-safe lock: the only providers a child profile's curators may use. All are keyword searches
+# on fixed hosts (no user-typed URL is fetched); SAFE_SEARCH ones run with strict safe search.
+KID_PROVIDERS = frozenset({'web_search', 'bing_news', 'wikipedia'})
+SAFE_SEARCH = frozenset({'web_search', 'bing_news'})
 
 
 PROVIDERS = {p.key: p for p in [
