@@ -8,6 +8,15 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Mood Board vision on the worker model (`7d15f92`, 2026-11-15)
+
+- Vision judging/search planning on `role='worker'` (`10.0.10.9`, vision-capable) with 900 s timeouts, per-batch
+  lease heartbeat, per-server LLM lock. Code only. Source backup `/root/compose/watchcraft-backups/
+  20261115-visionworker-7d15f92` (DB backup `20261115-moodsearch-ed1ab7e` from earlier today); rollback images
+  `watchcraft:rollback-20261115-visionworker-*`, `rollback.sh`. rsync changed the 4 files.
+- Image `sha256:be62dc8daf3d82dd3e7c3a8433d5ca717af7be0cfb312abac0b7c59f7fa1be66`, zero restarts; health/`/boards` 200.
+  The interrupted Homelab run's lease was released; the next run finished on the worker and added 8 images.
+
 ## Deployment record — Mood Board image search, pin review, per-image vision verdicts (`ed1ab7e`, 2026-11-15)
 
 - Range `8a23fb9..ed1ab7e`: pin image+caption embeddings (configured `embeddinggemma2` at `10.0.10.73:8082`,
