@@ -239,7 +239,8 @@ def preferences(pid: int = Depends(profile_id)):
 @router.post('/curator/preferences')
 def add_preference(body: LessonIn, pid: int = Depends(profile_id)):
     with session() as s:
-        if s.exec(select(func.count()).select_from(HubLesson).where(HubLesson.profile_id == pid)).one() >= 200:
+        if s.exec(select(func.count()).select_from(HubLesson).where(HubLesson.profile_id == pid,
+                                                                    HubLesson.active == True)).one() >= 200:  # noqa: E712
             raise HTTPException(422, 'Remove a preference before adding another.')
         l = HubLesson(profile_id=pid, text=body.text.strip(), scope=body.scope, polarity=body.polarity, user_edited=True)
         s.add(l); s.flush()
@@ -279,7 +280,10 @@ def edit_preference(lid: int, body: LessonPatch, pid: int = Depends(profile_id))
 @router.delete('/curator/preferences/{lid}')
 def delete_preference(lid: int, pid: int = Depends(profile_id)):
     with session() as s:
-        s.delete(_own_lesson(s, pid, lid))
+        lesson = _own_lesson(s, pid, lid)
+        from ..knowledge import teachings
+        teachings.tombstone_deleted(s, pid, 'hub_lesson', lesson.id)  # deleting is rejecting: never relearn it
+        s.delete(lesson)
         _refresh_preference_core(s, pid)
         s.commit()
     schedule.mark(pid)
