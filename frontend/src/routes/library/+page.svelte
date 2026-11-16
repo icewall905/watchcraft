@@ -195,12 +195,12 @@
 	}
 </script>
 
-<svelte:head><title>Library · WatchCraft</title></svelte:head>
+<svelte:head><title>The Stacks · WatchCraft</title></svelte:head>
 
 <div class="page reading-page">
 	<header class="head">
 		<div>
-			<h1>{activeCol ? activeCol.name : 'Library'}</h1>
+			<h1>{activeCol ? activeCol.name : 'The Stacks'}</h1>
 			<p class="muted">{activeCol ? (activeCol.description || 'Collection') : "Everything you've chosen to keep."}</p>
 		</div>
 		{#if !showCollections}

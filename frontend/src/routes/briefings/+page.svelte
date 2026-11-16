@@ -64,11 +64,11 @@
 	}
 </script>
 
-<svelte:head><title>Briefings · WatchCraft</title></svelte:head>
+<svelte:head><title>The Dispatch · WatchCraft</title></svelte:head>
 
 <div class="page reading-page">
 	<header class="head">
-		<div><p class="eyebrow">EXPLORE</p><h1>Briefings</h1><p class="muted">A readable digest of what your curators and topics found. Every claim cites the item behind it.</p></div>
+		<div><p class="eyebrow">EXPLORE</p><h1>The Dispatch</h1><p class="muted">A readable digest of what your curators and topics found. Every claim cites the item behind it.</p></div>
 		<button class="btn primary big" use:focusable onclick={() => (editing = { name: '', curator_ids: [], topic_ids: [], frequency: 'daily', length: 'concise' })}>＋ New briefing</button>
 	</header>
 

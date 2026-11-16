@@ -374,7 +374,7 @@ test('child friendly: grown-ups can switch it on; child profiles always have it 
  await page.getByLabel("Search your boards by what's in the picture").fill('cat');await page.getByRole('button',{name:'Search',exact:true}).click();
  await expect(page.getByRole('region',{name:'Search Pinterest'})).toHaveCount(0);
  await expect(page.getByRole('link',{name:'The Boards',exact:true}).first()).toBeVisible();
- await expect(page.getByRole('link',{name:'News',exact:true}).first()).toBeVisible();
+ await expect(page.getByRole('link',{name:'The Wire',exact:true}).first()).toBeVisible();
  await expect(page.getByRole('navigation',{name:'Main',exact:true}).locator('a[href="/music"]')).toHaveCount(0);
  await page.getByRole('button',{name:'New board'}).first().click();
  await expect(page.getByLabel(/Child friendly/)).toBeChecked();await expect(page.getByLabel(/Child friendly/)).toBeDisabled();

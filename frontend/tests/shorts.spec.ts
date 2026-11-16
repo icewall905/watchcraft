@@ -232,7 +232,7 @@ test('repeat visits show cached feeds during a slow refresh and keep them on fai
   await gate;
   await route.fulfill({ status: 503, json: { detail: 'Feeds temporarily unavailable' } });
  });
- await page.getByRole('link', { name: 'Feeds', exact: true }).first().click();
+ await page.getByRole('link', { name: 'The Scroll', exact: true }).first().click();
  await expect(page.getByRole('button', { name: /Science clips/ })).toBeVisible();
  await expect(page.getByText('Loading feeds…', { exact: true })).toHaveCount(0);
  release();

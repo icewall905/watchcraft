@@ -21,7 +21,7 @@ public class NavigationTest {
         assertEquals("/library", paths[1]);
     }
     @Test public void moodBoardCanBeChosenAsAShortcut() {
-        assertEquals("Mood Board", Navigation.feature("/boards").title);
+        assertEquals("The Boards", Navigation.feature("/boards").title);
         String[] paths = Navigation.DEFAULTS.clone();
         Navigation.replace(paths, 2, "/boards");
         assertEquals("/boards", Navigation.restore(paths)[2]);
@@ -41,5 +41,17 @@ public class NavigationTest {
         assertTrue(Navigation.matches("/news", "/news/12"));
         assertFalse(Navigation.matches("/news", "/newsletter"));
         assertFalse(Navigation.matches("/", "/news"));
+    }
+    @Test public void landingPageAcceptsOnlyKnownDestinations() {
+        assertEquals("/", Navigation.landing(null));
+        assertEquals("/news", Navigation.landing("/news"));
+        assertEquals("/alerts", Navigation.landing("/alerts"));
+        assertEquals("/", Navigation.landing("https://example.org"));
+        assertEquals("/", Navigation.landing("/nope"));
+        assertEquals("The Front Page", Feature.titleFor(Navigation.landing("/today")));
+    }
+    @Test public void memeRadarStaysAShortcutButLeavesTheMenu() {
+        assertNotNull(Navigation.feature("/memes"));
+        for (Feature f : Feature.ALL) if (f.path.equals("/memes")) assertFalse(f.menu);
     }
 }

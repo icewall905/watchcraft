@@ -111,6 +111,7 @@ public final class MainActivity extends ComponentActivity {
         });
         String saved = prefs.getString("server", "");
         if (!saved.isEmpty()) {
+            if (savedInstanceState == null) currentPath = landing();
             try { server = ServerAddress.normalize(saved, prefs.getBoolean("http", false)); hasConnected = true; showService(savedInstanceState); }
             catch (IllegalArgumentException ignored) { showSetup(); }
         } else showSetup();
@@ -283,7 +284,7 @@ public final class MainActivity extends ComponentActivity {
 
     private void showTvMenu(View anchor) {
         PopupMenu popup = new PopupMenu(this, anchor);
-        String[] titles = {"TV home", "Playlists", "Feeds", "Music videos"};
+        String[] titles = {"The Screen", "Playlists", "The Scroll", "The Jukebox"};
         String[] paths = {"/", "/settings?tab=categories", "/shorts", "/music"};
         for (int i = 0; i < titles.length; i++) popup.getMenu().add(0, i, i, titles[i]);
         popup.setOnMenuItemClickListener(item -> { navigate(paths[item.getItemId()]); return true; });
@@ -308,6 +309,17 @@ public final class MainActivity extends ComponentActivity {
                 .setSingleChoiceItems(names, selected, (dialog, which) -> {
                     Navigation.replace(paths, slot, choices[which].path); saveShortcuts(paths); dialog.dismiss(); navigationSettings();
                 }).setNegativeButton("Cancel", (dialog, which) -> navigationSettings()).show();
+    }
+
+    private String landing() { return Navigation.landing(prefs.getString("landing", "/")); }
+    private void chooseLanding() {
+        Feature[] choices = Feature.ALL; String[] names = new String[choices.length]; int selected = -1; String current = landing();
+        for (int i = 0; i < choices.length; i++) { names[i] = choices[i].title; if (choices[i].path.equals(current)) selected = i; }
+        new AlertDialog.Builder(this).setTitle("Open WatchCraft on")
+                .setSingleChoiceItems(names, selected, (dialog, which) -> {
+                    prefs.edit().putString("landing", choices[which].path).apply(); dialog.dismiss();
+                    toast("WatchCraft will open on " + choices[which].title);
+                }).setNegativeButton("Cancel", null).show();
     }
 
     private void navigate(String path) {
@@ -467,6 +479,7 @@ public final class MainActivity extends ComponentActivity {
         Button close = action("Done", false); close.setOnClickListener(v -> menu.dismiss()); top.addView(close); sheet.addView(top);
         String group = "";
         for (Feature f : Feature.ALL) {
+            if (!f.menu) continue;
             if (!group.equals(f.group)) { gap(sheet, 20); sheet.addView(text(f.group, 14, AMBER, true)); gap(sheet, 8); group = f.group; }
             LinearLayout item = row(); item.setGravity(Gravity.CENTER_VERTICAL); item.setPadding(dp(12), dp(12), dp(12), dp(12)); item.setBackground(ripple(round(PANEL, 12)));
             item.addView(icon(f.icon, MUTED, 23), new LinearLayout.LayoutParams(dp(24), dp(24)));
@@ -476,6 +489,7 @@ public final class MainActivity extends ComponentActivity {
             item.setOnClickListener(v -> { menu.dismiss(); navigate(f.path); }); sheet.addView(item);
         }
         gap(sheet, 24); Button navigation = action("Customize bottom bar", false); navigation.setOnClickListener(v -> { menu.dismiss(); navigationSettings(); }); sheet.addView(navigation);
+        gap(sheet, 12); Button start = action("Landing page: " + Feature.titleFor(landing()), false); start.setOnClickListener(v -> { menu.dismiss(); chooseLanding(); }); sheet.addView(start);
         gap(sheet, 12); Button connection = action("Server & app", false); connection.setOnClickListener(v -> { menu.dismiss(); connectionOptions(); }); sheet.addView(connection);
         scroll.addView(sheet); menu.setContentView(scroll);
         Window w = menu.getWindow(); if (w != null) { w.setBackgroundDrawableResource(android.R.color.transparent); w.setGravity(Gravity.BOTTOM); w.setDimAmount(.55f); }
@@ -636,7 +650,7 @@ public final class MainActivity extends ComponentActivity {
         if (menu != null && menu.isShowing()) { menu.dismiss(); return; }
         if (shell == null || shell.getParent() == null) { if (hasConnected) showService(null); else finish(); return; }
         if (web != null && web.canGoBack()) { clearError(); web.goBack(); }
-        else if (!currentPath.equals("/")) navigate("/"); else finish();
+        else if (!currentPath.equals(landing())) navigate(landing()); else finish();
     }
     @Override public void onConfigurationChanged(Configuration c) { super.onConfigurationChanged(c); root.requestApplyInsets(); }
     @Override protected void onSaveInstanceState(Bundle state) {

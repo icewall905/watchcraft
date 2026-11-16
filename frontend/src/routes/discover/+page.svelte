@@ -87,12 +87,12 @@
 	}
 </script>
 
-<svelte:head><title>Discover · WatchCraft</title></svelte:head>
+<svelte:head><title>The Finds · WatchCraft</title></svelte:head>
 
 <div class="page reading-page">
 	<header class="head">
 		<div>
-			<h1>Discover</h1>
+			<h1>The Finds</h1>
 			<p class="muted">A considered selection from your curators.</p>
 		</div>
 		<div class="hstack">

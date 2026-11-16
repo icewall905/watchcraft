@@ -18,7 +18,7 @@
 	import ArticleFeedback from '$lib/hub/ArticleFeedback.svelte';
 	import SeenDismiss from '$lib/hub/SeenDismiss.svelte';
 	import ShelfStatus from '$lib/hub/ShelfStatus.svelte';
-	import TodayExtras from '$lib/hub/TodayExtras.svelte';
+	import WhatsNew from '$lib/hub/WhatsNew.svelte';
 
 	let { onloadingchange }: { onloadingchange?: (loading: boolean) => void } = $props();
 	let edition = $state<TodayEdition | null>(null);
@@ -162,7 +162,7 @@
 	<header class="masthead">
 		<p class="date">Today · {today}</p>
 		<h1>{greeting}</h1>
-		<button class="btn regen" use:focusable disabled={rerunning} onclick={regenerate} title="Rebuild Today from the best of News, Discover, Briefings, Research and Meme Radar, then let the curator re-check it">{rerunning ? 'Regenerating…' : curating ? '↻ Regenerate (polishing…)' : '↻ Regenerate'}</button>
+		<button class="btn regen" use:focusable disabled={rerunning} onclick={regenerate} title="Rebuild The Front Page from the best of The Wire, The Finds, The Dispatch, The Study and Meme Radar, then let the curator re-check it">{rerunning ? 'Regenerating…' : curating ? '↻ Regenerate (polishing…)' : '↻ Regenerate'}</button>
 		{#if edition?.intro}
 			<Cited text={edition.intro} itemIds={edition.intro_refs.map((r) => r.item_id)} />
 		{:else}
@@ -171,6 +171,7 @@
 	</header>
 	<aside class="shelf-side" aria-label="Shelf health"><ShelfStatus /></aside>
 	</div>
+	<WhatsNew />
 
 	{#if error}
 		<div class="load-error" role="alert"><p>Today could not be loaded. {error}</p><button class="btn" use:focusable onclick={() => (revision++)}>Try again</button></div>
@@ -190,7 +191,7 @@
 
 		{#if entries('stories').length}
 			<section class="section" aria-label="Stories">
-				<SectionHeader title="Top stories" action={{ href: '/news', label: 'All news' }} />
+				<SectionHeader title="Top stories" action={{ href: '/news', label: 'All of The Wire' }} />
 					<div class="story-list" data-nav-row>
 					{#each shownStories as entry, index (entry.item_id)}
 						{#if entry.group_title && entry.group_key !== shownStories[index - 1]?.group_key}<h3 class="group-heading">{entry.group_title}</h3>{/if}
@@ -224,7 +225,7 @@
 		{/if}
 		{#if entries('reads').length}
 			<section class="section">
-				<SectionHeader title="Worth your time" action={{ href: '/discover', label: 'More discoveries' }} />
+				<SectionHeader title="Worth your time" action={{ href: '/discover', label: 'More in The Finds' }} />
 				<div class="reads" data-nav-row>
 					{#each shownReads as entry, index (entry.item_id)}
 						{#if entry.group_title && entry.group_key !== shownReads[index - 1]?.group_key}<h3 class="group-heading">{entry.group_title}</h3>{/if}
@@ -251,7 +252,6 @@
 			</section>
 		{/if}
 
-		<TodayExtras />
 
 		{#if alerts && 'count' in alerts && alerts.count > 0}
 			<section class="quiet-section" data-nav-row><QuietLine text={`${alerts.count} alert${alerts.count === 1 ? '' : 's'} waiting`} href="/alerts" linkLabel="Review alerts" tone="warn" /></section>

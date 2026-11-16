@@ -34,7 +34,7 @@ export const crApi = {
  removeSource: (id: number, link: number) => request<unknown>(`${base}/threads/${id}/sources/${link}`, {method: 'DELETE', toast: false}),
  learned: (id: number) => request<{lessons: string[]; up: number; down: number}>(`${base}/threads/${id}/learned`, {toast: false}),
  visit: (thread: 'all' | number) => request<{boundary: number}>(`${base}/visit`, {method: 'POST', body: {thread}, toast: false}),
- feed: (p: {thread: 'all' | number; section: 'new' | 'deep'; boundary: number; cursor?: string}, signal?: AbortSignal) => request<FeedPage>(`${base}/feed${qs(p)}`, {signal, toast: false}),
+ feed: (p: {thread: 'all' | number; section: 'new' | 'deep'; boundary?: number; cursor?: string}, signal?: AbortSignal) => request<FeedPage>(`${base}/feed${qs(p)}`, {signal, toast: false}),
  post: (id: number) => request<PostDetail>(`${base}/posts/${id}`, {toast: false}),
  comments: (id: number) => request<{comments: Comment[]; url: string}>(`${base}/posts/${id}/comments`, {toast: false}),
  seen: (pick_ids: number[], keepalive = false) => request<unknown>(`${base}/seen`, {method: 'POST', body: {pick_ids}, toast: false, keepalive}),

@@ -398,7 +398,7 @@
 		offRaw?.();
 	});
 </script>
-<svelte:head><title>Feeds · WatchCraft</title></svelte:head>
+<svelte:head><title>The Scroll · WatchCraft</title></svelte:head>
 <div class="feed" role="region" aria-label="Video feed" ontouchstart={onTouchStart} ontouchend={onTouchEnd} ontouchcancel={()=>touchStart=null}>
 	<nav class="shorts-navigation" aria-label="Feeds navigation">
 		<a class="btn" href="/" use:focusable>← Back to WatchCraft</a>

@@ -60,7 +60,7 @@ test('Today is a compact overview that links to the full sections', async ({ pag
 	await expect(page.getByRole('link', { name: 'Story 5', exact: true })).toHaveCount(0);
 	await expect(page.getByRole('heading', { name: 'AI research', exact: true })).toHaveCount(1);
 	await expect(page.getByRole('heading', { name: 'Home Assistant', exact: true })).toHaveCount(1);
-	await expect(page.getByRole('link', { name: 'All news' })).toHaveAttribute('href', '/news');
+	await expect(page.getByRole('link', { name: 'All of The Wire' })).toHaveAttribute('href', '/news');
 	await expect(page.getByRole('link', { name: 'Read 3', exact: true })).toBeVisible();
 	await expect(page.getByRole('link', { name: 'Read 4', exact: true })).toHaveCount(0);
 	await expect(page.getByRole('link', { name: /^Moment 4 / })).toBeVisible();
@@ -74,33 +74,41 @@ test('Today is a compact overview that links to the full sections', async ({ pag
 	}
 });
 
-test('Today gathers today\'s videos, music mixes and mood board pins, not older ones', async ({ page }) => {
+test('The Front Page previews what is new on every page, not older things', async ({ page }) => {
 	const now = Date.now() / 1000;
 	const video = (id: string, title: string, published: number) => ({ video: { id, title, channel_id: 'c', channel_name: 'A Channel', duration_s: 300, published_at: new Date(published * 1000).toISOString(), view_count: 1, like_count: 0, thumbnail: '', is_short: false, is_live: false } });
 	await page.route(/\/api\/hub\/today(?:\?.*)?$/, route => route.fulfill({ json: edition() }));
+	await page.route('**/api/hub/counts', route => route.fulfill({ json: { discover_unread: 0, alerts_new: 2, news_today: 7, boards_shared_new: 0, commonroom: 0 } }));
+	await page.route('**/api/hub/alerts?*', route => route.fulfill({ json: { items: [{ id: 1, severity: 'high', state: 'new', title: 'Price drop spotted', reason: '', curator_id: null, item: {}, created_at: now }], total: 2 } }));
 	await page.route('**/api/feed/home?*', route => route.fulfill({ json: [
 		{ kind: 'continue', title: 'Continue', emoji: '', items: [video('cont', 'Half watched', now)] },
 		{ kind: 'category', title: 'Science', emoji: '', items: [video('new1', 'Fresh science video', now - 60), video('old1', 'Last month video', now - 30 * 86400)] }
 	] }));
 	const mix = (id: number, name: string, at: number) => ({ id, name, kind: 'mood', emoji: '🌙', description: '', curator: '', curator_name: '', color: '#123', blurb: 'Calm', seed_video_id: '', status: 'ready', error: '', count: 12, created_at: at, refreshed_at: at, last_played_at: 0, covers: [] });
 	await page.route('**/api/music/home', route => route.fulfill({ json: { favorites: { tracks: [], artists: [] }, mixes: [mix(1, 'Tonight mix', now - 60), mix(2, 'Old mix', now - 9 * 86400)], recent: [], recent_mixes: [], ai: false, curators: [], offline: { wanted: 0, saved: 0, pending: 0 } } }));
-	const board = (id: number, name: string, last: number) => ({ id, name, interests: '', instructions: '', enabled: true, interval_hours: 24, pin_count: 3, target_images: 20, reference_url: null, reference_name: '', last_run: last });
+	const board = (id: number, name: string, last: number) => ({ id, name, interests: '', instructions: '', enabled: true, interval_hours: 24, pin_count: 3, target_images: 20, reference_url: null, reference_name: '', last_run: last, last_added: last, preview_urls: [`/api/hub/boards/${id}/pins/1/media`] });
 	await page.route('**/api/hub/boards', route => route.fulfill({ json: { boards: [board(5, 'Cozy cabins', now - 120), board(6, 'Stale board', now - 5 * 86400)] } }));
-	await page.route('**/api/hub/boards/5', route => route.fulfill({ json: { board: board(5, 'Cozy cabins', now - 120), next_cursor: null, has_more: false, pins: [1, 2, 3].map(id => ({ id, board_id: 5, title: `Cabin ${id}`, image_url: '', source_url: '', media_type: 'image', saved: false })) } }));
 	await page.route('**/api/hub/boards/*/pins/*/media', route => route.fulfill({ status: 404, body: '' }));
 	await page.setViewportSize({ width: 375, height: 812 });
 	await freshPage(page, '/today');
-	const videos = page.getByRole('region', { name: 'New videos' });
-	await expect(videos.getByText('Fresh science video')).toBeVisible();
-	await expect(videos.getByText('Last month video')).toHaveCount(0);
-	await expect(videos.getByText('Half watched')).toHaveCount(0);
-	const tunes = page.getByRole('region', { name: 'Music' });
-	await expect(tunes.getByText('Tonight mix')).toBeVisible();
-	await expect(tunes.getByText('Old mix')).toHaveCount(0);
-	const boards = page.getByRole('region', { name: 'Mood Board' });
-	await expect(boards.getByRole('heading', { name: 'Cozy cabins' })).toBeVisible();
-	await expect(boards.getByRole('link', { name: 'Cabin 3' })).toBeVisible();
-	await expect(boards.getByText('Stale board')).toHaveCount(0);
+	const news = page.getByRole('region', { name: "What's new" });
+	const screen = news.getByRole('article', { name: 'The Screen' });
+	await expect(screen.getByRole('link', { name: 'Fresh science video' })).toBeVisible();
+	await expect(screen.getByText('1 new video')).toBeVisible();
+	await expect(screen.getByRole('link', { name: 'Last month video' })).toHaveCount(0);
+	await expect(screen.getByRole('link', { name: 'Half watched' })).toHaveCount(0);
+	const jukebox = news.getByRole('article', { name: 'The Jukebox' });
+	await expect(jukebox.getByText('Tonight mix')).toBeVisible();
+	await expect(jukebox.getByText('Old mix')).toHaveCount(0);
+	const boards = news.getByRole('article', { name: 'The Boards' });
+	await expect(boards.getByText('1 board with new images')).toBeVisible();
+	await expect(boards.getByRole('link', { name: 'Cozy cabins' })).toBeVisible();
+	await expect(boards.getByRole('link', { name: 'Stale board' })).toHaveCount(0);
+	await expect(news.getByRole('article', { name: 'The Wire' }).getByText('7 new stories')).toBeVisible();
+	const alerts = news.getByRole('article', { name: 'Alerts' });
+	await expect(alerts.getByText('2 alerts waiting')).toBeVisible();
+	await expect(alerts.getByText('Price drop spotted')).toBeVisible();
+	await expect(news.getByRole('link', { name: /^Open The Screen/ })).toHaveAttribute('href', '/tv');
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
 
@@ -335,14 +343,14 @@ test('News and Today are separate pages', async ({ page }) => {
 	}] } }));
 	await page.setViewportSize({ width: 375, height: 812 });
 	await freshPage(page, '/news');
-	await expect(page.getByRole('heading', { name: 'News', exact: true, level: 1 })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'The Wire', exact: true, level: 1 })).toBeVisible();
 	await expect(page.getByRole('heading', { name: 'Another news story' })).toBeVisible();
 	await expect(page.getByRole('heading', { name: 'A thoughtful lead' })).toHaveCount(0);
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 	await freshPage(page, '/today');
 	await expect(page.getByRole('heading', { name: 'A thoughtful lead' })).toBeVisible();
 	await expect(page.getByRole('heading', { name: 'Another news story' })).toHaveCount(0);
-	await page.getByRole('link', { name: 'All news' }).click();
+	await page.getByRole('link', { name: 'All of The Wire' }).click();
 	await expect(page).toHaveURL(/\/news$/);
-	await expect(page.getByRole('heading', { name: 'News', exact: true, level: 1 })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'The Wire', exact: true, level: 1 })).toBeVisible();
 });

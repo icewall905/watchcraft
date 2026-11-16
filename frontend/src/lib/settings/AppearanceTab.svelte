@@ -6,6 +6,7 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import { THEMES } from '$lib/themes';
 	import Section from './Section.svelte';
+	import { LANDING_CHOICES, inAndroidApp, landingPath } from '$lib/navigation';
 
 	let saving = $state(false);
 	let savingShelf = $state(false);
@@ -50,6 +51,18 @@
 			</button>
 		{/each}
 	</div>
+</Section>
+</div>
+
+<div class="device-section">
+<Section title="Landing page" intro={inAndroidApp() ? 'The Android app picks its own start page: open the app menu and choose Landing page.' : 'The page this browser opens on. Saved in this browser only.'}>
+	{#if !inAndroidApp()}
+		<label class="landing">Open WatchCraft on
+			<select value={landingPath(deviceMode.landing)} onchange={(e) => deviceMode.setLanding(e.currentTarget.value)} use:focusable={{ group: 'landing', id: 'landing' }}>
+				{#each LANDING_CHOICES as c (c.href)}<option value={c.href}>{c.label}</option>{/each}
+			</select>
+		</label>
+	{/if}
 </Section>
 </div>
 
@@ -128,4 +141,5 @@
 	.name { display: flex; justify-content: space-between; gap: 0.5rem; align-items: center; font-weight: 750; }
 	.chosen { color: var(--accent); font-size: 0.75rem; white-space: nowrap; }
 	.note { margin-top: 1rem; }
+	.landing { display: grid; gap: .4rem; max-width: 22rem; font-weight: 600; }
 </style>

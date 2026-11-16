@@ -31,7 +31,7 @@ test('child access, administrator PIN and shared settings are enforced in the UI
 		await expect(page.getByRole('heading', { name: 'Hub is unavailable for this profile' })).toHaveCount(0);
 		await expect(page.getByRole('note').filter({ hasText: 'Kid-safe' })).toBeVisible();
 		await page.screenshot({ path: '/tmp/watchcraft-child-access.png' });
-		await expect(page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'Discover', exact: true })).toBeVisible();
+		await expect(page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'The Finds', exact: true })).toBeVisible();
 		const kid = { headers: { 'X-Profile-Id': String(child.id) } };
 		expect((await page.request.get('/api/hub/items', kid)).status()).toBe(200);
 		expect((await page.request.get('/api/hub/memes/items', kid)).status()).toBe(200);

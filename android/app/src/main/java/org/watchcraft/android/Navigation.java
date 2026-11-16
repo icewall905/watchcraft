@@ -29,6 +29,11 @@ final class Navigation {
         for (int i = 0; i < 4; i++) if (paths[i].equals(path)) { paths[i] = paths[slot]; break; }
         paths[slot] = path;
     }
+    /** Start page: any known destination, else The Screen. Never a URL from elsewhere. */
+    static String landing(String saved) {
+        for (Feature f : Feature.ALL) if (f.path.equals(saved)) return saved;
+        return "/";
+    }
     static boolean matches(String destination, String path) {
         return path.equals(destination) || (!destination.equals("/") && path.startsWith(destination + "/"));
     }

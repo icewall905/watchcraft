@@ -343,14 +343,14 @@
 	}
 </script>
 
-<svelte:head><title>News · WatchCraft</title></svelte:head>
+<svelte:head><title>The Wire · WatchCraft</title></svelte:head>
 
 <svelte:window ontouchstart={touchStart} ontouchmove={touchMove} ontouchend={touchEnd} />
 
 <div class="page">
 	<div class="pull" style:height={`${pull}px`} aria-hidden="true"><span class:ready={pull >= PULL_AT} style:transform={`rotate(${pull * 3}deg)`}>↻</span></div>
 	<header class="head">
-		<div><h1>News</h1><p class="muted">{mode === 'foryou' ? 'Your endless mix, grouped by story. Refresh any time for more.' : 'Newest first, grouped by story.'}</p></div>
+		<div><h1>The Wire</h1><p class="muted">{mode === 'foryou' ? 'Your endless mix, grouped by story. Refresh any time for more.' : 'Newest first, grouped by story.'}</p></div>
 		<div class="head-actions">
 			<button class="btn primary refresh" class:spin={refreshing} use:focusable onclick={refresh} disabled={loading || refreshing} aria-label="Refresh feed"><span class="refresh-icon" aria-hidden="true">↻</span> Refresh</button>
 			<a class="btn ghost" href="/briefings?new=1" use:focusable>Briefing</a>

@@ -38,13 +38,13 @@
 	}
 </script>
 
-<svelte:head><title>Knowledge · WatchCraft</title></svelte:head>
+<svelte:head><title>The Almanac · WatchCraft</title></svelte:head>
 
 <div class="page reading-page">
 	<header class="head">
 		<div>
 			<p class="eyebrow">EXPLORE</p>
-			<h1>Knowledge</h1>
+			<h1>The Almanac</h1>
 			<p class="muted">Long-lived topics you own. Unlike News, which fades, topics keep what you save, your notes and the sources behind everything. AI summaries always keep their sources.</p>
 		</div>
 		<button class="btn primary big" use:focusable onclick={() => (showNew = !showNew)}>{showNew ? 'Close' : '＋ New topic'}</button>

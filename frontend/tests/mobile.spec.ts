@@ -12,7 +12,7 @@ test('the phone gets a bottom bar and no desktop sidebar', async ({ page }) => {
 	await freshPage(page, '/');
 	const bar = page.getByRole('navigation', { name: 'Primary' });
 	await expect(bar).toBeVisible();
-	for (const name of ['TV', 'Today', 'Library', 'Alerts']) {
+	for (const name of ['The Screen', 'The Front Page', 'The Stacks', 'Alerts']) {
 		await expect(bar.getByRole('link', { name, exact: true })).toBeVisible();
 	}
 	await expect(bar.getByRole('button', { name: 'More' })).toBeVisible();
@@ -35,7 +35,7 @@ test('bottom bar targets are big enough to tap', async ({ page }) => {
 	await freshPage(page, '/');
 	const bar = page.getByRole('navigation', { name: 'Primary' });
 	await expect(bar).toBeVisible();
-	await expect(bar.getByRole('link', { name: 'TV', exact: true })).toBeVisible();
+	await expect(bar.getByRole('link', { name: 'The Screen', exact: true })).toBeVisible();
 	const boxes = await bar.locator('a, button').evaluateAll((els) =>
 		els.map((el) => {
 			const r = el.getBoundingClientRect();

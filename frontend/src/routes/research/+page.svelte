@@ -87,7 +87,7 @@
 	}
 </script>
 
-<svelte:head><title>Research · WatchCraft</title></svelte:head>
+<svelte:head><title>The Study · WatchCraft</title></svelte:head>
 
 <div class="page reading-page">
 	<header class="head">

@@ -28,7 +28,7 @@
 	import { applyTheme } from '$lib/themes';
 	import PlaybackPicker from '$lib/components/PlaybackPicker.svelte';
 	import { playback } from '$lib/stores/playback.svelte';
-	import { isHubPath } from '$lib/navigation';
+	import { inAndroidApp, isHubPath, landingPath } from '$lib/navigation';
 
 	let { children }: { children: Snippet } = $props();
 	// SvelteKit keeps a history index in history.state; back only pops entries this app created.
@@ -92,6 +92,17 @@
 		if (session.ready && !session.needsLogin && session.settings?.setup?.completed === false && page.url.pathname === '/') {
 			goto('/welcome', { replaceState: true });
 		}
+	});
+	// Landing page: only when this browser opens at plain `/`; later visits to The Screen stay put.
+	let landingPending = !publicShare && page.url.pathname === '/' && !page.url.search;
+	$effect(() => {
+		if (!landingPending || !session.ready) return;
+		if (session.needsLogin || session.choosing) return;
+		landingPending = false;
+		const target = landingPath(deviceMode.landing);
+		if (target === '/' || inAndroidApp() || page.url.pathname !== '/' || session.settings?.setup?.completed === false) return;
+		if (isHubPath(target) && !session.hubAllowed) return;
+		goto(target, { replaceState: true });
 	});
 
 	// Calm editorial styling (tokens.css [data-area='hub']) applies only to non-video routes.

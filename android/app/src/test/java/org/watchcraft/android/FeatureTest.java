@@ -13,11 +13,11 @@ public class FeatureTest {
     }
     @Test public void detailPagesRetainFeatureTitles() {
         assertEquals("Reading", Feature.titleFor("/item/12"));
-        assertEquals("Today", Feature.titleFor("/today/set-aside"));
-        assertEquals("News", Feature.titleFor("/news"));
+        assertEquals("The Front Page", Feature.titleFor("/today/set-aside"));
+        assertEquals("The Wire", Feature.titleFor("/news"));
         assertEquals("Now playing", Feature.titleFor("/watch/abc"));
         assertEquals("Curators", Feature.titleFor("/curators/7"));
-        assertEquals("Mood Board", Feature.titleFor("/boards"));
-        assertEquals("TV", Feature.titleFor("/category/2"));
+        assertEquals("The Boards", Feature.titleFor("/boards"));
+        assertEquals("The Screen", Feature.titleFor("/category/2"));
     }
 }
