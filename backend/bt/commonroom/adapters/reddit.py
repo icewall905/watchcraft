@@ -197,7 +197,9 @@ def fetch(locator: str, sort: str = 'new', cursor: str = '') -> Page:
     name = _sub(locator)
     if reddit_oauth.configured():
         return _page(_call(_listing_url(name, sort, cursor)))
-    if cursor or sort not in ('new', 'hot', 'top_day', 'top_week'):
+    # Without keys Reddit is read through the public RSS pace that News shares; a Reddit block there stalls
+    # News too, so Common Room takes only the fresh page and never walks older ones.
+    if cursor or sort != 'new':
         return Page()
     return _rss_page(name, sort)
 
@@ -239,10 +241,9 @@ def comments(post: dict) -> list[dict]:
         return []
     qs = urlencode({'limit': 50, 'depth': 6, 'sort': 'top', 'raw_json': 1})
     try:
-        if reddit_oauth.configured():
-            data = _call(f'{API}/comments/{quote(pid)}?{qs}')
-        else:
-            data = get_json(f'https://www.reddit.com/comments/{quote(pid)}.json?{qs}')
+        if not reddit_oauth.configured():
+            return []  # anonymous JSON reads get blocked, and a block also stalls News' Reddit feeds
+        data = _call(f'{API}/comments/{quote(pid)}?{qs}')
     except ValueError:
         if reddit_oauth.configured():
             raise

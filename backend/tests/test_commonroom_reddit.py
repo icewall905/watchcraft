@@ -138,16 +138,10 @@ def test_comments_tree(monkeypatch):
     assert [x['id'] for x in out[0]['children']] == ['c2'] and out[0]['children'][0]['children'] == []
 
 
-def test_comments_without_oauth_best_effort(monkeypatch, oauth):
+def test_no_comments_without_oauth(monkeypatch, oauth):
     oauth[0]['commonroom']['reddit_client_id'] = ''
-    urls = []
-
-    def boom(u, headers=None):
-        urls.append(u)
-        raise curation.FetchError(429, '30')
-    monkeypatch.setattr(rd, 'get_json', boom)
+    monkeypatch.setattr(rd, 'get_json', lambda *a, **k: pytest.fail('anonymous JSON reads stall News Reddit feeds'))
     assert rd.comments({'external_id': 't3_abc'}) == []
-    assert urls[0].startswith('https://www.reddit.com/comments/abc.json?')
 
 
 RSS = b'''<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom" xmlns:media="http://search.yahoo.com/mrss/">
@@ -165,15 +159,13 @@ def test_rss_fallback_without_credentials(monkeypatch, oauth):
     feeds = []
     monkeypatch.setattr(rd, '_rss_get', lambda f: feeds.append(f) or RSS)
     monkeypatch.setattr(rd, 'get_json', lambda *a, **k: pytest.fail('JSON API must not be used'))
-    page = rd.fetch('r/foo', 'hot', '')
-    assert feeds[0].startswith('https://www.reddit.com/r/foo/.rss')
+    page = rd.fetch('r/foo', 'new', '')
+    assert '/r/foo/new/.rss' in feeds[0]
     assert page.cursor == '' and [p['external_id'] for p in page.posts] == ['t3_aaa', 't3_bbb']
     a, b = page.posts
     assert a['link_url'] == 'https://example.com/x?a=1&b=2' and a['author'] == 'zed' and a['score'] == 0
     assert a['media'][0]['url'].startswith('https://b.thumbs.redditmedia.com') and a['community'] == 'r/foo'
     assert b['body'] == 'Body text' and b['link_url'] == '' and b['published_at'] > 0
-    rd.fetch('r/foo', 'new', '')
-    assert '/r/foo/new/.rss' in feeds[1]
     assert rd.fetch('r/foo', 'new', 't3_x').posts == []  # no paging without OAuth
 
 
@@ -200,14 +192,11 @@ def test_rate_limit_stops_callers(monkeypatch):
         rd.fetch('foo', 'new', '')
 
 
-def test_rss_fallback_skips_long_top_windows(monkeypatch, oauth):
+def test_rss_fallback_reads_only_the_fresh_page(monkeypatch, oauth):
     oauth[0]['commonroom']['reddit_secret'] = ''
-    monkeypatch.setattr(rd, '_rss_get', lambda f: pytest.fail('no RSS read for long windows'))
-    for sort in ('top_month', 'top_year', 'top_all'):
+    monkeypatch.setattr(rd, '_rss_get', lambda f: pytest.fail('backfill must not spend the shared Reddit RSS pace'))
+    for sort in ('hot', 'top_day', 'top_week', 'top_month', 'top_year', 'top_all'):
         assert rd.fetch('r/foo', sort, '') == Page()
-    feeds = []
-    monkeypatch.setattr(rd, '_rss_get', lambda f: feeds.append(f) or RSS)
-    assert rd.fetch('r/foo', 'top_week', '').posts and 't=week' in feeds[0]
 
 
 def test_401_drops_token_not_cooldown(monkeypatch, oauth):
