@@ -8,6 +8,16 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — downloader survives a locked DB, slow write-lock logging (`c88dbb0`, 2026-11-16)
+
+- The downloader exited (8× overnight) when its error event hit the same "database is locked"; now guarded. Write
+  transactions holding SQLite's lock ≥10 s (`BT_SLOW_WRITE_S`) log `bt.db.locks` with their origin. Code only.
+- Backup `/root/compose/watchcraft-backups/20261116-dllock-c88dbb0` (online DB quick_check ok, config hashes, previous
+  source); rollback images `watchcraft:rollback-20261116-dllock-*`, `rollback.sh`. rsync of the 4 changed files.
+  Pruned `20261115-merge-1bdbf34` and its rollback tags (`PRUNE-MANIFEST-20261116T054513Z.txt`).
+- All four services run `sha256:4d9c28125acf4bb4437c4ec13603e33284c8cc807cce085985449c3f55d78ae1`, zero restarts,
+  no tracebacks; health 200.
+
 ## Deployment record — Today best-of + Regenerate (`ca21993`, 2026-11-16)
 
 - Today ranks widely covered News stories higher, adds briefing/research excerpt cards, and `POST /api/hub/today/regenerate`
