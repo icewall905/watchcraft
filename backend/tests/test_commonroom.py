@@ -448,3 +448,35 @@ def test_pictures_the_source_no_longer_serves_are_left_out(client, monkeypatch, 
     assets.sweep_images()
     media = client.get('/api/hub/commonroom/feed', params={'boundary': 0}).json()['posts'][0]['media']
     assert [m['url'].rsplit('/', 1)[1] for m in media] == ['1']  # index of ok.png kept stable
+
+
+def test_language_whitelist_filters_judging_and_the_feed(client, monkeypatch):
+    """Only Danish and English: other languages are never judged or shown; undetected ones still show."""
+    monkeypatch.setattr(FAKE, 'fetch', lambda loc, sort, cur: Page([
+        post(1, title='What is the best way to run this at home', body=''),
+        post(2, title='Hvad sker der med min server, jeg har lige købt en ny', body=''),
+        post(3, title='Ein Witz über Katzen und mich, das ist nicht gut', body=''),
+        post(4, title='Привет всем это мой сервер', body=''),
+        post(5, title='Proxmox 9', body=''),
+        post(6, title='Status', body='', language='fr'),
+    ] if sort == 'new' else [], ''))
+    assert client.put('/api/hub/commonroom/languages', json={'languages': ['da', 'EN', 'da']}).json() == {'allowed': ['da', 'en']}
+    thread(client)
+    run_all()
+    titles = {p['title'] for p in client.get('/api/hub/commonroom/feed', params={'boundary': 0}).json()['posts']}
+    assert titles == {'What is the best way to run this at home', 'Hvad sker der med min server, jeg har lige købt en ny', 'Proxmox 9'}
+    langs = {l['key'] for l in client.get('/api/hub/commonroom/languages').json()['languages']}
+    assert {'en', 'da', 'de', 'ru', 'fr'} <= langs
+    assert client.put('/api/hub/commonroom/languages', json={'languages': ['english']}).status_code == 422
+
+
+def test_posts_stored_before_languages_get_one():
+    from bt.commonroom import store as st
+    with session() as s:
+        s.add(CRPost(url='https://x.example/1', platform='fake', title='Hvad sker der med min server, jeg har lige købt en ny'))
+        s.add(CRPost(url='https://x.example/2', platform='fake', title='Proxmox 9'))
+        s.commit()
+    assert st.backfill_languages() == 2
+    assert st.backfill_languages() == 0  # undetectable ones are not read again
+    with session() as s:
+        assert {p.url: p.language for p in s.exec(select(CRPost)).all()} == {'https://x.example/1': 'da', 'https://x.example/2': ''}

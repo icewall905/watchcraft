@@ -12,7 +12,7 @@ from sqlmodel import select
 from .. import access
 from ..db import get_settings, session
 from ..hub import ai, semantic
-from . import kids, teach
+from . import kids, store, teach
 from .models import (CRBlock, CRCandidate, CRPick, CRPost, CRPostVector, CRSourcePost, CRThread, CRThreadSource)
 
 log = logging.getLogger(__name__)
@@ -187,13 +187,15 @@ def run(thread: CRThread, lease: str) -> dict:
         blocks = list(s.exec(select(CRBlock).where(CRBlock.profile_id == thread.profile_id)).all())
         lessons = teach.prompt(s, thread)
         child = access.is_child(s, thread.profile_id)
+        languages = set(store.allowed_languages(s, thread.profile_id))
     show_nsfw = bool(get_settings()['commonroom'].get('show_nsfw')) and not child and not thread.child_friendly
     words = [w.strip().lower() for w in (thread.avoid or '').replace('\n', ',').split(',') if len(w.strip()) > 2]
     decided: dict[int, tuple[str, int, str]] = {}
     keep = []
     for p in posts:
         if (p.nsfw and not show_nsfw) or ((child or thread.child_friendly) and p.spoiler) \
-                or _blocked(p, blocks) or (words and _avoided(p, words)):
+                or _blocked(p, blocks) or (words and _avoided(p, words)) \
+                or (languages and p.language and p.language not in languages):
             decided[p.id] = ('rejected', 0, '')
         else:
             keep.append(p)

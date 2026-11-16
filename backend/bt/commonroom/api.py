@@ -3,7 +3,7 @@ import time
 
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import String, case, delete, func, update
+from sqlalchemy import String, case, delete, func, or_, update
 from sqlmodel import select
 
 from ..access import hub_worker_allowed, is_child, profile_id
@@ -11,7 +11,7 @@ from ..db import session
 from . import harvest, store
 from .adapters import ADAPTERS
 from .models import (CRAsset, CRBlock, CRCandidate, CRComments, CRFeedback, CRPick, CRPost, CRSource, CRThread,
-                     CRThreadSource, CRVisit)
+                     CRSourcePost, CRThreadSource, CRVisit)
 
 router = APIRouter(prefix='/hub/commonroom', tags=['Common Room'])
 PAGE = 30
@@ -46,6 +46,9 @@ def _visible_picks(s, pid: int):
         .join(CRThread, CRThread.id == CRPick.thread_id).where(CRPick.profile_id == pid)
     if _child(s, pid):
         q = q.where(CRPost.kid_ok == 1, CRPost.nsfw == False)  # noqa: E712
+    allowed = store.allowed_languages(s, pid)
+    if allowed:  # only the chosen languages; a post whose language is unknown still shows
+        q = q.where(or_(CRPost.language == '', CRPost.language.in_(allowed)))
     return q
 
 
@@ -543,6 +546,45 @@ def media(post_id: int, n: int, size: str = '', pid: int = Depends(require_room)
     if not mime:
         raise HTTPException(404, 'That picture is not a supported image.')
     return Response(data, media_type=mime, headers=headers)
+
+
+# ---------- languages
+
+class LanguagesIn(BaseModel):
+    languages: list[str] = Field(default_factory=list, max_length=60)
+
+
+@router.get('/languages')
+def get_languages(pid: int = Depends(require_room)):
+    """Languages of this profile's posts (most first) and the ones it chose; none chosen = all."""
+    with session() as s:
+        threads = select(CRThread.id).where(CRThread.profile_id == pid)
+        sources = select(CRThreadSource.source_id).where(CRThreadSource.thread_id.in_(threads))
+        mine = or_(CRPost.id.in_(select(CRCandidate.post_id).where(CRCandidate.thread_id.in_(threads))),
+                   CRPost.id.in_(select(CRSourcePost.post_id).where(CRSourcePost.source_id.in_(sources))))
+        seen = s.exec(select(CRPost.language, func.count()).where(mine, CRPost.language != '')
+                      .group_by(CRPost.language).order_by(func.count().desc()).limit(30)).all()
+        return {'languages': [{'key': k, 'count': n} for k, n in seen], 'allowed': store.allowed_languages(s, pid)}
+
+
+@router.put('/languages')
+def set_languages(body: LanguagesIn, pid: int = Depends(require_room)):
+    import re
+    from ..models import Profile
+    codes: list[str] = []
+    for raw in body.languages:
+        code = raw.strip().lower()
+        if not re.fullmatch(r'[a-z]{2,3}', code):
+            raise HTTPException(422, 'Use language codes such as da or en.')
+        if code not in codes:
+            codes.append(code)
+    with session() as s:
+        s.connection().exec_driver_sql('BEGIN IMMEDIATE')
+        p = s.get(Profile, pid)
+        p.prefs = {**(p.prefs or {}), 'commonroom_languages': codes}
+        s.add(p)
+        s.commit()
+    return {'allowed': codes}
 
 
 # ---------- blocks

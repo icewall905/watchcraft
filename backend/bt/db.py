@@ -100,6 +100,9 @@ def init_db() -> None:
         from .commonroom import models as _commonroom_models  # noqa: F401
         SQLModel.metadata.create_all(connection)
         _migrate_knowledge_columns(connection)
+        if 'language' not in {c['name'] for c in inspect(connection).get_columns('crpost')}:
+            connection.exec_driver_sql("ALTER TABLE crpost ADD COLUMN language VARCHAR NOT NULL DEFAULT ''")
+            connection.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_crpost_language ON crpost (language)')
         board_columns = {c['name'] for c in inspect(connection).get_columns('moodboard')}
         for name, definition in (('target_images', 'INTEGER NOT NULL DEFAULT 100'),
                                  ('avoid', "VARCHAR NOT NULL DEFAULT ''"),

@@ -1,4 +1,5 @@
 """Writes for Common Room: shared posts and sources. Short BEGIN IMMEDIATE transactions, no network."""
+import re
 import time
 from urllib.parse import urlsplit
 
@@ -21,6 +22,18 @@ def _domain(url: str) -> str:
     return host[4:] if host.startswith('www.') else host
 
 
+_LANG = re.compile(r'[a-z]{2,3}')
+
+
+def language_of(d: dict) -> str:
+    """The platform's own language tag when it gave one, else a best guess from the text ('' = unknown)."""
+    tag = str(d.get('language') or '').strip().lower().split('-')[0].split('_')[0]
+    if _LANG.fullmatch(tag):
+        return tag
+    from ..hub.memes import detect_language
+    return detect_language(f"{d.get('title') or ''} {str(d.get('body') or '')[:3000]}")
+
+
 def _clean(d: dict) -> dict | None:
     url = str(d.get('url') or '')
     if not url.startswith('https://') or len(url) > 2000:
@@ -41,7 +54,8 @@ def _clean(d: dict) -> dict | None:
             'title': title or body.split('\n', 1)[0][:300], 'body': body, 'link_url': link, 'domain': _domain(link),
             'media': media, 'meta': d.get('meta') if isinstance(d.get('meta'), dict) else {},
             'score': int(d.get('score') or 0), 'comments': int(d.get('comments') or 0),
-            'published_at': published or time.time(), 'nsfw': bool(d.get('nsfw')), 'spoiler': bool(d.get('spoiler'))}
+            'published_at': published or time.time(), 'nsfw': bool(d.get('nsfw')), 'spoiler': bool(d.get('spoiler')),
+            'language': language_of({**d, 'title': title, 'body': body})}
 
 
 def upsert_posts(posts: list[dict], source_id: int | None = None, thread_id: int | None = None) -> list[int]:
@@ -59,6 +73,7 @@ def upsert_posts(posts: list[dict], source_id: int | None = None, thread_id: int
             if post:
                 post.score, post.comments = r['score'] or post.score, r['comments'] or post.comments
                 post.fetched_at = time.time()
+                post.language = post.language or r['language']
                 if r['media'] and (not post.media or (_thumb(post.media) and not _thumb(r['media']))):
                     post.media = r['media']
             else:
@@ -81,6 +96,36 @@ def upsert_posts(posts: list[dict], source_id: int | None = None, thread_id: int
                     s.add(CRCandidate(thread_id=thread_id, post_id=i))
         s.commit()
     return ids
+
+
+def backfill_languages(limit: int = 500) -> int:
+    """Detect the language of stored posts from before languages were kept, a slice per call.
+    Posts that stay undetectable are marked so they are not read again."""
+    with session() as s:
+        rows = s.exec(select(CRPost.id, CRPost.title, CRPost.body, CRPost.meta)
+                      .where(CRPost.language == '').order_by(CRPost.id.desc()).limit(limit * 4)).all()
+    todo = [(pid, language_of({'title': t, 'body': b})) for pid, t, b, meta in rows
+            if not (meta or {}).get('lang_checked')][:limit]
+    if not todo:
+        return 0
+    with session() as s:
+        s.connection().exec_driver_sql('BEGIN IMMEDIATE')
+        for pid, lang in todo:
+            post = s.get(CRPost, pid)
+            if post and not post.language:
+                post.language = lang
+                if not lang:
+                    post.meta = {**(post.meta or {}), 'lang_checked': 1}
+                s.add(post)
+        s.commit()
+    return len(todo)
+
+
+def allowed_languages(s, pid: int) -> list[str]:
+    """Languages this profile wants in Common Room; [] = every language."""
+    from ..models import Profile
+    p = s.get(Profile, pid)
+    return [x for x in ((p.prefs or {}).get('commonroom_languages') or []) if isinstance(x, str) and x] if p else []
 
 
 def ensure_source(platform: str, locator: str, label: str = '') -> int:

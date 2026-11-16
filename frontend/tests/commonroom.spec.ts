@@ -149,3 +149,19 @@ test('desktop shows the wall in several columns, a phone in one', async ({ page 
 	await page.setViewportSize({ width: 390, height: 844 });
 	await expect.poll(async () => (await lefts()).size).toBe(1);
 });
+
+test('Settings: choose Common Room post languages', async ({ page }) => {
+	const puts: unknown[] = [];
+	await page.route('**/api/hub/commonroom/languages', async (route) => {
+		if (route.request().method() === 'GET') return route.fulfill({ json: { languages: [{ key: 'en', count: 40 }, { key: 'de', count: 3 }], allowed: [] } });
+		const body = route.request().postDataJSON();
+		puts.push(body);
+		return route.fulfill({ json: { allowed: body.languages } });
+	});
+	await freshPage(page, '/settings?tab=commonroom');
+	await expect(page.getByRole('heading', { name: 'Post languages' })).toBeVisible();
+	await page.getByRole('checkbox', { name: /Danish/ }).check();
+	await page.getByRole('checkbox', { name: /English/ }).check();
+	await expect(page.getByText('Showing: Danish, English.')).toBeVisible();
+	expect(puts).toEqual([{ languages: ['da'] }, { languages: ['da', 'en'] }]);
+});

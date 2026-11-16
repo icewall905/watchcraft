@@ -111,10 +111,34 @@ _LANGUAGE_WORDS = {
            'isso', 'quando', 'muito', 'também', 'aqui', 'sempre'},
     'it': {'il', 'lo', 'gli', 'che', 'non', 'una', 'per', 'con', 'su', 'è', 'sono', 'mio', 'tuo', 'come',
            'questo', 'quando', 'molto', 'anche', 'qui', 'perché', 'sempre'},
-    'da': {'og', 'ikke', 'jeg', 'hvad', 'meget', 'også', 'fordi', 'altid', 'sammen', 'du'},
+    'da': {'og', 'ikke', 'jeg', 'hvad', 'meget', 'også', 'fordi', 'altid', 'sammen', 'du', 'af', 'mig', 'dig',
+           'noget', 'nogen', 'lige', 'efter', 'nej', 'hvorfor', 'hvordan', 'eller', 'blev'},
     'sv': {'och', 'inte', 'är', 'jag', 'vad', 'mycket', 'också', 'därför', 'alltid', 'tillsammans', 'du'},
-    'no': {'og', 'ikke', 'jeg', 'hva', 'veldig', 'også', 'fordi', 'alltid', 'sammen', 'du'},
+    'no': {'og', 'ikke', 'jeg', 'hva', 'veldig', 'også', 'fordi', 'alltid', 'sammen', 'du', 'av', 'meg', 'deg',
+           'noe', 'noen', 'etter', 'hvorfor', 'hvordan', 'eller', 'ble'},
 }
+
+
+# Writing systems that name their language well enough to filter on. Latin text goes to the word lists.
+_SCRIPTS = (('ja', re.compile(r'[\u3040-\u30ff]')), ('ko', re.compile(r'[\uac00-\ud7af]')),
+            ('zh', re.compile(r'[\u4e00-\u9fff]')), ('uk', re.compile(r'[іїєґІЇЄҐ]')),
+            ('ru', re.compile(r'[\u0400-\u04ff]')), ('ar', re.compile(r'[\u0600-\u06ff]')),
+            ('he', re.compile(r'[\u0590-\u05ff]')), ('el', re.compile(r'[\u0370-\u03ff]')),
+            ('hi', re.compile(r'[\u0900-\u097f]')), ('th', re.compile(r'[\u0e00-\u0e7f]')))
+
+
+def _script_language(text: str) -> str:
+    """Language of text written mostly in a non-Latin script; '' for Latin or mixed text."""
+    letters = [c for c in text if c.isalpha()]
+    if len(letters) < 4:
+        return ''
+    if sum(1 for c in letters if c < '\u0250') >= len(letters) / 2:
+        return ''
+    for lang, pattern in _SCRIPTS:
+        hits = len(pattern.findall(text))
+        if (lang in ('ja', 'uk') and hits >= 1) or hits >= len(letters) / 4:
+            return lang
+    return ''
 
 
 def detect_language(text: str) -> str:
@@ -125,6 +149,9 @@ def detect_language(text: str) -> str:
     word such as "das" next to an English one is not enough, and an unknown language
     hides nothing by mistake.
     """
+    script = _script_language(text or '')
+    if script:
+        return script
     words = set(re.findall(r"[a-zà-ÿ']+", (text or '').lower()))
     if len(words) < 2:
         return ''
@@ -146,7 +173,7 @@ def detect_language(text: str) -> str:
 
 
 # Bump when detect_language changes, so earlier guesses are checked again.
-_LANGUAGE_PASS = 'watchcraft_meme_language_pass_v2'
+_LANGUAGE_PASS = 'watchcraft_meme_language_pass_v3'
 
 
 def backfill_languages(s: Session, limit: int = 200) -> int:

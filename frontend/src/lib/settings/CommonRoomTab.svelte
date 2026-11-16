@@ -4,6 +4,9 @@
 	import { SettingsDraft } from './useSettings.svelte';
 	import Toggle from '$lib/components/form/Toggle.svelte';
 	import TextField from '$lib/components/form/TextField.svelte';
+	import LanguageChecklist from './LanguageChecklist.svelte';
+	import { crApi } from '$lib/hub/commonroom';
+	import { errMsg } from '$lib/hub/util';
 
 	const cr = new SettingsDraft('commonroom');
 	// A tab opened before an update may hold settings without this section: start from the defaults.
@@ -11,6 +14,17 @@
 		cr.value = { reddit_client_id: '', reddit_secret: '', stackexchange_key: '', show_nsfw: false };
 		cr.saved = '';
 	}
+	let langCounts = $state<Record<string, number>>({});
+	let langChosen = $state<string[]>([]);
+	let langState = $state<'loading' | 'ready' | string>('loading');
+	$effect(() => {
+		crApi.languages().then((r) => {
+			langCounts = Object.fromEntries(r.languages.map((l) => [l.key, l.count]));
+			langChosen = r.allowed;
+			langState = 'ready';
+		}, (e) => { langState = errMsg(e); });
+	});
+	const saveLanguages = async (next: string[]) => (await crApi.setLanguages(next)).allowed;
 	const keyed = $derived.by(() => { const s = JSON.parse(cr.saved || '{}'); return !!s.reddit_client_id && !!s.reddit_secret; });
 </script>
 
@@ -22,4 +36,10 @@
 	<TextField label="Stack Exchange key" type="password" hint="Optional. Raises the request quota." bind:value={cr.value.stackexchange_key} />
 	<Toggle label="Show NSFW posts" hint="Blurred until clicked. Always hidden for child profiles." bind:checked={cr.value.show_nsfw} />
 	<SaveBar label="Save Common Room" dirty={cr.dirty} busy={cr.busy} onsave={() => cr.save('Common Room settings saved')} onreset={() => cr.reset()} />
+</Section>
+
+<Section title="Post languages" intro="Choose the languages you want on your Common Room wall. Posts in other languages are never judged or shown, also when new ones turn up later. Posts whose language could not be told are always shown. This applies to the profile you are using now.">
+	{#if langState === 'loading'}<p class="muted">Loading…</p>
+	{:else if langState !== 'ready'}<p class="warn" role="alert">{langState}</p>
+	{:else}<LanguageChecklist counts={langCounts} bind:chosen={langChosen} save={saveLanguages} noun="posts" />{/if}
 </Section>

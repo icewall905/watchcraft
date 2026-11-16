@@ -103,6 +103,7 @@ def _post(row: dict, community: str = '') -> dict | None:
         'media': media, 'score': _int(post.get('likeCount')), 'comments': _int(post.get('replyCount')),
         'published_at': _ts(rec.get('createdAt') or post.get('indexedAt')),
         'nsfw': bool(labels & set(NSFW_LABELS)), 'spoiler': False,
+        'language': str(((rec.get('langs') or [''])[:1] or [''])[0] or ''),
         'meta': {'uri': str(post['uri']), 'cid': str(post.get('cid') or ''), 'reposts': _int(post.get('repostCount'))},
     }
 

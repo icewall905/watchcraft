@@ -21,6 +21,8 @@ export interface Block { id: number; kind: 'community' | 'author' | 'domain'; va
 export type ThreadInput = {name: string; interests: string; instructions?: string; avoid?: string; strictness?: Strictness};
 const base = '/hub/commonroom';
 export const crApi = {
+ languages: () => request<{languages: {key: string; count: number}[]; allowed: string[]}>(`${base}/languages`, {toast: false}),
+ setLanguages: (languages: string[]) => request<{allowed: string[]}>(`${base}/languages`, {method: 'PUT', body: {languages}, toast: false}),
  threads: (signal?: AbortSignal) => request<{threads: Thread[]; platforms: PlatformInfo[]; child: boolean}>(`${base}/threads`, {signal, toast: false}),
  create: (body: ThreadInput) => request<Thread>(`${base}/threads`, {method: 'POST', body, toast: false}),
  update: (id: number, body: Partial<Thread>) => request<Thread>(`${base}/threads/${id}`, {method: 'PATCH', body, toast: false}),

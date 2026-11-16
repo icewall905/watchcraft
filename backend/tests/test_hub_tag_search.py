@@ -123,6 +123,14 @@ def test_language_detection_fills_in_what_the_source_left_blank():
     assert detect_language('Ein Witz über Katzen') == 'de'
     assert detect_language('the cat is not happy') == 'en'
     assert detect_language('me timaron con el doblaje') == 'es'
+    assert detect_language('Hvad sker der med min server, jeg har lige købt en ny') == 'da'
+    assert detect_language('Jeg har kjøpt en ny server, hva skal jeg gjøre med den nå etter') == 'no'
+    # Non-Latin scripts name their language.
+    assert detect_language('Привет всем это мой сервер') == 'ru'
+    assert detect_language('Привіт усім це мій сервер') == 'uk'
+    assert detect_language('自宅サーバーを作りました') == 'ja'
+    assert detect_language('我的家庭服务器') == 'zh'
+    assert detect_language('Proxmox 9 на сервере with English') == ''
     # Nothing to go on: stay unknown rather than guess and hide the wrong memes.
     assert detect_language('😂😂😂') == ''
     assert detect_language('ok') == ''

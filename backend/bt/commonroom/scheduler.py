@@ -123,6 +123,11 @@ async def scheduler():
         except Exception:
             log.exception('Common Room previews failed')
         try:
+            from . import store
+            await asyncio.to_thread(store.backfill_languages)
+        except Exception:
+            log.exception('Common Room language backfill failed')
+        try:
             from . import assets
             await asyncio.to_thread(assets.sweep)
         except Exception:

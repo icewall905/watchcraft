@@ -75,6 +75,7 @@ def _status(s: dict, instance: str, community: str = '') -> dict | None:
         'score': _int(s.get('favourites_count')), 'comments': _int(s.get('replies_count')),
         'published_at': _ts(s.get('created_at')), 'nsfw': bool(s.get('sensitive')),
         'spoiler': bool(s.get('spoiler_text')),
+        'language': str(s.get('language') or ''),
         'meta': {'instance': instance, 'status_id': str(s.get('id') or ''), 'reblogs': _int(s.get('reblogs_count'))},
     }
 

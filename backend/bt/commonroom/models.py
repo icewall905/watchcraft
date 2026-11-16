@@ -77,6 +77,7 @@ class CRPost(SQLModel, table=True):
     fetched_at: float = Field(default_factory=time.time, index=True)
     nsfw: bool = False
     spoiler: bool = False
+    language: str = Field(default='', index=True)  # platform's tag, else detected; '' = unknown
     kid_ok: int | None = None         # None = unchecked, 1 = passed, 0 = failed (fail closed)
     kid_image_ok: int | None = None
 
