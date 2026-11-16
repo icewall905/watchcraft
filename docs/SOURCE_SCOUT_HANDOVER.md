@@ -8,6 +8,17 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — share Mood Board images to child profiles (`04231b4`, 2026-11-16)
+
+- Child profiles are share targets; images from non-child-friendly boards pass the kid-safe picture bar on the vision
+  model first (fail closed, ≤40 per share, rest held back); received boards are child-friendly; kids see notices.
+  Code only. Vision model on; 2 child profiles.
+- Backup `/root/compose/watchcraft-backups/20261116-kidshare-04231b4` (online DB quick_check ok, config hashes, previous
+  source); rollback images `watchcraft:rollback-20261116-kidshare-*`, `rollback.sh`. rsync of the 8 changed files.
+  Pruned `20261116-todaybest-ca21993` and its rollback tags (`PRUNE-MANIFEST-20261116T063040Z.txt`).
+- All four services run `sha256:fb084b1800a14d4cbd3ac6267ae9b02237488925d397470b6a55522edb7d252b`, zero restarts,
+  no tracebacks; health and `/boards` 200; new share bundle served.
+
 ## Deployment record — downloader survives a locked DB, slow write-lock logging (`c88dbb0`, 2026-11-16)
 
 - The downloader exited (8× overnight) when its error event hit the same "database is locked"; now guarded. Write
