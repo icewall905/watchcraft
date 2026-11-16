@@ -8,6 +8,18 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Mood Board AI-image setting (`34b6bb6`, 2026-11-16)
+
+- Per-board `ai_images` (More tuning): Reject (default, previous behaviour), Mark (keep, `moodpin.ai_flag` from
+  metadata or vision verdict → "AI" badge + viewer reason), Ignore (no check). Additive columns `moodboard.ai_images`
+  (default `reject`), `moodpin.ai_flag`; created on startup — all 5 boards `reject`, quick_check ok.
+- Backup `/root/compose/watchcraft-backups/20261116-aimode-34b6bb6` (online DB quick_check ok, config hashes, previous
+  source, `rollback.sh` → `watchcraft:rollback-20261116-aimode-*`; the old image ignores the new columns). rsync
+  (checksum) of the 10 files of `94a772a..34b6bb6`. Pruned `20261116-commonroom-5366932` and its rollback tags
+  (`PRUNE-MANIFEST-20261116T173807Z.txt`).
+- All four `wc-*` run `sha256:b6429746…`, zero restarts, no tracebacks; health and `/boards` 200; new setting in the
+  served bundle. Backend 1533 passed/6 skipped; svelte-check, build and `boards.spec.ts` (22) passed.
+
 ## Deployment record — Mood Board AI-image filter (`94a772a`, 2026-11-16)
 
 - "AI generated" thumbs-down reason; curator skips candidates whose metadata declares AI generation (C2PA/IPTC
