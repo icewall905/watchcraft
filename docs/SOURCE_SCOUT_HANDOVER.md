@@ -23,6 +23,13 @@
   (`bt-*` containers for ~1 min on the same `./data`), then redeployed with all three compose files; all four `wc-*`
   services run `sha256:8e213ea1…`, zero restarts, DB quick_check ok, health/`/settings`/`/common-room` 200. Always pass
   `-f compose.yaml -f compose.watchcraft.yaml -f compose.host.yaml`.
+- Follow-up `3698048` + `723f299` (code only): Common Room card pictures were requested without `X-Profile-Id`
+  and 404ed for every profile but the first; now loaded profile-aware. Picked posts' pictures are saved full size +
+  WebP preview in `data/commonroom-media` and comments prefetched, so curated posts work offline. Meme Radar
+  languages became a whitelist. Rollback tags `watchcraft:rollback-20261116-pictures-*` (`settings` tags removed);
+  previous source `previous-source-pictures-67fe02e.tar.gz`. All four `wc-*` run `sha256:6fa981e1…`, zero restarts,
+  no tracebacks; first minutes: 23 files / 1.7 MB stored, full + preview served for profile H; 4 of 39 pictured picks
+  point at pictures their source no longer serves (HTTP 404).
 
 - New `/common-room`: per-interest Threads harvest Reddit/Lemmy/Mbin/Mastodon/Bluesky/HN/Lobsters/dev.to/Tildes/
   Stack Exchange/Discourse, judge with the worker model, New→Deep feed with backfill, teaching, kid gate. Additive
