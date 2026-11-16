@@ -141,7 +141,7 @@ export const hub = {
 	deleteSavedSearch: (id: number) => send<{ ok: boolean }>('DELETE', `/saved-searches/${id}`),
 
 	memeItems: (params: Params, signal?: AbortSignal) => get<Page<Item> & { next_cursor?: string | null; has_more?: boolean }>('/memes/items' + qs(params), signal),
-	memeFacets: () => get<{ communities: { key: string; count: number }[]; languages: { key: string; count: number }[]; hidden_languages: string[] }>('/memes/facets'),
+	memeFacets: () => get<{ communities: { key: string; count: number }[]; languages: { key: string; count: number }[]; hidden_languages: string[]; allowed_languages?: string[] }>('/memes/facets'),
 	memeTrends: (params: Params) => get<{ trends: MemeTrend[] }>('/memes/trends' + qs(params)),
 	memeTrendState: (id: number, body: { followed?: boolean; hidden?: boolean }) => send<{ followed: boolean; hidden: boolean }>('POST', `/memes/trends/${id}/state`, body),
 	memeFormats: (params: Params) => get<{ formats: MemeFormat[]; total: number }>('/memes/formats' + qs(params)),
@@ -151,6 +151,9 @@ export const hub = {
 	/** Analyze collected examples and recount trends now instead of on the next scheduler tick. */
 	memeRefresh: () => send<{ started: number; running: number; recent: number; next_at: number | null }>('POST', '/memes/refresh'),
 	memeSweep: () => send<{ analyzed: number; transitions: number; formats: number }>('POST', '/memes/sweep'),
+	/** Languages to show in Meme Radar; [] shows every language. */
+	setMemeLanguages: (languages: string[]) =>
+		send<{ languages: string[]; hidden_languages: string[] }>('PUT', '/memes/languages', { languages }),
 	hideMemeLanguage: (code: string, hidden = true) =>
 		send<{ hidden_languages: string[] }>('POST', `/memes/languages/${encodeURIComponent(code)}/hide`, { hidden }),
 

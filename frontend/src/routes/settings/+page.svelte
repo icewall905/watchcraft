@@ -35,7 +35,7 @@
 			{ key: 'ai', label: 'AI model and limits', icon: '✦', hint: 'Model, agent team, pace' },
 			{ key: 'curator', label: 'Curator', icon: '✧', hint: 'Learned preferences and nightly selection' },
 			{ key: 'memory', label: 'AI memory', icon: '🧠', hint: 'Rules learned from feedback' },
-			{ key: 'memes', label: 'Meme Radar', icon: '🌐', hint: 'Languages to leave out' }
+			{ key: 'memes', label: 'Meme Radar', icon: '🌐', hint: 'Languages to show' }
 		] },
 		{ label: 'Sources and keys', tabs: [
 			{ key: 'search', label: 'Web search', icon: '🔎', hint: 'SearXNG or Brave for curators' },

@@ -2526,11 +2526,42 @@ def hide_meme_language(code: str, body: MemeLanguageIn, pid: int = Depends(profi
             hidden.append(code)
         else:
             timestamps.pop(code, None)
+        allowed = [x for x in (prefs.get('meme_languages') or []) if isinstance(x, str)]
+        if allowed:  # keep the chosen languages in step with a hide or undo from the feed
+            allowed = [x for x in allowed if x != code] + ([] if body.hidden else [code])
+            prefs['meme_languages'] = allowed or [code]
         prefs['hidden_meme_languages'] = hidden[:20]
         prefs['hidden_meme_languages_at'] = timestamps
         p.prefs = prefs
         s.add(p); s.commit()
         return {'hidden_languages': prefs['hidden_meme_languages']}
+
+
+class MemeLanguagesIn(BaseModel):
+    languages: list[str] = Input(default_factory=list, max_length=60)
+
+
+@router.put('/memes/languages')
+def set_meme_languages(body: MemeLanguagesIn, pid: int = Depends(profile_id)):
+    """The languages this profile wants in Meme Radar. Empty means every language. Memes with no detected
+    language are always shown. A language chosen here is no longer hidden by an earlier thumbs-down."""
+    codes = []
+    for raw in body.languages:
+        code = raw.strip().lower()
+        if not re.fullmatch(r'[a-z]{2,3}(?:-[a-z]{2,4})?', code):
+            raise HTTPException(422, 'Use language codes such as de or pt-br.')
+        if code not in codes:
+            codes.append(code)
+    with session() as s:
+        p = s.get(Profile, pid)
+        prefs = dict(p.prefs or {})
+        prefs['meme_languages'] = codes
+        prefs['hidden_meme_languages'] = [x for x in (prefs.get('hidden_meme_languages') or []) if x not in codes]
+        prefs['hidden_meme_languages_at'] = {k: v for k, v in (prefs.get('hidden_meme_languages_at') or {}).items()
+                                             if k not in codes}
+        p.prefs = prefs
+        s.add(p); s.commit()
+        return {'languages': codes, 'hidden_languages': prefs['hidden_meme_languages']}
 
 
 MEME_REFRESH_COOLDOWN = 5 * 60
@@ -2609,10 +2640,14 @@ def meme_items(view: str = 'examples', q: str = '', community: str = '', provide
         if language:
             stmt = stmt.where(MemeExample.language == language)
         # Languages this profile asked never to see again, learned from thumbs-down reasons.
-        hidden_languages = [x for x in ((s.get(Profile, pid).prefs or {}).get('hidden_meme_languages') or [])
-                            if isinstance(x, str) and x]
+        prefs = s.get(Profile, pid).prefs or {}
+        hidden_languages = [x for x in (prefs.get('hidden_meme_languages') or []) if isinstance(x, str) and x]
         if hidden_languages:
             stmt = stmt.where(or_(MemeExample.language == '', MemeExample.language.not_in(hidden_languages)))
+        # Only the languages this profile chose (none chosen = all); undetected language always passes.
+        allowed_languages = [x for x in (prefs.get('meme_languages') or []) if isinstance(x, str) and x]
+        if allowed_languages:
+            stmt = stmt.where(or_(MemeExample.language == '', MemeExample.language.in_(allowed_languages)))
         if provider:
             stmt = stmt.where(ContentItem.provider.in_(provider.split(',')))
         if format_id:
@@ -2654,11 +2689,12 @@ def meme_facets(pid: int = Depends(profile_id)):
                            .where(MemeExample.language != '', vis)
                            .group_by(MemeExample.language).order_by(func.count(MemeExample.item_id).desc())
                            .limit(20)).all()
-        hidden = [x for x in ((s.get(Profile, pid).prefs or {}).get('hidden_meme_languages') or [])
-                  if isinstance(x, str) and x]
+        prefs = s.get(Profile, pid).prefs or {}
+        hidden = [x for x in (prefs.get('hidden_meme_languages') or []) if isinstance(x, str) and x]
+        allowed = [x for x in (prefs.get('meme_languages') or []) if isinstance(x, str) and x]
         return {'communities': [{'key': c, 'count': n} for c, n in communities],
                 'languages': [{'key': l, 'count': n} for l, n in languages],
-                'hidden_languages': hidden}
+                'hidden_languages': hidden, 'allowed_languages': allowed}
 
 
 @router.get('/memes/trends')

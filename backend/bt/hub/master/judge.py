@@ -68,6 +68,8 @@ def meme_reader(s: Session, pid: int) -> str:
                      'more like: ' + ', '.join(x for x in c.tuned_up if x.casefold() not in GENERIC_MEME_TERMS)[:400] if c.tuned_up else '',
                      'less like: ' + ', '.join(x for x in c.tuned_down if x.casefold() not in GENERIC_MEME_TERMS)[:400] if c.tuned_down else '') if x))
     profile_rules = rules.load(s, pid)
+    if profile_rules.allowed_languages:
+        parts.append('Meme languages to show (others are filtered out): ' + ', '.join(sorted(profile_rules.allowed_languages)))
     if profile_rules.hidden_languages:
         parts.append('Hidden meme languages: ' + ', '.join(sorted(profile_rules.hidden_languages)))
     if profile_rules.hidden_communities:

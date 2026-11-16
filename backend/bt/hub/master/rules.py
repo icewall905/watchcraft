@@ -30,6 +30,7 @@ class ProfileRules:
     """What one profile has asked never to see, loaded once per pass."""
     child: bool = False
     hidden_languages: set[str] = field(default_factory=set)
+    allowed_languages: set[str] = field(default_factory=set)  # empty: every language
     muted_terms: list[str] = field(default_factory=list)  # whole words or phrases
     hidden_formats: set[int] = field(default_factory=set)
     hidden_communities: set[str] = field(default_factory=set)
@@ -60,6 +61,7 @@ def load(s: Session, pid: int) -> ProfileRules:
     return ProfileRules(
         child=child, kid_unsafe=kid_unsafe,
         hidden_languages={x for x in (prefs.get('hidden_meme_languages') or []) if isinstance(x, str)},
+        allowed_languages={x for x in (prefs.get('meme_languages') or []) if isinstance(x, str) and x},
         muted_terms=[k.lower() for t in topics for k in (t.keywords or [t.name]) if isinstance(k, str) and k.strip()],
         hidden_formats={int(k) for kind, k in hidden if kind == 'format' and k.isdigit()},
         hidden_communities={k for kind, k in hidden if kind == 'community' and k})
@@ -118,6 +120,8 @@ def check(item: ContentItem, ex: MemeExample | None, rules: ProfileRules, now: f
     language = (ex.language if ex else '') or str(meta.get('language') or '')
     if language and language in rules.hidden_languages:
         return RuleResult(reject=True, quality=0, reasons=[f'hidden language {language}'])
+    if language and rules.allowed_languages and language not in rules.allowed_languages:
+        return RuleResult(reject=True, quality=0, reasons=[f'language {language} not chosen'])
     if meta.get('sensitive') and rules.child:
         return RuleResult(reject=True, quality=0, reasons=['sensitive'])
     if rules.child and item.id in rules.kid_unsafe:
