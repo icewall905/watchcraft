@@ -22,7 +22,8 @@ export type EditionEntry = {
 };
 export type EditionSection =
 	| { key: 'lead' | 'stories' | 'reads' | 'memes'; title: string; entries: EditionEntry[] }
-	| { key: 'research'; title: string; curator_ids: number[]; curators: { id: number; name: string; subject: string; report_at: number | null }[] }
+	| { key: 'research'; title: string; curator_ids: number[]; curators: { id: number; name: string; subject: string; report_at: number | null; excerpt?: string }[] }
+	| { key: 'briefings'; title: string; issue_ids: number[]; issues: { id: number; briefing_id: number; name: string; created_at: number; ai: boolean; excerpt: string }[] }
 	| { key: 'alerts'; title: string; count: number };
 export type TodayEdition = {
 	rerun?: { requested_at: number; completed_at: number };

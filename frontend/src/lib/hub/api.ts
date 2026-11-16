@@ -156,6 +156,7 @@ export const hub = {
 
 	// Master curator: the daily edition and what it left out.
 	rerunToday: () => send<{requested_at: number; completed_at: number}>('POST', '/today/rerun'),
+	regenerateToday: () => send<{ rebuilt: boolean; rerun: { requested_at: number; completed_at: number } | null }>('POST', '/today/regenerate'),
 	today: (signal?: AbortSignal, preview?: { stories: number; reads: number; memes: number }) =>
 		get<TodayEdition>('/today' + (preview ? qs({ preview: true, ...preview }) : ''), signal),
 	setAside: (params: Params) => get<Page<Item>>('/today/set-aside' + qs(params)),

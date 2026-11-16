@@ -18,8 +18,8 @@ from sqlmodel import Session, select
 
 from ...db import get_settings
 from .. import ai
-from ..models import (Alert, ContentItem, Curator, CuratorDiscovery, Edition, ItemState,
-                      ItemVerdict, MemeExample, StoryItem, Topic, TopicItem)
+from ..models import (Alert, Briefing, BriefingIssue, ContentItem, Curator, CuratorDiscovery, Edition,
+                      ItemState, ItemVerdict, MemeExample, StoryItem, Topic, TopicItem)
 from ..meme_quality import candidate_clause
 from . import views
 
@@ -36,6 +36,10 @@ SECTIONS = [('lead', 'Today\'s story', 1), ('stories', 'Stories', 299), ('reads'
             ('memes', 'Something light', 32)]
 SECTION_SIZES = {key: size for key, _, size in SECTIONS}
 INTRO_WORDS = 60
+# A story the News page clusters from several publishers is a strong "best of" signal:
+# each extra publisher adds a little rank, capped so one big story cannot bury fresh ones.
+COVERAGE_BONUS, COVERAGE_CAP = 3, 9
+BRIEFING_HIGHLIGHTS = 3
 STORY_SUMMARIES = 4  # model-written story summaries per morning
 
 
@@ -177,7 +181,9 @@ def desired(s: Session, pid: int, now: float | None = None) -> dict[str, list[di
     unavailable_ids = _unavailable(s, pid)
     previously_shown = _previously_shown(s, pid, now)
     rows = []
-    for v, item, story in _candidates(s, pid):
+    candidates = _candidates(s, pid)
+    coverage = _sources(s, pid, list({story for _, item, story in candidates if story and item.type in STORY_TYPES}))
+    for v, item, story in candidates:
         if item.id in unavailable_ids or v.overruled == 'demoted' or (item.id in previously_shown and v.overruled != 'promoted'):
             continue
         stamp = item.published_at if item.published_at is not None else item.first_seen
@@ -190,7 +196,8 @@ def desired(s: Session, pid: int, now: float | None = None) -> dict[str, list[di
         # Features get a modest relevance bonus; freshness can still let a good
         # new keeper pass a stale or weaker feature instead of being buried by tier.
         feature_bonus = 10 if v.tier == 'feature' or v.overruled == 'promoted' else 0
-        rows.append((v.final - age * 4 + feature_bonus, stamp, item.id, v, item, story))
+        covered = min(COVERAGE_CAP, max(0, coverage.get(story, 1) - 1) * COVERAGE_BONUS) if story and item.type in STORY_TYPES else 0
+        rows.append((v.final - age * 4 + feature_bonus + covered, stamp, item.id, v, item, story))
     rows.sort(key=lambda row: row[:4], reverse=True)
     out: dict[str, list[dict]] = {key: [] for key, _, _ in SECTIONS}
     for _, _, _, v, item, story in _varied(rows):
@@ -258,12 +265,19 @@ def merge(old: list[dict], new: dict[str, list[dict]], shown: set[int], alive: s
 
 
 def _extras(s: Session, pid: int, now: float) -> list[dict]:
-    """Quiet lines: research written since yesterday and alerts still waiting."""
+    """Highlights from other pages: research and briefings written since yesterday, alerts still waiting."""
     out = []
     reports = s.exec(select(Curator.id).where(Curator.profile_id == pid, Curator.kind == 'research',
                                               Curator.report_at >= now - 86400, Curator.report != '')).all()
     if reports:
         out.append({'key': 'research', 'title': 'From your research', 'curator_ids': list(reports)})
+    issues = s.exec(select(BriefingIssue.id, BriefingIssue.briefing_id).join(Briefing, Briefing.id == BriefingIssue.briefing_id)
+                    .where(Briefing.profile_id == pid, BriefingIssue.created_at >= now - 86400, BriefingIssue.content != '')
+                    .order_by(BriefingIssue.created_at.desc())).all()
+    latest = list({bid: iid for iid, bid in reversed(issues)}.values())  # newest issue per briefing
+    latest = sorted(latest, reverse=True)[:BRIEFING_HIGHLIGHTS]
+    if latest:
+        out.append({'key': 'briefings', 'title': 'From your briefings', 'issue_ids': latest})
     alerts = s.exec(select(func.count()).select_from(Alert).where(Alert.profile_id == pid, Alert.state == 'new')).one()
     if alerts:
         out.append({'key': 'alerts', 'title': 'Alerts', 'count': alerts})
@@ -274,6 +288,20 @@ def patch(s: Session, pid: int, now: float | None = None, run_id: str = '') -> E
     """Bring today's edition up to date without moving anything already seen. No model calls. Commits."""
     with EDITION_LOCK:
         return _patch_locked(s, pid, now, run_id)
+
+
+def regenerate(s: Session, pid: int, now: float | None = None) -> Edition:
+    """Rebuild today's selection from scratch now. What was already delivered today stays
+    recorded (so later days still skip it); placements and prose are released. Commits."""
+    with EDITION_LOCK:
+        now = now or time.time()
+        ed = s.exec(select(Edition).where(Edition.profile_id == pid, Edition.day == today(now))).first()
+        if ed is not None:
+            s.refresh(ed)
+            ed.sections, ed.intro, ed.intro_refs = [], '', []
+            s.add(ed)
+            s.flush()
+        return _patch_locked(s, pid, now, '')
 
 
 def _patch_locked(s: Session, pid: int, now: float | None, run_id: str) -> Edition:

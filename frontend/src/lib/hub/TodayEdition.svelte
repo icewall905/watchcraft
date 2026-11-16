@@ -40,13 +40,16 @@
 	function clearEdition() {
 		edition = null;
 	}
-	async function rerun() {
+	async function regenerate() {
 		const pid = session.profileId, version = session.version;
 		rerunning = true;
 		try {
-			await hub.rerunToday();
-			if (pid === session.profileId && version === session.version && accessAllowed()) { notice = 'Master curator queued. The selection will refresh when the review finishes.'; await load(); }
-		} catch (e) { if (pid === session.profileId && version === session.version && accessAllowed()) notice = e instanceof Error ? e.message : 'Could not start the curator.'; }
+			const r = await hub.regenerateToday();
+			if (pid === session.profileId && version === session.version && accessAllowed()) {
+				notice = r.rerun ? 'Rebuilt from the best of everything new. The curator is re-checking and will polish it shortly.' : 'Rebuilt from the best of everything new.';
+				await load();
+			}
+		} catch (e) { if (pid === session.profileId && version === session.version && accessAllowed()) notice = e instanceof Error ? e.message : 'Could not regenerate Today.'; }
 		finally { rerunning = false; }
 	}
 
@@ -131,7 +134,11 @@
 	const shownMemes = $derived(entries('memes').slice(0, showing.memes));
 	const research = $derived(section('research'));
 	const alerts = $derived(section('alerts'));
-	const hasContent = $derived(!!(entries('lead').length || entries('stories').length || entries('reads').length || entries('memes').length || (research && 'curators' in research && research.curators.length) || (alerts && 'count' in alerts && alerts.count)));
+	const briefings = $derived.by(() => { const b = section('briefings'); return b && 'issues' in b ? b.issues : []; });
+	const reports = $derived(research && 'curators' in research ? research.curators : []);
+	const curating = $derived(!!(edition?.rerun && edition.rerun.requested_at > edition.rerun.completed_at));
+	const hasContent = $derived(!!(entries('lead').length || entries('stories').length || entries('reads').length || entries('memes').length || reports.length || briefings.length || (alerts && 'count' in alerts && alerts.count)));
+	const ago = (sec: number) => { const h = Math.max(0, Math.round((clock / 1000 - sec) / 3600)); return h < 1 ? 'just now' : `${h} h ago`; };
 	const greeting = $derived.by(() => {
 		const hour = new Date(clock).getHours();
 		const name = session.profile?.name ? `, ${session.profile.name}` : '';
@@ -155,7 +162,7 @@
 	<header class="masthead">
 		<p class="date">Today · {today}</p>
 		<h1>{greeting}</h1>
-		<button class="btn" use:focusable disabled={rerunning || !!(edition?.rerun && edition.rerun.requested_at > edition.rerun.completed_at)} onclick={rerun}>{rerunning ? 'Queuing…' : edition?.rerun && edition.rerun.requested_at > edition.rerun.completed_at ? 'Curating…' : 'Rerun master curator'}</button>
+		<button class="btn regen" use:focusable disabled={rerunning} onclick={regenerate} title="Rebuild Today from the best of News, Discover, Briefings, Research and Meme Radar, then let the curator re-check it">{rerunning ? 'Regenerating…' : curating ? '↻ Regenerate (polishing…)' : '↻ Regenerate'}</button>
 		{#if edition?.intro}
 			<Cited text={edition.intro} itemIds={edition.intro_refs.map((r) => r.item_id)} />
 		{:else}
@@ -196,6 +203,25 @@
 			</section>
 		{/if}
 
+		{#if briefings.length || reports.length}
+			<section class="section" aria-label="Briefings and research">
+				<SectionHeader title="Briefed for you" action={briefings.length ? { href: '/briefings', label: 'All briefings' } : { href: '/research', label: 'All research' }} />
+				<div class="briefs" data-nav-row>
+					{#each briefings as b (b.id)}
+						<a class="brief" href="/briefings" use:focusable>
+							<span class="kicker">Briefing · {b.name} · {ago(b.created_at)}{b.ai ? ' · AI-written' : ''}</span>
+							<p>{b.excerpt}</p>
+						</a>
+					{/each}
+					{#each reports as c (c.id)}
+						<a class="brief" href={`/research/${c.id}`} use:focusable>
+							<span class="kicker">Research · {c.subject || c.name}{c.report_at ? ` · ${ago(c.report_at)}` : ''}</span>
+							<p>{c.excerpt || 'A new report is ready.'}</p>
+						</a>
+					{/each}
+				</div>
+			</section>
+		{/if}
 		{#if entries('reads').length}
 			<section class="section">
 				<SectionHeader title="Worth your time" action={{ href: '/discover', label: 'More discoveries' }} />
@@ -227,9 +253,6 @@
 
 		<TodayExtras />
 
-		{#if research && 'curators' in research && research.curators.length}
-			<section class="quiet-section" data-nav-row><QuietLine text={`New research on ${research.curators.map((c) => c.subject || c.name).join(', ')}`} href={`/research/${research.curators[0].id}`} linkLabel="Read the report" /></section>
-		{/if}
 		{#if alerts && 'count' in alerts && alerts.count > 0}
 			<section class="quiet-section" data-nav-row><QuietLine text={`${alerts.count} alert${alerts.count === 1 ? '' : 's'} waiting`} href="/alerts" linkLabel="Review alerts" tone="warn" /></section>
 		{/if}
@@ -260,6 +283,12 @@
 	.story-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: clamp(1.5rem, 4vw, 4rem); }
 	.reads { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: clamp(1rem, 2.5vw, 2rem); }
 	.group-heading { grid-column: 1 / -1; margin: 1.2rem 0 0; padding-top: .8rem; border-top: 1px solid var(--rule); color: var(--ink-soft); font: 500 var(--fs-md) / 1.4 var(--font-display); overflow-wrap: anywhere; }
+	.briefs { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 20rem), 1fr)); gap: clamp(.8rem, 2vw, 1.5rem); }
+	.brief { display: grid; gap: .45rem; padding: 1rem 1.1rem; border-left: 2px solid var(--rule); background: var(--bg-2); color: inherit; text-decoration: none; min-width: 0; }
+	.brief:hover, .brief:focus-visible { border-left-color: var(--ink-soft); }
+	.brief .kicker { color: var(--faint); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+	.brief p { margin: 0; color: var(--ink); line-height: 1.55; overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 5; line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; }
+	.regen { margin-bottom: 1rem; }
 	.memes { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(.7rem, 1.5vw, 1.25rem); }
 	.quiet-section { padding: 1rem 0; border-top: 1px solid var(--rule); }
 	.edition-end { display: grid; justify-items: center; border-top: 1px solid var(--rule); margin-top: 2rem; padding-top: 1rem; }

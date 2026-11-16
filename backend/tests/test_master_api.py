@@ -343,3 +343,60 @@ def test_today_preview_does_not_consume_hidden_entries_until_expanded(client):
     expanded = client.get('/api/hub/today?preview=true&stories=36').json()
     with session() as s:
         assert set(s.exec(select(Edition)).one().shown_item_ids) == set(entries(expanded, 'lead') + entries(expanded, 'stories')[:36])
+
+
+# ---------- today: best of the other pages, regenerate
+
+def test_widely_covered_story_outranks_a_slightly_better_single_source_one(client):
+    single = add(story=new_story(), final=80, title='One outlet')
+    big = new_story()
+    covered = add(story=big, final=76, title='Everyone reports it')
+    add(story=big, tier='keep', final=60)
+    add(story=big, tier='keep', final=60)
+    today = client.get('/api/hub/today').json()
+    assert entries(today, 'lead') == [covered]
+    assert single in entries(today, 'stories')
+    assert today['sections'][0]['entries'][0]['sources'] == 3
+
+
+def test_today_highlights_recent_briefing_issues_and_research_teasers(client):
+    from bt.hub.models import Briefing, BriefingIssue, Curator
+    add(final=80)
+    with session() as s:
+        b = Briefing(profile_id=1, name='Morning AI'); s.add(b); s.flush()
+        s.add(BriefingIssue(briefing_id=b.id, content='old', created_at=time.time() - 3 * 86400))
+        s.add(BriefingIssue(briefing_id=b.id, content='## Today\n**Models** shipped [1].', ai=True))
+        s.add(Curator(profile_id=1, name='R', kind='research', subject='Batteries', report='Solid-state cells improve [1].',
+                      report_at=time.time()))
+        s.commit()
+    today = client.get('/api/hub/today').json()
+    briefs = next(sec for sec in today['sections'] if sec['key'] == 'briefings')
+    assert [(i['name'], i['excerpt'], i['ai']) for i in briefs['issues']] == [('Morning AI', 'Today Models shipped.', True)]
+    research = next(sec for sec in today['sections'] if sec['key'] == 'research')
+    assert research['curators'][0]['excerpt'] == 'Solid-state cells improve.'
+    _, headers = other_profile(client)
+    assert not any(sec['key'] == 'briefings' for sec in client.get('/api/hub/today', headers=headers).json()['sections'])
+
+
+def test_regenerate_rebuilds_now_and_queues_the_curator(client):
+    lead = add(story=new_story(), final=90)
+    assert entries(client.get('/api/hub/today').json(), 'lead') == [lead]
+    better = add(story=new_story(), final=99)
+    with session() as s:
+        ed = s.exec(select(Edition)).one()
+        ed.intro, ed.intro_refs = 'Old intro [1].', [lead]
+        s.add(ed); s.commit()
+    out = client.post('/api/hub/today/regenerate').json()
+    assert out['rebuilt'] is True and out['rerun']['requested_at'] > out['rerun']['completed_at']
+    today = client.get('/api/hub/today').json()
+    assert entries(today, 'lead') == [better] and lead in entries(today, 'stories') and today['intro'] == ''
+    with session() as s:
+        assert lead in s.exec(select(Edition)).one().shown_item_ids
+
+
+def test_regenerate_still_rebuilds_with_master_disabled(client):
+    from bt.db import get_settings, save_setting
+    add(final=80)
+    save_setting('hub_master', {**get_settings()['hub_master'], 'enabled': False})
+    out = client.post('/api/hub/today/regenerate')
+    assert out.status_code == 200 and out.json() == {'rebuilt': True, 'rerun': None}

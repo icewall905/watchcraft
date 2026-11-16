@@ -1,5 +1,6 @@
 """Master curator endpoints: the daily edition, what was set aside, overrules, stories,
 explanations and the learned preferences the curator reads."""
+import re
 import time
 from typing import Literal
 
@@ -14,7 +15,7 @@ from ..api.core import profile_id
 from ..db import session, get_kv, save_setting
 from .api import can_see, item_query, serialize
 from .master import edition, schedule, views
-from .models import ContentItem, Curator, Edition, HubLesson, HubPreferenceCore, ItemVerdict, StoryItem, Topic
+from .models import Briefing, BriefingIssue, ContentItem, Curator, Edition, HubLesson, HubPreferenceCore, ItemVerdict, StoryItem, Topic
 
 router = APIRouter(prefix='/hub', tags=['WatchCraft Hub'], dependencies=[Depends(require_hub)])
 SET_ASIDE_DAYS = 7
@@ -54,6 +55,14 @@ def _kid_entry(e: dict, found: dict[int, dict]) -> dict:
     elif refs:
         out['summary_refs'] = _refs(found, refs)
     return out
+
+
+def _excerpt(text: str, limit: int = 280) -> str:
+    """Plain teaser of generated prose: no citations or markdown, cut at a word."""
+    text = re.sub(r'\s*\[\d+(?:\s*,\s*\d+)*\]', '', text or '')
+    text = re.sub(r'^\s*(?:#+|[-•]|\d+\.)\s+|[*_`>]+', '', text, flags=re.M)
+    text = ' '.join(text.split())
+    return text if len(text) <= limit else text[:limit].rsplit(' ', 1)[0].rstrip(',;:') + '…'
 
 
 def _set_aside_count(s: Session, pid: int, now: float) -> int:
@@ -96,9 +105,21 @@ def today(preview: bool = False, stories: int = 8, reads: int = 6, memes: int = 
                                    **({'summary_refs': _refs(found, e['summary_refs'])} if e.get('summary_refs') else {})}
                                   for e in sec['entries'] if e['item_id'] in found]
             if sec.get('key') == 'research':
-                out['curators'] = [{'id': c.id, 'name': c.name, 'subject': c.subject, 'report_at': c.report_at}
+                # A child's teaser would be written partly from sources it may not see.
+                out['curators'] = [{'id': c.id, 'name': c.name, 'subject': c.subject, 'report_at': c.report_at,
+                                    'excerpt': '' if kid else _excerpt(c.report)}
                                    for c in s.exec(select(Curator).where(Curator.id.in_(sec.get('curator_ids', [])),
                                                                          Curator.profile_id == pid)).all()]
+            if sec.get('key') == 'briefings':
+                if kid:
+                    continue
+                rows = s.exec(select(BriefingIssue, Briefing).join(Briefing, Briefing.id == BriefingIssue.briefing_id)
+                              .where(BriefingIssue.id.in_(sec.get('issue_ids', [])), Briefing.profile_id == pid)
+                              .order_by(BriefingIssue.created_at.desc())).all()
+                out['issues'] = [{'id': i.id, 'briefing_id': b.id, 'name': b.name, 'created_at': i.created_at,
+                                  'ai': i.ai, 'excerpt': _excerpt(i.content)} for i, b in rows]
+                if not out['issues']:
+                    continue
             sections.append(out)
         delivered = entry_ids
         if preview:
@@ -116,6 +137,17 @@ def today(preview: bool = False, stories: int = 8, reads: int = 6, memes: int = 
                 'intro': intro, 'intro_refs': _refs(found, intro_refs), 'sections': sections,
                 'rerun': get_kv(f'watchcraft_master_manual:{pid}', {}, s=s),
                 'set_aside': 0 if kid else _set_aside_count(s, pid, now), 'curated': views.has_verdicts(s, pid)}
+
+
+@router.post('/today/regenerate')
+def regenerate(pid: int = Depends(profile_id)):
+    """Rebuild today's selection now, then ask the master curator to re-judge and rewrite the prose."""
+    from ..db import get_settings
+    with session() as s:
+        edition.regenerate(s, pid)
+    if not get_settings()['hub_master'].get('enabled', True):
+        return {'rebuilt': True, 'rerun': None}
+    return {'rebuilt': True, 'rerun': rerun(pid)}
 
 
 @router.post('/today/rerun')

@@ -16,7 +16,8 @@ const edition = () => ({
 		{ key: 'stories', title: 'Stories', entries: [{ item_id: 2, item: item(2, 'A second story'), sources: 2, summary: 'A concise summary.' }] },
 		{ key: 'reads', title: 'Reads', entries: [{ item_id: 3, item: item(3, 'A useful read', 'article') }] },
 		{ key: 'memes', title: 'Memes', entries: [{ item_id: 4, item: { ...item(4, 'A small joke', 'meme'), meme: { spoiler: 'A small joke', sensitive: false, community: 'quiet-humor' } } }] },
-		{ key: 'research', title: 'Research', curator_ids: [8], curators: [{ id: 8, name: 'Materials', subject: 'new materials', report_at: 1 }] },
+		{ key: 'research', title: 'Research', curator_ids: [8], curators: [{ id: 8, name: 'Materials', subject: 'new materials', report_at: 1, excerpt: 'Graphene gets cheaper.' }] },
+		{ key: 'briefings', title: 'From your briefings', issue_ids: [5], issues: [{ id: 5, briefing_id: 2, name: 'Morning AI', created_at: 1, ai: true, excerpt: 'Three labs shipped new models.' }] },
 		{ key: 'alerts', title: 'Alerts', count: 2 }
 	]
 });
@@ -32,7 +33,9 @@ test('Today assembles the edition, citations, reasons and curator actions', asyn
 	await expect(page.getByText('+2 sources')).toBeVisible();
 	await expect(page.getByRole('heading', { name: 'Top stories' })).toBeVisible();
 	await expect(page.getByRole('heading', { name: 'A useful read' })).toBeVisible();
-	await expect(page.getByRole('link', { name: 'Read the report' })).toHaveAttribute('href', '/research/8');
+	await expect(page.getByRole('heading', { name: 'Briefed for you' })).toBeVisible();
+	await expect(page.getByRole('link', { name: /Morning AI.*Three labs shipped new models/ })).toHaveAttribute('href', '/briefings');
+	await expect(page.getByRole('link', { name: /new materials.*Graphene gets cheaper/ })).toHaveAttribute('href', '/research/8');
 	await expect(page.getByRole('link', { name: 'Review alerts' })).toHaveAttribute('href', '/alerts');
 	await page.getByRole('button', { name: 'Why?' }).first().click();
 	await expect(page.getByText('Matches your interests')).toBeVisible();
@@ -296,16 +299,17 @@ test('Today displays labeled archived AI summaries when source excerpts are abse
 	}
 });
 
-test('manual curator rerun stays pending and refreshes after completion', async ({ page }) => {
+test('regenerate rebuilds Today now and reports when the curator finishes polishing', async ({ page }) => {
 	let state = { requested_at: 0, completed_at: 0 };
 	await page.route(/\/api\/hub\/today(?:\?.*)?$/, route => route.fulfill({ json: { ...edition(), rerun: state } }));
-	await page.route('**/api/hub/today/rerun', route => { state = { requested_at: 10, completed_at: 0 }; return route.fulfill({ json: state }); });
+	await page.route('**/api/hub/today/regenerate', route => { state = { requested_at: 10, completed_at: 0 }; return route.fulfill({ json: { rebuilt: true, rerun: state } }); });
 	await freshPage(page, '/today');
-	await page.getByRole('button', { name: 'Rerun master curator' }).click();
-	await expect(page.getByRole('button', { name: 'Curating…' })).toBeDisabled();
+	await page.getByRole('button', { name: /^↻ Regenerate$/ }).click();
+	await expect(page.getByRole('status').filter({ hasText: 'Rebuilt from the best of everything new' })).toBeVisible();
+	await expect(page.getByRole('button', { name: /Regenerate \(polishing…\)/ })).toBeEnabled();
 	state = { requested_at: 10, completed_at: 11 };
 	await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-	await expect(page.getByRole('button', { name: 'Rerun master curator' })).toBeEnabled();
+	await expect(page.getByRole('button', { name: /^↻ Regenerate$/ })).toBeEnabled();
 	await expect(page.getByRole('status').filter({ hasText: 'Master curator finished' })).toBeVisible();
 });
 
