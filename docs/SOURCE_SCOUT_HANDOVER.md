@@ -8,6 +8,18 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Today best-of + Regenerate (`ca21993`, 2026-11-16)
+
+- Today ranks widely covered News stories higher, adds briefing/research excerpt cards, and `POST /api/hub/today/regenerate`
+  rebuilds the edition now and queues the master curator. Code only, no schema change.
+- Backup `/root/compose/watchcraft-backups/20261116-todaybest-ca21993` (online DB quick_check ok, config hashes,
+  previous source); rollback images `watchcraft:rollback-20261116-todaybest-*`, `rollback.sh`. rsync (checksum) of the
+  8 changed files. Pruned `20261115-thumbs-dbc00ad`, `daily-20261115T165422Z` and the thumbs rollback tags
+  (`PRUNE-MANIFEST-20261116T052813Z.txt`).
+- All four services run `sha256:dbb51d87b7e40b1fc99a73943e83fb47c4aea372918cb3e9ed5fcbbba482e6c0`, zero restarts,
+  no tracebacks; health and `/today` 200; new Today bundle served. Before deploy the downloader had restarted 8 times
+  (unrelated, pre-existing).
+
 ## Deployment record — kid-safe Hub for child profiles (`0ec5d18`, 2026-11-15)
 
 - Merge of 6435937: child profiles get every Hub area except Music and Sources behind a server-enforced kid-safe lock
