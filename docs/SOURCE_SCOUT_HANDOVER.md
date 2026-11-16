@@ -8,6 +8,23 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Common Room (`5366932`, `5632d32`, 2026-11-16)
+
+- New `/common-room`: per-interest Threads harvest Reddit/Lemmy/Mbin/Mastodon/Bluesky/HN/Lobsters/dev.to/Tildes/
+  Stack Exchange/Discourse, judge with the worker model, New→Deep feed with backfill, teaching, kid gate. Additive
+  schema: 13 `cr*` tables created by `init_db`. `5632d32`: keyless Reddit reads only the fresh RSS page (a live run
+  tripped Reddit's 429 block, which also stalls News' Reddit feeds); backfill/search/comments need Settings keys.
+- Backup `/root/compose/watchcraft-backups/20261116-commonroom-5366932` (online DB quick_check ok, config hashes,
+  previous source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261116-commonroom-*`); `5632d32` code-only,
+  rollback tags `watchcraft:rollback-20261116-crreddit-*`. Restored copy, network off: 86 tables' row counts unchanged,
+  13 new, `init_db` twice, quick_check ok.
+- Live run on a second restored copy (real network + LLM, prod untouched): AI discovered 5 sources, 702 posts fetched,
+  31 of 60 kept, on-topic. Backend 1515 passed/6 skipped; frontend check/build and e2e passed.
+- All four services run `sha256:bfb87e99a5172670df1f29739d8bfb0dade9a38e3f8cbe6b39146c9499caebe8`, zero restarts, no
+  tracebacks; health, `/common-room` and `/api/hub/commonroom/threads` 200.
+- Pruned rollback tags `dllock` and `kidsafe` (images removed; their backup dirs kept, so those rollbacks need an image
+  rebuild) — `PRUNE-MANIFEST-20261116T074251Z.txt`.
+
 ## Deployment record — share Mood Board images to child profiles (`04231b4`, 2026-11-16)
 
 - Child profiles are share targets; images from non-child-friendly boards pass the kid-safe picture bar on the vision
