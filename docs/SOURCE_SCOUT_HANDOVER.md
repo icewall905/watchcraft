@@ -8,6 +8,19 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — section names, What's new Front Page, landing page (`25997ec`, 2026-11-16)
+
+- New section names (The Screen, The Scroll, The Jukebox, The Front Page, The Finds, The Wire, The Stacks, The
+  Almanac, The Dispatch, The Study, The Scout); The Front Page opens with a 24-hour What's new grid per section;
+  per-browser landing page under Settings → Appearance (skipped inside the Android app). Frontend only; the Android
+  changes in this commit ship with the next app release.
+- Backup `/root/compose/watchcraft-backups/20261116-frontpage-25997ec` (online DB quick_check ok, config hashes,
+  previous source incl. the removed `TodayExtras.svelte`, `new-files.txt`, `rollback.sh` →
+  `watchcraft:rollback-20261116-frontpage-*`). rsync (checksum) of the 27 web files of `6742bca..25997ec`; one file
+  removed. Pruned `20261116-aimood-94a772a` and its rollback tags (`PRUNE-MANIFEST-20261116T200237Z.txt`).
+- All four `wc-*` run `sha256:db3e0552…`, zero restarts, no tracebacks; health, `/today`, `/news`, `/settings`,
+  `/common-room` 200; new names and landing setting in the served bundle.
+
 ## Deployment record — The Commons and The Boards (`6742bca`, 2026-11-16)
 
 - Side menu: Mood Board → The Boards, Common Room → The Commons; Meme Radar leaves the menu and sits under The
