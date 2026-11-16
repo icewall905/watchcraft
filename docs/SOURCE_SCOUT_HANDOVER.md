@@ -8,6 +8,17 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Common Room post languages (`b9136be`, 2026-11-16)
+
+- Posts keep a language (platform tag or guess; stored posts backfilled); a profile's chosen languages skip other
+  posts before judging and filter the feed (unknown language shows). Language guesser also names non-Latin scripts
+  and separates Danish/Norwegian; Meme Radar shares it. Additive schema: `crpost.language` + index.
+- Backup `/root/compose/watchcraft-backups/20261116-crlang-b9136be` (online DB copy, quick_check ok, previous
+  source); rollback images `watchcraft:rollback-20261116-crlang-*` (`columns` tags removed). Pruned
+  `20261116-dllock-c88dbb0` (`PRUNE-MANIFEST-20261116T105237Z.txt`).
+- All four `wc-*` run `sha256:ca3592cb…`, zero restarts, no tracebacks. Profile H set to Danish + English: 120 picks,
+  115 visible; post languages en 399, unknown 105, it 10, de 3, es/fr/pt 2 each.
+
 ## Deployment record — Common Room (`5366932`, `5632d32`, 2026-11-16)
 
 - Follow-up `0b144f1` (code only): `/visit` accepts the numeric thread id the page sends (opening/creating a thread
