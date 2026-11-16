@@ -138,3 +138,14 @@ test('a picture that fails to load leaves no broken frame on the card', async ({
 	await expect(page.getByText('Lost picture').first()).toBeVisible();
 	await expect(page.locator('.card .media')).toHaveCount(0);
 });
+
+test('desktop shows the wall in several columns, a phone in one', async ({ page }) => {
+	await setup(page);
+	await page.setViewportSize({ width: 1600, height: 1000 });
+	await freshPage(page, '/common-room');
+	await expect(page.getByText('Fresh C64 demo').first()).toBeVisible();
+	const lefts = async () => new Set(await page.locator('.feed').first().locator('.item').evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().left))));
+	expect((await lefts()).size).toBeGreaterThan(1);
+	await page.setViewportSize({ width: 390, height: 844 });
+	await expect.poll(async () => (await lefts()).size).toBe(1);
+});

@@ -8,6 +8,9 @@
  let threads = $state<Thread[]>([]), platforms = $state<PlatformInfo[]>([]), child = $state(false), selected = $state<'all' | number>('all');
  let newPosts = $state<Post[]>([]), deepPosts = $state<Post[]>([]), section = $state<'new' | 'deep'>('new'), cursor = $state(''), hasMore = $state(false), building = $state(false);
  let loaded = $state(false), loading = $state(false), error = $state(''), boundary = $state(0), editing = $state<Thread | 'new' | null>(null), open = $state<Post | null>(null), running = $state(false);
+ let wallWidth = $state(0);
+ const COL_PX = 384, GAP_PX = 14; // 24rem columns
+ const cols = $derived(Math.max(1, Math.min(4, Math.floor((wallWidth + GAP_PX) / (COL_PX + GAP_PX)))));
  let sentinel = $state<HTMLDivElement>();
  let generation = 0, identity = '', controller: AbortController | null = null;
  const allowed = () => session.hubAllowed && session.ready && !session.needsLogin && !session.choosing;
@@ -118,7 +121,17 @@
 </script>
 
 <svelte:head><title>Common Room</title></svelte:head>
-<div class="cr">
+{#snippet wall(list: Post[])}
+ <!-- Desktop: posts dealt left to right into columns that each stack tightly (no holes under short cards);
+      new pages append to the same columns, so nothing already on screen moves. -->
+ <div class="feed" style:--cols={cols}>
+  {#each Array.from({ length: cols }, (_, c) => list.filter((_, i) => i % cols === c)) as column, c (c)}
+   <div class="col">{#each column as p (p.pick_id)}<div class="item" use:seen={p.pick_id}><PostCard post={p} onOpen={(x) => { open = x; }} onGone={gone} /></div>{/each}</div>
+  {/each}
+ </div>
+{/snippet}
+
+<div class="cr" bind:clientWidth={wallWidth}>
  <header class="head">
   <div><p class="eyebrow">Explore</p><h1>Common Room</h1></div>
   {#if current}<div class="acts">
@@ -149,11 +162,11 @@
  {:else}
   {#if newPosts.length}
    <h2 class="sec">New since your last visit</h2>
-   <div class="feed">{#each newPosts as p (p.pick_id)}<div use:seen={p.pick_id}><PostCard post={p} onOpen={(x) => { open = x; }} onGone={gone} /></div>{/each}</div>
+   {@render wall(newPosts)}
   {/if}
   {#if section === 'deep'}
    {#if shown || !gathering}<div class="divider" role="separator"><span>You're caught up — deeper picks below</span></div>{/if}
-   <div class="feed">{#each deepPosts as p (p.pick_id)}<div use:seen={p.pick_id}><PostCard post={p} onOpen={(x) => { open = x; }} onGone={gone} /></div>{/each}</div>
+   {@render wall(deepPosts)}
   {/if}
   {#if gathering}
    <section class="empty"><h2>Your curator is gathering posts…</h2><p class="muted">{statusText ? `Status: ${statusText}` : 'This can take a few minutes.'}{#if current?.error} · {current.error}{/if}</p></section>
@@ -183,6 +196,11 @@
  .badge{min-width:1.3rem;padding:0 .35rem;border-radius:var(--r-pill);background:var(--accent);color:var(--accent-ink);font-size:.72rem;font-weight:700;text-align:center}
  .sec{margin:.4rem 0 0;font-size:.85rem;text-transform:uppercase;letter-spacing:.1em;color:var(--muted)}
  .feed{display:grid;gap:.9rem}
+ /* Desktop: the wall widens into columns, read left to right; a phone keeps the single column. */
+ .feed{grid-template-columns:repeat(var(--cols,1),minmax(0,1fr));align-items:start}
+ .col{display:grid;gap:.9rem;min-width:0}
+ /* Desktop: the wall widens so several columns fit; a phone keeps the single column. */
+ @media (min-width:1100px){.cr{max-width:112rem}}
  .divider{display:flex;align-items:center;gap:.8rem;color:var(--muted);font-size:.85rem;margin:.6rem 0}
  .divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--line-strong)}
  .empty{padding:2rem 1rem;text-align:center;border:1px dashed var(--line-strong);border-radius:var(--r-md);display:grid;gap:.7rem;justify-items:center}
