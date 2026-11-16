@@ -10,6 +10,12 @@ from .models import CRCandidate, CRPost, CRSource, CRSourcePost
 FIELDS = ('community', 'external_id', 'author', 'title', 'body', 'link_url', 'score', 'comments', 'nsfw', 'spoiler')
 
 
+def _thumb(media: list) -> bool:
+    """Only a small feed thumbnail: a fuller picture found later replaces it."""
+    first = media[0] if media else {}
+    return first.get('from') == 'thumb' or 'width=140' in str(first.get('url') or '')
+
+
 def _domain(url: str) -> str:
     host = (urlsplit(url).hostname or '') if url else ''
     return host[4:] if host.startswith('www.') else host
@@ -53,7 +59,7 @@ def upsert_posts(posts: list[dict], source_id: int | None = None, thread_id: int
             if post:
                 post.score, post.comments = r['score'] or post.score, r['comments'] or post.comments
                 post.fetched_at = time.time()
-                if r['media'] and not post.media:
+                if r['media'] and (not post.media or (_thumb(post.media) and not _thumb(r['media']))):
                     post.media = r['media']
             else:
                 post = CRPost(**r)

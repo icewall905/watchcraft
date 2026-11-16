@@ -6,7 +6,7 @@ from sqlmodel import select
 
 from test_curation import client  # noqa: F401
 from test_master_api import other_profile
-from bt.commonroom import api as cr_api, curate, discover, harvest, kids, scheduler, store
+from bt.commonroom import api as cr_api, assets, curate, discover, harvest, kids, scheduler, store
 from bt.commonroom.adapters import Adapter, Page
 from bt.commonroom.models import CRCandidate, CRPick, CRPost, CRSource, CRThread
 from bt.db import session
@@ -47,7 +47,7 @@ FAKE = Adapter(key='fake', label='Fake', parse=parse, fetch=fetch, sorts=('new',
 @pytest.fixture(autouse=True)
 def fake_platform(monkeypatch):
     CALLS.clear()
-    for mod in (harvest, discover, cr_api):
+    for mod in (harvest, discover, cr_api, assets):
         monkeypatch.setattr(mod, 'ADAPTERS', {'fake': FAKE})
     monkeypatch.setattr(curate.semantic, 'available', lambda: (False, 'off'))
     scheduler._pruned[0] = time.time()
@@ -366,3 +366,62 @@ def test_link_posts_get_the_linked_pages_preview_picture(client, monkeypatch):
     assert len(with_pic) == 1 and with_pic[0]['media'][0]['url'].endswith('/media/0')
     with session() as s:
         assert s.get(CRPost, with_pic[0]['post_id']).media[0]['url'] == 'https://blog.example/img/cover.jpg'
+
+
+def test_feed_thumbnails_are_replaced_by_the_full_picture(client, monkeypatch):
+    from bt.commonroom import previews
+    thumb = [{'kind': 'image', 'url': 'https://b.thumbs.redditmedia.com/t.jpg', 'poster': '', 'w': 0, 'h': 0, 'from': 'thumb'}]
+    monkeypatch.setattr(FAKE, 'fetch', lambda loc, sort, cur: Page(
+        [post(1, link_url='https://i.redd.it/full.png', media=thumb)] if sort == 'new' else [], ''))
+    thread(client)
+    run_all()
+    monkeypatch.setattr(previews.curation, 'fetch', lambda *a, **k: pytest.fail('a direct image needs no page fetch'))
+    assert previews.sweep() == 1
+    with session() as s:
+        p = s.exec(select(CRPost)).first()
+        assert p.media[0]['url'] == 'https://i.redd.it/full.png'
+
+
+
+def test_rss_entries_use_the_full_picture_not_the_feed_thumbnail():
+    from bt.commonroom.adapters.reddit import rss_image
+    assert rss_image('https://i.redd.it/a.png', '') == 'https://i.redd.it/a.png'
+    html = '<a href="x"><img src="https://preview.redd.it/b.jpg?width=640&amp;crop=smart&amp;s=1" alt="t" /></a>'
+    assert rss_image('https://example.com/article', html) == 'https://preview.redd.it/b.jpg?width=640&crop=smart&s=1'
+    assert rss_image('', '<img src="https://b.thumbs.redditmedia.com/t.jpg">') == ''
+
+
+def test_curated_posts_work_offline_pictures_thumbnails_and_comments(client, monkeypatch, tmp_path):
+    """Once picked, a post's pictures (full + preview) and comments are stored locally and served without WAN."""
+    import io
+    from PIL import Image
+    from bt.commonroom import assets
+    monkeypatch.setattr(assets, 'MEDIA_DIR', tmp_path)
+    buf = io.BytesIO()
+    Image.new('RGB', (1600, 1200), 'red').save(buf, format='PNG')
+    big = buf.getvalue()
+    monkeypatch.setattr(FAKE, 'fetch', lambda loc, sort, cur: Page(
+        [post(1, media=[{'kind': 'image', 'url': 'https://img.example/a.png', 'poster': '', 'w': 0, 'h': 0}])]
+        if sort == 'new' else [], ''))
+    monkeypatch.setattr(FAKE, 'comments', lambda data: [{'id': 'c1', 'author': 'bob', 'body': 'hi', 'score': 1,
+                                                          'published_at': 0, 'replies': []}])
+    thread(client)
+    run_all()
+    monkeypatch.setattr(assets.curation, 'fetch', lambda *a, **k: big)
+    assert assets.sweep() == {'images': 1, 'comments': 1}
+
+    def offline(*a, **k):
+        raise OSError('no network')
+    monkeypatch.setattr(assets.curation, 'fetch', offline)
+    monkeypatch.setattr(FAKE, 'comments', offline)
+    p = client.get('/api/hub/commonroom/feed', params={'boundary': 0}).json()['posts'][0]
+    full = client.get(p['media'][0]['url'])
+    thumb = client.get(p['media'][0]['thumb'])
+    assert full.status_code == 200 and full.content == big
+    assert thumb.status_code == 200 and thumb.headers['content-type'] == 'image/webp' and len(thumb.content) < len(big)
+    c = client.get(f"/api/hub/commonroom/posts/{p['post_id']}/comments").json()
+    assert c['comments'] and c['comments'][0]['body'] == 'hi'
+    # Unreferenced files go; referenced ones stay.
+    (tmp_path / 'zz').mkdir()
+    (tmp_path / 'zz' / 'orphan.full').write_bytes(b'x')
+    assert assets.gc(min_age_s=0) == 1 and client.get(p['media'][0]['url']).status_code == 200

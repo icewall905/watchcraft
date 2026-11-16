@@ -2,6 +2,7 @@
 	import type { Post } from '$lib/hub/commonroom';
 	import { crApi } from '$lib/hub/commonroom';
 	import Feedback from './Feedback.svelte';
+	import { authSrc } from '$lib/hub/BoardImage.svelte';
 	import Reasons from './Reasons.svelte';
 	import { ago, compact, platformOf } from './util';
 	let { post, onOpen, onGone }: { post: Post; onOpen: (p: Post) => void; onGone?: (p: Post) => void } = $props();
@@ -39,10 +40,10 @@
 				<div class="media">
 					{#if first.kind === 'video'}
 						<a class="vid" href={post.link_url || post.url} target="_blank" rel="noopener noreferrer" aria-label="Play video (opens original)">
-							{#if first.poster}<img src={first.poster} alt="" loading="lazy" />{:else}<span class="noposter"></span>{/if}<span class="playbtn">▶</span>
+							{#if first.poster}<img use:authSrc={first.poster} alt="" loading="lazy" />{:else}<span class="noposter"></span>{/if}<span class="playbtn">▶</span>
 						</a>
 					{:else}
-						<button type="button" class="imgbtn" aria-label="Open post" onclick={() => onOpen(post)}><img src={first.url} alt="" loading="lazy" /></button>
+						<button type="button" class="imgbtn" aria-label="Open post" onclick={() => onOpen(post)}><img use:authSrc={first.thumb || first.url} alt="" loading="lazy" /></button>
 					{/if}
 					{#if post.media.length > 1}<span class="count">{post.media.length} images</span>{/if}
 				</div>

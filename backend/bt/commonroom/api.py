@@ -1,5 +1,4 @@
 """Common Room HTTP API under /api/hub/commonroom. Profile-scoped; child profiles see kid-checked posts only."""
-import hashlib
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -7,7 +6,6 @@ from pydantic import BaseModel, Field
 from sqlalchemy import String, case, delete, func, update
 from sqlmodel import select
 
-from .. import curation
 from ..access import hub_worker_allowed, is_child, profile_id
 from ..db import session
 from . import harvest, store
@@ -80,9 +78,10 @@ def _media(post: CRPost, child: bool) -> list[dict]:
     for n, m in enumerate(post.media or []):
         if m.get('kind') == 'video':
             out.append({'kind': 'video', 'url': m.get('url') or '',
-                        'poster': f'/api/hub/commonroom/posts/{post.id}/media/{n}' if m.get('poster') else ''})
+                        'poster': f'/api/hub/commonroom/posts/{post.id}/media/{n}?size=thumb' if m.get('poster') else ''})
         else:
-            out.append({'kind': 'image', 'url': f'/api/hub/commonroom/posts/{post.id}/media/{n}', 'poster': ''})
+            u = f'/api/hub/commonroom/posts/{post.id}/media/{n}'
+            out.append({'kind': 'image', 'url': u, 'thumb': u + '?size=thumb', 'poster': ''})
     return out
 
 
@@ -501,9 +500,10 @@ def comments(post_id: int, pid: int = Depends(require_room)):
 
 
 @router.get('/posts/{post_id}/media/{n}')
-def media(post_id: int, n: int, pid: int = Depends(require_room)):
-    """The post's own pictures through our server: never a general URL fetcher."""
-    from ..hub.api import IMG_CACHE, IMG_MAX_BYTES, IMG_TYPES, _image_mime, _prune_img_cache
+def media(post_id: int, n: int, size: str = '', pid: int = Depends(require_room)):
+    """The post's own pictures from the local copy (saved when the post was picked); the source is only a
+    fallback for a picture not saved yet. Never a general URL fetcher."""
+    from . import assets
     with session() as s:
         post, _, _ = _post_for(s, pid, post_id)
         if _child(s, pid):
@@ -517,33 +517,23 @@ def media(post_id: int, n: int, pid: int = Depends(require_room)):
             raise HTTPException(404, 'No picture for this post.')
         m = items[n]
         url = m.get('poster') if m.get('kind') == 'video' else m.get('url')
-    if not url:
+    if not url or not url.startswith('https://'):
         raise HTTPException(404, 'No picture for this post.')
-    try:
-        url = curation.canonical(url)
-    except ValueError:
-        raise HTTPException(404, 'No picture for this post.')
-    key = hashlib.sha256(url.encode()).hexdigest()
-    path = IMG_CACHE / key[:2] / key
-    if path.is_file():
-        data = path.read_bytes()
-        mime = _image_mime(data)
-        if mime:
-            return Response(data, media_type=mime, headers={'Cache-Control': 'private, max-age=86400'})
-    try:
-        data = curation.fetch(url, kinds=IMG_TYPES, limit=IMG_MAX_BYTES)
-    except Exception:  # noqa: BLE001
-        raise HTTPException(404, 'That picture could not be fetched.')
-    mime = _image_mime(data)
+    headers = {'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff'}
+    data = assets.local(url, thumb=size == 'thumb')
+    if data is None:
+        try:
+            if not assets.save(url):
+                raise HTTPException(404, 'That picture is not a supported image.')
+        except HTTPException:
+            raise
+        except Exception:  # noqa: BLE001
+            raise HTTPException(404, 'That picture could not be fetched.')
+        data = assets.local(url, thumb=size == 'thumb')
+    mime = assets.mime_of(data or b'')
     if not mime:
         raise HTTPException(404, 'That picture is not a supported image.')
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-        _prune_img_cache(time.time())
-    except OSError:
-        pass
-    return Response(data, media_type=mime, headers={'Cache-Control': 'private, max-age=86400'})
+    return Response(data, media_type=mime, headers=headers)
 
 
 # ---------- blocks

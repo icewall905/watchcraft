@@ -12,7 +12,9 @@ from sqlmodel import select
 from .. import curation
 from ..db import session
 from ..hub import extract
+from .adapters.reddit import direct_image
 from .models import CRPick, CRPost
+from .store import _thumb
 
 log = logging.getLogger(__name__)
 PER_TICK = 8
@@ -39,10 +41,10 @@ def _due(limit: int) -> list[tuple[int, str]]:
                       .order_by(CRPost.published_at.desc()).limit(400)).all()
     out = []
     for pid, link, media, meta in rows:
-        if media or (meta or {}).get('preview_checked') or not link.startswith('https://'):
+        if (media and not _thumb(media)) or (meta or {}).get('preview_checked') or not link.startswith('https://'):
             continue
         host = link.split('/', 3)[2].lower()
-        if host in SKIP_HOSTS:
+        if host in SKIP_HOSTS and not direct_image(link):
             continue
         out.append((pid, link))
         if len(out) >= limit:
@@ -54,14 +56,14 @@ def sweep(limit: int = PER_TICK) -> int:
     found = 0
     for pid, link in _due(limit):
         try:
-            image = og_image(link)
+            image = link if direct_image(link) else og_image(link)
         except Exception as e:  # noqa: BLE001 — a page we cannot read just has no picture
             log.debug('Common Room preview for %s failed: %s', link, e)
             image = ''
         with session() as s:
             s.connection().exec_driver_sql('BEGIN IMMEDIATE')
             post = s.get(CRPost, pid)
-            if post and not post.media:
+            if post and (not post.media or _thumb(post.media)):
                 post.meta = {**(post.meta or {}), 'preview_checked': time.time()}
                 if image:
                     post.media = [{'kind': 'image', 'url': image, 'poster': '', 'w': 0, 'h': 0, 'from': 'link'}]

@@ -103,8 +103,11 @@ def prune(now: float | None = None):
                                (CRPostVector, CRPostVector.post_id), (CRComments, CRComments.post_id),
                                (CRAsset, CRAsset.post_id), (CRPost, CRPost.id)):
                 s.exec(delete(model).where(col.in_(old)))
-        s.exec(delete(CRComments).where(CRComments.fetched_at < now - 86400))
+        # Comments of kept posts stay: they are the offline copy shown when the source cannot be reached.
+        s.exec(delete(CRComments).where(CRComments.fetched_at < now - 86400, CRComments.post_id.not_in(picked)))
         s.commit()
+    from . import assets
+    assets.gc()
 
 
 async def scheduler():
@@ -119,6 +122,11 @@ async def scheduler():
             await asyncio.to_thread(previews.sweep)
         except Exception:
             log.exception('Common Room previews failed')
+        try:
+            from . import assets
+            await asyncio.to_thread(assets.sweep)
+        except Exception:
+            log.exception('Common Room local copies failed')
         try:
             await asyncio.to_thread(prune)
         except Exception:

@@ -106,3 +106,21 @@ test('Reddit keys are easy to find: grouped Settings tab with status', async ({ 
 	await page.getByRole('button', { name: 'Save Common Room' }).click();
 	expect((await saved).postDataJSON().reddit_client_id).toBe('abc');
 });
+
+test('post pictures load as the current profile, preview size on the card', async ({ page }) => {
+	const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64');
+	const media: { url: string; profile: string | undefined }[] = [];
+	await page.route('**/api/hub/commonroom/**', async (route) => {
+		const req = route.request(), url = new URL(req.url()), path = url.pathname.replace('/api/hub/commonroom', '');
+		if (path === '/threads') return route.fulfill({ json: { threads: [thread], platforms: [], child: false } });
+		if (path === '/visit') return route.fulfill({ json: { boundary: 50 } });
+		if (path === '/feed') return route.fulfill({ json: { posts: url.searchParams.get('section') === 'new' ? [post(1, 'Pictured post', { media: [{ kind: 'image', url: '/api/hub/commonroom/posts/101/media/0', thumb: '/api/hub/commonroom/posts/101/media/0?size=thumb', poster: '' }] })] : [], next_cursor: '', has_more: false, building: false } });
+		if (path.startsWith('/posts/101/media/')) { media.push({ url: url.pathname + url.search, profile: req.headers()['x-profile-id'] }); return route.fulfill({ body: png, contentType: 'image/png' }); }
+		return route.fulfill({ json: {} });
+	});
+	await freshPage(page, '/common-room');
+	const img = page.locator('.imgbtn img');
+	await expect(img).toHaveAttribute('src', /^blob:/);
+	expect(media[0].url).toBe('/api/hub/commonroom/posts/101/media/0?size=thumb');
+	expect(media[0].profile).toBeTruthy();
+});

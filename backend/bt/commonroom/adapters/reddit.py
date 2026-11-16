@@ -183,14 +183,36 @@ def _rss_page(name: str, sort: str) -> Page:
         body = '' if lm else plain(f['content'])
         body = re.sub(r'submitted by\s+/u/\S+.*$', '', body, flags=re.S | re.I).strip()
         thumb = https(f['thumb'])
+        image = rss_image(link, f['content'])
         author = f['author'].removeprefix('/u/')
         posts.append({'platform': 'reddit', 'community': f'r/{name}', 'external_id': m.group(1), 'url': url,
                       'link_url': link if (urlsplit(link).hostname or '') not in ('www.reddit.com', 'reddit.com') else '',
                       'title': title_of(plain(f['title'], 400)), 'body': body, 'author': author,
-                      'media': [{'kind': 'image', 'url': thumb, 'poster': '', 'w': 0, 'h': 0}] if thumb else [],
+                      'media': [{'kind': 'image', 'url': image, 'poster': '', 'w': 0, 'h': 0}] if image else
+                               [{'kind': 'image', 'url': thumb, 'poster': '', 'w': 0, 'h': 0, 'from': 'thumb'}] if thumb else [],
                       'score': 0, 'comments': 0, 'published_at': float(f['published'] or 0),
                       'nsfw': False, 'spoiler': False, 'meta': {'id': m.group(1)[3:], 'rss': True}})
     return Page(posts, '')
+
+
+_IMG_EXT = re.compile(r'\.(?:jpe?g|png|gif|webp)$', re.I)
+_IMG_HOSTS = ('i.redd.it', 'i.imgur.com')
+_CONTENT_IMG = re.compile(r'<img[^>]+src="([^"]+)"', re.I)
+
+
+def direct_image(url: str) -> bool:
+    parts = urlsplit(url)
+    return parts.scheme == 'https' and ((parts.hostname or '') in _IMG_HOSTS or bool(_IMG_EXT.search(parts.path)))
+
+
+def rss_image(link: str, content: str) -> str:
+    """Full picture for an RSS entry: the linked image itself, else the preview in the entry HTML (Reddit puts a
+    640 px preview there); '' leaves the 140 px feed thumbnail as the fallback."""
+    if link and direct_image(link):
+        return link
+    m = _CONTENT_IMG.search(content or '')
+    src = https(html.unescape(m.group(1))) if m else ''
+    return '' if not src or 'width=140' in src or (urlsplit(src).hostname or '').endswith('thumbs.redditmedia.com') else src
 
 
 def fetch(locator: str, sort: str = 'new', cursor: str = '') -> Page:

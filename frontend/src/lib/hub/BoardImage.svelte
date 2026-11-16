@@ -5,7 +5,7 @@
  const MAX = 1500; // grid previews are ~30 KB; full images are only cached as the viewer opens them
  const cache = new Map<string, Promise<string>>();
  const ready = new Map<string, string>(); // resolved entries, readable synchronously so remounted tiles show at once
- const LOCAL = /^\/api\/hub\/boards\/\d+\/(?:pins\/\d+\/(?:media|thumb)|reference\/media)(?:\?v=\d+)?$/;
+ const LOCAL = /^\/api\/hub\/(?:boards\/\d+\/(?:pins\/\d+\/(?:media|thumb)|reference\/media)(?:\?v=\d+)?|commonroom\/posts\/\d+\/media\/\d+(?:\?size=thumb)?)$/;
  export function boardMediaUrl(url: string): Promise<string> {
   // Only this authenticated local media route is allowed; never load a provider URL.
   if (!LOCAL.test(url)) return Promise.reject(new Error('Image unavailable'));
@@ -27,6 +27,20 @@
  /** Already-downloaded object URL for this image, or '' (never starts a fetch). */
  export function boardMediaReady(url: string): string {
   return ready.get(`${currentProfileId() ?? ''}|${url}`) ?? '';
+ }
+ /** Action for a plain <img>: loads an authenticated local media URL with this profile's header.
+  * A bare src would go out without X-Profile-Id and be answered for the wrong profile. */
+ export function authSrc(node: HTMLImageElement, url: string) {
+  let current = '';
+  const load = (u: string) => {
+   current = u;
+   const hit = boardMediaReady(u);
+   if (hit) { node.src = hit; return; }
+   node.removeAttribute('src');
+   boardMediaUrl(u).then((b) => { if (current === u) node.src = b; }, () => { if (current === u) node.dispatchEvent(new Event('error')); });
+  };
+  load(url);
+  return { update: load };
  }
  export async function boardMediaBlob(url: string): Promise<Blob> {
   return (await fetch(await boardMediaUrl(url))).blob();

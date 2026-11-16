@@ -2,6 +2,7 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import { crApi, type Post, type PostDetail, type Comment } from '$lib/hub/commonroom';
 	import Feedback from './Feedback.svelte';
+	import { authSrc } from '$lib/hub/BoardImage.svelte';
 	import CommentTree from './CommentTree.svelte';
 	import { ago, compact, platformOf } from './util';
 	let { post, onClose, onGone }: { post: Post; onClose: () => void; onGone?: (p: Post) => void } = $props();
@@ -26,8 +27,8 @@
 		{#if err}<p class="err" role="alert">{err}</p>{/if}
 		{#each post.media as m, i (i)}
 			{#if m.kind === 'video'}
-				<a class="vid" href={post.link_url || post.url} target="_blank" rel="noopener noreferrer">{#if m.poster}<img src={m.poster} alt="" />{/if}<span class="playbtn">▶ Watch at source</span></a>
-			{:else}<img class="gal" src={m.url} alt="" loading="lazy" />{/if}
+				<a class="vid" href={post.link_url || post.url} target="_blank" rel="noopener noreferrer">{#if m.poster}<img use:authSrc={m.poster} alt="" />{/if}<span class="playbtn">▶ Watch at source</span></a>
+			{:else}<img class="gal" use:authSrc={m.url} alt="" loading="lazy" />{/if}
 		{/each}
 		{#if detail}
 			{#if detail.body}<div class="text">{detail.body}</div>{:else if post.excerpt}<div class="text">{post.excerpt}</div>{/if}

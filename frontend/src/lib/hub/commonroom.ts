@@ -7,7 +7,7 @@ export interface Thread {
 }
 export interface PlatformInfo { key: string; label: string; example: string; sorts: string[] }
 export interface ThreadSource { id: number; source_id: number; platform: string; locator: string; label: string; origin: 'user' | 'ai'; enabled: boolean; error: string; last_ok: number | null }
-export interface Media { kind: 'image' | 'video'; url: string; poster?: string }
+export interface Media { kind: 'image' | 'video'; url: string; thumb?: string; poster?: string }
 export type Verdict = 'up' | 'down' | '';
 export interface Post {
  pick_id: number; post_id: number; thread_id: number; thread_name: string; platform: string; community: string; author: string; title: string; excerpt: string;
