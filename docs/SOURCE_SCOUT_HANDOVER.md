@@ -33,6 +33,9 @@
 - Follow-up `3a3002c` (code only): such pictures are dropped from the post and a picture failing in the browser hides
   its frame. Rollback tags `watchcraft:rollback-20261116-nobroken-*` (`pictures` tags removed). All four `wc-*` run
   `sha256:2bcbe1dd…`, zero restarts, no tracebacks; 34 of 34 listed pictures served, 62 files / 5.7 MB stored.
+- Follow-up `277cd3e` (frontend only): desktop Common Room wall in up to four columns. Rollback tags
+  `watchcraft:rollback-20261116-columns-*` (`nobroken` tags removed). All four `wc-*` run `sha256:c9b61172…`, zero
+  restarts, no tracebacks; health and `/common-room` 200, new stylesheet served.
 
 - New `/common-room`: per-interest Threads harvest Reddit/Lemmy/Mbin/Mastodon/Bluesky/HN/Lobsters/dev.to/Tildes/
   Stack Exchange/Discourse, judge with the worker model, New→Deep feed with backfill, teaching, kid gate. Additive
