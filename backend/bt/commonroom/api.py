@@ -74,8 +74,17 @@ def _media(post: CRPost, child: bool) -> list[dict]:
     if child:
         return [{'kind': 'image', 'url': f'/api/hub/commonroom/posts/{post.id}/media/0', 'poster': ''}] \
             if post.kid_image_ok == 1 else []
+    from . import assets
+    failed = set((post.meta or {}).get('media_failed') or [])
+
+    def gone(url: str) -> bool:  # the source stopped serving it and we never got a copy
+        return url in failed and not assets.path(url).is_file()
     out = []
     for n, m in enumerate(post.media or []):
+        if m.get('poster') and gone(m['poster']):
+            m = {**m, 'poster': ''}
+        if m.get('kind') != 'video' and gone(m.get('url') or ''):
+            continue
         if m.get('kind') == 'video':
             out.append({'kind': 'video', 'url': m.get('url') or '',
                         'poster': f'/api/hub/commonroom/posts/{post.id}/media/{n}?size=thumb' if m.get('poster') else ''})

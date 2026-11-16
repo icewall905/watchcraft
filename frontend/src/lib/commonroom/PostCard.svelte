@@ -12,6 +12,7 @@
 	let gone = $state(post.verdict === 'down');
 	const blurred = $derived((post.nsfw || post.spoiler) && !revealed);
 	const first = $derived(post.media[0]);
+	let broken = $state(false); // the picture could not be loaded: show the post without a frame
 	function down() {
 		gone = true;
 		void crApi.pick(post.pick_id, {hidden: true}).catch(() => {});
@@ -36,14 +37,14 @@
 			<button type="button" class="reveal" onclick={() => { revealed = true; }}>{post.nsfw ? 'NSFW' : 'Spoiler'} content hidden. Click to show.</button>
 		{:else}
 			{#if post.excerpt}<p class="excerpt">{post.excerpt}</p>{/if}
-			{#if first}
+			{#if first && !broken}
 				<div class="media">
 					{#if first.kind === 'video'}
 						<a class="vid" href={post.link_url || post.url} target="_blank" rel="noopener noreferrer" aria-label="Play video (opens original)">
-							{#if first.poster}<img use:authSrc={first.poster} alt="" loading="lazy" />{:else}<span class="noposter"></span>{/if}<span class="playbtn">▶</span>
+							{#if first.poster}<img use:authSrc={first.poster} alt="" loading="lazy" onerror={() => { broken = true; }} />{:else}<span class="noposter"></span>{/if}<span class="playbtn">▶</span>
 						</a>
 					{:else}
-						<button type="button" class="imgbtn" aria-label="Open post" onclick={() => onOpen(post)}><img use:authSrc={first.thumb || first.url} alt="" loading="lazy" /></button>
+						<button type="button" class="imgbtn" aria-label="Open post" onclick={() => onOpen(post)}><img use:authSrc={first.thumb || first.url} alt="" loading="lazy" onerror={() => { broken = true; }} /></button>
 					{/if}
 					{#if post.media.length > 1}<span class="count">{post.media.length} images</span>{/if}
 				</div>

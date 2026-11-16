@@ -27,8 +27,8 @@
 		{#if err}<p class="err" role="alert">{err}</p>{/if}
 		{#each post.media as m, i (i)}
 			{#if m.kind === 'video'}
-				<a class="vid" href={post.link_url || post.url} target="_blank" rel="noopener noreferrer">{#if m.poster}<img use:authSrc={m.poster} alt="" />{/if}<span class="playbtn">▶ Watch at source</span></a>
-			{:else}<img class="gal" use:authSrc={m.url} alt="" loading="lazy" />{/if}
+				<a class="vid" href={post.link_url || post.url} target="_blank" rel="noopener noreferrer">{#if m.poster}<img use:authSrc={m.poster} alt="" onerror={(e) => { (e.currentTarget as HTMLElement).hidden = true; }} />{/if}<span class="playbtn">▶ Watch at source</span></a>
+			{:else}<img class="gal" use:authSrc={m.url} alt="" loading="lazy" onerror={(e) => { (e.currentTarget as HTMLElement).hidden = true; }} />{/if}
 		{/each}
 		{#if detail}
 			{#if detail.body}<div class="text">{detail.body}</div>{:else if post.excerpt}<div class="text">{post.excerpt}</div>{/if}

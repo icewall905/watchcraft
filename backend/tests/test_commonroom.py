@@ -425,3 +425,26 @@ def test_curated_posts_work_offline_pictures_thumbnails_and_comments(client, mon
     (tmp_path / 'zz').mkdir()
     (tmp_path / 'zz' / 'orphan.full').write_bytes(b'x')
     assert assets.gc(min_age_s=0) == 1 and client.get(p['media'][0]['url']).status_code == 200
+
+
+def test_pictures_the_source_no_longer_serves_are_left_out(client, monkeypatch, tmp_path):
+    monkeypatch.setattr(assets, 'MEDIA_DIR', tmp_path)
+    monkeypatch.setattr(FAKE, 'fetch', lambda loc, sort, cur: Page(
+        [post(1, media=[{'kind': 'image', 'url': 'https://img.example/gone.png', 'poster': '', 'w': 0, 'h': 0},
+                        {'kind': 'image', 'url': 'https://img.example/ok.png', 'poster': '', 'w': 0, 'h': 0}])]
+        if sort == 'new' else [], ''))
+    thread(client)
+    run_all()
+    import io
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new('RGB', (8, 8)).save(buf, format='PNG')
+
+    def fetch(url, **k):
+        if 'gone' in url:
+            raise OSError('HTTP 404')
+        return buf.getvalue()
+    monkeypatch.setattr(assets.curation, 'fetch', fetch)
+    assets.sweep_images()
+    media = client.get('/api/hub/commonroom/feed', params={'boundary': 0}).json()['posts'][0]['media']
+    assert [m['url'].rsplit('/', 1)[1] for m in media] == ['1']  # index of ok.png kept stable

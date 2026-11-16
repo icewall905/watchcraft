@@ -124,3 +124,17 @@ test('post pictures load as the current profile, preview size on the card', asyn
 	expect(media[0].url).toBe('/api/hub/commonroom/posts/101/media/0?size=thumb');
 	expect(media[0].profile).toBeTruthy();
 });
+
+test('a picture that fails to load leaves no broken frame on the card', async ({ page }) => {
+	await page.route('**/api/hub/commonroom/**', async (route) => {
+		const url = new URL(route.request().url()), path = url.pathname.replace('/api/hub/commonroom', '');
+		if (path === '/threads') return route.fulfill({ json: { threads: [thread], platforms: [], child: false } });
+		if (path === '/visit') return route.fulfill({ json: { boundary: 50 } });
+		if (path === '/feed') return route.fulfill({ json: { posts: url.searchParams.get('section') === 'new' ? [post(1, 'Lost picture', { media: [{ kind: 'image', url: '/api/hub/commonroom/posts/101/media/0', thumb: '/api/hub/commonroom/posts/101/media/0?size=thumb', poster: '' }] })] : [], next_cursor: '', has_more: false, building: false } });
+		if (path.startsWith('/posts/101/media/')) return route.fulfill({ status: 404, json: { detail: 'That picture could not be fetched.' } });
+		return route.fulfill({ json: {} });
+	});
+	await freshPage(page, '/common-room');
+	await expect(page.getByText('Lost picture').first()).toBeVisible();
+	await expect(page.locator('.card .media')).toHaveCount(0);
+});
