@@ -1,7 +1,11 @@
 """Engine, sessions, settings helpers, agent state/control (shared across processes)."""
 import copy
 import json
+import logging
+import os
 import secrets
+import time
+import traceback
 from contextlib import contextmanager
 from datetime import timedelta
 
@@ -45,6 +49,43 @@ def _pragmas(conn, _):
     cur.execute("PRAGMA foreign_keys=ON")
     cur.execute("PRAGMA busy_timeout=30000")
     cur.close()
+
+
+# A write transaction holds SQLite's single write lock until it ends; every other process's
+# writes wait up to busy_timeout (30 s) and then fail with "database is locked". Log any
+# transaction that kept the lock long enough to matter, with where its first write came from.
+SLOW_WRITE_S = float(os.environ.get("BT_SLOW_WRITE_S", "10"))
+_WRITES = ("INSERT", "UPDATE", "DELETE", "REPLACE")
+_lock_log = logging.getLogger("bt.db.locks")
+
+
+def _caller() -> str:
+    """The app frames that started the write: skip this module and library code."""
+    try:
+        frames = [f for f in traceback.extract_stack()[:-3]
+                  if f.filename.endswith(".py") and "site-packages" not in f.filename
+                  and "/lib/python" not in f.filename and f.filename != __file__]
+        return " < ".join(f"{os.path.basename(os.path.dirname(f.filename))}/{os.path.basename(f.filename)}:{f.lineno} {f.name}"
+                          for f in reversed(frames[-3:])) or "?"
+    except Exception:  # noqa: BLE001 — diagnostics must never break a write
+        return "?"
+
+
+@event.listens_for(engine, "before_cursor_execute")
+def _note_first_write(conn, _cursor, statement, _params, _context, _many):
+    if "write_since" not in conn.info and statement.lstrip()[:7].upper().startswith(_WRITES):
+        conn.info["write_since"] = (time.monotonic(), statement.split(None, 3)[:3], _caller())
+
+
+def _write_ended(conn, how: str) -> None:
+    since = conn.info.pop("write_since", None)
+    if since and (held := time.monotonic() - since[0]) >= SLOW_WRITE_S:
+        _lock_log.warning("write lock held %.1fs until %s by pid %s: first %s from %s",
+                          held, how, os.getpid(), " ".join(since[1]), since[2])
+
+
+event.listen(engine, "commit", lambda conn: _write_ended(conn, "commit"))
+event.listen(engine, "rollback", lambda conn: _write_ended(conn, "rollback"))
 
 
 def init_db() -> None:
