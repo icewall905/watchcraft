@@ -10,6 +10,10 @@
 
 ## Deployment record — Common Room (`5366932`, `5632d32`, 2026-11-16)
 
+- Follow-up `0b144f1` (code only): `/visit` accepts the numeric thread id the page sends (opening/creating a thread
+  failed with "Input should be a valid string"). Rollback tags `watchcraft:rollback-20261116-crvisit-*`; the
+  intermediate `crreddit` tags were removed.
+
 - New `/common-room`: per-interest Threads harvest Reddit/Lemmy/Mbin/Mastodon/Bluesky/HN/Lobsters/dev.to/Tildes/
   Stack Exchange/Discourse, judge with the worker model, New→Deep feed with backfill, teaching, kid gate. Additive
   schema: 13 `cr*` tables created by `init_db`. `5632d32`: keyless Reddit reads only the fresh RSS page (a live run
