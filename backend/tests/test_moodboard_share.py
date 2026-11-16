@@ -106,8 +106,8 @@ def test_share_to_profile_isolation(client, monkeypatch):
     ob = make(client, name='Theirs')  # mine; try sharing another board's pin through it
     assert client.post(f"/api/hub/mood-share/boards/{ob['id']}/to-profile", json={'to': other, 'pin_id': pin['id']}).status_code == 404
     # Profiles without Mood Board access are not targets.
-    real = share.hub_allowed
-    monkeypatch.setattr(share, 'hub_allowed', lambda s, pid: pid != other and real(s, pid))
+    real = share.boards_allowed
+    monkeypatch.setattr(share, 'boards_allowed', lambda s, pid: pid != other and real(s, pid))
     assert client.get('/api/hub/mood-share/targets').json()['profiles'] == []
     assert client.post(url, json={'to': other}).status_code == 404
     with session() as s:
@@ -280,3 +280,100 @@ def test_limiter_is_bounded_and_groups_ipv6(monkeypatch):
     assert share._client(R('2001:db8:1:3::1')) != share._client(R('2001:db8:1:2::1'))
     assert share._client(R('192.0.2.7')) == '192.0.2.7'
     assert share._client(R('::ffff:192.0.2.7')) == '192.0.2.7'
+
+
+# ---------- to a child profile
+
+def child_profile(client):
+    """A child in the household means grown-ups need a PIN: give the test admin one and unlock it."""
+    from test_access import protect_admin
+    admin = protect_admin(client)
+    assert client.post(f"/api/profiles/{admin['id']}/unlock", json={'pin': '4826'}).status_code == 200
+    with session() as s:
+        kid = Profile(name='Kid', role='child')
+        s.add(kid); s.commit()
+        return kid.id, {'X-Profile-Id': str(kid.id)}
+
+
+def judge(monkeypatch, safe_titles=None, calls=None):
+    """Stub the vision model: 'safe' unless the call is told otherwise; records batches."""
+    from bt.hub import ai, kidsafe
+    monkeypatch.setattr(kidsafe, '_vision', lambda: True)
+    monkeypatch.setattr(share, 'vision_image', lambda data: 'img', raising=False)
+    import bt.hub.moodboards as mb
+    monkeypatch.setattr(mb, 'vision_image', lambda data: 'img')
+    def call(system, user, schema, **kw):
+        assert 'child-safety' in system and kw.get('images')
+        n = len(kw['images'])
+        (calls if calls is not None else []).append(n)
+        verdicts = safe_titles(n) if safe_titles else [True] * n
+        return {'verdicts': [{'n': i + 1, 'kid_safe': v, 'reason': ''} for i, v in enumerate(verdicts)]}
+    monkeypatch.setattr(ai, '_call', call)
+
+
+def test_child_profiles_are_share_targets_and_get_a_child_friendly_inbox(client, monkeypatch):
+    b = make(client, name='Cats')
+    pin = add(client, b['id'])
+    kid, kh = child_profile(client)
+    calls = []
+    judge(monkeypatch, calls=calls)
+    targets = client.get('/api/hub/mood-share/targets').json()['profiles']
+    assert [(t['id'], t['child']) for t in targets] == [(kid, True)]
+    r = client.post(f"/api/hub/mood-share/boards/{b['id']}/to-profile", json={'to': kid, 'pin_id': pin['id']})
+    assert r.status_code == 200, r.text
+    assert r.json()['added'] == 1 and r.json()['held'] == 0 and calls == [1]
+    boards = client.get('/api/hub/boards', headers=kh).json()['boards']
+    assert [x['name'] for x in boards] == ['Shared with you']
+    with session() as s:
+        inbox = s.get(MoodBoard, boards[0]['id'])
+        assert inbox.child_friendly and inbox.strictness == 'strict' and inbox.profile_id == kid
+    notices = client.get('/api/hub/mood-share/notices', headers=kh).json()['notices']
+    assert len(notices) == 1
+    assert client.get('/api/hub/counts', headers=kh).json()['boards_shared_new'] == 1
+    assert client.post('/api/hub/mood-share/notices/seen', json={'ids': [notices[0]['id']]}, headers=kh).status_code == 200
+
+
+def test_images_that_fail_the_kid_check_are_held_back(client, monkeypatch):
+    b = make(client, name='Mixed')
+    for n in range(1, 4):
+        add(client, b['id'], n)
+    kid, kh = child_profile(client)
+    judge(monkeypatch, safe_titles=lambda n: [True, False, True][:n])
+    r = client.post(f"/api/hub/mood-share/boards/{b['id']}/to-profile", json={'to': kid})
+    assert r.status_code == 200, r.text
+    assert r.json()['added'] == 2 and r.json()['held'] == 1
+    copy = client.get('/api/hub/boards', headers=kh).json()['boards'][0]
+    assert copy['pin_count'] == 2
+    with session() as s:
+        assert s.get(MoodBoard, copy['id']).child_friendly
+    # A single rejected image sends nothing.
+    judge(monkeypatch, safe_titles=lambda n: [False] * n)
+    pin = add(client, b['id'], 9)
+    r = client.post(f"/api/hub/mood-share/boards/{b['id']}/to-profile", json={'to': kid, 'pin_id': pin['id']})
+    assert r.status_code == 409 and 'kid-safety' in r.json()['detail']
+
+
+def test_child_share_fails_closed_without_a_vision_model_or_on_errors(client, monkeypatch):
+    from bt.hub import ai, kidsafe
+    b = make(client)
+    pin = add(client, b['id'])
+    kid, _ = child_profile(client)
+    url = f"/api/hub/mood-share/boards/{b['id']}/to-profile"
+    monkeypatch.setattr(kidsafe, '_vision', lambda: False)
+    assert client.post(url, json={'to': kid, 'pin_id': pin['id']}).status_code == 409
+    judge(monkeypatch)
+    monkeypatch.setattr(ai, '_call', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('model down')))
+    assert client.post(url, json={'to': kid, 'pin_id': pin['id']}).status_code == 409
+    with session() as s:
+        assert not s.exec(select(MoodPin).where(MoodPin.profile_id == kid)).all()
+        assert not s.exec(select(MoodShareNotice)).all()
+
+
+def test_child_friendly_board_images_go_to_a_child_without_another_check(client, monkeypatch):
+    from bt.hub import ai
+    b = make(client, name='Kid board', child_friendly=True)
+    pin = add(client, b['id'])
+    kid, _ = child_profile(client)
+    monkeypatch.setattr(ai, '_call', lambda *a, **k: pytest.fail('no model call expected'))
+    r = client.post(f"/api/hub/mood-share/boards/{b['id']}/to-profile", json={'to': kid, 'pin_id': pin['id']})
+    assert r.status_code == 200 and r.json()['added'] == 1

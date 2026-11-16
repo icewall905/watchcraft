@@ -23,11 +23,15 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, func
 from sqlmodel import select
 
-from ..access import grown_up_access, hub_allowed, require_hub
+import logging
+
+from ..access import boards_allowed, grown_up_access, hub_allowed, is_child, require_boards, require_hub
 from ..db import session
 from ..models import Profile
 from .models import MoodAsset, MoodBoard, MoodPin, MoodShareLink, MoodShareNotice
 from .moodboards import MAX_PINS, owned
+
+log = logging.getLogger(__name__)
 
 
 def _private(response: Response):
@@ -42,6 +46,7 @@ TOKEN_RE = re.compile(r'wcs_[A-Za-z0-9_-]{43}')
 MAX_LINKS = 50
 INBOX = 'Shared with you'
 PAGE = 60
+KID_CHECK_MAX = 40  # images from a non-child-friendly board checked per share to a child (vision model, in the request)
 HEADERS = {'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow, noarchive',
            'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff'}
 JSON_HEADERS = {**HEADERS, 'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'"}
@@ -62,11 +67,11 @@ def _visible_pin(s, pid, bid, pin_id):
 
 @router.get('/targets')
 def targets(pid: int = Depends(require_hub)):
-    """Other household profiles that can receive Mood Board images."""
+    """Other household profiles that can receive Mood Board images, child profiles included."""
     with session() as s:
         rows = s.exec(select(Profile).where(Profile.id != pid).order_by(Profile.name)).all()
-        return {'profiles': [{'id': p.id, 'name': p.name, 'emoji': p.emoji, 'color': p.color}
-                             for p in rows if hub_allowed(s, p.id)]}
+        return {'profiles': [{'id': p.id, 'name': p.name, 'emoji': p.emoji, 'color': p.color, 'child': p.role == 'child'}
+                             for p in rows if boards_allowed(s, p.id)]}
 
 
 class ToProfile(BaseModel):
@@ -98,13 +103,71 @@ def _stored(s, bid):
                   .where(MoodPin.board_id == bid)).one()
 
 
+def _kid_check(pictures: list[tuple[int, bytes]]) -> set[int]:
+    """Pin ids whose picture passes the kid-safe picture bar. Fail closed: errors approve nothing."""
+    from . import ai, kidsafe
+    from .moodboards import vision_image
+    if not pictures:
+        return set()
+    if not kidsafe._vision():
+        raise HTTPException(409, 'Images for a child profile need a kid-safety check, and the vision model is off.')
+    ok: set[int] = set()
+    for start in range(0, len(pictures), kidsafe.IMAGE_BATCH):
+        batch = pictures[start:start + kidsafe.IMAGE_BATCH]
+        try:
+            images = [vision_image(data) for _, data in batch]
+            res = ai._call(kidsafe.SYSTEM + ' ' + kidsafe.IMAGE_RULE,
+                           ai._data([{'type': 'image', 'title': 'Mood Board image'} for _ in batch]), kidsafe.SCHEMA,
+                           max_tokens=600, images=images, role='worker')
+        except Exception as e:  # noqa: BLE001 — unchecked pictures are not shared
+            log.info('kid-safe share check failed: %s', e)
+            continue
+        for row in res.get('verdicts', []) if isinstance(res, dict) else []:
+            n, safe, _ = kidsafe.normalize(row)
+            if safe and n is not None and 1 <= n <= len(batch):
+                ok.add(batch[n - 1][0])
+    return ok
+
+
+def _child_approved(bid: int, data: 'ToProfile', pid: int) -> tuple[set[int] | None, int]:
+    """For a child recipient: (pin ids allowed through, pins held back). None means not a child.
+    A child-friendly board's images already passed the child rule when collected; any other image
+    is checked now, outside the write transaction (vision calls take seconds)."""
+    with session() as s:
+        board = owned(s, pid, bid)
+        if not is_child(s, data.to):
+            return None, 0
+        if data.pin_id is not None:
+            pins = [_visible_pin(s, pid, bid, data.pin_id)]
+        else:
+            pins = s.exec(select(MoodPin).join(MoodAsset, MoodAsset.pin_id == MoodPin.id)
+                          .where(MoodPin.board_id == bid, MoodPin.profile_id == pid, MoodPin.hidden == False)  # noqa: E712
+                          .order_by(MoodPin.id).limit(MAX_PINS)).all()
+        ids = [p.id for p in pins]
+        if board.child_friendly:
+            return set(ids), 0
+        check = ids[:KID_CHECK_MAX]
+        pictures = [(i, a.data) for i in check if (a := s.get(MoodAsset, i))]
+    ok = _kid_check(pictures)
+    return ok, len(ids) - len(ok)
+
+
 @router.post('/boards/{bid}/to-profile')
 def to_profile(bid: int, data: ToProfile, pid: int = Depends(require_hub)):
+    with session() as s:
+        recipient = s.get(Profile, data.to)
+        if data.to == pid or not recipient or not boards_allowed(s, data.to):
+            raise HTTPException(404, 'That profile cannot receive Mood Board images.')
+    approved, held = _child_approved(bid, data, pid)
+    if approved is not None and not approved:
+        raise HTTPException(409, f"{'This image' if data.pin_id is not None else 'None of these images'} passed the "
+                                 f"kid-safety check, so nothing was sent to {recipient.name}.")
+    child = approved is not None
     with session() as s:
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
         board = owned(s, pid, bid)
         recipient = s.get(Profile, data.to)
-        if data.to == pid or not recipient or not hub_allowed(s, data.to):
+        if not recipient or not boards_allowed(s, data.to):
             raise HTTPException(404, 'That profile cannot receive Mood Board images.')
         sender = s.get(Profile, pid)
         if data.pin_id is not None:
@@ -113,10 +176,13 @@ def to_profile(bid: int, data: ToProfile, pid: int = Depends(require_hub)):
                             .order_by(MoodBoard.id)).first()
             if not target:
                 target = MoodBoard(profile_id=data.to, name=INBOX, interests='Images other profiles shared with you',
-                                   enabled=False)
+                                   enabled=False, **({'child_friendly': True, 'strictness': 'strict'} if child else {}))
                 s.add(target)
                 s.flush()
-            elif _stored(s, target.id) >= MAX_PINS:
+            elif child and not target.child_friendly:
+                target.child_friendly, target.strictness = True, 'strict'
+                s.add(target)
+            if _stored(s, target.id) >= MAX_PINS:
                 raise HTTPException(409, f"{recipient.name}'s Shared with you board is full.")
         else:
             pins = s.exec(select(MoodPin).join(MoodAsset, MoodAsset.pin_id == MoodPin.id)
@@ -124,20 +190,27 @@ def to_profile(bid: int, data: ToProfile, pid: int = Depends(require_hub)):
                           .order_by(MoodPin.id).limit(MAX_PINS)).all()
             if not pins:
                 raise HTTPException(409, 'This board has no images to share yet.')
+            if child:
+                pins = [p for p in pins if p.id in approved]
+                if not pins:
+                    raise HTTPException(409, f'None of these images passed the kid-safety check, so nothing was sent to {recipient.name}.')
             target = MoodBoard(profile_id=data.to, name=f'{board.name} · from {sender.name}'[:100],
-                               interests=board.interests, enabled=False)
+                               interests=board.interests, enabled=False,
+                               **({'child_friendly': True, 'strictness': 'strict'} if child else {}))
             s.add(target)
             s.flush()
+        if child:
+            pins = [p for p in pins if p.id in approved]  # a board edited during the check cannot slip new images in
         added = sum(_copy(s, pin, target.id, data.to) for pin in pins)
         if added:
             s.add(MoodShareNotice(recipient_id=data.to, sender_id=pid, kind='pin' if data.pin_id is not None else 'board',
                                   board_id=target.id, count=added))
         s.commit()
-        return {'ok': True, 'added': added, 'recipient': recipient.name}
+        return {'ok': True, 'added': added, 'recipient': recipient.name, 'held': held}
 
 
 @router.get('/notices')
-def notices(pid: int = Depends(require_hub)):
+def notices(pid: int = Depends(require_boards)):
     with session() as s:
         rows = s.exec(select(MoodShareNotice).where(MoodShareNotice.recipient_id == pid, MoodShareNotice.seen == False)  # noqa: E712
                       .order_by(MoodShareNotice.id.desc()).limit(20)).all()
@@ -158,7 +231,7 @@ class Seen(BaseModel):
 
 
 @router.post('/notices/seen')
-def notices_seen(data: Seen, pid: int = Depends(require_hub)):
+def notices_seen(data: Seen, pid: int = Depends(require_boards)):
     with session() as s:
         for n in s.exec(select(MoodShareNotice).where(MoodShareNotice.recipient_id == pid,
                                                       MoodShareNotice.id.in_(data.ids))).all():

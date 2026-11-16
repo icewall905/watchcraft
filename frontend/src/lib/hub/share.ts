@@ -1,7 +1,7 @@
 import { request } from '$lib/api';
 
 /** Mood Board sharing: copy to another household profile, or a public link (backend: bt/hub/moodboard_share.py). */
-export interface ShareTarget { id: number; name: string; emoji: string; color: string }
+export interface ShareTarget { id: number; name: string; emoji: string; color: string; child?: boolean }
 export interface ShareLink {
  id: number; kind: 'pin' | 'board'; board_id: number; pin_id: number | null; board_name: string; pin_title: string;
  hint: string; include_source: boolean; expires_at: number | null; expired: boolean; created_at: number;
@@ -18,7 +18,7 @@ const base = '/hub/mood-share';
 export const shareApi = {
  targets: () => request<{profiles: ShareTarget[]}>(`${base}/targets`, {toast: false}),
  toProfile: (board: number, to: number, pin_id?: number) =>
-  request<{ok: boolean; added: number; recipient: string}>(`${base}/boards/${board}/to-profile`, {method: 'POST', body: {to, pin_id}, toast: false}),
+  request<{ok: boolean; added: number; recipient: string; held?: number}>(`${base}/boards/${board}/to-profile`, {method: 'POST', body: {to, pin_id}, toast: false}),
  notices: () => request<{notices: ShareNotice[]}>(`${base}/notices`, {toast: false}),
  seen: (ids: number[]) => request<unknown>(`${base}/notices/seen`, {method: 'POST', body: {ids}, toast: false}),
  links: (board_id?: number) => request<{links: ShareLink[]}>(`${base}/links${board_id ? `?board_id=${board_id}` : ''}`, {toast: false}),

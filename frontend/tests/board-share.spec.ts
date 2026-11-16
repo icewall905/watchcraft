@@ -135,3 +135,18 @@ test('sharing an image file opens the share sheet straight from the tap', async 
   await expect(page.getByText('Could not share this image.')).toHaveCount(0);
  } finally { await cleanup(request, s); }
 });
+
+test('a kid profile is a share target and held-back images are reported', async ({ page, request }) => {
+ const s = await seed(request);
+ try {
+  await page.route('**/api/hub/mood-share/targets', route => route.fulfill({ json: { profiles: [{ id: 999, name: 'Kiddo', emoji: '🐣', color: '#ffd166', child: true }] } }));
+  await page.route(`**/api/hub/mood-share/boards/${s.board.id}/to-profile`, route => route.fulfill({ json: { ok: true, added: 1, recipient: 'Kiddo', held: 1 } }));
+  await freshPage(page, `/boards?board=${s.board.id}`);
+  await page.getByRole('toolbar', { name: 'Board actions' }).getByRole('button', { name: 'Share', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Share “Share test board”' });
+  await expect(dialog.getByText('Kid · safety-checked')).toBeVisible();
+  await expect(dialog.getByText(/pass the kid-safety check first/)).toBeVisible();
+  await dialog.getByRole('button', { name: 'Send this board to Kiddo' }).click();
+  await expect(page.getByText('Sent 1 image to Kiddo. 1 image was held back by the kid-safety check.')).toBeVisible();
+ } finally { await cleanup(request, s); }
+});

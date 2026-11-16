@@ -296,7 +296,7 @@
   <div class="heading-actions">{#if !session.isChild}<button class="btn pill" onclick={() => { sharing = {}; }}>{@render icon('link')}Shared links</button><button class="btn pill" onclick={openExtension}>{@render icon('puzzle')}Browser extension</button>{/if}<button class="btn primary new-board" onclick={() => edit()}>{@render icon('plus')}New board</button></div>
  </header>
  {#if error && !editing && !imageOpen && !importOpen}<div class="feedback error" role="alert"><span>{error}</span><button class="btn" onclick={() => load()}>Try again</button></div>{/if}
- {#if !selected && !session.isChild}<ShareNotices onOpen={(id) => choose(id)} />{/if}
+ {#if !selected}<ShareNotices onOpen={(id) => choose(id)} />{/if}
  {#if notice}<p class="feedback good" role="status">{notice}<button class="dismiss" aria-label="Dismiss message" onclick={() => { notice = ''; }}>×</button></p>{/if}
 
  {#if boards.length}

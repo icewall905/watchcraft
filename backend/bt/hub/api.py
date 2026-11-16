@@ -13,7 +13,7 @@ from sqlalchemy import case, func, or_, text
 from sqlmodel import Session, delete, select
 
 from .. import curation
-from ..access import CHILD_CURATOR_ACTIONS, KID_LOCKED, hub_allowed, is_child, require_admin, require_hub
+from ..access import CHILD_CURATOR_ACTIONS, KID_LOCKED, boards_allowed, hub_allowed, is_child, require_admin, require_hub
 from ..api.core import profile_id
 from ..config import DATA_DIR
 from ..db import get_settings, save_setting, session
@@ -182,7 +182,7 @@ def counts(pid: int = Depends(profile_id)):
             func.coalesce(ContentItem.published_at, ContentItem.first_seen) >= time.time() - 86400)).one()
         from .moodboard_share import unseen_count
         return {'discover_unread': unread, 'alerts_new': alerts, 'news_today': news,
-                'boards_shared_new': unseen_count(s, pid) if hub_allowed(s, pid) else 0}
+                'boards_shared_new': unseen_count(s, pid) if boards_allowed(s, pid) else 0}
 
 
 # ---------- items

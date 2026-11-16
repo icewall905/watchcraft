@@ -40,7 +40,8 @@
   busy = true; error = '';
   try {
    const r = await shareApi.toProfile(board.id, t.id, pin?.id);
-   toast.success(r.added ? `Sent ${pin ? 'the image' : `${r.added} image${r.added === 1 ? '' : 's'}`} to ${r.recipient}.` : `${r.recipient} already has ${pin ? 'this image' : 'these images'}.`);
+   const held = r.held ? ` ${r.held} ${r.held === 1 ? 'image was' : 'images were'} held back by the kid-safety check.` : '';
+   toast.success((r.added ? `Sent ${pin ? 'the image' : `${r.added} image${r.added === 1 ? '' : 's'}`} to ${r.recipient}.` : `${r.recipient} already has ${pin ? 'this image' : 'these images'}.`) + held);
    onClose();
   } catch (e) { fail(e); } finally { busy = false; }
  }
@@ -109,11 +110,12 @@
      <ul class="targets">
       {#each targets as t (t.id)}
        <li><button class="target" disabled={busy} onclick={() => send(t)} aria-label={`Send ${what} to ${t.name}`}>
-        <Avatar emoji={t.emoji} color={t.color} size="2.2rem" /><span>{t.name}</span><span class="go">{pin ? 'Send image' : 'Send copy'}</span>
+        <Avatar emoji={t.emoji} color={t.color} size="2.2rem" /><span>{t.name}{#if t.child}<small class="kid">Kid · safety-checked</small>{/if}</span><span class="go">{busy && t.child ? 'Checking…' : pin ? 'Send image' : 'Send copy'}</span>
        </button></li>
       {/each}
      </ul>
     {/if}
+    {#if targets?.some(t => t.child)}<p class="muted small">Images for a kid profile pass the kid-safety check first; anything that does not is held back.</p>{/if}
     {#if pin && canDeviceShare}<button class="btn pill" onclick={shareFile}>Share file with an app…</button>{/if}
    </div>
   {:else}
@@ -175,4 +177,5 @@
  .what strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
  .small{font-size:.8rem}
  .error{color:#ff8f8f}
+ .kid { display: block; color: var(--faint); font-size: var(--fs-xs, .75rem); }
 </style>
