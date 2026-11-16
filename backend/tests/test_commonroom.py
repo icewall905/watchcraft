@@ -336,3 +336,10 @@ def test_thread_new_counts(client):
     assert th['new_count'] == th['pick_count'] > 0 and th['source_count'] == 1
     client.post('/api/hub/commonroom/visit', json={'thread': str(t['id'])})
     assert client.get('/api/hub/commonroom/threads').json()['threads'][0]['new_count'] == 0
+
+
+def test_visit_accepts_numeric_thread_id_like_the_page_sends(client):
+    t = thread(client)
+    r = client.post('/api/hub/commonroom/visit', json={'thread': t['id']})
+    assert r.status_code == 200, r.text
+    assert client.post('/api/hub/commonroom/visit', json={'thread': 9999}).status_code == 404

@@ -279,7 +279,7 @@ def remove_source(tid: int, lid: int, pid: int = Depends(require_room)):
 # ---------- feed
 
 class VisitIn(BaseModel):
-    thread: str = 'all'
+    thread: int | str = 'all'  # the page sends a thread id as a number
 
 
 def _scope(s, pid: int, thread: str) -> str:
@@ -299,7 +299,7 @@ def visit(data: VisitIn, pid: int = Depends(require_room)):
     now = time.time()
     with session() as s:
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
-        scope = _scope(s, pid, data.thread)
+        scope = _scope(s, pid, str(data.thread))
         v = s.exec(select(CRVisit).where(CRVisit.profile_id == pid, CRVisit.scope == scope)).first()
         if not v:
             v = CRVisit(profile_id=pid, scope=scope, boundary=now - FIRST_VISIT_S, visit_at=now)
