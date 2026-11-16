@@ -562,6 +562,7 @@ class MoodBoard(SQLModel, table=True):
     min_width: int = 0        # Skip captured images narrower than this (px)
     strictness: str = 'strict'  # strict | balanced
     child_friendly: bool = False  # safe sources + child-safety vision rule; always on for child profiles
+    ai_images: str = 'reject'  # ignore | mark | reject — how the curator treats AI-generated images
     created_at: float = Field(default_factory=time.time)
 
 
@@ -580,6 +581,7 @@ class MoodPin(SQLModel, table=True):
     license: str = ''
     saved: bool = False
     hidden: bool = False
+    ai_flag: str = ''  # why the curator thinks it is AI-generated ('' = not flagged)
     created_at: float = Field(default_factory=time.time)
 
 

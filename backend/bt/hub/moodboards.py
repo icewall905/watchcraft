@@ -77,6 +77,7 @@ class BoardCreate(BaseModel):
     min_width: int = Field(default=0, ge=0, le=4000)
     strictness: str = Field(default='strict', pattern='^(strict|balanced)$')
     child_friendly: bool = False
+    ai_images: str = Field(default='reject', pattern='^(ignore|mark|reject)$')
 
 
 class BoardEdit(BaseModel):
@@ -92,6 +93,7 @@ class BoardEdit(BaseModel):
     min_width: int | None = Field(default=None, ge=0, le=4000)
     strictness: str | None = Field(default=None, pattern='^(strict|balanced)$')
     child_friendly: bool | None = None
+    ai_images: str | None = Field(default=None, pattern='^(ignore|mark|reject)$')
 
 
 class PinFeedback(BaseModel):
@@ -674,7 +676,18 @@ def vision_image(data, edge=1024):
     return 'data:image/jpeg;base64,' + base64.b64encode(output.getvalue()).decode('ascii')
 
 
-def select_candidates(candidates, interests, instructions, progress=None, reference_data=None, strict=True):
+AI_RULES = {
+    'reject': 'Reject images that look AI-generated: waxy or airbrushed skin, impossible hands, fingers or limbs, '
+              'melted or nonsense text and logos, warped symmetry or perspective, objects merging into each other, '
+              'over-perfect cinematic lighting with dreamy glow, and generator-style hyperreal fantasy renders. ',
+    'mark': 'Do not reject an image only for being AI-generated, but set ai_generated=true when it looks AI-generated '
+            '(waxy or airbrushed skin, impossible hands or limbs, melted or nonsense text, warped perspective, objects '
+            'merging into each other, generator-style hyperreal renders); otherwise false. ',
+    'ignore': '',
+}
+
+
+def select_candidates(candidates, interests, instructions, progress=None, reference_data=None, strict=True, ai_mode='reject'):
     """Judge captured pixels, in small batches, against every requested constraint."""
     if not ai.enabled() or not get_settings()['llm'].get('vision'):
         raise NotesUnavailable('Vision model unavailable')
@@ -691,8 +704,10 @@ def select_candidates(candidates, interests, instructions, progress=None, refere
                       'index': {'type': 'integer', 'minimum': 0, 'maximum': len(batch)-1},
                       'seen': {'type': 'string', 'maxLength': 160},
                       'fits': {'type': 'boolean'},
-                      'why': {'type': 'string', 'maxLength': 200}},
-                      'required': ['index', 'seen', 'fits', 'why'], 'additionalProperties': False}}},
+                      'why': {'type': 'string', 'maxLength': 200},
+                      **({'ai_generated': {'type': 'boolean'}} if ai_mode == 'mark' else {})},
+                      'required': ['index', 'seen', 'fits', 'why'] + (['ai_generated'] if ai_mode == 'mark' else []),
+                      'additionalProperties': False}}},
                   'required': ['verdicts'], 'additionalProperties': False}
         rows = [{'index': i, 'title': str(c.get('title', ''))[:500],
                  'description': str(c.get('description', ''))[:1000]} for i, c in enumerate(batch)]
@@ -714,10 +729,7 @@ def select_candidates(candidates, interests, instructions, progress=None, refere
                    'owner\'s avoid list; preferences in the instructions may be partly met. ') +
                 'Reject generic stock previews, watermarked catalog assets and AI/SEO '
                 'illustrations when the board asks for real setups or projects. '
-                'Unless the board explicitly asks for AI art, reject images that look AI-generated: waxy or '
-                'airbrushed skin, impossible hands, fingers or limbs, melted or nonsense text and logos, warped '
-                'symmetry or perspective, objects merging into each other, over-perfect cinematic lighting with '
-                'dreamy glow, and generator-style hyperreal fantasy renders. '
+                + AI_RULES.get(ai_mode, '') +
                 'Specific restrictions such as heart patterns ONLY must be visibly '
                 'present on the requested object, not inferred from its title. Sewing pattern requests need '
                 'an actual usable pattern or clearly relevant pattern instructions, not just a garment photo. '
@@ -745,6 +757,8 @@ def select_candidates(candidates, interests, instructions, progress=None, refere
             for i in dict.fromkeys(keep):
                 batch[i]['_verdict'] = {'seen': str(by_index[i].get('seen', ''))[:160],
                                         'why': str(by_index[i].get('why', ''))[:200]}
+                if ai_mode == 'mark' and by_index[i].get('ai_generated') is True and not batch[i].get('_ai_flag'):
+                    batch[i]['_ai_flag'] = 'looks AI-generated'
                 chosen.append(batch[i])
         except Exception as exc:
             # One slow or malformed batch must not discard verdicts from the others.
@@ -832,7 +846,7 @@ def collect(bid, lease, revision):
         child = bool(board.child_friendly)
         strict = child or board.strictness != 'balanced'
         context = board.name + ' — ' + board.interests
-        allow_ai = ai_detect.board_wants_ai(board.name, board.interests, board.instructions)
+        ai_mode = board.ai_images if board.ai_images in ai_detect.MODES else 'reject'
         offset = board.source_offset
         query = interests[(offset // 30) % len(interests)]
         page_offset = ((offset // (30 * len(interests))) * 30) % 300
@@ -878,10 +892,11 @@ def collect(bid, lease, revision):
                 if (min_width and width and width < min_width) or (media == 'photos' and mime == 'image/gif') \
                         or (media == 'gifs' and mime != 'image/gif'):
                     continue  # Owner's size/media filter: no vision call spent on it.
-                if not allow_ai and (flag := ai_detect.detect(data)):
+                flag = ai_detect.detect(data) if ai_mode != 'ignore' else ''
+                if flag and ai_mode == 'reject':
                     log.info('Mood Board skip AI image %s: %s', item['image_url'][:120], flag)
                     continue  # Declared AI generation: no vision call spent on it.
-                captured.append({**item, '_captured': (data, mime, width, height)})
+                captured.append({**item, '_captured': (data, mime, width, height), **({'_ai_flag': flag} if flag else {})})
             except Exception:
                 failures += 1
         def progress(start, end):
@@ -889,6 +904,8 @@ def collect(bid, lease, revision):
             milestone('judge', f'Vision reviewing images {start + 1}–{end} of {len(captured)} against your instructions.',
                       reviewed=start, candidates=len(captured))
         extra = {'reference_data': reference_data} if reference_data else {}
+        if ai_mode != 'reject':
+            extra['ai_mode'] = ai_mode
         if not strict:
             extra['strict'] = False
         selected = select_candidates(captured, context, instructions, progress, **extra)
@@ -925,7 +942,8 @@ def collect(bid, lease, revision):
             pin = MoodPin(board_id=bid, profile_id=board.profile_id, title=item['title'][:500],
                           source_url=item['source_url'], image_url=item['image_url'],
                           media_type='gif' if mime == 'image/gif' else 'image', width=width, height=height,
-                          attribution=item.get('attribution', '')[:1000], license=item.get('license', '')[:200])
+                          attribution=item.get('attribution', '')[:1000], license=item.get('license', '')[:200],
+                          ai_flag=item.get('_ai_flag', '')[:200])
             s.add(pin)
             s.flush()
             s.add(MoodAsset(pin_id=pin.id, mime=mime, data=data))

@@ -46,16 +46,5 @@ def detect(data: bytes) -> str:
     return ''
 
 
-_WANTS_AI = re.compile(r'\b(ai[ -]?(art|generated|images?|illustrations?)|midjourney|stable diffusion|dall[ -]?e|generative)\b', re.I)
-
-_NEGATION = re.compile(r"\b(no|not|never|avoid|without|exclude|except|skip|don'?t)\b[\w\s,-]*$")
-
-
-def board_wants_ai(*texts: str) -> bool:
-    """Boards that ask for AI art keep it; every other board drops declared AI images."""
-    for text in texts:
-        for match in _WANTS_AI.finditer(text or ''):
-            before = (text or '')[max(0, match.start() - 25):match.start()].lower()
-            if not _NEGATION.search(before):
-                return True
-    return False
+# Board setting `ai_images`: how the curator treats AI-generated candidates.
+MODES = ('ignore', 'mark', 'reject')

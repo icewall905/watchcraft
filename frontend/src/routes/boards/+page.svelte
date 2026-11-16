@@ -17,7 +17,7 @@
  let sentinel = $state<HTMLDivElement>();
  let cursor = $state<string | null>(null), hasMore = $state(false), editing = $state(false), editId = $state<number | null>(null);
  let name = $state(''), interests = $state(''), instructions = $state(''), enabled = $state(true), interval = $state(12), saving = $state(false);
- let targetImages = $state(100), avoid = $state(''), seeds = $state(''), media = $state<'any' | 'photos' | 'gifs'>('any'), minWidth = $state(0), strictness = $state<'strict' | 'balanced'>('strict'), childFriendly = $state(false);
+ let targetImages = $state(100), avoid = $state(''), seeds = $state(''), media = $state<'any' | 'photos' | 'gifs'>('any'), minWidth = $state(0), strictness = $state<'strict' | 'balanced'>('strict'), childFriendly = $state(false), aiImages = $state<'ignore' | 'mark' | 'reject'>('reject');
  let waiting = $state<BoardPin[]>([]), layout = $state(0); // `layout` re-flows the grid only when the list is replaced
  // After removing the open image from view, keep browsing: show the next one instead of closing.
  function following(p: BoardPin) { const list = found ?? pins; const i = list.findIndex(v => v.id === p.id); return list[i + 1] ?? list[i - 1] ?? null; }
@@ -137,10 +137,10 @@
   return rows.sort(boardSort === 'name' ? (a, b) => a.name.localeCompare(b.name) : boardSort === 'size' ? (a, b) => (b.pin_count ?? 0) - (a.pin_count ?? 0) : (a, b) => recent(b) - recent(a));
  });
  const hue = (id: number) => (id * 67) % 360;
- function edit(b?: MoodBoard) { editId = b?.id ?? null; name = b?.name ?? ''; interests = b?.interests ?? ''; instructions = b?.instructions ?? ''; enabled = b?.enabled ?? true; interval = b?.interval_hours ?? 12; targetImages = b?.target_images ?? 100; avoid = b?.avoid ?? ''; seeds = b?.seed_searches ?? ''; media = b?.media ?? 'any'; minWidth = b?.min_width ?? 0; strictness = b?.strictness ?? 'strict'; childFriendly = session.isChild || (b?.child_friendly ?? false); error = ''; editing = true; }
+ function edit(b?: MoodBoard) { editId = b?.id ?? null; name = b?.name ?? ''; interests = b?.interests ?? ''; instructions = b?.instructions ?? ''; enabled = b?.enabled ?? true; interval = b?.interval_hours ?? 12; targetImages = b?.target_images ?? 100; avoid = b?.avoid ?? ''; seeds = b?.seed_searches ?? ''; media = b?.media ?? 'any'; minWidth = b?.min_width ?? 0; strictness = b?.strictness ?? 'strict'; childFriendly = session.isChild || (b?.child_friendly ?? false); aiImages = b?.ai_images ?? 'reject'; error = ''; editing = true; }
  async function saveBoard(e: SubmitEvent) {
   e.preventDefault(); if (!allowed() || saving) return; saving = true; const owner = stamp();
-  const body: BoardInput = {name: name.trim(), interests: interests.trim(), instructions: instructions.trim(), enabled, interval_hours: Number(interval), target_images: Number(targetImages), avoid: avoid.trim(), seed_searches: seeds.trim(), media, min_width: Number(minWidth), strictness: childFriendly ? 'strict' : strictness, child_friendly: session.isChild || childFriendly};
+  const body: BoardInput = {name: name.trim(), interests: interests.trim(), instructions: instructions.trim(), enabled, interval_hours: Number(interval), target_images: Number(targetImages), avoid: avoid.trim(), seed_searches: seeds.trim(), media, min_width: Number(minWidth), strictness: childFriendly ? 'strict' : strictness, child_friendly: session.isChild || childFriendly, ai_images: aiImages};
   try { const result = editId ? await boardsApi.update(editId, body) : await boardsApi.create(body); if (owner !== stamp() || !allowed()) return; selected = result.board.id; void goto(`/boards?board=${result.board.id}`, {keepFocus: true}); editing = false; await load(); notice = editId ? 'Board updated.' : active(result.board.last_status) ? 'Board created. Follow its curator’s progress below.' : 'Board created. Find images to start filling it.'; }
   catch (e) { if (owner === stamp() && allowed()) error = message(e); }
   finally { if (owner === stamp()) saving = false; }
@@ -324,7 +324,7 @@
       <article class="pin">
        <div class="frame">
         <button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.thumb_url ?? pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} width={pin.width} height={pin.height} /></button>
-        {#if pin.media_type === 'gif'}<span class="badge">GIF</span>{/if}
+        {#if pin.media_type === 'gif'}<span class="badge">GIF</span>{/if}{#if pin.ai_flag}<span class="badge ai" title={`AI generated: ${pin.ai_flag}`}>AI</span>{/if}
          </div>
        <div class="caption"><button class="pin-title" onclick={() => { preview = pin; }}>{pin.title}</button><button class="pin-meta board-link" onclick={() => { clearSearch(); choose(pin.board_id); }}>on {pin.board_name}</button>
         <div class="actions" role="group" aria-label={`Actions for ${pin.title}`}><span class="gap"></span><button class="act heart" class:on={pin.saved} disabled={busy === pin.id} title={pin.saved ? 'Saved — click to unsave' : 'Save'} aria-label={pin.saved ? `Unsave ${pin.title}` : `Save ${pin.title}`} aria-pressed={pin.saved} onclick={() => pinAction(pin, {saved: !pin.saved})}>{@render icon('heart')}</button></div></div>
@@ -426,7 +426,7 @@
     <article class="pin">
      <div class="frame">
       <button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.thumb_url ?? pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} width={pin.width} height={pin.height} /></button>
-      {#if pin.media_type === 'gif'}<span class="badge">GIF</span>{/if}
+      {#if pin.media_type === 'gif'}<span class="badge">GIF</span>{/if}{#if pin.ai_flag}<span class="badge ai" title={`AI generated: ${pin.ai_flag}`}>AI</span>{/if}
      </div>
      <div class="caption"><button class="pin-title" onclick={() => { preview = pin; }}>{pin.title}</button>{#if pin.attribution}<span class="pin-meta">{pin.attribution}</span>{/if}
       <div class="actions" role="group" aria-label={`Actions for ${pin.title}`}>
@@ -456,12 +456,18 @@
    <label>Seed searches<textarea rows="3" maxlength="1000" bind:value={seeds} placeholder={'10 inch mini rack\nraspberry pi cluster\nhomelab cable management'}></textarea><small>Your own search phrases, one per line. Used first, before the curator's own ideas.</small></label>
   </fieldset>
   <label class="child-toggle"><input type="checkbox" bind:checked={childFriendly} disabled={session.isChild} /><span><strong>🧸 Child friendly</strong><small>{session.isChild ? 'Always on for child profiles.' : 'Only safe image search (no social feeds), strict checking, and every image must be fine for a young child.'}</small></span></label>
-  <details class="tuning" open={media !== 'any' || minWidth > 0 || strictness !== 'strict'}>
+  <details class="tuning" open={media !== 'any' || minWidth > 0 || strictness !== 'strict' || aiImages !== 'reject'}>
    <summary>More tuning</summary>
    <div class="choice" role="radiogroup" aria-label="How strict">
     <span class="choice-label">How strict</span>
     <label class="opt"><input type="radio" name="strictness" value="strict" bind:group={strictness} /><span><strong>Strict</strong><small>Only clear matches that meet every instruction.</small></span></label>
     <label class="opt"><input type="radio" name="strictness" value="balanced" bind:group={strictness} disabled={childFriendly} /><span><strong>Balanced</strong><small>Clear matches of the subject; preferences may be partly met.</small></span></label>
+   </div>
+   <div class="choice" role="radiogroup" aria-label="AI-generated images">
+    <span class="choice-label">AI-generated images</span>
+    <label class="opt"><input type="radio" name="ai-images" value="reject" bind:group={aiImages} /><span><strong>Reject</strong><small>Leave out images that are or look AI-generated.</small></span></label>
+    <label class="opt"><input type="radio" name="ai-images" value="mark" bind:group={aiImages} /><span><strong>Mark</strong><small>Keep them, with an AI badge on the picture.</small></span></label>
+    <label class="opt"><input type="radio" name="ai-images" value="ignore" bind:group={aiImages} /><span><strong>Ignore</strong><small>Don't check for AI at all.</small></span></label>
    </div>
    <div class="form-grid">
     <label>Image type<select bind:value={media}><option value="any">Photos and GIFs</option><option value="photos">Photos only</option><option value="gifs">GIFs only</option></select></label>
@@ -714,6 +720,7 @@
  .frame:hover::after,.frame:focus-within::after{opacity:1}
  .frame:hover .picture :global(img){transform:scale(1.03)}
  .badge{position:absolute;left:.6rem;bottom:.6rem;font-size:.65rem;font-weight:800;letter-spacing:.08em;padding:.2rem .45rem;border-radius:.4rem;background:rgba(0,0,0,.6);color:#fff;pointer-events:none}
+ .badge.ai{top:.6rem;bottom:auto;background:rgba(124,58,237,.85)}
  .caption{padding:.5rem .3rem 0;display:grid;gap:.1rem}
  .pin-title{text-align:left;padding:0;border:0;background:none;color:var(--text);font:inherit;font-weight:600;font-size:.88rem;line-height:1.35;cursor:pointer;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
  .pin-meta{font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

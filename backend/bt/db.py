@@ -110,9 +110,12 @@ def init_db() -> None:
                                  ('media', "VARCHAR NOT NULL DEFAULT 'any'"),
                                  ('min_width', 'INTEGER NOT NULL DEFAULT 0'),
                                  ('strictness', "VARCHAR NOT NULL DEFAULT 'strict'"),
-                                 ('child_friendly', 'BOOLEAN NOT NULL DEFAULT 0')):
+                                 ('child_friendly', 'BOOLEAN NOT NULL DEFAULT 0'),
+                                 ('ai_images', "VARCHAR NOT NULL DEFAULT 'reject'")):
             if name not in board_columns:
                 connection.exec_driver_sql(f'ALTER TABLE moodboard ADD COLUMN "{name}" {definition}')
+        if 'ai_flag' not in {c['name'] for c in inspect(connection).get_columns('moodpin')}:
+            connection.exec_driver_sql("ALTER TABLE moodpin ADD COLUMN ai_flag VARCHAR NOT NULL DEFAULT ''")
         # Additive shared-learning type columns. Existing rows are videos by default;
         # keep the legacy video_id column unchanged for old feedback and callers.
         _migrate_shared_learning_columns(connection)

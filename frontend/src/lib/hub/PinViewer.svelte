@@ -154,6 +154,7 @@
      {#if pin.vision_why}<p><span class="label">Fits because</span>{pin.vision_why}</p>{/if}
     {:else if uploaded}<h3>Added by you</h3><p class="muted">You uploaded this image.</p>
     {:else}<h3>No curator notes</h3><p class="muted">Added before notes were kept, or saved by hand.</p>{/if}
+    {#if pin.ai_flag}<p><span class="label">AI generated</span>{pin.ai_flag}</p>{/if}
     {#if pin.feedback === 'good'}<p class="verdict good">You confirmed it fits.</p>{/if}
     {#if pin.feedback_note}<p class="muted">Your note: {pin.feedback_note}</p>{/if}
    </section>

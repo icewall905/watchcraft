@@ -91,7 +91,7 @@ def _copy(s, pin, bid, recipient):
         return True
     copy = MoodPin(board_id=bid, profile_id=recipient, title=pin.title, source_url=pin.source_url,
                    image_url=pin.image_url, media_type=pin.media_type, width=pin.width, height=pin.height,
-                   attribution=pin.attribution, license=pin.license, saved=False)
+                   attribution=pin.attribution, license=pin.license, ai_flag=pin.ai_flag, saved=False)
     s.add(copy)
     s.flush()
     s.add(MoodAsset(pin_id=copy.id, mime=asset.mime, data=asset.data))
