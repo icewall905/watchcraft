@@ -1,6 +1,7 @@
 <script lang="ts">
  import { onMount, untrack } from 'svelte';
  import { session } from '$lib/stores/session.svelte';
+ import CommonsSwitch from '$lib/commonroom/CommonsSwitch.svelte';
  import { crApi, type Thread, type PlatformInfo, type Post } from '$lib/hub/commonroom';
  import PostCard from '$lib/commonroom/PostCard.svelte';
  import PostView from '$lib/commonroom/PostView.svelte';
@@ -120,7 +121,7 @@
  async function deleted() { editing = null; try { await loadThreads(); } catch { /* keep */ } await start('all'); }
 </script>
 
-<svelte:head><title>Common Room</title></svelte:head>
+<svelte:head><title>The Commons · WatchCraft</title></svelte:head>
 {#snippet wall(list: Post[])}
  <!-- Desktop: posts dealt left to right into columns that each stack tightly (no holes under short cards);
       new pages append to the same columns, so nothing already on screen moves. -->
@@ -133,12 +134,13 @@
 
 <div class="cr" bind:clientWidth={wallWidth}>
  <header class="head">
-  <div><p class="eyebrow">Explore</p><h1>Common Room</h1></div>
+  <div><p class="eyebrow">Explore</p><h1>The Commons</h1></div>
   {#if current}<div class="acts">
    <button class="btn" disabled={running || activeStatus(current.last_status)} onclick={runNow}>{activeStatus(current.last_status) ? 'Gathering…' : 'Run now'}</button>
    <button class="btn" onclick={() => { editing = current; }}>Edit thread</button>
   </div>{/if}
  </header>
+ <CommonsSwitch />
  {#if session.isAdmin && session.settings && !session.settings.commonroom?.reddit_client_id}
   <p class="keys small">Reddit runs in limited mode (newest posts only, no comments). <a href="/settings?tab=commonroom">Add Reddit keys in Settings</a></p>
  {/if}

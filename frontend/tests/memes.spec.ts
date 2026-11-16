@@ -1,12 +1,17 @@
 import { test, expect } from '@playwright/test';
 import { freshPage } from './helpers';
 
-test('Meme Radar is in navigation and renders its empty states', async ({ page }) => {
+test('Meme Radar lives under The Commons and renders its empty states', async ({ page }) => {
 	await freshPage(page, '/');
 	const nav = page.getByRole('navigation', { name: 'Main', exact: true });
-	await expect(nav.getByRole('link', { name: 'Meme Radar' })).toBeVisible();
-	await nav.getByRole('link', { name: 'Meme Radar' }).click();
+	await expect(nav.getByRole('link', { name: 'Meme Radar' })).toHaveCount(0);
+	await nav.getByRole('link', { name: 'The Commons' }).click();
+	const commons = page.getByRole('navigation', { name: 'The Commons' });
+	await expect(commons.getByRole('link', { name: 'Threads' })).toHaveAttribute('aria-current', 'page');
+	await commons.getByRole('link', { name: 'Meme Radar' }).click();
 	await expect(page.getByRole('heading', { name: 'Meme Radar', level: 1 })).toBeVisible();
+	await expect(commons.getByRole('link', { name: 'Meme Radar' })).toHaveAttribute('aria-current', 'page');
+	await expect(nav.getByRole('link', { name: 'The Commons' })).toHaveAttribute('aria-current', 'page');
 	for (const t of ['Explore', 'Trends', 'Emerging', 'Formats', 'Saved', 'History', 'Set aside'])
 		await expect(page.getByRole('tab', { name: t, exact: true })).toBeVisible();
 	await expect(page.getByRole('heading', { name: 'No memes yet' })).toBeVisible();

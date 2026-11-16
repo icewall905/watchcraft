@@ -79,7 +79,7 @@ test('board target defaults to 100 and users can set a visual reference and add 
 
 test('browse local pins save move hide and respect refresh cooldown',async({page})=>{
  const writes=await setup(page);await freshPage(page,'/boards?board=1');
- await expect(page.getByRole('link',{name:'Mood Board',exact:true}).first()).toHaveAttribute('href','/boards');
+ await expect(page.getByRole('link',{name:'The Boards',exact:true}).first()).toHaveAttribute('href','/boards');
  const view=page.getByRole('button',{name:'View Quiet courtyard',exact:true});await expect(view).toBeVisible();
  await page.getByRole('button',{name:'Save Quiet courtyard',exact:true}).click();
  await expect(page.getByRole('button',{name:'Unsave Quiet courtyard',exact:true})).toHaveAttribute('aria-pressed','true');
@@ -373,7 +373,7 @@ test('child friendly: grown-ups can switch it on; child profiles always have it 
  await expect(page.getByRole('button',{name:'Import Pinterest'})).toHaveCount(0);
  await page.getByLabel("Search your boards by what's in the picture").fill('cat');await page.getByRole('button',{name:'Search',exact:true}).click();
  await expect(page.getByRole('region',{name:'Search Pinterest'})).toHaveCount(0);
- await expect(page.getByRole('link',{name:'Mood Board',exact:true}).first()).toBeVisible();
+ await expect(page.getByRole('link',{name:'The Boards',exact:true}).first()).toBeVisible();
  await expect(page.getByRole('link',{name:'News',exact:true}).first()).toBeVisible();
  await expect(page.getByRole('navigation',{name:'Main',exact:true}).locator('a[href="/music"]')).toHaveCount(0);
  await page.getByRole('button',{name:'New board'}).first().click();

@@ -19,7 +19,7 @@ export const SETTINGS = entry('/settings', 'Settings', 'settings');
 
 export const SECTIONS: NavSection[] = [
 	{ key: 'watch', title: 'Watch', items: [TV, SHORTS, MUSIC, entry('/subscriptions', 'Subscriptions', 'subs')] },
-	{ key: 'explore', title: 'Explore', items: [entry('/today', 'Today', 'news'), DISCOVER, entry('/news', 'News', 'news'), entry('/memes', 'Meme Radar', 'meme'), entry('/boards', 'Mood Board', 'library', 'boards_shared_new'), entry('/common-room', 'Common Room', 'team', 'commonroom'), LIBRARY, entry('/knowledge', 'Knowledge', 'book'), entry('/briefings', 'Briefings', 'briefing'), ALERTS] },
+	{ key: 'explore', title: 'Explore', items: [entry('/today', 'Today', 'news'), DISCOVER, entry('/news', 'News', 'news'), entry('/boards', 'The Boards', 'library', 'boards_shared_new'), entry('/common-room', 'The Commons', 'team', 'commonroom', (p) => prefix('/common-room')(p) || prefix('/memes')(p)), LIBRARY, entry('/knowledge', 'Knowledge', 'book'), entry('/briefings', 'Briefings', 'briefing'), ALERTS] },
 	{ key: 'research', title: 'Research', items: [entry('/research', 'Research', 'research'), entry('/scout-report', 'Scout Report', 'briefing')] },
 	{ key: 'workshop', title: 'Workshop', quiet: true, items: [entry('/team', 'Agent Activity', 'team'), entry('/curators', 'Curators', 'curator'), entry('/sources', 'Sources', 'source'), entry('/agent', 'Video AI', 'agent'), entry('/stats', 'Statistics', 'chart')] }
 ];

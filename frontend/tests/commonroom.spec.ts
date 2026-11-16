@@ -63,7 +63,7 @@ test('opening a post loads its comments', async ({ page }) => {
 test('nav entry is present', async ({ page }) => {
 	await setup(page);
 	await freshPage(page, '/common-room');
-	await expect(page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'Common Room' })).toHaveAttribute('href', '/common-room');
+	await expect(page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'The Commons' })).toHaveAttribute('href', '/common-room');
 });
 
 test('a post already rated down starts hidden', async ({ page }) => {

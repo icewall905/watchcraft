@@ -4,6 +4,7 @@
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { focusable } from '$lib/nav';
+	import CommonsSwitch from '$lib/commonroom/CommonsSwitch.svelte';
 	import { hub, ago } from '$lib/hub/api';
 	import { sinceTs, errMsg } from '$lib/hub/util';
 	import type { Item, MemeExplain, MemeFormat, MemeTrend, Topic } from '$lib/hub/types';
@@ -318,13 +319,14 @@
 	const spark = (t: MemeTrend) => t.observations.map((o) => o.count);
 </script>
 
-<svelte:head><title>Meme Radar · WatchCraft</title></svelte:head>
+<svelte:head><title>Meme Radar · The Commons · WatchCraft</title></svelte:head>
 
 <svelte:window onkeydown={onKey} />
 
 <div class="page">
 	<header class="head">
 		<div>
+			<p class="eyebrow">The Commons</p>
 			<h1>Meme Radar</h1>
 			<p class="muted">Fresh laughs from your curators. Scroll, enjoy, and tune your taste.</p>
 		</div>
@@ -333,6 +335,7 @@
 			<a class="btn ghost" href="/curators" use:focusable>Manage curators</a>
 		</div>
 	</header>
+	<CommonsSwitch />
 	{#if sweepNote}<p class="small muted" role="status">{sweepNote}</p>{/if}
 
 	<div class="tabs" role="tablist" aria-label="Meme Radar views">
@@ -535,6 +538,7 @@
 	.page { display: grid; gap: 1rem; align-content: start; }
 	.head { display: flex; justify-content: space-between; align-items: end; gap: 1rem; flex-wrap: wrap; }
 	.head-acts { display: flex; gap: .6rem; flex-wrap: wrap; }
+	.eyebrow { margin: 0 0 .3rem; font-size: .75rem; letter-spacing: .14em; text-transform: uppercase; color: var(--ai); font-weight: 700; }
 	.tabs { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
 	.tab { min-height: 2.75rem; padding: .4rem 1rem; }
 	.count { margin-left: auto; }
