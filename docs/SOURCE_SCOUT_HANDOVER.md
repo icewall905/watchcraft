@@ -17,6 +17,12 @@
   8 per tick, tried once; aggregator hosts skipped). Within a minute 20 of 23 checked picks had pictures; the media
   endpoint served them. Rollback tags `watchcraft:rollback-20261116-crpreview-*` (`crvisit` tags removed).
 - Android `android-v0.1.11` / code 13 (`ff1acc8`) adds the Common Room tab; signed by the release workflow.
+- Follow-up `67fe02e` (frontend only): Settings grouped by purpose; Reddit keys on Settings → Sources and keys →
+  Common Room. Rollback tags `watchcraft:rollback-20261116-settings-*` (`crpreview` tags removed); previous source in
+  `watchcraft-backups/previous-source-settings-bd0d9e5.tar.gz`. First started with `compose.yaml` alone by mistake
+  (`bt-*` containers for ~1 min on the same `./data`), then redeployed with all three compose files; all four `wc-*`
+  services run `sha256:8e213ea1…`, zero restarts, DB quick_check ok, health/`/settings`/`/common-room` 200. Always pass
+  `-f compose.yaml -f compose.watchcraft.yaml -f compose.host.yaml`.
 
 - New `/common-room`: per-interest Threads harvest Reddit/Lemmy/Mbin/Mastodon/Bluesky/HN/Lobsters/dev.to/Tildes/
   Stack Exchange/Discourse, judge with the worker model, New→Deep feed with backfill, teaching, kid gate. Additive
