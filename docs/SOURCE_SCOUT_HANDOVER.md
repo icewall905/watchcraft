@@ -8,6 +8,16 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — The Commons and The Boards (`6742bca`, 2026-11-16)
+
+- Side menu: Mood Board → The Boards, Common Room → The Commons; Meme Radar leaves the menu and sits under The
+  Commons via a Threads / Meme Radar switch (URLs unchanged). Frontend only.
+- Backup `/root/compose/watchcraft-backups/20261116-commons-6742bca` (online DB quick_check ok, config hashes, previous
+  source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261116-commons-*`). rsync (checksum) of the 9 files
+  of `34b6bb6..6742bca`. Pruned `20261116-crlang-b9136be` and its rollback tags (`PRUNE-MANIFEST-20261116T182747Z.txt`).
+- All four `wc-*` run `sha256:ae46c379…`, zero restarts, no tracebacks; health, `/common-room`, `/memes`, `/boards`
+  200; new labels in the served bundle.
+
 ## Deployment record — Mood Board AI-image setting (`34b6bb6`, 2026-11-16)
 
 - Per-board `ai_images` (More tuning): Reject (default, previous behaviour), Mark (keep, `moodpin.ai_flag` from
