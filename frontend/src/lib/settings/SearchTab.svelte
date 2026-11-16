@@ -10,6 +10,7 @@
 
 	const d = new SettingsDraft('search');
 	const mb = new SettingsDraft('moodboard_sources');
+	const cr = new SettingsDraft('commonroom');
 	let pinterest = $state<PinterestStatus | null>(null);
 	$effect(() => { boardsApi.pinterestLiveStatus().then((s) => { pinterest = s; }, () => { pinterest = null; }); });
 	const when = (t: number) => new Date(t * 1000).toLocaleString();
@@ -48,5 +49,16 @@
 	{:else if pinterest && mb.value.pinterest}<p class="small muted">Left today: {pinterest.day_left} searches ({pinterest.hour_left} this hour), {pinterest.images_left} images.</p>{/if}
 	<p class="muted small">Instagram, TikTok, Facebook and X offer no public access, so they are not searched. Boards can always open Pinterest in your browser so you can paste images, or import a public Pinterest board. Everything you add is stored on this server.</p>
 	<SaveBar stack={1} label="Save image sources" dirty={mb.dirty} busy={mb.busy} onsave={() => mb.save('Mood Board sources saved')} onreset={() => mb.reset()} />
+</Section>
+{/if}
+
+{#if cr.value && 'show_nsfw' in cr.value}
+<Section title="Common Room" intro="Keys for the Common Room social wall. Reddit needs an app; everything else works without keys.">
+	<p class="muted small">Create a Reddit "script" app at <a href="https://www.reddit.com/prefs/apps" target="_blank" rel="noopener noreferrer">reddit.com/prefs/apps</a>, then paste its client id and secret.</p>
+	<TextField label="Reddit client id" bind:value={cr.value.reddit_client_id} />
+	<TextField label="Reddit secret" type="password" hint="Shown as ******** once saved. Leave it as is to keep the saved secret." bind:value={cr.value.reddit_secret} />
+	<TextField label="Stack Exchange key" type="password" hint="Optional. Raises the request quota." bind:value={cr.value.stackexchange_key} />
+	<Toggle label="Show NSFW posts" hint="Blurred until clicked. Always hidden for child profiles." bind:checked={cr.value.show_nsfw} />
+	<SaveBar stack={2} label="Save Common Room" dirty={cr.dirty} busy={cr.busy} onsave={() => cr.save('Common Room settings saved')} onreset={() => cr.reset()} />
 </Section>
 {/if}

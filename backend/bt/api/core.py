@@ -1078,7 +1078,11 @@ def _cleanup_seen(video_id: str) -> None:
 
 def _redact(st: dict) -> dict:
     st = {**st, "llm": {**st["llm"]}, "throttle": {**st["throttle"]}, "search": {**st["search"]},
-          "notify": {**st["notify"]}, "stt": {**st["stt"]}, "moodboard_sources": {**st["moodboard_sources"]}}
+          "notify": {**st["notify"]}, "stt": {**st["stt"]}, "moodboard_sources": {**st["moodboard_sources"]},
+          "commonroom": {**st["commonroom"]}}
+    for k in ("reddit_secret", "stackexchange_key"):
+        if st["commonroom"].get(k):
+            st["commonroom"][k] = "********"
     for k in ("flickr_api_key", "tumblr_api_key"):
         if st["moodboard_sources"].get(k):
             st["moodboard_sources"][k] = "********"
@@ -1180,6 +1184,19 @@ def write_settings(key: str, value: dict, s: Session = Depends(get_session)):
         value["mastodon_instance"] = instance.strip().lower()
         if type(merged["source_timeout_s"]) is not int or not 5 <= merged["source_timeout_s"] <= 60:
             raise HTTPException(400, "Use a per-source timeout between 5 and 60 seconds")
+    if key == "commonroom":
+        for k in ("reddit_secret", "stackexchange_key"):
+            if value.get(k) == "********":
+                value[k] = cur.get(k, "")
+        if set(value) - set(cur):
+            raise HTTPException(400, "Unknown Common Room setting")
+        merged = {**cur, **value}
+        for k in ("reddit_client_id", "reddit_secret", "stackexchange_key"):
+            if not isinstance(merged[k], str) or len(merged[k]) > 200:
+                raise HTTPException(400, "Keys must be text up to 200 characters")
+            value[k] = merged[k].strip()
+        if type(merged["show_nsfw"]) is not bool:
+            raise HTTPException(400, "NSFW must be on or off")
     if key == "team":
         n = value.get("max_parallel", cur["max_parallel"])
         if type(n) is not int or not 1 <= n <= 8:

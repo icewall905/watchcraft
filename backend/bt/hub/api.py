@@ -181,8 +181,10 @@ def counts(pid: int = Depends(profile_id)):
             ContentItem.id.in_(found), ContentItem.type.in_(['news', 'article']),
             func.coalesce(ContentItem.published_at, ContentItem.first_seen) >= time.time() - 86400)).one()
         from .moodboard_share import unseen_count
+        from ..commonroom.api import new_count as commonroom_new
         return {'discover_unread': unread, 'alerts_new': alerts, 'news_today': news,
-                'boards_shared_new': unseen_count(s, pid) if boards_allowed(s, pid) else 0}
+                'boards_shared_new': unseen_count(s, pid) if boards_allowed(s, pid) else 0,
+                'commonroom': commonroom_new(s, pid)}
 
 
 # ---------- items
@@ -2810,6 +2812,8 @@ def delete_profile_data(s: Session, pid: int) -> None:
     moodboards.delete_profile(s, pid)
     from . import moodboard_share
     moodboard_share.delete_profile(s, pid)
+    from ..commonroom import api as commonroom_api
+    commonroom_api.delete_profile(s, pid)
     from .models import ArticleShare
     s.exec(delete(ArticleShare).where(ArticleShare.profile_id == pid))
     cids = list(s.exec(select(Curator.id).where(Curator.profile_id == pid)).all())

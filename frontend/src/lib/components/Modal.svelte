@@ -51,7 +51,11 @@
 		place-items: stretch end;
 		padding: 0;
 	}
+	header h2 {
+		overflow-wrap: anywhere;
+	}
 	.modal {
+		min-width: 0;
 		position: relative;
 		width: min(100%, 38rem);
 		max-height: min(92dvh, 64rem);

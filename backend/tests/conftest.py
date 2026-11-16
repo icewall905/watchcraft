@@ -33,6 +33,8 @@ def _isolated_background_work(monkeypatch):
     monkeypatch.setattr(moodboards, 'scheduler', idle_scheduler)
     monkeypatch.setattr(engine, 'scheduler', idle_scheduler)
     monkeypatch.setattr(subtitle_jobs, 'worker', idle_scheduler)
+    from bt.commonroom import scheduler as commonroom_scheduler
+    monkeypatch.setattr(commonroom_scheduler, 'scheduler', idle_scheduler)
     monkeypatch.setattr(slots, 'after_release', None)
 
 

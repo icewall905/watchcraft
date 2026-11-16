@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from . import auth
 from .hub import api as hub_api, engine as hub_engine, master_api as hub_master_api, sharing as hub_sharing, moodboards, moodboard_imports, pinterest_live, extension as hub_extension, moodboard_share
 from .knowledge import api as knowledge_api
+from .commonroom import api as commonroom_api, scheduler as commonroom_scheduler
 from .api import agent as agent_api
 from .music import api as music_api, service as music_service
 from .api import core
@@ -31,6 +32,7 @@ async def lifespan(_app):
     boards = asyncio.create_task(moodboards.scheduler())
     moods = asyncio.create_task(music_service.mood_scheduler())
     imports = asyncio.create_task(moodboard_imports.scheduler())
+    room = asyncio.create_task(commonroom_scheduler.scheduler())
     subs = (asyncio.create_task(subtitle_jobs.worker())
             if os.environ.get('BT_SUBTITLE_WORKER', '1').lower() in ('1', 'true', 'yes') else None)
     try:
@@ -40,9 +42,10 @@ async def lifespan(_app):
         boards.cancel()
         moods.cancel()
         imports.cancel()
+        room.cancel()
         if subs:
             subs.cancel()
-        for running in (task, boards, moods, imports, subs):
+        for running in (task, boards, moods, imports, room, subs):
             if running is None:
                 continue
             with suppress(asyncio.CancelledError):
@@ -55,6 +58,7 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(core.router, prefix="/api")
 app.include_router(hub_api.router, prefix="/api")
 app.include_router(moodboards.router, prefix="/api")
+app.include_router(commonroom_api.router, prefix="/api")
 app.include_router(hub_extension.router, prefix="/api")
 app.include_router(pinterest_live.router, prefix="/api")
 app.include_router(moodboard_imports.router, prefix="/api")

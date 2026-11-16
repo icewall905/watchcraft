@@ -57,6 +57,14 @@ DEFAULT_SETTINGS: dict = {
         "pinterest": False,
         "source_timeout_s": 20,
     },
+    # Common Room social sources. Reddit uses an app-only OAuth "script" app when both values are set
+    # (about 100 requests/min, scores and comments); without them it falls back to public RSS.
+    "commonroom": {
+        "reddit_client_id": os.environ.get("WC_REDDIT_CLIENT_ID", ""),
+        "reddit_secret": os.environ.get("WC_REDDIT_SECRET", ""),
+        "stackexchange_key": os.environ.get("WC_STACKEXCHANGE_KEY", ""),
+        "show_nsfw": False,  # grown-up profiles only; child profiles never see NSFW
+    },
     # Alert delivery. An empty URL or host disables that channel; the password is redacted in responses.
     "notify": {
         "webhook_url": "",

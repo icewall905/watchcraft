@@ -97,6 +97,7 @@ def init_db() -> None:
         from .hub import migrate, models as _hub_models  # noqa: F401
         from .music import models as _music_models  # noqa: F401
         from .knowledge import models as _knowledge_models  # noqa: F401
+        from .commonroom import models as _commonroom_models  # noqa: F401
         SQLModel.metadata.create_all(connection)
         _migrate_knowledge_columns(connection)
         board_columns = {c['name'] for c in inspect(connection).get_columns('moodboard')}
