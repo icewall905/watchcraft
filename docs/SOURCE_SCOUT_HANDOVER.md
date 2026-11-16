@@ -13,6 +13,10 @@
 - Follow-up `0b144f1` (code only): `/visit` accepts the numeric thread id the page sends (opening/creating a thread
   failed with "Input should be a valid string"). Rollback tags `watchcraft:rollback-20261116-crvisit-*`; the
   intermediate `crreddit` tags were removed.
+- Follow-up `bd0d9e5` (code only): kept link posts without media get the linked page's og:image (scheduler sweep,
+  8 per tick, tried once; aggregator hosts skipped). Within a minute 20 of 23 checked picks had pictures; the media
+  endpoint served them. Rollback tags `watchcraft:rollback-20261116-crpreview-*` (`crvisit` tags removed).
+- Android `android-v0.1.11` / code 13 (`ff1acc8`) adds the Common Room tab; signed by the release workflow.
 
 - New `/common-room`: per-interest Threads harvest Reddit/Lemmy/Mbin/Mastodon/Bluesky/HN/Lobsters/dev.to/Tildes/
   Stack Exchange/Discourse, judge with the worker model, New→Deep feed with backfill, teaching, kid gate. Additive
