@@ -343,3 +343,26 @@ def test_visit_accepts_numeric_thread_id_like_the_page_sends(client):
     r = client.post('/api/hub/commonroom/visit', json={'thread': t['id']})
     assert r.status_code == 200, r.text
     assert client.post('/api/hub/commonroom/visit', json={'thread': 9999}).status_code == 404
+
+
+def test_link_posts_get_the_linked_pages_preview_picture(client, monkeypatch):
+    from bt.commonroom import previews
+    monkeypatch.setattr(FAKE, 'fetch', lambda loc, sort, cur: Page(
+        [post(1, link_url='https://blog.example/a'), post(2, link_url='https://news.ycombinator.com/x')]
+        if sort == 'new' else [], ''))
+    thread(client)
+    run_all()
+    fetched = []
+
+    def page(url, kinds=None, limit=None):
+        fetched.append(url)
+        return b'<html><head><meta property="og:image" content="/img/cover.jpg"></head></html>'
+    monkeypatch.setattr(previews.curation, 'fetch', page)
+    assert previews.sweep() == 1
+    assert fetched == ['https://blog.example/a']  # aggregator pages are never fetched
+    assert previews.sweep() == 0 and len(fetched) == 1  # tried once only
+    posts = client.get('/api/hub/commonroom/feed', params={'boundary': 0}).json()['posts']
+    with_pic = [p for p in posts if p['media']]
+    assert len(with_pic) == 1 and with_pic[0]['media'][0]['url'].endswith('/media/0')
+    with session() as s:
+        assert s.get(CRPost, with_pic[0]['post_id']).media[0]['url'] == 'https://blog.example/img/cover.jpg'

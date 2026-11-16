@@ -115,6 +115,11 @@ async def scheduler():
             log.exception('Common Room scheduler tick failed')
             worked = False
         try:
+            from . import previews
+            await asyncio.to_thread(previews.sweep)
+        except Exception:
+            log.exception('Common Room previews failed')
+        try:
             await asyncio.to_thread(prune)
         except Exception:
             log.exception('Common Room prune failed')
