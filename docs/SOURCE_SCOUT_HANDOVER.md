@@ -30,6 +30,9 @@
   previous source `previous-source-pictures-67fe02e.tar.gz`. All four `wc-*` run `sha256:6fa981e1…`, zero restarts,
   no tracebacks; first minutes: 23 files / 1.7 MB stored, full + preview served for profile H; 4 of 39 pictured picks
   point at pictures their source no longer serves (HTTP 404).
+- Follow-up `3a3002c` (code only): such pictures are dropped from the post and a picture failing in the browser hides
+  its frame. Rollback tags `watchcraft:rollback-20261116-nobroken-*` (`pictures` tags removed). All four `wc-*` run
+  `sha256:2bcbe1dd…`, zero restarts, no tracebacks; 34 of 34 listed pictures served, 62 files / 5.7 MB stored.
 
 - New `/common-room`: per-interest Threads harvest Reddit/Lemmy/Mbin/Mastodon/Bluesky/HN/Lobsters/dev.to/Tildes/
   Stack Exchange/Discourse, judge with the worker model, New→Deep feed with backfill, teaching, kid gate. Additive
