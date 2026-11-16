@@ -8,6 +8,17 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Mood Board AI-image filter (`94a772a`, 2026-11-16)
+
+- "AI generated" thumbs-down reason; curator skips candidates whose metadata declares AI generation (C2PA/IPTC
+  digital source type, SD/ComfyUI PNG params, generator EXIF) before the vision call, unless the board asks for AI
+  art; vision prompt rejects AI-looking images. Code only, no schema change.
+- Backup `/root/compose/watchcraft-backups/20261116-aimood-94a772a` (online DB quick_check ok, config hashes, previous
+  source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261116-aimood-*`). rsync (checksum) of the 5 changed
+  files. Pruned `20261116-kidshare-04231b4` and its rollback tags (`PRUNE-MANIFEST-20261116T172424Z.txt`).
+- All four `wc-*` run `sha256:ece1ca2c…`, zero restarts, no tracebacks; health and `/boards` 200; new chip in the
+  served bundle.
+
 ## Deployment record — Common Room post languages (`b9136be`, 2026-11-16)
 
 - Posts keep a language (platform tag or guess; stored posts backfilled); a profile's chosen languages skip other
