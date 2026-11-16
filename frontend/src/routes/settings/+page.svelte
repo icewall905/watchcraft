@@ -17,30 +17,50 @@
 	import StorageTab from '$lib/settings/StorageTab.svelte';
 	import AppearanceTab from '$lib/settings/AppearanceTab.svelte';
 	import SearchTab from '$lib/settings/SearchTab.svelte';
+	import CommonRoomTab from '$lib/settings/CommonRoomTab.svelte';
+	import MoodSourcesTab from '$lib/settings/MoodSourcesTab.svelte';
 	import NotificationsTab from '$lib/settings/NotificationsTab.svelte';
 	import CuratorTab from '$lib/settings/CuratorTab.svelte';
 	import MemeLanguagesTab from '$lib/settings/MemeLanguagesTab.svelte';
 
-	const TABS = [
-		{ key: 'categories', label: 'Playlists', icon: '🗂️', hint: 'What the AI looks for' },
-		{ key: 'feeds', label: 'Feeds', icon: '▶', hint: 'Local short-video collections' },
-		{ key: 'curator', label: 'Curator', icon: '✧', hint: 'Learned preferences and nightly selection' },
-		{ key: 'memory', label: 'AI memory', icon: '🧠', hint: 'Rules learned from feedback' },
-		{ key: 'ai', label: 'AI and limits', icon: '✦', hint: 'Model, curator, pace' },
-		{ key: 'search', label: 'Search & sources', icon: '🔎', hint: 'Web search provider for curators' },
-		{ key: 'memes', label: 'Meme languages', icon: '🌐', hint: 'Languages you do not want in Meme Radar' },
-		{ key: 'notify', label: 'Notifications', icon: '🔔', hint: 'Webhook, Home Assistant, email' },
-		{ key: 'player', label: 'Player', icon: '▶', hint: 'Quality, speed, captions' },
-		{ key: 'appearance', label: 'Appearance', icon: '🎨', hint: 'Device mode, themes and colours' },
-		{ key: 'storage', label: 'Storage', icon: '💾', hint: 'Videos saved on the server' },
-		{ key: 'sponsorblock', label: 'SponsorBlock', icon: '⏭', hint: 'Skip sponsors and intros' },
-		{ key: 'extras', label: 'Extras', icon: '🧩', hint: 'Short videos, dislikes, titles' },
-		{ key: 'cookies', label: 'YouTube cookies', icon: '🍪', hint: 'Optional sign-in' },
-		{ key: 'profiles', label: 'Profiles', icon: '👪', hint: 'Family members' },
-		{ key: 'screens', label: 'Screens', icon: '📺', hint: 'Play on receivers and pairing' },
-		{ key: 'keys', label: 'Remote test', icon: '🎮', hint: 'See what buttons send' }
-	] as const;
-	type TabKey = (typeof TABS)[number]['key'];
+	// Grouped by what you are doing: what gets collected, how the AI learns, where it may look,
+	// how things play, the devices around the house, and who lives here.
+	type Tab = { key: string; label: string; icon: string; hint: string };
+	const GROUPS: { label: string; tabs: Tab[] }[] = [
+		{ label: 'Collections', tabs: [
+			{ key: 'categories', label: 'Playlists', icon: '🗂️', hint: 'What the AI looks for' },
+			{ key: 'feeds', label: 'Feeds', icon: '▶', hint: 'Local short-video collections' }
+		] },
+		{ label: 'AI and learning', tabs: [
+			{ key: 'ai', label: 'AI model and limits', icon: '✦', hint: 'Model, agent team, pace' },
+			{ key: 'curator', label: 'Curator', icon: '✧', hint: 'Learned preferences and nightly selection' },
+			{ key: 'memory', label: 'AI memory', icon: '🧠', hint: 'Rules learned from feedback' },
+			{ key: 'memes', label: 'Meme Radar', icon: '🌐', hint: 'Languages to leave out' }
+		] },
+		{ label: 'Sources and keys', tabs: [
+			{ key: 'search', label: 'Web search', icon: '🔎', hint: 'SearXNG or Brave for curators' },
+			{ key: 'commonroom', label: 'Common Room', icon: '💬', hint: 'Reddit and Stack Exchange keys' },
+			{ key: 'moodsources', label: 'Mood Board sources', icon: '🖼️', hint: 'Image sites, Flickr and Tumblr keys' },
+			{ key: 'cookies', label: 'YouTube sign-in', icon: '🍪', hint: 'Optional cookies' }
+		] },
+		{ label: 'Watching', tabs: [
+			{ key: 'player', label: 'Player', icon: '▶', hint: 'Quality, speed, captions' },
+			{ key: 'sponsorblock', label: 'SponsorBlock', icon: '⏭', hint: 'Skip sponsors and intros' },
+			{ key: 'extras', label: 'YouTube extras', icon: '🧩', hint: 'Shorts, dislikes, better titles' },
+			{ key: 'storage', label: 'Storage', icon: '💾', hint: 'Videos saved on the server' }
+		] },
+		{ label: 'Home and devices', tabs: [
+			{ key: 'appearance', label: 'Appearance', icon: '🎨', hint: 'Device mode, themes and colours' },
+			{ key: 'screens', label: 'Screens', icon: '📺', hint: 'Play on receivers and pairing' },
+			{ key: 'notify', label: 'Notifications', icon: '🔔', hint: 'Webhook, Home Assistant, email' },
+			{ key: 'keys', label: 'Remote test', icon: '🎮', hint: 'See what buttons send' }
+		] },
+		{ label: 'Household', tabs: [
+			{ key: 'profiles', label: 'Profiles', icon: '👪', hint: 'Family members' }
+		] }
+	];
+	const TABS = GROUPS.flatMap((g) => g.tabs);
+	type TabKey = string;
 	const tab = $derived((TABS.find((t) => t.key === (page.url.searchParams.get('tab') === 'playlists' ? 'categories' : page.url.searchParams.get('tab')))?.key ?? 'categories') as TabKey);
 
 	function go(k: TabKey) {
@@ -52,7 +72,9 @@
 <div class="page settings workshop-page">
 	<nav class="side" aria-label="Settings sections" data-nav-zone="side">
 		<h1>Settings</h1>
-		{#each TABS as t}
+		{#each GROUPS as g}
+			<p class="group">{g.label}</p>
+			{#each g.tabs as t}
 			<button
 				class="tab"
 				class:on={tab === t.key}
@@ -62,6 +84,7 @@
 				<span class="ic">{t.icon}</span>
 				<span class="tx"><span class="l">{t.label}</span><span class="h">{t.hint}</span></span>
 			</button>
+			{/each}
 		{/each}
 		<a class="tab" href="/welcome" use:focusable={{ group: 'set-tabs', id: 'set-welcome' }}>Setup guide</a>
 	</nav>
@@ -79,6 +102,8 @@
 					{:else if tab === 'memory'}<MemoryTab />
 					{:else if tab === 'ai'}<AiTab />
 					{:else if tab === 'search'}<SearchTab />
+					{:else if tab === 'commonroom'}<CommonRoomTab />
+					{:else if tab === 'moodsources'}<MoodSourcesTab />
 					{:else if tab === 'memes'}<MemeLanguagesTab />
 					{:else if tab === 'notify'}<NotificationsTab />
 					{:else if tab === 'player'}<PlayerTab />
@@ -112,6 +137,17 @@
 	.side h1 {
 		font-size: clamp(1.5rem, 1.5vw + 0.8rem, 2.4rem);
 		margin: 0.5rem 0 1rem 0.4rem;
+	}
+	.group {
+		margin: 0.9rem 0 0.15rem 0.8rem;
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--faint);
+	}
+	.side h1 + .group {
+		margin-top: 0;
 	}
 	.tab {
 		--focus-scale: 1.04;
@@ -186,6 +222,11 @@
 		}
 		.h {
 			display: none;
+		}
+		.group {
+			flex: none;
+			align-self: center;
+			margin: 0 0 0 0.6rem;
 		}
 	}
 </style>

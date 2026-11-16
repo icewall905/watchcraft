@@ -126,6 +126,9 @@
    <button class="btn" onclick={() => { editing = current; }}>Edit thread</button>
   </div>{/if}
  </header>
+ {#if session.isAdmin && session.settings && !session.settings.commonroom?.reddit_client_id}
+  <p class="keys small">Reddit runs in limited mode (newest posts only, no comments). <a href="/settings?tab=commonroom">Add Reddit keys in Settings</a></p>
+ {/if}
  {#if loaded || threads.length}
  <nav class="chips" aria-label="Threads">
   <button type="button" class="chip" class:on={selected === 'all'} aria-pressed={selected === 'all'} onclick={() => start('all')}>All{#if allNew}<span class="badge">{allNew}</span>{/if}</button>
@@ -168,6 +171,7 @@
 
 <style>
  .cr{max-width:46rem;margin:auto;padding:clamp(1rem,3vw,2rem);display:grid;gap:1rem;min-width:0}
+ .keys{margin:.6rem 0 0;color:var(--muted)}
  .head{display:flex;justify-content:space-between;align-items:flex-end;gap:1rem;flex-wrap:wrap}
  .eyebrow{margin:0 0 .3rem;font-size:.75rem;letter-spacing:.14em;text-transform:uppercase;color:var(--ai);font-weight:700}
  h1{margin:0;font-size:clamp(1.8rem,4vw,2.6rem);letter-spacing:-.04em;line-height:1}

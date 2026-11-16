@@ -92,3 +92,17 @@ test('long unbroken title stays inside the drawer at 375px', async ({ page }) =>
 	expect(box!.x).toBeGreaterThanOrEqual(0);
 	expect(box!.x + box!.width).toBeLessThanOrEqual(376);
 });
+
+test('Reddit keys are easy to find: grouped Settings tab with status', async ({ page }) => {
+	await freshPage(page, '/settings?tab=commonroom');
+	const side = page.getByRole('navigation', { name: 'Settings sections' });
+	await expect(side.getByText('Sources and keys')).toBeVisible();
+	await expect(side.getByRole('button', { name: /Common Room/ })).toHaveAttribute('aria-current', 'page');
+	await expect(page.getByRole('heading', { name: 'Common Room' })).toBeVisible();
+	await expect(page.getByLabel('Reddit client id')).toBeVisible();
+	await expect(page.getByRole('status').filter({ hasText: /limited mode|keys are set/ })).toBeVisible();
+	await page.getByLabel('Reddit client id').fill('abc');
+	const saved = page.waitForRequest((r) => r.url().includes('/api/settings/commonroom') && r.method() === 'PUT');
+	await page.getByRole('button', { name: 'Save Common Room' }).click();
+	expect((await saved).postDataJSON().reddit_client_id).toBe('abc');
+});

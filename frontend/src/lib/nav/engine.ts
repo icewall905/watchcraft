@@ -476,6 +476,12 @@ class NavEngine {
 				if (zone) return !z || z === zone;
 				return !z || !z.hasAttribute('data-nav-side');
 			});
+			// Inside a zone, chrome is the fallback only: a fixed top bar can sit nearer than a scrolled-off
+			// control above, and that control must still be reachable.
+			if (zone) {
+				const inZone = pool.filter((x) => x.e.el.closest('[data-nav-zone]') === zone);
+				if (inZone.length) pool = inZone;
+			}
 		}
 		if (!pool.length) return false;
 		const cx = r.left + r.width / 2;
