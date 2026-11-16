@@ -20,7 +20,7 @@ from sqlmodel import select
 from .. import curation
 from ..access import boards_allowed, is_child, require_boards, require_hub
 from ..db import get_settings, session
-from . import ai, activity, social_fetch
+from . import ai, ai_detect, activity, social_fetch
 from ..models import AgentEvent
 from .models import MoodAsset, MoodBoard, MoodFeedback, MoodPin, MoodPinNote, MoodPinVector, MoodImport, MoodReference, MoodThumb
 
@@ -714,6 +714,10 @@ def select_candidates(candidates, interests, instructions, progress=None, refere
                    'owner\'s avoid list; preferences in the instructions may be partly met. ') +
                 'Reject generic stock previews, watermarked catalog assets and AI/SEO '
                 'illustrations when the board asks for real setups or projects. '
+                'Unless the board explicitly asks for AI art, reject images that look AI-generated: waxy or '
+                'airbrushed skin, impossible hands, fingers or limbs, melted or nonsense text and logos, warped '
+                'symmetry or perspective, objects merging into each other, over-perfect cinematic lighting with '
+                'dreamy glow, and generator-style hyperreal fantasy renders. '
                 'Specific restrictions such as heart patterns ONLY must be visibly '
                 'present on the requested object, not inferred from its title. Sewing pattern requests need '
                 'an actual usable pattern or clearly relevant pattern instructions, not just a garment photo. '
@@ -828,6 +832,7 @@ def collect(bid, lease, revision):
         child = bool(board.child_friendly)
         strict = child or board.strictness != 'balanced'
         context = board.name + ' — ' + board.interests
+        allow_ai = ai_detect.board_wants_ai(board.name, board.interests, board.instructions)
         offset = board.source_offset
         query = interests[(offset // 30) % len(interests)]
         page_offset = ((offset // (30 * len(interests))) * 30) % 300
@@ -873,6 +878,9 @@ def collect(bid, lease, revision):
                 if (min_width and width and width < min_width) or (media == 'photos' and mime == 'image/gif') \
                         or (media == 'gifs' and mime != 'image/gif'):
                     continue  # Owner's size/media filter: no vision call spent on it.
+                if not allow_ai and (flag := ai_detect.detect(data)):
+                    log.info('Mood Board skip AI image %s: %s', item['image_url'][:120], flag)
+                    continue  # Declared AI generation: no vision call spent on it.
                 captured.append({**item, '_captured': (data, mime, width, height)})
             except Exception:
                 failures += 1

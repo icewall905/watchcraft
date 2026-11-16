@@ -240,7 +240,7 @@
  }
  async function copy(text: string, what: string) { try { await navigator.clipboard.writeText(text); extCopied = what; } catch { extCopied = ''; } }
  let reviewing = $state<BoardPin | null>(null), reviewNote = $state('');
- const REASONS = ['Off-topic for this board', 'Text, quote or poster image', 'Advert or stock photo', 'Low quality or blurry'];
+ const REASONS = ['Off-topic for this board', 'Text, quote or poster image', 'Advert or stock photo', 'Low quality or blurry', 'AI generated'];
  async function review(p: BoardPin, verdict: '' | 'good' | 'bad', note = '') {
   if (!allowed() || busy !== null) return; busy = p.id; const owner = stamp();
   try {
