@@ -14,15 +14,15 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException, Response
 from PIL import Image
 from pydantic import BaseModel, Field
-from sqlalchemy import delete, func, update
+from sqlalchemy import and_, delete, false, func, or_, update
 from sqlmodel import select
 
 from .. import curation
 from ..access import boards_allowed, is_child, require_boards, require_hub
 from ..db import get_settings, session
 from . import ai, ai_detect, activity, social_fetch
-from ..models import AgentEvent
-from .models import MoodAsset, MoodBoard, MoodFeedback, MoodPin, MoodPinNote, MoodPinVector, MoodImport, MoodReference, MoodThumb
+from ..models import AgentEvent, Profile
+from .models import MoodAsset, MoodBoard, MoodBoardMember, MoodFeedback, MoodPin, MoodPinNote, MoodPinVector, MoodImport, MoodReference, MoodThumb
 
 router = APIRouter(prefix='/hub/boards', tags=['Mood boards'])
 IMAGE_TYPES = ('image/jpeg', 'image/png', 'image/gif', 'image/webp')
@@ -146,11 +146,64 @@ class PinEdit(BaseModel):
     board_id: int | None = None
 
 
-def owned(s, pid, bid):
+def member_ids(s, bid) -> list[int]:
+    """Profiles that share a board with its owner (owner not included)."""
+    return list(s.exec(select(MoodBoardMember.profile_id).where(MoodBoardMember.board_id == bid)
+                       .order_by(MoodBoardMember.created_at)).all())
+
+
+def owned(s, pid, bid, manage=False):
+    """The board when `pid` owns it or (unless `manage`) is a member; 404 otherwise."""
     board = s.get(MoodBoard, bid)
-    if not board or board.profile_id != pid:
-        raise HTTPException(404, 'Board not found')
-    return board
+    if board and (board.profile_id == pid or (not manage and s.get(MoodBoardMember, (bid, pid)))):
+        return board
+    raise HTTPException(404, 'Board not found')
+
+
+def accessible(pid):
+    """Condition for boards `pid` owns or works on as a member."""
+    joined = select(MoodBoardMember.board_id).where(MoodBoardMember.profile_id == pid)
+    return or_(MoodBoard.profile_id == pid, MoodBoard.id.in_(joined))
+
+
+def child_on_board(s, board) -> bool:
+    """A child owns the board or works on it: child limits apply to everything on it."""
+    if is_child(s, board.profile_id):
+        return True
+    return any(is_child(s, m) for m in member_ids(s, board.id))
+
+
+def kid_visible(board, viewer):
+    """SQL condition: pins a child profile `viewer` may see on `board`. Checked pins (ok / override); unchecked
+    ones only on the child's own board and only when the child's own curator or the child added them."""
+    trusted = and_(MoodPin.kid_state == '', MoodPin.profile_id == board.profile_id) \
+        if board.profile_id == viewer else false()
+    return or_(MoodPin.kid_state.in_(('ok', 'override')), trusted)
+
+
+def viewer_filter(s, board, viewer):
+    """Extra pin condition for this viewer, or None (grown-ups see every pin)."""
+    return kid_visible(board, viewer) if viewer is not None and is_child(s, viewer) else None
+
+
+def pin_visible(s, pin, board, viewer) -> bool:
+    if not is_child(s, viewer):
+        return True
+    return pin.kid_state in ('ok', 'override') or (
+        pin.kid_state == '' and board.profile_id == viewer and pin.profile_id == viewer)
+
+
+def board_pin(s, pid, bid, pin_id):
+    """(board, pin) for a pin on a board `pid` can use and see; 404 otherwise."""
+    board = owned(s, pid, bid)
+    pin = s.get(MoodPin, pin_id)
+    if not pin or pin.board_id != bid or not pin_visible(s, pin, board, pid):
+        raise HTTPException(404, 'Pin not found')
+    return board, pin
+
+
+def profile_brief(p):
+    return {'id': p.id, 'name': p.name, 'emoji': p.emoji, 'color': p.color, 'child': p.role == 'child'}
 
 
 def stored(s, bid) -> int:
@@ -166,29 +219,46 @@ def liked():
     return (MoodPin.saved == True) | MoodPin.id.in_(good)
 
 
-def board_json(s, board):
+def board_json(s, board, viewer=None):
+    """Board for `viewer` (default: its owner). Children see only the pins they may see on it."""
+    viewer = board.profile_id if viewer is None else viewer
+    extra = viewer_filter(s, board, viewer)
+    visible = [MoodPin.board_id == board.id, MoodPin.hidden == False]  # noqa: E712
+    if extra is not None:
+        visible.append(extra)
     result = board.model_dump(exclude={'lease', 'build_started', 'revision', 'source_offset'})
-    result['pin_count'] = s.exec(select(func.count()).select_from(MoodPin).where(
-        MoodPin.board_id == board.id, MoodPin.hidden == False)).one()
+    result['pin_count'] = s.exec(select(func.count()).select_from(MoodPin).where(*visible)).one()
     reference = s.get(MoodReference, board.id)
     result['reference_url'] = f'/api/hub/boards/{board.id}/reference/media?v={board.revision}' if reference else None
     result['reference_name'] = reference.name if reference else ''
     result['retry_after'] = retry_after(board)
     result['last_result'] = last_result(s, board, result['pin_count'])
     # Overview collage: saved favourites first, then the newest finds.
-    recent = s.exec(select(MoodPin.id).where(MoodPin.board_id == board.id, MoodPin.hidden == False)
+    recent = s.exec(select(MoodPin.id).where(*visible)
                     .order_by(MoodPin.saved.desc(), MoodPin.id.desc()).limit(4)).all()
     result['preview_urls'] = [f'/api/hub/boards/{board.id}/pins/{i}/media' for i in recent]
     result['cover_url'] = result['preview_urls'][0] if recent else None
-    result['saved_count'] = s.exec(select(func.count()).select_from(MoodPin).where(
-        MoodPin.board_id == board.id, MoodPin.hidden == False, liked())).one()
-    result['last_added'] = s.exec(select(func.max(MoodPin.created_at)).where(
-        MoodPin.board_id == board.id, MoodPin.hidden == False)).one()
+    result['saved_count'] = s.exec(select(func.count()).select_from(MoodPin).where(*visible, liked())).one()
+    result['last_added'] = s.exec(select(func.max(MoodPin.created_at)).where(*visible)).one()
+    # Shared boards: owner, members and the viewer's role; grown-ups also see what is hidden from children.
+    owner = s.get(Profile, board.profile_id)
+    members = [p for m in member_ids(s, board.id) if (p := s.get(Profile, m))]
+    result['owner'] = profile_brief(owner) if owner else None
+    result['members'] = [profile_brief(p) for p in members]
+    result['role'] = 'owner' if viewer == board.profile_id else 'member'
+    kids = (owner is not None and owner.role == 'child') or any(p.role == 'child' for p in members)
+    result['kids'] = kids
+    result['kid_hidden_count'] = s.exec(select(func.count()).select_from(MoodPin).where(
+        MoodPin.board_id == board.id, MoodPin.hidden == False, MoodPin.kid_state == 'hidden')).one() \
+        if kids and extra is None else 0  # noqa: E712
     return result
 
 
-def pin_json(pin, feedback=None, note=None):
-    result = pin.model_dump(exclude={'image_url'})
+def pin_json(pin, feedback=None, note=None, grown_up=True, added_by=''):
+    result = pin.model_dump(exclude={'image_url', 'kid_state', 'kid_reason'})
+    if grown_up:  # children never see why a picture was hidden from them
+        result['kid_state'], result['kid_reason'] = pin.kid_state, pin.kid_reason
+    result['added_by'] = added_by
     result['vision_seen'] = note.seen if note else ''
     result['vision_why'] = note.why if note else ''
     result['image_url'] = f'/api/hub/boards/{pin.board_id}/pins/{pin.id}/media'
@@ -202,8 +272,8 @@ def pin_json(pin, feedback=None, note=None):
 @router.get('')
 def boards(pid: int = Depends(require_boards)):
     with session() as s:
-        return {'boards': [board_json(s, b) for b in s.exec(select(MoodBoard).where(
-            MoodBoard.profile_id == pid).order_by(MoodBoard.id.desc())).all()]}
+        return {'boards': [board_json(s, b, pid) for b in s.exec(select(MoodBoard).where(
+            accessible(pid)).order_by(MoodBoard.id.desc())).all()]}
 
 
 @router.get('/search')
@@ -236,7 +306,7 @@ def create(data: BoardCreate, pid: int = Depends(require_boards)):
         s.add(board)
         s.commit()
         s.refresh(board)
-        data = board_json(s, board)
+        data = board_json(s, board, pid)
     if board.enabled:
         activity.emit_board(board, 'queued-' + secrets.token_hex(8), 'queued', 'First image search queued for ' + board.name + '.')
     return {'board': data}
@@ -248,6 +318,9 @@ def detail(bid: int, cursor: int | None = None, saved: bool = False, unreviewed:
     with session() as s:
         board = owned(s, pid, bid)
         query = select(MoodPin).where(MoodPin.board_id == bid, MoodPin.hidden == False)
+        extra = viewer_filter(s, board, pid)
+        if extra is not None:
+            query = query.where(extra)
         if unreviewed:
             query = query.where(MoodPin.id.not_in(select(MoodFeedback.pin_id)))
         if cursor is not None:
@@ -259,17 +332,20 @@ def detail(bid: int, cursor: int | None = None, saved: bool = False, unreviewed:
         pins = pins[:PAGE_SIZE]
         reviews = feedback_map(s, [p.id for p in pins])
         notes = note_map(s, [p.id for p in pins])
-        return {'board': board_json(s, board), 'pins': [pin_json(p, reviews.get(p.id), notes.get(p.id)) for p in pins],
+        grown_up = extra is None
+        names = {p.id: p.name for p in s.exec(select(Profile).where(Profile.id.in_({p.profile_id for p in pins}))).all()}
+        return {'board': board_json(s, board, pid),
+                'pins': [pin_json(p, reviews.get(p.id), notes.get(p.id), grown_up, names.get(p.profile_id, '')) for p in pins],
                 'next_cursor': str(pins[-1].id) if more else None, 'has_more': more}
 
 
 @router.patch('/{bid}')
 def edit(bid: int, data: BoardEdit, pid: int = Depends(require_boards)):
     with session() as s:
-        board = owned(s, pid, bid)
+        board = owned(s, pid, bid, manage=True)
         changes = data.model_dump(exclude_unset=True)
-        if is_child(s, pid) and (changes.get('child_friendly') is False or changes.get('strictness') == 'balanced'):
-            raise HTTPException(403, 'Boards on a child profile always stay child-friendly.')
+        if (is_child(s, pid) or child_on_board(s, board)) and (changes.get('child_friendly') is False or changes.get('strictness') == 'balanced'):
+            raise HTTPException(403, 'Boards a child uses always stay child-friendly.')
         for key, value in changes.items():
             if value is None:
                 raise HTTPException(422, 'Board fields cannot be null')
@@ -289,18 +365,22 @@ def edit(bid: int, data: BoardEdit, pid: int = Depends(require_boards)):
         board.error = ''
         s.add(board)
         s.commit()
-        return {'board': board_json(s, board)}
+        return {'board': board_json(s, board, pid)}
 
 
 def delete_profile(s, pid):
-    """Called inside household deletion's existing transaction."""
-    ids = select(MoodPin.id).where(MoodPin.profile_id == pid)
+    """Called inside household deletion's existing transaction. Images the profile added to boards it only
+    worked on stay there; its own boards go, with everything on them."""
+    s.exec(delete(MoodBoardMember).where(MoodBoardMember.profile_id == pid))
+    own = select(MoodBoard.id).where(MoodBoard.profile_id == pid)
+    s.exec(delete(MoodBoardMember).where(MoodBoardMember.board_id.in_(own)))
+    ids = select(MoodPin.id).where(MoodPin.board_id.in_(own))
     s.exec(delete(MoodAsset).where(MoodAsset.pin_id.in_(ids)))
     s.exec(delete(MoodThumb).where(MoodThumb.pin_id.in_(ids)))
     s.exec(delete(MoodPinVector).where(MoodPinVector.pin_id.in_(ids)))
-    s.exec(delete(MoodFeedback).where(MoodFeedback.profile_id == pid))
+    s.exec(delete(MoodFeedback).where(MoodFeedback.pin_id.in_(ids) | MoodFeedback.board_id.in_(own)))
     s.exec(delete(MoodPinNote).where(MoodPinNote.pin_id.in_(ids)))
-    s.exec(delete(MoodPin).where(MoodPin.profile_id == pid))
+    s.exec(delete(MoodPin).where(MoodPin.board_id.in_(own)))
     s.exec(delete(MoodImport).where(MoodImport.profile_id == pid))
     s.exec(delete(AgentEvent).where(AgentEvent.kind == activity.KIND, AgentEvent.profile_id == pid,
                                   AgentEvent.payload['board_id'].as_integer() != None))
@@ -313,7 +393,7 @@ def delete_profile(s, pid):
 @router.delete('/{bid}')
 def remove(bid: int, pid: int = Depends(require_boards)):
     with session() as s:
-        owned(s, pid, bid)
+        owned(s, pid, bid, manage=True)
         ids = select(MoodPin.id).where(MoodPin.board_id == bid)
         s.exec(delete(MoodAsset).where(MoodAsset.pin_id.in_(ids)))
         s.exec(delete(MoodThumb).where(MoodThumb.pin_id.in_(ids)))
@@ -325,6 +405,9 @@ def remove(bid: int, pid: int = Depends(require_boards)):
         s.exec(delete(AgentEvent).where(AgentEvent.kind == activity.KIND, AgentEvent.profile_id == pid,
                                       AgentEvent.payload['board_id'].as_integer() == bid))
         s.exec(delete(MoodReference).where(MoodReference.board_id == bid))
+        s.exec(delete(MoodBoardMember).where(MoodBoardMember.board_id == bid))
+        from .models import MoodShareNotice
+        s.exec(delete(MoodShareNotice).where(MoodShareNotice.board_id == bid))
         s.exec(delete(MoodBoard).where(MoodBoard.id == bid))
         s.commit()
     return {'ok': True}
@@ -337,14 +420,14 @@ def refresh(bid: int, pid: int = Depends(require_boards)):
         board = owned(s, pid, bid)
         wait = retry_after(board)
         if board.lease or board.last_status == 'queued' or wait:
-            data = board_json(s, board)
+            data = board_json(s, board, pid)
             return {'queued': False, 'status': 'collecting' if board.lease else 'queued' if board.last_status == 'queued' else 'cooldown',
                     'retry_after': wait, 'last_result': data['last_result'], 'board': data}
         board.next_run = 0
         board.last_status = 'queued'
         s.add(board)
         s.commit()
-        data = board_json(s, board)
+        data = board_json(s, board, pid)
     activity.emit_board(board, 'queued-' + secrets.token_hex(8), 'queued', 'Image search queued for ' + board.name + '.')
     return {'queued': True, 'status': 'queued', 'retry_after': 0, 'last_result': data['last_result'], 'board': data}
 
@@ -356,7 +439,7 @@ def reshuffle(bid: int, pid: int = Depends(require_boards)):
     taught anything from them (unlike Not a fit)."""
     with session() as s:
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
-        board = owned(s, pid, bid)
+        board = owned(s, pid, bid, manage=True)  # replaces everyone's images on a shared board
         if board.lease:
             raise HTTPException(409, 'Your curator is searching right now. Reshuffle when it has finished.')
         ids = s.exec(select(MoodPin.id).where(MoodPin.board_id == bid, MoodPin.hidden == False,
@@ -373,7 +456,7 @@ def reshuffle(bid: int, pid: int = Depends(require_boards)):
         board.error = ''
         s.add(board)
         s.commit()
-        data = board_json(s, board)
+        data = board_json(s, board, pid)
     activity.emit_board(board, 'queued-' + secrets.token_hex(8), 'queued',
                         f'Reshuffled {board.name}: replacing {len(ids)} images, keeping {kept} you liked.')
     return {'replaced': len(ids), 'kept': kept, 'board': data}
@@ -382,10 +465,7 @@ def reshuffle(bid: int, pid: int = Depends(require_boards)):
 @router.patch('/{bid}/pins/{pin_id}')
 def edit_pin(bid: int, pin_id: int, data: PinEdit, pid: int = Depends(require_boards)):
     with session() as s:
-        owned(s, pid, bid)
-        pin = s.get(MoodPin, pin_id)
-        if not pin or pin.board_id != bid or pin.profile_id != pid:
-            raise HTTPException(404, 'Pin not found')
+        board, pin = board_pin(s, pid, bid, pin_id)
         if data.board_id is not None and data.board_id != bid:
             owned(s, pid, data.board_id)
             if s.exec(select(MoodPin.id).where(MoodPin.board_id == data.board_id,
@@ -394,6 +474,7 @@ def edit_pin(bid: int, pin_id: int, data: PinEdit, pid: int = Depends(require_bo
             if stored(s, data.board_id) >= MAX_PINS:
                 raise HTTPException(409, 'The destination board has reached its image limit')
             pin.board_id = data.board_id
+            pin.kid_state, pin.kid_reason = '', ''  # judged again for the new board's children if it has any
         if data.hidden is False and pin.hidden and not s.get(MoodAsset, pin.id):
             raise HTTPException(410, 'This image was reshuffled away and its picture is no longer stored.')
         for key in ('saved', 'hidden'):
@@ -402,17 +483,35 @@ def edit_pin(bid: int, pin_id: int, data: PinEdit, pid: int = Depends(require_bo
                 setattr(pin, key, value)
         s.add(pin)
         s.commit()
-        return {'pin': pin_json(pin, s.get(MoodFeedback, pin.id), s.get(MoodPinNote, pin.id))}
+        return {'pin': pin_json(pin, s.get(MoodFeedback, pin.id), s.get(MoodPinNote, pin.id), not is_child(s, pid))}
+
+
+class KidVisibility(BaseModel):
+    visible: bool
+
+
+@router.post('/{bid}/pins/{pin_id}/kid')
+def kid_visibility(bid: int, pin_id: int, data: KidVisibility, pid: int = Depends(require_hub)):
+    """A grown-up on a board a child uses overrides the kid check: show the picture to children, or hide it.
+    Children cannot call this (require_hub)."""
+    with session() as s:
+        board, pin = board_pin(s, pid, bid, pin_id)
+        if not child_on_board(s, board):
+            raise HTTPException(409, 'No child uses this board.')
+        me = s.get(Profile, pid)
+        name = me.name if me else 'a grown-up'
+        pin.kid_state = 'override' if data.visible else 'hidden'
+        pin.kid_reason = f'Allowed by {name}' if data.visible else f'Hidden by {name}'
+        s.add(pin)
+        s.commit()
+        return {'pin': pin_json(pin, s.get(MoodFeedback, pin.id), s.get(MoodPinNote, pin.id)), 'board': board_json(s, board, pid)}
 
 
 @router.put('/{bid}/pins/{pin_id}/feedback')
 def review_pin(bid: int, pin_id: int, data: PinFeedback, pid: int = Depends(require_boards)):
     """Teach the board's curator. 'bad' also hides the pin (recoverable); clearing restores it."""
     with session() as s:
-        board = owned(s, pid, bid)
-        pin = s.get(MoodPin, pin_id)
-        if not pin or pin.board_id != bid or pin.profile_id != pid:
-            raise HTTPException(404, 'Pin not found')
+        board, pin = board_pin(s, pid, bid, pin_id)
         current = s.get(MoodFeedback, pin_id)
         if not data.verdict:
             if current:
@@ -428,7 +527,7 @@ def review_pin(bid: int, pin_id: int, data: PinFeedback, pid: int = Depends(requ
             s.add(current)
         s.add(pin)
         s.commit()
-        return {'pin': pin_json(pin, current, s.get(MoodPinNote, pin.id)), 'board': board_json(s, board)}
+        return {'pin': pin_json(pin, current, s.get(MoodPinNote, pin.id), not is_child(s, pid)), 'board': board_json(s, board, pid)}
 
 
 class ImageInput(BaseModel):
@@ -479,15 +578,37 @@ def _public_http(url):
     return url if parts.scheme in ('http', 'https') and parts.hostname and not parts.username and not parts.password else None
 
 
+def kid_judge(raw) -> tuple[str, str]:
+    """(kid_state, reason) for one picture: ok, hidden with the model's reason, or '' when it could not be judged
+    (vision model off or failing: the kid sweep tries again; children do not see it meanwhile)."""
+    from .moodboard_share import _kid_check
+    unchecked: set[int] = set()
+    reasons: dict[int, str] = {}
+    try:
+        ok = _kid_check([(0, raw)], unchecked, reasons)
+    except HTTPException:
+        return '', ''
+    if 0 in ok:
+        return 'ok', ''
+    if 0 in unchecked:
+        return '', ''
+    return 'hidden', reasons.get(0) or 'Did not pass the kid-safety check.'
+
+
 def add_image_for(pid, bid, data):
     with session() as s:
-        owned(s, pid, bid)
+        board = owned(s, pid, bid)
         child = is_child(s, pid)
+        kids = child_on_board(s, board)
     raw, mime, width, height = input_image(data)
+    state, reason = '', ''
     if child:  # every picture a child adds passes the kid-safe picture bar first; fails closed
         from .moodboard_share import _kid_check
         if not _kid_check([(0, raw)]):
             raise HTTPException(422, 'This picture did not pass the kid-safety check, so it was not added.')
+        state = 'ok'
+    elif kids:  # a grown-up's add on a board a child uses: kept, but hidden from children when it fails
+        state, reason = kid_judge(raw)
     linked = _public_http(data.source_url) if data.data_base64 else None
     page = _public_http(data.page_url)
     # A pasted Pinterest pin link (copied by the user from Pinterest in their own browser) identifies the
@@ -497,7 +618,7 @@ def add_image_for(pid, bid, data):
     source = pin_link or data.url or linked or 'upload:sha256:' + hashlib.sha256(raw).hexdigest()
     with session() as s:
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
-        owned(s, pid, bid)
+        board = owned(s, pid, bid)
         old = s.exec(select(MoodPin).where(MoodPin.board_id == bid, MoodPin.source_url.in_({source, data.url or source}))).first()
         if old:
             if not s.get(MoodAsset, old.id):  # Reshuffled away earlier: store the picture again.
@@ -506,47 +627,52 @@ def add_image_for(pid, bid, data):
                 old.media_type = 'gif' if mime == 'image/gif' else 'image'
             old.hidden = False
             old.saved = True
+            if state and old.kid_state in ('', 'ok'):  # never undo a grown-up's override or hide
+                old.kid_state, old.kid_reason = state, reason
             s.add(old)
             s.commit()
-            return {'pin': pin_json(old), 'existing': True}
+            return {'pin': pin_json(old, grown_up=not child), 'existing': True}
         if stored(s, bid) >= MAX_PINS:
             raise HTTPException(409, 'This board has reached its 1,000-image storage limit')
         pin = MoodPin(board_id=bid, profile_id=pid, title=data.title.strip() or 'Added image',
                       source_url=source, image_url=data.url or linked or '', saved=True,
                       media_type='gif' if mime == 'image/gif' else 'image', width=width, height=height,
-                      attribution='Pinterest' if pin_link else (urlsplit(page or data.url or linked).hostname if (page or data.url or linked) else 'Uploaded by you'))
+                      attribution='Pinterest' if pin_link else (urlsplit(page or data.url or linked).hostname if (page or data.url or linked) else 'Uploaded by you'),
+                      kid_state=state, kid_reason=reason)
         s.add(pin)
         s.flush()
         s.add(MoodAsset(pin_id=pin.id, mime=mime, data=raw))
+        from .moodboard_share import notify_added
+        notify_added(s, board, pid, [pin])
         s.commit()
-        return {'pin': pin_json(pin)}
+        return {'pin': pin_json(pin, grown_up=not child)}
 
 
 @router.post('/{bid}/reference')
 def set_reference(bid: int, data: ImageInput, pid: int = Depends(require_hub)):
     with session() as s:
-        owned(s, pid, bid)
+        owned(s, pid, bid, manage=True)
     raw, mime, _, _ = input_image(data)
     with session() as s:
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
-        board = owned(s, pid, bid)
+        board = owned(s, pid, bid, manage=True)
         s.merge(MoodReference(board_id=bid, name=data.title.strip() or 'Inspiration image', mime=mime, data=raw))
         invalidate_reference(board)
         s.add(board)
         s.commit()
-        return {'board': board_json(s, board)}
+        return {'board': board_json(s, board, pid)}
 
 
 @router.delete('/{bid}/reference')
 def remove_reference(bid: int, pid: int = Depends(require_hub)):
     with session() as s:
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
-        board = owned(s, pid, bid)
+        board = owned(s, pid, bid, manage=True)
         s.exec(delete(MoodReference).where(MoodReference.board_id == bid))
         invalidate_reference(board)
         s.add(board)
         s.commit()
-        return {'board': board_json(s, board)}
+        return {'board': board_json(s, board, pid)}
 
 
 @router.get('/{bid}/reference/media')
@@ -563,10 +689,7 @@ def reference_media(bid: int, pid: int = Depends(require_boards)):
 @router.get('/{bid}/pins/{pin_id}/media')
 def media(bid: int, pin_id: int, pid: int = Depends(require_boards)):
     with session() as s:
-        owned(s, pid, bid)
-        pin = s.get(MoodPin, pin_id)
-        if not pin or pin.board_id != bid or pin.profile_id != pid:
-            raise HTTPException(404, 'Pin not found')
+        board_pin(s, pid, bid, pin_id)
         asset = s.get(MoodAsset, pin_id)
         if not asset:
             raise HTTPException(404, 'Image not available')
@@ -625,10 +748,7 @@ def thumb_sweep(limit: int = 50) -> int:
 @router.get('/{bid}/pins/{pin_id}/thumb')
 def thumb(bid: int, pin_id: int, pid: int = Depends(require_boards)):
     with session() as s:
-        owned(s, pid, bid)
-        pin = s.get(MoodPin, pin_id)
-        if not pin or pin.board_id != bid or pin.profile_id != pid:
-            raise HTTPException(404, 'Pin not found')
+        board_pin(s, pid, bid, pin_id)
         preview = ensure_thumb(s, pin_id)
         if preview is None:
             raise HTTPException(404, 'Image not available')
@@ -939,6 +1059,8 @@ def collect(bid, lease, revision):
             return
         count = stored(s, bid)
         visible = s.exec(select(func.count()).select_from(MoodPin).where(MoodPin.board_id == bid, MoodPin.hidden == False)).one()
+        # Judged under the child rule (a child joining bumps the revision, so older runs never land here).
+        kid_ok = 'ok' if board.child_friendly and child_on_board(s, board) else ''
         for item, data, mime, width, height in results:
             if count >= MAX_PINS or visible + added >= board.target_images:
                 break
@@ -948,7 +1070,7 @@ def collect(bid, lease, revision):
                           source_url=item['source_url'], image_url=item['image_url'],
                           media_type='gif' if mime == 'image/gif' else 'image', width=width, height=height,
                           attribution=item.get('attribution', '')[:1000], license=item.get('license', '')[:200],
-                          ai_flag=item.get('_ai_flag', '')[:200])
+                          ai_flag=item.get('_ai_flag', '')[:200], kid_state=kid_ok)
             s.add(pin)
             s.flush()
             s.add(MoodAsset(pin_id=pin.id, mime=mime, data=data))
@@ -1038,4 +1160,9 @@ async def scheduler():
             await asyncio.to_thread(thumb_sweep)
         except Exception:
             log.exception('Mood Board preview tick failed')
+        try:
+            from .moodboard_share import kid_sweep
+            await asyncio.to_thread(kid_sweep)
+        except Exception:
+            log.exception('Mood Board kid-check tick failed')
         await asyncio.sleep(2 if worked else 30)

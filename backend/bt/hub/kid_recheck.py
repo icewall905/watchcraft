@@ -14,7 +14,7 @@ from sqlmodel import select
 
 from ..db import session
 from ..models import Profile
-from .models import MoodAsset, MoodPin
+from .models import MoodAsset, MoodBoard, MoodPin
 from .moodboard_share import _kid_check
 
 BATCH = 40
@@ -26,8 +26,12 @@ def recheck(profile_ids: list[int] | None = None, apply: bool = False) -> dict:
         if profile_ids:
             q = q.where(Profile.id.in_(profile_ids))
         kids = list(s.exec(q).all())
+        # Boards the children own; a grown-up's override stands. Shared boards a child only works on are
+        # covered by the kid sweep (moodboard_share.kid_sweep), which keeps failures visible to grown-ups.
+        boards = select(MoodBoard.id).where(MoodBoard.profile_id.in_(kids))
         ids = list(s.exec(select(MoodPin.id).join(MoodAsset, MoodAsset.pin_id == MoodPin.id)
-                          .where(MoodPin.profile_id.in_(kids), MoodPin.hidden == False)  # noqa: E712
+                          .where(MoodPin.board_id.in_(boards), MoodPin.hidden == False,  # noqa: E712
+                                 MoodPin.kid_state != 'override')
                           .order_by(MoodPin.id)).all()) if kids else []
     out = {'profiles': len(kids), 'checked': 0, 'passed': 0, 'failed': [], 'unchecked': 0}
     for start in range(0, len(ids), BATCH):

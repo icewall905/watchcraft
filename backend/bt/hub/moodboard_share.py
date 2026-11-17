@@ -28,8 +28,8 @@ import logging
 from ..access import boards_allowed, grown_up_access, hub_allowed, is_child, require_boards, require_hub
 from ..db import session
 from ..models import Profile
-from .models import MoodAsset, MoodBoard, MoodPin, MoodShareLink, MoodShareNotice
-from .moodboards import MAX_PINS, owned
+from .models import MoodAsset, MoodBoard, MoodBoardMember, MoodPin, MoodShareLink, MoodShareNotice
+from .moodboards import MAX_PINS, accessible, member_ids, owned, pin_visible, profile_brief
 
 log = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ def _hash(token: str) -> str:
 
 def _visible_pin(s, pid, bid, pin_id):
     pin = s.get(MoodPin, pin_id)
-    if not pin or pin.board_id != bid or pin.profile_id != pid or pin.hidden or not s.get(MoodAsset, pin_id):
+    if not pin or pin.board_id != bid or pin.hidden or not s.get(MoodAsset, pin_id):
         raise HTTPException(404, 'Image not found')
     return pin
 
@@ -109,7 +109,8 @@ def _stored(s, bid):
                   .where(MoodPin.board_id == bid)).one()
 
 
-def _kid_check(pictures: list[tuple[int, bytes]], unchecked: set[int] | None = None) -> set[int]:
+def _kid_check(pictures: list[tuple[int, bytes]], unchecked: set[int] | None = None,
+               reasons: dict[int, str] | None = None) -> set[int]:
     """Pin ids whose picture passes the kid-safe picture bar. Fail closed: errors approve nothing
     (their ids go into `unchecked` when given, so a re-check can tell "failed" from "not judged")."""
     from . import ai, kidsafe
@@ -132,9 +133,13 @@ def _kid_check(pictures: list[tuple[int, bytes]], unchecked: set[int] | None = N
                 unchecked.update(i for i, _ in batch)
             continue
         for row in res.get('verdicts', []) if isinstance(res, dict) else []:
-            n, safe, _ = kidsafe.normalize(row)
-            if safe and n is not None and 1 <= n <= len(batch):
+            n, safe, why = kidsafe.normalize(row)
+            if n is None or not 1 <= n <= len(batch):
+                continue
+            if safe:
                 ok.add(batch[n - 1][0])
+            elif reasons is not None and why:
+                reasons[batch[n - 1][0]] = why
     return ok
 
 
@@ -143,14 +148,14 @@ def _child_approved(bid: int, data: 'ToProfile', pid: int) -> tuple[set[int] | N
     Every image is checked now, outside the write transaction (vision calls take seconds). A child-friendly
     board is not trusted: hand-added, extension, imported and moved images reach it without the child rule."""
     with session() as s:
-        owned(s, pid, bid)
+        owned(s, pid, bid, manage=True)
         if not is_child(s, data.to):
             return None, 0
         if data.pin_id is not None:
             pins = [_visible_pin(s, pid, bid, data.pin_id)]
         else:
             pins = s.exec(select(MoodPin).join(MoodAsset, MoodAsset.pin_id == MoodPin.id)
-                          .where(MoodPin.board_id == bid, MoodPin.profile_id == pid, MoodPin.hidden == False)  # noqa: E712
+                          .where(MoodPin.board_id == bid, MoodPin.hidden == False)  # noqa: E712
                           .order_by(MoodPin.id).limit(MAX_PINS)).all()
         ids = [p.id for p in pins]
         check = ids[:KID_CHECK_MAX]
@@ -174,7 +179,7 @@ def to_profile(bid: int, data: ToProfile, pid: int = Depends(require_hub)):
     child = approved is not None
     with session() as s:
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
-        board = owned(s, pid, bid)
+        board = owned(s, pid, bid, manage=True)
         recipient = s.get(Profile, data.to)
         if not recipient or not boards_allowed(s, data.to):
             raise HTTPException(404, 'That profile cannot receive Mood Board images.')
@@ -195,7 +200,7 @@ def to_profile(bid: int, data: ToProfile, pid: int = Depends(require_hub)):
                 raise HTTPException(409, f"{recipient.name}'s Shared with you board is full.")
         else:
             pins = s.exec(select(MoodPin).join(MoodAsset, MoodAsset.pin_id == MoodPin.id)
-                          .where(MoodPin.board_id == bid, MoodPin.profile_id == pid, MoodPin.hidden == False)  # noqa: E712
+                          .where(MoodPin.board_id == bid, MoodPin.hidden == False)  # noqa: E712
                           .order_by(MoodPin.id).limit(MAX_PINS)).all()
             if not pins:
                 raise HTTPException(409, 'This board has no images to share yet.')
@@ -226,7 +231,7 @@ def notices(pid: int = Depends(require_boards)):
         out = []
         for n in rows:
             board = s.get(MoodBoard, n.board_id)
-            if not board or board.profile_id != pid:
+            if not board or not s.exec(select(MoodBoard.id).where(MoodBoard.id == board.id, accessible(pid))).first():
                 continue
             sender = s.get(Profile, n.sender_id)
             out.append({'id': n.id, 'kind': n.kind, 'count': n.count, 'board_id': board.id, 'board_name': board.name,
@@ -254,7 +259,145 @@ def unseen_count(s, pid) -> int:
     """Unseen notices whose board the recipient still has."""
     return s.exec(select(func.count()).select_from(MoodShareNotice).join(MoodBoard, MoodBoard.id == MoodShareNotice.board_id)
                   .where(MoodShareNotice.recipient_id == pid, MoodShareNotice.seen == False,  # noqa: E712
-                         MoodBoard.profile_id == pid)).one()
+                         accessible(pid))).one()
+
+
+# ---------- shared boards (members)
+
+MAX_MEMBERS = 10
+SWEEP_BATCH = 20
+
+
+def notify_added(s, board, sender, pins):
+    """Tell everyone else on a shared board that `sender` added images. One unseen notice per board and sender
+    counts up. Children only hear about images they can see."""
+    if not pins:
+        return
+    for rid in [board.profile_id, *member_ids(s, board.id)]:
+        if rid == sender:
+            continue
+        count = sum(1 for p in pins if pin_visible(s, p, board, rid))
+        if not count:
+            continue
+        row = s.exec(select(MoodShareNotice).where(MoodShareNotice.recipient_id == rid, MoodShareNotice.sender_id == sender,
+                                                   MoodShareNotice.board_id == board.id, MoodShareNotice.kind == 'added',
+                                                   MoodShareNotice.seen == False)).first()  # noqa: E712
+        if row:
+            row.count += count
+            row.created_at = time.time()
+        else:
+            row = MoodShareNotice(recipient_id=rid, sender_id=sender, kind='added', board_id=board.id, count=count)
+        s.add(row)
+
+
+def members_json(s, board):
+    owner = s.get(Profile, board.profile_id)
+    return {'owner': profile_brief(owner) if owner else None,
+            'members': [profile_brief(p) for m in member_ids(s, board.id) if (p := s.get(Profile, m))]}
+
+
+def add_member(s, board, to: int, by: int):
+    """Add a profile to a board (inside the caller's transaction). A child makes the whole board child-friendly;
+    pictures already on it wait for the kid sweep before the child sees them."""
+    recipient = s.get(Profile, to)
+    from ..accounts import is_open
+    if to == board.profile_id or not recipient or not boards_allowed(s, to) or \
+            (not is_open() and recipient.account_id is None):
+        raise HTTPException(404, 'That profile cannot join Mood Boards.')
+    if s.get(MoodBoardMember, (board.id, to)):
+        raise HTTPException(409, f'{recipient.name} already works on this board.')
+    if len(member_ids(s, board.id)) >= MAX_MEMBERS:
+        raise HTTPException(409, f'A board can be shared with up to {MAX_MEMBERS} profiles.')
+    s.add(MoodBoardMember(board_id=board.id, profile_id=to, added_by=by))
+    if recipient.role == 'child' and not (board.child_friendly and board.strictness == 'strict'):
+        board.child_friendly, board.strictness = True, 'strict'
+        board.revision += 1  # a collection started under the grown-up rules never lands
+        board.lease, board.build_started = '', 0
+        s.add(board)
+    s.add(MoodShareNotice(recipient_id=to, sender_id=by, kind='member', board_id=board.id, count=1))
+    return recipient
+
+
+class MemberAdd(BaseModel):
+    to: int
+
+
+@router.get('/boards/{bid}/members')
+def list_members(bid: int, pid: int = Depends(require_boards)):
+    with session() as s:
+        return members_json(s, owned(s, pid, bid))
+
+
+@router.post('/boards/{bid}/members')
+def invite(bid: int, data: MemberAdd, pid: int = Depends(require_hub)):
+    """Share a board to work on together. Owner only; children cannot invite (require_hub)."""
+    with session() as s:
+        s.connection().exec_driver_sql('BEGIN IMMEDIATE')
+        board = owned(s, pid, bid, manage=True)
+        recipient = add_member(s, board, data.to, pid)
+        s.commit()
+        return {**members_json(s, board), 'added': recipient.name}
+
+
+@router.delete('/boards/{bid}/members/{member}')
+def remove_member(bid: int, member: int, pid: int = Depends(require_boards)):
+    """The owner removes anyone; a member leaves. The board stays with its owner (still child-friendly)."""
+    with session() as s:
+        board = owned(s, pid, bid)
+        if member != pid and board.profile_id != pid:
+            raise HTTPException(403, 'Only the board owner can remove others.')
+        row = s.get(MoodBoardMember, (bid, member))
+        if not row:
+            raise HTTPException(404, 'Not on this board.')
+        s.delete(row)
+        s.exec(delete(MoodShareNotice).where(MoodShareNotice.recipient_id == member, MoodShareNotice.board_id == bid))
+        s.commit()
+        return members_json(s, board)
+
+
+def kid_boards(s) -> list[MoodBoard]:
+    """Boards a child owns or works on."""
+    kids = select(Profile.id).where(Profile.role == 'child')
+    joined = select(MoodBoardMember.board_id).where(MoodBoardMember.profile_id.in_(kids))
+    return list(s.exec(select(MoodBoard).where(MoodBoard.profile_id.in_(kids) | MoodBoard.id.in_(joined))).all())
+
+
+def kid_sweep(limit: int = SWEEP_BATCH) -> int:
+    """Kid-check unchecked pictures on boards a child uses (a child joined, a model was down, an image moved).
+    The child's own unchecked finds on the child's own board are trusted (the child rule found them).
+    Errors leave pictures unchecked for the next sweep. Returns how many were judged."""
+    from . import kidsafe
+    if not kidsafe._vision():
+        return 0
+    with session() as s:
+        ids = []
+        for board in kid_boards(s):
+            q = select(MoodPin.id).join(MoodAsset, MoodAsset.pin_id == MoodPin.id).where(
+                MoodPin.board_id == board.id, MoodPin.hidden == False, MoodPin.kid_state == '')  # noqa: E712
+            if is_child(s, board.profile_id):
+                q = q.where(MoodPin.profile_id != board.profile_id)
+            ids += s.exec(q.order_by(MoodPin.id.desc()).limit(limit - len(ids))).all()
+            if len(ids) >= limit:
+                break
+        pictures = [(i, a.data) for i in ids if (a := s.get(MoodAsset, i))]
+    if not pictures:
+        return 0
+    unchecked: set[int] = set()
+    reasons: dict[int, str] = {}
+    try:
+        ok = _kid_check(pictures, unchecked, reasons)
+    except HTTPException:
+        return 0
+    with session() as s:
+        for pin_id, _ in pictures:
+            pin = s.get(MoodPin, pin_id)
+            if not pin or pin.kid_state or pin_id in unchecked:
+                continue  # a grown-up decided meanwhile, or not judged
+            pin.kid_state = 'ok' if pin_id in ok else 'hidden'
+            pin.kid_reason = '' if pin_id in ok else (reasons.get(pin_id) or 'Did not pass the kid-safety check.')
+            s.add(pin)
+        s.commit()
+    return len(pictures) - len(unchecked)
 
 
 # ---------- public links (owner side)
@@ -272,7 +415,7 @@ def _dead(s, row) -> bool:
         return True
     if row.pin_id:
         pin = s.get(MoodPin, row.pin_id)
-        return not pin or pin.board_id != row.board_id or pin.profile_id != row.profile_id or pin.created_at > row.created_at
+        return not pin or pin.board_id != row.board_id or pin.created_at > row.created_at
     return False
 
 
@@ -317,7 +460,7 @@ def create_link(bid: int, data: LinkCreate, pid: int = Depends(require_hub)):
         raise HTTPException(422, 'Choose never, 1, 7 or 30 days.')
     with session() as s:
         _require_grown_up(s, pid)
-        owned(s, pid, bid)
+        owned(s, pid, bid, manage=True)
         if data.pin_id is not None:
             _visible_pin(s, pid, bid, data.pin_id)
         _prune(s, pid)
@@ -447,7 +590,7 @@ def _source(row, url):
 def _scope(row):
     """The pins a link may show: exactly its image, or every visible image on its board."""
     q = select(MoodPin).join(MoodAsset, MoodAsset.pin_id == MoodPin.id).where(
-        MoodPin.board_id == row.board_id, MoodPin.profile_id == row.profile_id, MoodPin.hidden == False)  # noqa: E712
+        MoodPin.board_id == row.board_id, MoodPin.hidden == False)  # noqa: E712
     return q.where(MoodPin.id == row.pin_id) if row.pin_id else q
 
 

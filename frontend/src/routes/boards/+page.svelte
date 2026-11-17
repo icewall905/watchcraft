@@ -11,6 +11,8 @@
  import { preloadImages, stopPreloading } from '$lib/hub/preload';
  import ShareDialog from '$lib/hub/ShareDialog.svelte';
  import ShareNotices from '$lib/hub/ShareNotices.svelte';
+ import Avatar from '$lib/components/Avatar.svelte';
+ import { shareApi } from '$lib/hub/share';
  import { boardsApi, type MoodBoard, type BoardPin, type BoardInput, type PinterestImport, type FoundPin, type BoardSearch, type ExtensionKey } from '$lib/hub/boards';
  let boards = $state<MoodBoard[]>([]), selected = $state<number | null>(null), pins = $state<BoardPin[]>([]);
  let loading = $state(false), more = $state(false), error = $state(''), notice = $state(''), savedOnly = $state(false), reviewOnly = $state(false);
@@ -274,6 +276,23 @@
  const tone = $derived(curatorActive ? 'busy' : board?.last_status === 'error' ? 'bad' : board?.last_status === 'ok' || board?.last_status === 'target_reached' ? 'good' : 'idle');
  function pickFile(file: File | null | undefined) { imageFile = file ?? null; if (imageFile) imageUrl = ''; }
  function dropFile(e: DragEvent) { e.preventDefault(); dragging = false; pickFile(e.dataTransfer?.files?.[0]); }
+ // Shared boards: a member leaves; a grown-up shows a picture the kid check hid to the kids, or hides one.
+ const mine = (b: MoodBoard | null | undefined) => !b || b.role !== 'member';
+ let leaveConfirm = $state(false), kidBusy = $state(false);
+ async function leaveBoard() {
+  if (!selected || !allowed() || session.profileId == null) return; const owner = stamp();
+  try { await shareApi.removeMember(selected, session.profileId); if (owner !== stamp() || !allowed()) return; leaveConfirm = false; selected = null; void goto('/boards', {keepFocus: true}); await load(); }
+  catch (e) { if (owner === stamp()) error = message(e); }
+ }
+ async function kidToggle(p: BoardPin, visible: boolean) {
+  kidBusy = true; error = ''; const owner = stamp();
+  try {
+   const r = await boardsApi.kid(p.board_id, p.id, visible); if (owner !== stamp()) return;
+   pins = pins.map(v => v.id === p.id ? {...v, ...r.pin} : v);
+   if (preview?.id === p.id) preview = {...preview, ...r.pin};
+   boards = boards.map(b => b.id === r.board.id ? r.board : b);
+  } catch (e) { if (owner === stamp()) error = message(e); } finally { kidBusy = false; }
+ }
  async function removeBoard() { if (!selected || !allowed()) return; const owner = stamp(); try { await boardsApi.remove(selected); if (owner !== stamp() || !allowed()) return; deleteConfirm = false; selected = null; void goto('/boards', {keepFocus: true}); await load(); } catch(e) { if (owner === stamp()) error = message(e); } }
 </script>
 
@@ -334,7 +353,7 @@
       <article class="pin">
        <div class="frame">
         <button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.thumb_url ?? pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} width={pin.width} height={pin.height} /></button>
-        {#if pin.media_type === 'gif'}<span class="badge">GIF</span>{/if}{#if pin.ai_flag}<span class="badge ai" title={`AI generated: ${pin.ai_flag}`}>AI</span>{/if}
+        {#if pin.media_type === 'gif'}<span class="badge">GIF</span>{/if}{#if pin.ai_flag}<span class="badge ai" title={`AI generated: ${pin.ai_flag}`}>AI</span>{/if}{#if pin.kid_state === 'hidden'}<span class="badge kidhide" title={`Hidden from kids: ${pin.kid_reason}`}>Hidden from kids</span>{/if}
          </div>
        <div class="caption"><button class="pin-title" onclick={() => { preview = pin; }}>{pin.title}</button><button class="pin-meta board-link" onclick={() => { clearSearch(); choose(pin.board_id); }}>on {pin.board_name}</button>
         <div class="actions" role="group" aria-label={`Actions for ${pin.title}`}><span class="gap"></span><button class="act heart" class:on={pin.saved} disabled={busy === pin.id} title={pin.saved ? 'Saved — click to unsave' : 'Save'} aria-label={pin.saved ? `Unsave ${pin.title}` : `Save ${pin.title}`} aria-pressed={pin.saved} onclick={() => pinAction(pin, {saved: !pin.saved})}>{@render icon('heart')}</button></div></div>
@@ -363,7 +382,7 @@
       </span>
       <span class="card-body">
        <span class="card-name">{b.name}</span>
-       <span class="card-meta">{#if b.child_friendly}<span class="kid-badge" title="Child friendly">🧸</span> {/if}{b.pin_count ?? 0} images{#if b.saved_count} · {@render icon('heart')}{b.saved_count}{/if}</span>
+       <span class="card-meta">{#if b.child_friendly}<span class="kid-badge" title="Child friendly">🧸</span> {/if}{#if b.members?.length || b.role === 'member'}<span class="shared-badge" title={`Shared with ${[b.owner, ...(b.members ?? [])].filter(x => x && x.id !== session.profileId).map(x => x?.name).join(', ')}`}>Shared</span> {/if}{b.pin_count ?? 0} images{#if b.saved_count} · {@render icon('heart')}{b.saved_count}{/if}</span>
        {#if active(b.last_status)}<span class="card-status busy">Curator searching…</span>
        {:else if b.last_status === 'error'}<span class="card-status bad">Needs attention</span>
        {:else if !b.enabled}<span class="card-status">Paused</span>{/if}
@@ -378,6 +397,14 @@
   <section class="board-hero">
    <div class="hero-main">
     <h2>{board.name}</h2>
+    {#if board.members?.length || board.role === 'member'}
+     <div class="people" aria-label="Working on this board">
+      {#each [board.owner, ...(board.members ?? [])].filter(x => !!x) as person (person?.id)}<span class="person" title={person?.id === board.owner?.id ? `${person?.name} (owner)` : person?.name}><Avatar emoji={person?.emoji ?? ''} color={person?.color ?? ''} size="1.6rem" /></span>{/each}
+      <span class="muted">{board.role === 'member' ? `Shared by ${board.owner?.name ?? 'someone'}` : `Shared with ${(board.members ?? []).map(m => m.name).join(', ')}`}</span>
+      {#if board.role === 'member'}<button class="link-btn" onclick={() => { leaveConfirm = true; }}>Leave board</button>{/if}
+     </div>
+    {/if}
+    {#if board.kid_hidden_count}<p class="kid-note">🧸 {board.kid_hidden_count} image{board.kid_hidden_count === 1 ? ' is' : 's are'} hidden from the kids. Open one to see why, or show it to them anyway.</p>{/if}
     {#if tags.length || board.child_friendly}<ul class="tags" aria-label="Interests">{#if board.child_friendly}<li class="kid">🧸 Child friendly</li>{/if}{#each tags as t}<li>{t}</li>{/each}</ul>{/if}
     <div class="goal">
      <div class="goal-text"><span class="image-count">{board.pin_count ?? 0} / {board.target_images ?? 100} images</span><span class="muted">{board.enabled ? `Curator checks every ${board.interval_hours} hours.` : 'Automatic discovery paused.'}</span></div>
@@ -385,9 +412,9 @@
     </div>
     <div class="tools" role="toolbar" aria-label="Board actions">
      <button class="btn primary find" disabled={findDisabled} onclick={refresh}>{@render icon('spark')}{findLabel}</button>
-     <button class="btn pill" disabled={curatorActive || reshuffling} title="Replace every image you have not hearted or given a thumbs up" onclick={() => { error = ''; reshuffleOpen = true; }}>{@render icon('shuffle')}Reshuffle</button>
+     {#if mine(board)}<button class="btn pill" disabled={curatorActive || reshuffling} title="Replace every image you have not hearted or given a thumbs up" onclick={() => { error = ''; reshuffleOpen = true; }}>{@render icon('shuffle')}Reshuffle</button>{/if}
      <button class="btn pill" onclick={() => openImage('manual')}>{@render icon('plus')}Add image</button>
-     {#if !session.isChild}
+     {#if !session.isChild && mine(board)}
      <button class="btn pill" onclick={() => openImage('reference')}>{@render icon('eye')}{board.reference_url ? 'Change inspiration image' : 'Add inspiration image'}</button>
      <button class="btn pill" onclick={() => { error = ''; importOpen = true; }}>{@render icon('pin')}Import Pinterest</button>
      <button class="btn pill" onclick={() => { sharing = {board: {id: board.id, name: board.name}}; }}>{@render icon('upload')}Share</button>
@@ -398,7 +425,7 @@
       <button class:on={savedOnly} aria-pressed={savedOnly} title="Saved and marked Fits" onclick={() => { if (!savedOnly) { savedOnly = true; reviewOnly = false; void load(); } }}>{@render icon('heart')}Saved{savedOnly ? ' only' : ''}</button>
       <button class:on={reviewOnly} aria-pressed={reviewOnly} onclick={() => { if (!reviewOnly) { reviewOnly = true; savedOnly = false; void load(); } }}>{@render icon('check')}To review</button>
      </div>
-     <button class="btn pill icon-only" aria-label={`Edit ${board.name} curator`} title="Edit curator" onclick={() => edit(board)}>{@render icon('gear')}</button>
+     {#if mine(board)}<button class="btn pill icon-only" aria-label={`Edit ${board.name} curator`} title="Edit curator" onclick={() => edit(board)}>{@render icon('gear')}</button>{/if}
     </div>
    </div>
    {#if board.reference_url}
@@ -436,7 +463,7 @@
     <article class="pin">
      <div class="frame">
       <button class="picture" aria-label={`View ${pin.title}`} onclick={() => { preview = pin; }}><BoardImage url={pin.thumb_url ?? pin.image_url} alt={pin.title} animated={pin.media_type === 'gif'} width={pin.width} height={pin.height} /></button>
-      {#if pin.media_type === 'gif'}<span class="badge">GIF</span>{/if}{#if pin.ai_flag}<span class="badge ai" title={`AI generated: ${pin.ai_flag}`}>AI</span>{/if}
+      {#if pin.media_type === 'gif'}<span class="badge">GIF</span>{/if}{#if pin.ai_flag}<span class="badge ai" title={`AI generated: ${pin.ai_flag}`}>AI</span>{/if}{#if pin.kid_state === 'hidden'}<span class="badge kidhide" title={`Hidden from kids: ${pin.kid_reason}`}>Hidden from kids</span>{/if}
      </div>
      <div class="caption"><button class="pin-title" onclick={() => { preview = pin; }}>{pin.title}</button>{#if pin.attribution}<span class="pin-meta">{pin.attribution}</span>{/if}
       <div class="actions" role="group" aria-label={`Actions for ${pin.title}`}>
@@ -564,21 +591,32 @@
  <p class="muted small">Replaced images will not come back, and your curator does not learn from them. Use 👎 for images it should avoid.</p>
  <div class="form-actions"><button class="btn" onclick={() => { reshuffleOpen = false; }}>Cancel</button><button class="btn primary" disabled={reshuffling} onclick={reshuffle}>{reshuffling ? 'Reshuffling…' : replaceable ? `Replace ${replaceable} image${replaceable === 1 ? '' : 's'}` : 'Find more'}</button></div>
 </Modal>{/if}
+{#if leaveConfirm && board}<Modal portal title="Leave this board?" onClose={() => { leaveConfirm = false; }}><p>“{board.name}” stays with {board.owner?.name ?? 'its owner'}. The images you added stay on it.</p><div class="form-actions"><button class="btn" onclick={() => { leaveConfirm = false; }}>Stay</button><button class="btn danger" onclick={leaveBoard}>Leave board</button></div></Modal>{/if}
 {#if deleteConfirm}<Modal portal title="Delete this board?" onClose={() => { deleteConfirm = false; }}><p>This removes the board and its saved pins.</p><div class="form-actions"><button class="btn" onclick={() => { deleteConfirm = false; }}>Keep board</button><button class="btn danger" onclick={removeBoard}>Delete board</button></div></Modal>{/if}
 
 {#if preview}<PinViewer pin={preview} pins={found ?? pins} boardName={boards.find(b => b.id === preview?.board_id)?.name ?? ''} busy={busy === preview.id}
  onClose={() => { preview = null; moving = null; }} onNavigate={(p) => { preview = p; moving = null; }}
  onSave={(p) => pinAction(p, {saved: !p.saved})} onFits={(p) => review(p, p.feedback === 'good' ? '' : 'good')}
  onNotFit={(p) => { reviewing = p; reviewNote = ''; }} onHide={(p) => remove(p)}
- onShare={session.isChild ? undefined : (p) => { sharing = {board: {id: p.board_id, name: boards.find(b => b.id === p.board_id)?.name ?? ''}, pin: p}; }}>
+ onShare={session.isChild || !mine(boards.find(b => b.id === preview?.board_id)) ? undefined : (p) => { sharing = {board: {id: p.board_id, name: boards.find(b => b.id === p.board_id)?.name ?? ''}, pin: p}; }}>
  {#snippet actions()}
+  {#if preview?.kid_state === 'hidden' || preview?.kid_state === 'override'}
+   <div class="kid-box" role="note">
+    <strong>{preview.kid_state === 'hidden' ? '🧸 Hidden from kids' : '🧸 Shown to kids'}</strong>
+    {#if preview.kid_reason}<p class="muted">{preview.kid_reason}</p>{/if}
+    <button class="btn pill" disabled={kidBusy} onclick={() => preview && kidToggle(preview, preview.kid_state === 'hidden')}>{preview.kid_state === 'hidden' ? 'Show to kids anyway' : 'Hide from kids'}</button>
+   </div>
+  {:else if preview?.kid_state === 'ok'}
+   <button class="btn pill" disabled={kidBusy} onclick={() => preview && kidToggle(preview, false)}>Hide from kids</button>
+  {/if}
+  {#if preview?.added_by}<p class="muted small">Added by {preview.added_by}</p>{/if}
   {#if boards.length > 1}
    {#if moving}<div class="move-form"><label>Destination board<select bind:value={moveTo}>{#each boards.filter(b => b.id !== preview?.board_id) as b}<option value={b.id}>{b.name}</option>{/each}</select></label><button class="btn primary" disabled={!moveTo || busy !== null} onclick={() => preview && pinAction(preview, {board_id: Number(moveTo)})}>Move image</button></div>
    {:else}<button class="btn pill" onclick={() => { moving = preview?.id ?? null; moveTo = String(boards.find(b => b.id !== preview?.board_id)?.id ?? ''); }}>Move to another board</button>{/if}
   {/if}
  {/snippet}
 </PinViewer>{/if}
-{#if sharing}<ShareDialog board={sharing.board} pin={sharing.pin} onClose={() => { sharing = null; }} />{/if}
+{#if sharing}<ShareDialog board={sharing.board} pin={sharing.pin} onClose={() => { sharing = null; }} onMembers={() => void load(false, true)} />{/if}
 
 <style>
  .boards-page{--mb-rose:#ff8fab;--mb-peach:#ffb547;--mb-card:rgba(255,255,255,.04);max-width:1680px;margin:auto;padding:clamp(1rem,3vw,2.5rem);overflow-x:clip}
@@ -731,6 +769,14 @@
  .frame:hover .picture :global(img){transform:scale(1.03)}
  .badge{position:absolute;left:.6rem;bottom:.6rem;font-size:.65rem;font-weight:800;letter-spacing:.08em;padding:.2rem .45rem;border-radius:.4rem;background:rgba(0,0,0,.6);color:#fff;pointer-events:none}
  .badge.ai{top:.6rem;bottom:auto;background:rgba(124,58,237,.85)}
+ .badge.kidhide{left:auto;right:.6rem;background:rgba(214,69,69,.88);letter-spacing:.02em}
+ .shared-badge{font-size:.7rem;font-weight:700;padding:.05rem .4rem;border-radius:999px;border:1px solid var(--line);color:var(--muted)}
+ .people{display:flex;align-items:center;gap:.35rem;flex-wrap:wrap;margin:.2rem 0 .5rem}
+ .people .person{display:inline-flex}
+ .people .muted{margin-left:.3rem}
+ .kid-note{margin:.2rem 0 .6rem;font-size:.9rem;color:#ffb547}
+ .kid-box{display:grid;gap:.35rem;padding:.6rem .8rem;border:1px solid rgba(255,181,71,.5);border-radius:var(--r-md);margin-bottom:.5rem}
+ .kid-box p{margin:0}
  .caption{padding:.5rem .3rem 0;display:grid;gap:.1rem}
  .pin-title{text-align:left;padding:0;border:0;background:none;color:var(--text);font:inherit;font-weight:600;font-size:.88rem;line-height:1.35;cursor:pointer;display:-webkit-box;-webkit-line-clamp:2;line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
  .pin-meta{font-size:.72rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

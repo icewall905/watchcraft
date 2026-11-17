@@ -1,17 +1,22 @@
 import { request } from '$lib/api';
 import { qs } from './api';
+export interface BoardPerson { id: number; name: string; emoji: string; color: string; child: boolean }
 export interface MoodBoard {
  id: number; name: string; interests: string; instructions: string; enabled: boolean; interval_hours: number;
  pin_count: number; target_images: number; reference_url: string | null; reference_name: string; last_run?: number | null; last_status?: string; error?: string;
  retry_after?: number; last_result?: string; cover_url?: string | null;
  preview_urls?: string[]; saved_count?: number; last_added?: number | null; created_at?: number;
  avoid?: string; seed_searches?: string; media?: 'any' | 'photos' | 'gifs'; min_width?: number; strictness?: 'strict' | 'balanced'; child_friendly?: boolean; ai_images?: 'ignore' | 'mark' | 'reject';
+ /** Shared boards: owner, the other members, this profile's role; `kids` = a child uses it. */
+ owner?: BoardPerson | null; members?: BoardPerson[]; role?: 'owner' | 'member'; kids?: boolean; kid_hidden_count?: number;
 }
 export interface BoardPin {
  id: number; board_id: number; title: string; image_url: string; thumb_url?: string; source_url: string;
  media_type: string; attribution?: string; license?: string; saved: boolean;
  feedback?: '' | 'good' | 'bad'; feedback_note?: string;
  width?: number; height?: number; vision_seen?: string; vision_why?: string; ai_flag?: string;
+ /** Grown-ups only, on boards a child uses: '' unchecked | ok | hidden | override, and why. */
+ kid_state?: '' | 'ok' | 'hidden' | 'override'; kid_reason?: string; added_by?: string; profile_id?: number;
 }
 export type BoardInput = Pick<MoodBoard, 'name' | 'interests' | 'instructions' | 'enabled' | 'interval_hours'> & {target_images: number; avoid: string; seed_searches: string; media: 'any' | 'photos' | 'gifs'; min_width: number; strictness: 'strict' | 'balanced'; child_friendly: boolean; ai_images: 'ignore' | 'mark' | 'reject'};
 export type BoardImageInput = {url?: string; data_base64?: string; title?: string; source_url?: string};
@@ -40,6 +45,7 @@ export const boardsApi = {
  setReference: (id: number, body: BoardImageInput) => request<{board: MoodBoard}>(`${base}/${id}/reference`, {method: 'POST', body, toast: false}),
  removeReference: (id: number) => request<{board: MoodBoard}>(`${base}/${id}/reference`, {method: 'DELETE', toast: false}),
  pin: (id: number, pin: number, body: {saved?: boolean; hidden?: boolean; board_id?: number}) => request<{pin: BoardPin}>(`${base}/${id}/pins/${pin}`, {method: 'PATCH', body, toast: false}),
+ kid: (id: number, pin: number, visible: boolean) => request<{pin: BoardPin; board: MoodBoard}>(`${base}/${id}/pins/${pin}/kid`, {method: 'POST', body: {visible}, toast: false}),
  review: (id: number, pin: number, body: {verdict: '' | 'good' | 'bad'; note?: string}) => request<{pin: BoardPin; board: MoodBoard}>(`${base}/${id}/pins/${pin}/feedback`, {method: 'PUT', body, toast: false}),
  extKeys: () => request<{keys: ExtensionKey[]}>('/ext/keys', {toast: false}),
  createExtKey: (name: string) => request<{key: string; info: ExtensionKey}>('/ext/keys', {method: 'POST', body: {name}, toast: false}),

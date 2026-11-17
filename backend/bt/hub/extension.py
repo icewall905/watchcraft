@@ -97,8 +97,9 @@ def revoke_key(key_id: int, pid: int = Depends(require_hub)):
 def ext_boards(pid: int = Depends(key_profile)):
     with session() as s:
         profile = s.get(Profile, pid)
-        rows = s.exec(select(MoodBoard).where(MoodBoard.profile_id == pid).order_by(MoodBoard.name)).all()
-        counts = dict(s.exec(select(MoodPin.board_id, func.count()).where(MoodPin.profile_id == pid, MoodPin.hidden == False)
+        rows = s.exec(select(MoodBoard).where(moodboards.accessible(pid)).order_by(MoodBoard.name)).all()
+        counts = dict(s.exec(select(MoodPin.board_id, func.count()).where(MoodPin.board_id.in_([b.id for b in rows] or [0]),
+                                                                          MoodPin.hidden == False)  # noqa: E712
                              .group_by(MoodPin.board_id)).all())
         return {'profile': profile.name if profile else '', 'boards': [{'id': b.id, 'name': b.name, 'pin_count': counts.get(b.id, 0)} for b in rows]}
 

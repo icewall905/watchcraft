@@ -1,17 +1,21 @@
 <script lang="ts">
- import { onMount } from 'svelte';
+ import { onMount, untrack } from 'svelte';
  import Modal from '$lib/components/Modal.svelte';
  import Avatar from '$lib/components/Avatar.svelte';
  import { toast } from '$lib/stores/toast.svelte';
  import { session } from '$lib/stores/session.svelte';
  import { boardMediaBlob } from '$lib/hub/BoardImage.svelte';
  import type { BoardPin } from '$lib/hub/boards';
- import { shareApi, type ShareLink, type ShareTarget } from '$lib/hub/share';
+ import { shareApi, type BoardMembers, type ShareLink, type ShareTarget } from '$lib/hub/share';
 
  // board + optional pin: share that image or the whole board. No board: manage every public link.
- let { board, pin, onClose }: { board?: {id: number; name: string}; pin?: BoardPin; onClose: () => void } = $props();
+ let { board, pin, onClose, onMembers }: { board?: {id: number; name: string}; pin?: BoardPin; onClose: () => void;
+  onMembers?: (m: BoardMembers) => void } = $props();
 
- let tab = $state<'profile' | 'link'>('profile');  // Without a board only the link list shows.
+ // A whole board can be worked on together; a single image is only copied or linked.
+ const together = $derived(!!board && !pin && session.grownUp);
+ let tab = $state<'together' | 'profile' | 'link'>(untrack(() => board && !pin && session.grownUp ? 'together' : 'profile'));  // Without a board only the link list shows.
+ let team = $state<BoardMembers | null>(null);
  let targets = $state<ShareTarget[] | null>(null);
  let links = $state<ShareLink[]>([]);
  let busy = $state(false), error = $state('');
@@ -24,6 +28,7 @@
 
  onMount(() => {
   if (board) shareApi.targets().then(r => { targets = r.profiles; }).catch(() => { targets = []; });
+  if (board && !pin) shareApi.members(board.id).then(r => { team = r; }).catch(() => {});
   void loadLinks();
  });
 
@@ -45,6 +50,23 @@
    onClose();
   } catch (e) { fail(e); } finally { busy = false; }
  }
+
+ async function invite(t: ShareTarget) {
+  if (!board) return;
+  busy = true; error = '';
+  try {
+   const r = await shareApi.invite(board.id, t.id);
+   team = r; onMembers?.(r);
+   toast.success(`${r.added} can now work on “${board.name}” with you.${t.child ? ' Child limits apply.' : ''}`);
+  } catch (e) { fail(e); } finally { busy = false; }
+ }
+ async function drop(id: number, name: string) {
+  if (!board) return;
+  busy = true; error = '';
+  try { const r = await shareApi.removeMember(board.id, id); team = r; onMembers?.(r); toast.info(`${name} no longer works on this board.`); }
+  catch (e) { fail(e); } finally { busy = false; }
+ }
+ const onTeam = (id: number) => !!team && (team.owner?.id === id || team.members.some(m => m.id === id));
 
  async function makeLink() {
   if (!board) return;
@@ -96,12 +118,41 @@
  <div class="share">
   {#if board}
    <div class="tabs" role="tablist" aria-label="How to share">
-    <button role="tab" aria-selected={tab === 'profile'} class:on={tab === 'profile'} onclick={() => { tab = 'profile'; error = ''; }}>To a profile</button>
+    {#if together}<button role="tab" aria-selected={tab === 'together'} class:on={tab === 'together'} onclick={() => { tab = 'together'; error = ''; }}>Work together</button>{/if}
+    <button role="tab" aria-selected={tab === 'profile'} class:on={tab === 'profile'} onclick={() => { tab = 'profile'; error = ''; }}>{together ? 'Send a copy' : 'To a profile'}</button>
     <button role="tab" aria-selected={tab === 'link'} class:on={tab === 'link'} onclick={() => { tab = 'link'; error = ''; }}>Get link</button>
    </div>
   {/if}
 
-  {#if tab === 'profile' && board}
+  {#if tab === 'together' && board}
+   <div role="tabpanel" aria-label="Work together">
+    <p class="muted">Everyone you add sees this board and can add, save and remove images. Changes show up for all of you. Settings stay yours.</p>
+    {#if team?.members.length}
+     <h3 class="sub">Working on it</h3>
+     <ul class="targets">
+      {#each team.members as m (m.id)}
+       <li class="member"><Avatar emoji={m.emoji} color={m.color} size="2.2rem" /><span>{m.name}{#if m.child}<small class="kid">Kid · child limits</small>{/if}</span>
+        <button class="btn pill" disabled={busy} onclick={() => drop(m.id, m.name)} aria-label={`Remove ${m.name} from this board`}>Remove</button></li>
+      {/each}
+     </ul>
+    {/if}
+    {#if targets === null}<p class="muted">Loading profiles…</p>
+    {:else}
+     {@const open = targets.filter(t => !onTeam(t.id))}
+     {#if open.length}
+      <h3 class="sub">Add someone</h3>
+      <ul class="targets">
+       {#each open as t (t.id)}
+        <li><button class="target" disabled={busy} onclick={() => invite(t)} aria-label={`Work on this board with ${t.name}`}>
+         <Avatar emoji={t.emoji} color={t.color} size="2.2rem" /><span>{t.name}{#if t.account}<small>{t.account}</small>{/if}{#if t.child}<small class="kid">Kid · child limits</small>{/if}</span><span class="go">Add</span>
+        </button></li>
+       {/each}
+      </ul>
+     {:else if !team?.members.length}<p class="muted">No other profile can use Mood Boards.</p>{/if}
+    {/if}
+    {#if targets?.some(t => t.child)}<p class="muted small">With a kid on the board it stays child-friendly. Every image is kid-checked; ones that fail stay visible to grown-ups with the reason, and you can still show them to the kids.</p>{/if}
+   </div>
+  {:else if tab === 'profile' && board}
    <div role="tabpanel" aria-label="To a profile">
     <p class="muted">{pin ? 'They get a copy in their “Shared with you” board.' : 'They get their own copy of this board, with the curator paused.'}</p>
     {#if targets === null}<p class="muted">Loading profiles…</p>
@@ -166,6 +217,10 @@
  .target{width:100%;display:flex;align-items:center;gap:.7rem;padding:.55rem .7rem;border:1px solid var(--line);border-radius:var(--r-md);background:transparent;color:inherit;font:inherit;cursor:pointer;text-align:left}
  .target:hover:not(:disabled){background:var(--surface-2)}
  .target .go{margin-left:auto;font-size:.85rem;color:var(--muted)}
+ .member{display:flex;align-items:center;gap:.7rem;padding:.4rem .7rem;border:1px solid var(--line);border-radius:var(--r-md)}
+ .member .btn{margin-left:auto}
+ .target small:not(.kid){display:block;color:var(--faint);font-size:var(--fs-xs,.75rem)}
+ .sub{font-size:.85rem;margin:.8rem 0 .4rem;color:var(--muted);font-weight:600}
  .url{width:100%;padding:.6rem .7rem;border-radius:var(--r-md);border:1px solid var(--line);background:var(--surface-2);color:inherit;font:inherit;font-size:.85rem}
  .row{display:flex;flex-wrap:wrap;gap:.5rem}
  .field{display:flex;align-items:center;justify-content:space-between;gap:.7rem}

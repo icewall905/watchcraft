@@ -28,7 +28,8 @@ test('share a board with another profile, who sees a banner and gets a copy', as
   await freshPage(page, `/boards?board=${s.board.id}`);
   await page.getByRole('toolbar', { name: 'Board actions' }).getByRole('button', { name: 'Share', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Share “Share test board”' });
-  await expect(dialog.getByRole('tab', { name: 'To a profile' })).toHaveAttribute('aria-selected', 'true');
+  await expect(dialog.getByRole('tab', { name: 'Work together' })).toHaveAttribute('aria-selected', 'true');
+  await dialog.getByRole('tab', { name: 'Send a copy' }).click();
   await dialog.getByRole('button', { name: 'Send this board to Ann share' }).click();
   await expect(page.getByText('Sent 2 images to Ann share.')).toBeVisible();
 
@@ -51,6 +52,42 @@ test('share a board with another profile, who sees a banner and gets a copy', as
   await page.getByRole('button', { name: 'Dismiss' }).click();
   await page.reload();
   await expect(page.getByRole('region', { name: 'Shared with you' })).toHaveCount(0);
+ } finally { await cleanup(request, s); }
+});
+
+test('work on a board together: the member sees it, adds to it and can leave', async ({ page, request }) => {
+ const s = await seed(request);
+ try {
+  await freshPage(page, `/boards?board=${s.board.id}`);
+  await page.getByRole('toolbar', { name: 'Board actions' }).getByRole('button', { name: 'Share', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Share “Share test board”' });
+  await dialog.getByRole('button', { name: 'Work on this board with Ann share' }).click();
+  await expect(page.getByText('Ann share can now work on “Share test board” with you.')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Remove Ann share from this board' })).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(page.getByText('Shared with Ann share')).toBeVisible();
+
+  // Ann: invitation banner, the same board (not a copy), member-only tools.
+  await page.evaluate((id) => localStorage.setItem('bt.profile', String(id)), s.ann.id);
+  await page.goto('/boards');
+  await expect(page.getByRole('region', { name: 'Shared with you' })).toContainText('invited you to work on a board together');
+  await page.getByRole('button', { name: /Open Share test board/ }).click();
+  await expect(page.getByText(/Shared by/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'View Red square 1' })).toBeVisible();
+  const tools = page.getByRole('toolbar', { name: 'Board actions' });
+  await expect(tools.getByRole('button', { name: 'Add image' })).toBeVisible();
+  await expect(tools.getByRole('button', { name: 'Reshuffle' })).toHaveCount(0);
+  await expect(tools.getByRole('button', { name: /Edit .* curator/ })).toHaveCount(0);
+  const added = await request.post(`/api/hub/boards/${s.board.id}/images`, { headers: { 'X-Profile-Id': String(s.ann.id) }, data: { data_base64: PNG, title: 'Ann square', source_url: 'https://example.com/ann.png' } });
+  expect(added.ok()).toBeTruthy();
+  await page.getByRole('button', { name: 'Leave board' }).click();
+  await page.getByRole('dialog', { name: 'Leave this board?' }).getByRole('button', { name: 'Leave board' }).click();
+  await expect(page.getByRole('button', { name: /Open Share test board/ })).toHaveCount(0);
+
+  // Owner: Ann's image stayed, and a notice says so.
+  await page.evaluate((id) => localStorage.setItem('bt.profile', String(id)), Number(s.owner['X-Profile-Id']));
+  await page.goto(`/boards?board=${s.board.id}`);
+  await expect(page.getByRole('button', { name: 'View Ann square' })).toBeVisible();
  } finally { await cleanup(request, s); }
 });
 
@@ -144,6 +181,8 @@ test('a kid profile is a share target and held-back images are reported', async 
   await freshPage(page, `/boards?board=${s.board.id}`);
   await page.getByRole('toolbar', { name: 'Board actions' }).getByRole('button', { name: 'Share', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Share “Share test board”' });
+  await expect(dialog.getByText('Kid · child limits')).toBeVisible();
+  await dialog.getByRole('tab', { name: 'Send a copy' }).click();
   await expect(dialog.getByText('Kid · safety-checked')).toBeVisible();
   await expect(dialog.getByText(/pass the kid-safety check first/)).toBeVisible();
   await dialog.getByRole('button', { name: 'Send this board to Kiddo' }).click();

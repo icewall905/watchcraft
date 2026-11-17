@@ -582,6 +582,17 @@ class MoodPin(SQLModel, table=True):
     saved: bool = False
     hidden: bool = False
     ai_flag: str = ''  # why the curator thinks it is AI-generated ('' = not flagged)
+    # Kid check on boards a child shares: '' unchecked | ok | hidden (failed or hidden by a grown-up) | override
+    kid_state: str = ''
+    kid_reason: str = ''
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodBoardMember(SQLModel, table=True):
+    """Extra profiles that work on a board together with its owner (MoodBoard.profile_id)."""
+    board_id: int = Field(primary_key=True)
+    profile_id: int = Field(primary_key=True, index=True)
+    added_by: int = 0
     created_at: float = Field(default_factory=time.time)
 
 
@@ -684,7 +695,7 @@ class MoodShareLink(SQLModel, table=True):
     deleting the row revokes it at once (every public request looks it up again)."""
     id: Optional[int] = Field(default=None, primary_key=True)
     profile_id: int = Field(index=True)
-    kind: str  # 'pin' | 'board'
+    kind: str  # 'pin' | 'board' (copies) | 'member' (joined a shared board) | 'added' (images added by a member)
     board_id: int = Field(index=True)
     pin_id: Optional[int] = None
     token_hash: str = Field(index=True, unique=True)
@@ -701,7 +712,7 @@ class MoodShareNotice(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     recipient_id: int = Field(index=True)
     sender_id: int
-    kind: str  # 'pin' | 'board'
+    kind: str  # 'pin' | 'board' (copies) | 'member' (joined a shared board) | 'added' (images added by a member)
     board_id: int
     count: int = 1
     seen: bool = False

@@ -13,7 +13,11 @@
   void shareApi.seen(ids).catch(() => {});
  }
  function open(n: ShareNotice) { done(notices.filter(x => x.board_id === n.board_id).map(x => x.id)); onOpen(n.board_id); }
- const text = (n: ShareNotice) => `${n.sender_emoji ? n.sender_emoji + ' ' : ''}${n.sender} shared ${n.kind === 'board' ? 'a board' : n.count === 1 ? 'an image' : `${n.count} images`} with you`;
+ const images = (c: number) => c === 1 ? 'an image' : `${c} images`;
+ const text = (n: ShareNotice) => `${n.sender_emoji ? n.sender_emoji + ' ' : ''}${n.sender} ` + (
+  n.kind === 'member' ? 'invited you to work on a board together'
+  : n.kind === 'added' ? `added ${images(n.count)}`
+  : `shared ${n.kind === 'board' ? 'a board' : images(n.count)} with you`);
 </script>
 
 {#if notices.length}

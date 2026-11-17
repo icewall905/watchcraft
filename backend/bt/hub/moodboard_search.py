@@ -95,8 +95,22 @@ def sweep(throttled: bool = True) -> dict:
     return {'embedded': done}
 
 
+def _visible(s, pid: int):
+    """Pins on boards this profile owns or works on; children only see what they may see (moodboards.kid_visible)."""
+    from sqlalchemy import and_, or_
+    from ..access import is_child
+    from .moodboards import accessible
+    boards = select(MoodBoard.id).where(accessible(pid))
+    cond = MoodPin.board_id.in_(boards) & (MoodPin.hidden == False)  # noqa: E712
+    if is_child(s, pid):
+        own = select(MoodBoard.id).where(MoodBoard.profile_id == pid)
+        cond = cond & or_(MoodPin.kid_state.in_(('ok', 'override')),
+                          and_(MoodPin.kid_state == '', MoodPin.profile_id == pid, MoodPin.board_id.in_(own)))
+    return cond
+
+
 def _counts(s, pid: int, model: str) -> tuple[int, int]:
-    visible = (MoodPin.profile_id == pid) & (MoodPin.hidden == False)
+    visible = _visible(s, pid)
     total = s.exec(select(func.count()).select_from(MoodPin).where(visible)).one()
     indexed = s.exec(select(func.count()).select_from(MoodPin)
                      .join(MoodPinVector, MoodPinVector.pin_id == MoodPin.id)
@@ -125,8 +139,7 @@ def search(q: str, pid: int, board_id: int | None = None, limit: int = 40) -> li
     with session() as s:
         stmt = (select(MoodPinVector.pin_id, MoodPinVector.vector, MoodPinVector.dim)
                 .join(MoodPin, MoodPin.id == MoodPinVector.pin_id)
-                .where(MoodPinVector.model == model, MoodPinVector.dim == len(query),
-                       MoodPin.profile_id == pid, MoodPin.hidden == False))
+                .where(MoodPinVector.model == model, MoodPinVector.dim == len(query), _visible(s, pid)))
         if board_id is not None:
             stmt = stmt.where(MoodPin.board_id == board_id)
         rows = s.exec(stmt.order_by(MoodPin.id.desc()).limit(MAX_COMPARE)).all()
@@ -153,12 +166,15 @@ def search_response(q: str, pid: int, board_id: int | None, limit: int) -> dict:
         return {**base, 'available': False, 'reason': str(e)}
     with session() as s:
         pins = {p.id: p for p in s.exec(select(MoodPin).where(MoodPin.id.in_([i for i, _ in ranked] or [0]))).all()}
-        names = dict(s.exec(select(MoodBoard.id, MoodBoard.name).where(MoodBoard.profile_id == pid)).all())
+        from .moodboards import accessible
+        from ..access import is_child
+        names = dict(s.exec(select(MoodBoard.id, MoodBoard.name).where(accessible(pid))).all())
+        grown_up = not is_child(s, pid)
         from .moodboards import note_map
         notes = note_map(s, list(pins))
     out = []
     for pin_id, score in ranked:
         pin = pins.get(pin_id)
         if pin:
-            out.append({**pin_json(pin, note=notes.get(pin_id)), 'board_name': names.get(pin.board_id, ''), 'similarity': score})
+            out.append({**pin_json(pin, note=notes.get(pin_id), grown_up=grown_up), 'board_name': names.get(pin.board_id, ''), 'similarity': score})
     return {**base, 'pins': out}

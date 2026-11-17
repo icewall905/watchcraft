@@ -108,7 +108,7 @@ def enqueue(bid: int, data: ImportRequest, pid: int = Depends(require_hub)):
         raise HTTPException(422, str(exc)) from None
     with session() as s:
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
-        moodboards.owned(s, pid, bid)
+        moodboards.owned(s, pid, bid, manage=True)
         if s.exec(select(MoodImport).where(MoodImport.board_id == bid, MoodImport.status.in_(ACTIVE))).first():
             raise HTTPException(409, 'A Pinterest import is already running for this board. It continues in the background.')
         if s.exec(select(func.count()).select_from(MoodPin).where(MoodPin.board_id == bid)).one() >= moodboards.MAX_PINS:

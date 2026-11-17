@@ -1,14 +1,16 @@
 import { request } from '$lib/api';
+import type { BoardPerson } from './boards';
 
 /** Mood Board sharing: copy to another household profile, or a public link (backend: bt/hub/moodboard_share.py). */
-export interface ShareTarget { id: number; name: string; emoji: string; color: string; child?: boolean }
+export interface ShareTarget { id: number; name: string; emoji: string; color: string; child?: boolean; account?: string | null }
+export interface BoardMembers { owner: BoardPerson | null; members: BoardPerson[] }
 export interface ShareLink {
  id: number; kind: 'pin' | 'board'; board_id: number; pin_id: number | null; board_name: string; pin_title: string;
  hint: string; include_source: boolean; expires_at: number | null; expired: boolean; created_at: number;
  views: number; last_viewed: number | null;
 }
 export interface ShareNotice {
- id: number; kind: 'pin' | 'board'; count: number; board_id: number; board_name: string;
+ id: number; kind: 'pin' | 'board' | 'member' | 'added'; count: number; board_id: number; board_name: string;
  sender: string; sender_emoji: string; created_at: number;
 }
 export interface PublicPin { id: number; title: string; width: number; height: number; media_type: string; source_url?: string }
@@ -19,6 +21,9 @@ export const shareApi = {
  targets: () => request<{profiles: ShareTarget[]}>(`${base}/targets`, {toast: false}),
  toProfile: (board: number, to: number, pin_id?: number) =>
   request<{ok: boolean; added: number; recipient: string; held?: number}>(`${base}/boards/${board}/to-profile`, {method: 'POST', body: {to, pin_id}, toast: false}),
+ members: (board: number) => request<BoardMembers>(`${base}/boards/${board}/members`, {toast: false}),
+ invite: (board: number, to: number) => request<BoardMembers & {added: string}>(`${base}/boards/${board}/members`, {method: 'POST', body: {to}, toast: false}),
+ removeMember: (board: number, member: number) => request<BoardMembers>(`${base}/boards/${board}/members/${member}`, {method: 'DELETE', toast: false}),
  notices: () => request<{notices: ShareNotice[]}>(`${base}/notices`, {toast: false}),
  seen: (ids: number[]) => request<unknown>(`${base}/notices/seen`, {method: 'POST', body: {ids}, toast: false}),
  links: (board_id?: number) => request<{links: ShareLink[]}>(`${base}/links${board_id ? `?board_id=${board_id}` : ''}`, {toast: false}),

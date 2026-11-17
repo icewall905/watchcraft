@@ -122,8 +122,10 @@ def init_db() -> None:
                                  ('next_at', 'FLOAT NOT NULL DEFAULT 0'), ('note', "VARCHAR NOT NULL DEFAULT ''")):
             if name not in import_columns:
                 connection.exec_driver_sql(f'ALTER TABLE moodimport ADD COLUMN "{name}" {definition}')
-        if 'ai_flag' not in {c['name'] for c in inspect(connection).get_columns('moodpin')}:
-            connection.exec_driver_sql("ALTER TABLE moodpin ADD COLUMN ai_flag VARCHAR NOT NULL DEFAULT ''")
+        pin_columns = {c['name'] for c in inspect(connection).get_columns('moodpin')}
+        for name in ('ai_flag', 'kid_state', 'kid_reason'):
+            if name not in pin_columns:
+                connection.exec_driver_sql(f"ALTER TABLE moodpin ADD COLUMN {name} VARCHAR NOT NULL DEFAULT ''")
         # Additive shared-learning type columns. Existing rows are videos by default;
         # keep the legacy video_id column unchanged for old feedback and callers.
         _migrate_shared_learning_columns(connection)
