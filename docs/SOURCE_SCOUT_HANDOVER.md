@@ -19,6 +19,18 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Marquee library age/genre filters, back keeps place (`13343e2`, 2026-11-17)
+
+- Library pages get Age (3/7/10/13/16, steps that exist in the library) and Genre filter rows. Ages map the
+  library's own rating strings (`jf.rating_age`; US PG = 8, FSK/number ratings use the number, unrated excluded) to
+  an `officialRatings` list; new `GET /api/jellyfin/filters` reads `/Items/Filters`. Going back from a title
+  restores the loaded list, filters and scroll spot (in-memory, per history entry). No schema or `android/` change.
+- Backup `/root/compose/watchcraft-backups/20261117-marquee-13343e2` (online DB quick_check ok, config hashes,
+  previous source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261117-marquee-*`). rsync (checksum) of
+  the 7 non-`android/` files of `9405dcb..13343e2` (one new). Pruned `20261117-collector-81334bb` and its rollback
+  tags (`PRUNE-MANIFEST-20261117T192938Z.txt`).
+- All four `wc-*` run `sha256:1c047fe0…`, zero restarts, no tracebacks; health 200; served bundle has the age filter.
+
 ## Deployment record — parental controls (`9405dcb`, 2026-11-17)
 
 - Per child switches for each page and action (`bt/parental.py`; `profile.parental` JSON column, additive). An
