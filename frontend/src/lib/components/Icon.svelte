@@ -50,7 +50,9 @@
 		grid: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
 		list: 'M8 6h12M8 12h12M8 18h12M4 6v.01M4 12v.01M4 18v.01',
 		menu: 'M4 6h16M4 12h16M4 18h16',
-		sidebar: 'M4 5h16v14H4zM9 5v14'
+		sidebar: 'M4 5h16v14H4zM9 5v14',
+		expand: 'M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5',
+		shrink: 'M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5'
 	};
 	const filled = new Set(['play', 'pause', 'next', 'prev', 'agent', 'rewind', 'forward']);
 </script>

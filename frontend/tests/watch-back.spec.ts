@@ -44,3 +44,13 @@ test('Back leaves the entire watch session and returns to its playlist', async (
 	await page.keyboard.press('Escape');
 	await expect(page).toHaveURL(new RegExp(`/category/${id}$`));
 });
+
+test('Full screen button toggles real full screen on the watch page', async ({ page }) => {
+	await page.addInitScript(() => localStorage.setItem('bt.profile', '1'));
+	await page.goto('/watch/backtest001');
+	const enter = page.getByRole('button', { name: 'Full screen', exact: true });
+	await enter.click();
+	await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(true);
+	await page.getByRole('button', { name: 'Exit full screen' }).click();
+	await expect.poll(() => page.evaluate(() => !!document.fullscreenElement)).toBe(false);
+});

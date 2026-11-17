@@ -65,6 +65,18 @@
 	let decodeRetried = false;
 	let slow = $state(false);
 	let slowTimer: ReturnType<typeof setTimeout> | null = null;
+	// ---------- trouble: a failed or stalled stream retries quietly from the same spot for a while
+	const RETRY_FOR_MS = 90_000;
+	const STALL_MS = 30_000;
+	const DEFAULT_FAIL = 'This video could not be played. YouTube may be blocking the server, or the video is restricted.';
+	let retrying = $state(false);
+	let retryDeadline = 0;
+	let retryCount = 0;
+	let retryTimer: ReturnType<typeof setTimeout> | null = null;
+	let stallTimer: ReturnType<typeof setTimeout> | null = null;
+	let fatal = ''; // the video itself cannot play (unavailable, live): retrying will not help
+	let failMsg = DEFAULT_FAIL;
+	let lastPos = 0; // last real playback position of this video, kept across retries
 
 	const chapters = $derived((detail?.chapters ?? []).filter((c) => typeof c.start_time === 'number'));
 	const chapter = $derived([...chapters].reverse().find((c) => c.start_time <= time));
@@ -91,9 +103,14 @@
 	});
 
 	// ---------- load
-	async function load(vid: string) {
+	async function load(vid: string, resume = 0) {
 		const seq = ++loadSeq;
 		loading = true;
+		clearRetry();
+		fatal = '';
+		failMsg = DEFAULT_FAIL;
+		lastPos = resume;
+		extrasFor = '';
 		manifestRetried = false;
 		decodeRetried = false;
 		slow = false;
@@ -131,7 +148,8 @@
 		const detailP = api.video(vid).then(
 			(d) => (detail = d),
 			(e) => {
-				loadError = e?.status === 503 ? 'YouTube is temporarily blocking requests. Try again later.' : e?.status === 404 ? 'This video is unavailable.' : '';
+				if (e?.status === 404) fatal = 'This video is unavailable.';
+				else if (e?.status === 503) failMsg = 'YouTube is temporarily blocking requests. Try again later.';
 				return null;
 			}
 		);
@@ -142,6 +160,7 @@
 		if (seq !== loadSeq) return;
 		if (h && !h.finished) start = h.position_s ?? 0;
 		if (start < 5) start = 0;
+		if (resume) start = resume; // Try again: continue where playback actually was
 
 		// A saved copy plays straight from disk; the local probe beats any detail round trip.
 		const offlineOk = await playOffline(vid, start, seq, false);
@@ -161,8 +180,14 @@
 			if (playback.receiver) playback.error = 'Autoplay was blocked. Press Play on this screen, or allow autoplay for The Hub.';
 		});
 		poke();
+		extras(vid, seq);
+		detailP.then(() => {});
+	}
 
-		// Side data, all optional.
+	/** Side data, all optional. Runs once per video, after the first successful start. */
+	let extrasFor = '';
+	function extras(vid: string, seq: number) {
+		extrasFor = vid;
 		refreshSubtitles(vid, seq);
 		api.sponsorblock(vid).then((raw) => seq === loadSeq && (segments = prepareSegments(raw, session.settings?.sponsorblock)), () => {});
 		api.captions(vid).then((c) => {
@@ -174,7 +199,6 @@
 				if (m) setCaption(m.key);
 			}
 		}, () => {});
-		detailP.then(() => {});
 		const cid = catId ?? null;
 		if (cid) api.categoryFeed(cid, 'accepted', { limit: 12, after: vid }).then((l) => seq === loadSeq && (upNext = l.filter((c) => c.video.id !== vid)), () => {});
 	}
@@ -184,6 +208,7 @@
 		if (!video) return false;
 		const maxH = session.playerPrefs.max_height;
 		let ok = false;
+		let live = false;
 		try {
 			const shaka = await loadShaka();
 			if (seq !== loadSeq) return false;
@@ -251,10 +276,13 @@
 		} catch (e: any) {
 			console.warn('DASH failed, using fallback', e);
 			if (e?.data?.[1] === 409 || String(e?.data?.[0] ?? '').includes('409')) {
-				loadError = 'Live streams are not supported yet.';
+				live = true;
+				fatal = 'Live streams are not supported yet.';
+				loadError = fatal;
+				loading = false;
 			}
 		}
-		if (!ok && seq === loadSeq && !loadError) await fallback(vid, start, seq);
+		if (!ok && seq === loadSeq && !live) await fallback(vid, start, seq);
 		return seq === loadSeq;
 	}
 
@@ -329,10 +357,7 @@
 		video.addEventListener(
 			'error',
 			() => {
-				if (seq === loadSeq) {
-					loadError = loadError || 'This video could not be played. YouTube may be blocking the server, or the video is restricted.';
-					loading = false;
-				}
+				if (seq === loadSeq) playFailed(vid, video!.currentTime || start);
 			},
 			{ once: true }
 		);
@@ -340,7 +365,77 @@
 		video.play().catch(() => {});
 	}
 
-	async function teardown() {
+	function clearRetry() {
+		if (retryTimer) clearTimeout(retryTimer);
+		if (stallTimer) clearTimeout(stallTimer);
+		retryTimer = stallTimer = null;
+		retrying = false;
+		retryDeadline = 0;
+		retryCount = 0;
+	}
+
+	/** Streaming failed or stalled: spin and rebuild the stream from `at`, backing off, until RETRY_FOR_MS runs out. */
+	function playFailed(vid: string, at: number) {
+		const seq = ++loadSeq; // the failed attempt's handlers go stale
+		if (stallTimer) clearTimeout(stallTimer);
+		if (retryTimer) clearTimeout(retryTimer);
+		at = Math.max(at, lastPos);
+		lastPos = at;
+		if (!retryDeadline) retryDeadline = Date.now() + RETRY_FOR_MS;
+		retrying = true;
+		const delay = Math.min(2000 * 2 ** retryCount, 10_000);
+		retryCount++;
+		retryTimer = setTimeout(async () => {
+			retryTimer = null;
+			if (seq !== loadSeq) return;
+			if (fatal || Date.now() > retryDeadline) {
+				retrying = false;
+				loadError = fatal || failMsg;
+				loading = false;
+				return;
+			}
+			await teardown(true);
+			if (seq !== loadSeq || !video) return;
+			manifestRetried = false;
+			decodeRetried = false;
+			if (!(await stream(vid, at, seq)) || !video) return;
+			if (quality !== 'auto' && player) {
+				player.configure({ abr: { enabled: false } });
+				const t = (player.getVideoTracks() as any[]).filter((x) => x.height === quality).sort((a, b) => b.bandwidth - a.bandwidth)[0];
+				if (t) player.selectVideoTrack(t, true);
+			}
+			video.playbackRate = speed;
+			if (!paused || loading) video.play().catch(() => {});
+		}, delay);
+	}
+
+	function armStall() {
+		if (stallTimer) clearTimeout(stallTimer);
+		stallTimer = null;
+		if (loading || retrying || mode === 'offline' || mode === 'none' || loadError) return;
+		const seq = loadSeq;
+		stallTimer = setTimeout(() => {
+			stallTimer = null;
+			if (seq === loadSeq && waiting && !loadError && video) playFailed(id, video.currentTime);
+		}, STALL_MS);
+	}
+
+	function recovered() {
+		if (stallTimer) clearTimeout(stallTimer);
+		stallTimer = null;
+		if (!retrying) return;
+		retrying = false;
+		retryDeadline = 0;
+		retryCount = 0;
+		loading = false;
+		loadError = '';
+		if (slowTimer) clearTimeout(slowTimer);
+		// The failed attempt's pending side data went stale with it: fetch what is missing.
+		if (extrasFor !== id) extras(id, loadSeq);
+		else refreshSubtitles(id, loadSeq);
+	}
+
+	async function teardown(keepTracks = false) {
 		if (player) {
 			try {
 				await player.destroy();
@@ -351,7 +446,7 @@
 		}
 		if (video) {
 			video.removeAttribute('src');
-			for (const t of [...video.querySelectorAll('track')]) t.remove();
+			if (!keepTracks) for (const t of [...video.querySelectorAll('track')]) t.remove();
 			video.load();
 		}
 		mode = 'none';
@@ -502,6 +597,7 @@
 	function onTime() {
 		if (!video) return;
 		time = video.currentTime;
+		if (time > 0 && mode !== 'none') lastPos = time;
 		const b = video.buffered;
 		for (let i = 0; i < b.length; i++) if (b.start(i) <= time && b.end(i) >= time) buffered = b.end(i);
 		if (!video.paused) {
@@ -680,7 +776,19 @@
 	const beforeCast = () => { saveHistory(true); skipExitHistory = true; };
 	let offKeys: (() => void) | null = null;
 	const onVis = () => document.visibilityState === 'hidden' && saveHistory(true);
+	// Real full screen where the browser or app shell allows it (the Android app hides its bars).
+	let canFull = $state(false);
+	let full = $state(false);
+	const onFullChange = () => (full = !!document.fullscreenElement);
+	async function toggleFull() {
+		try {
+			if (document.fullscreenElement) await document.exitFullscreen();
+			else await document.documentElement.requestFullscreen();
+		} catch { /* refused: stay as is */ }
+	}
 	onMount(() => {
+		canFull = !!document.fullscreenEnabled;
+		document.addEventListener('fullscreenchange', onFullChange);
 		offKeys = nav.handleKeys(onKey);
 		document.addEventListener('visibilitychange', onVis);
 		window.addEventListener('pagehide', onVis);
@@ -696,11 +804,15 @@
 		if (!skipExitHistory) saveHistory(true);
 		offKeys?.();
 		document.removeEventListener('visibilitychange', onVis);
+		document.removeEventListener('fullscreenchange', onFullChange);
+		if (document.fullscreenElement) void document.exitFullscreen().catch(() => {});
 		window.removeEventListener('pagehide', onVis);
 		window.removeEventListener('bt:before-cast', beforeCast);
 		if (hideTimer) clearTimeout(hideTimer);
 		if (cdTimer) clearInterval(cdTimer);
 		if (slowTimer) clearTimeout(slowTimer);
+		if (retryTimer) clearTimeout(retryTimer);
+		if (stallTimer) clearTimeout(stallTimer);
 		if (subtitlePoll) clearTimeout(subtitlePoll);
 		loadSeq++;
 		teardown();
@@ -732,9 +844,9 @@
 		}}
 		ontimeupdate={onTime}
 		ondurationchange={() => (duration = Number.isFinite(video!.duration) ? video!.duration : duration)}
-		onwaiting={() => (waiting = true)}
-		onplaying={() => (waiting = false)}
-		oncanplay={() => (waiting = false)}
+		onwaiting={() => ((waiting = true), armStall())}
+		onplaying={() => ((waiting = false), recovered())}
+		oncanplay={() => ((waiting = false), stallTimer && (clearTimeout(stallTimer), (stallTimer = null)))}
 		onended={onEnded}
 		onclick={togglePlay}
 	></video>
@@ -746,8 +858,14 @@
 				<div class="spinner static" aria-hidden="true"></div>
 				<p class="prep-title">Preparing video…</p>
 				{#if title}<p class="muted">{title}</p>{/if}
-				{#if slow}<p class="small faint">The first play of a video takes a little longer while the server fetches it from YouTube.</p>{/if}
+				{#if retrying}<p class="small faint">Having trouble reaching the video. Retrying…</p>
+				{:else if slow}<p class="small faint">The first play of a video takes a little longer while the server fetches it from YouTube.</p>{/if}
 			</div>
+		</div>
+	{:else if retrying && !loadError}
+		<div class="retrying" aria-live="polite">
+			<div class="spinner static" aria-hidden="true"></div>
+			<p class="small">Reconnecting…</p>
 		</div>
 	{:else if waiting && !loadError}
 		<div class="spinner" aria-label="Buffering"></div>
@@ -758,7 +876,7 @@
 			<h2>Can't play this video</h2>
 			<p class="muted">{loadError}</p>
 			<div class="hstack">
-				<button class="btn primary" use:focusable={{ autofocus: true, onSelect: () => load(id) }}>Try again</button>
+				<button class="btn primary" use:focusable={{ autofocus: true, onSelect: () => load(id, lastPos) }}>Try again</button>
 				<button class="btn" use:focusable={{ onSelect: exit }}>Go back</button>
 			</div>
 		</div>
@@ -853,6 +971,9 @@
 						<Icon name="quality" /><span class="lbl">{mode === 'offline' ? `Offline ${detail?.download?.height || video?.videoHeight || ''}p` : mode === 'fallback' ? 'Basic' : quality === 'auto' ? 'Auto' : `${quality}p`}</span>
 					</button>
 					<button class="btn" aria-label="Info" use:focusable={{ group: 'p-btns', id: 'p-info', scroll: 'none', onSelect: () => (info = true), onKey: downOpensInfo }}><Icon name="info" /><span class="lbl">Info</span></button>
+					{#if canFull}
+						<button class="btn icon round" aria-label={full ? 'Exit full screen' : 'Full screen'} title={full ? 'Exit full screen' : 'Full screen'} use:focusable={{ group: 'p-btns', scroll: 'none', onSelect: toggleFull, onKey: downOpensInfo }}><Icon name={full ? 'shrink' : 'expand'} /></button>
+					{/if}
 				</div>
 				<p class="hint faint tiny">Down for details. Back to leave.</p>
 			</div>
@@ -1057,6 +1178,20 @@
 		border: 4px solid rgba(255, 255, 255, 0.15);
 		border-top-color: var(--accent);
 		animation: spin 0.9s linear infinite;
+		pointer-events: none;
+	}
+	.retrying {
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		transform: translate(-50%, -50%);
+		display: grid;
+		justify-items: center;
+		gap: 0.6rem;
+		padding: 1rem 1.4rem;
+		border-radius: 12px;
+		background: rgba(0, 0, 0, 0.55);
+		color: #fff;
 		pointer-events: none;
 	}
 	.preparing {
