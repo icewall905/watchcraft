@@ -792,3 +792,38 @@ def test_child_profiles_get_their_own_always_child_friendly_boards(client):
     assert client.post(f"{base}/pinterest", headers=kid, json={'url': 'https://www.pinterest.com/a/b/'}).status_code == 403
     assert client.post('/api/ext/keys', headers=kid, json={}).status_code == 403
     assert client.post('/api/hub/items/import', headers=kid, json={'url': 'https://example.org/'}).status_code == 403  # adult tools stay closed
+
+
+def test_pinned_candidates_never_use_run_slots_and_captures_cap_per_host(client, monkeypatch):
+    import threading, time as _t
+    b = make(client, target_images=200)
+    seed(b['id'], 40)  # Already pinned: candidate(0..39).
+    monkeypatch.setattr(moodboard_sources, 'search', lambda *a, **kw: [candidate(n) for n in range(100)])
+    active, peak, lock = [0], [0], threading.Lock()
+    def capture(url):
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        _t.sleep(0.01)
+        with lock:
+            active[0] -= 1
+        return b'img', 'image/png', 1, 1
+    monkeypatch.setattr(mb, 'capture_image', capture)
+    seen = []
+    monkeypatch.setattr(mb, 'select_candidates', lambda rows, *a, **k: seen.extend(rows) or rows)
+    assert mb.dispatch_due()
+    assert len(seen) == mb.CANDIDATES_PER_RUN
+    assert all(int(r['source_url'].rsplit('Flower', 1)[1].split('.')[0]) >= 40 for r in seen)
+    assert peak[0] <= mb.CAPTURE_PER_HOST  # One image host: never more than its slot count at once.
+
+
+def test_page_with_only_known_images_retries_next_page_soon(client, monkeypatch):
+    b = make(client)
+    seed(b['id'], 3)
+    monkeypatch.setattr(moodboard_sources, 'search', lambda *a, **kw: [candidate(n) for n in range(3)])
+    monkeypatch.setattr(mb, 'capture_image', lambda url: (b'img', 'image/png', 1, 1))
+    assert mb.dispatch_due()
+    with session() as s:
+        board = s.get(MoodBoard, b['id'])
+        assert board.last_status == 'queued' and board.source_offset == 30
+        assert board.next_run <= __import__("time").time() + mb.EMPTY_RETRY_S

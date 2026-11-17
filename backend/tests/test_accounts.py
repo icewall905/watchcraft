@@ -211,7 +211,7 @@ def test_login_is_throttled(app):
     c = client(app)
     bootstrap(c)
     other = client(app)
-    for _ in range(5):
+    for _ in range(10):
         assert other.post('/api/auth/login', json={'username': 'mika', 'password': 'nope nope'}).status_code == 401
     assert other.post('/api/auth/login', json={'username': 'mika', 'password': PW}).status_code == 429
 

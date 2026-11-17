@@ -5,8 +5,10 @@ import json
 import secrets
 import hashlib
 import re
+import threading
 import time
 import math
+from concurrent.futures import ThreadPoolExecutor
 import logging
 from io import BytesIO
 from urllib.parse import urlsplit
@@ -61,6 +63,10 @@ class VisionCallFailed(NotesUnavailable):
     """Vision is configured, but the model did not return a usable verdict (busy, timeout, bad output)."""
 
 
+CANDIDATES_PER_RUN = 48  # Fresh (not yet pinned) previews judged per run.
+CAPTURE_WORKERS = 4  # Parallel preview downloads; at most CAPTURE_PER_HOST at once on one image host.
+CAPTURE_PER_HOST = 2
+EMPTY_RETRY_S = 600  # A run that found nothing new tries the next result page soon instead of waiting hours.
 VISION_TIMEOUT_S = 900  # Background work on the worker model: wait as long as it takes, within reason.
 
 
@@ -817,7 +823,7 @@ def select_candidates(candidates, interests, instructions, progress=None, refere
     if not ai.enabled() or not get_settings()['llm'].get('vision'):
         raise NotesUnavailable('Vision model unavailable')
     chosen, failed, batches, last_error = [], 0, 0, None
-    for start in range(0, min(len(candidates), 30), 5):
+    for start in range(0, min(len(candidates), CANDIDATES_PER_RUN), 5):
         batch = candidates[start:start + 5]
         batches += 1
         if progress:
@@ -897,11 +903,11 @@ def select_candidates(candidates, interests, instructions, progress=None, refere
 
 def discovery_queries(interest, instructions, reference_data=None):
     """Search phrases retrieve possibilities; vision enforces the full instructions."""
-    schema = {'type': 'object', 'properties': {'queries': {'type': 'array', 'maxItems': 3,
+    schema = {'type': 'object', 'properties': {'queries': {'type': 'array', 'maxItems': 4,
               'items': {'type': 'string', 'maxLength': 150}}}, 'required': ['queries'], 'additionalProperties': False}
     try:
         extra = {'images': [vision_image(reference_data)]} if reference_data else {}
-        out = ai._call('Inspect the attached inspiration image if present and use its visible subject, style and details to guide search phrases. Write up to three short image-search phrases for this visual mood board. '
+        out = ai._call('Inspect the attached inspiration image if present and use its visible subject, style and details to guide search phrases. Write up to four short, varied image-search phrases for this visual mood board. '
                        'Use concrete objects and useful synonyms (homelab racks -> home server rack setup). '
                        'Include specific requested patterns or objects, but never paste full instructions '
                        'or combine every interest into one over-constrained query. Return search phrases only.',
@@ -909,7 +915,7 @@ def discovery_queries(interest, instructions, reference_data=None):
                        schema, max_tokens=250, role='worker', timeout_s=VISION_TIMEOUT_S, **extra)
         phrases = out.get('queries')
         if isinstance(phrases, list):
-            phrases = list(dict.fromkeys(v.strip()[:150] for v in phrases[:3] if isinstance(v, str) and v.strip()))
+            phrases = list(dict.fromkeys(v.strip()[:150] for v in phrases[:4] if isinstance(v, str) and v.strip()))
             if phrases:
                 return phrases
     except Exception:
@@ -940,7 +946,7 @@ def board_rules(board):
     return ('\n' + '\n'.join(parts)) if parts else ''
 
 
-def plan_queries(seeds, planned, offset, cap=4):
+def plan_queries(seeds, planned, offset, cap=5):
     """Owner seeds first (rotating through long lists across runs), then AI-planned phrases."""
     out = []
     if seeds:
@@ -950,6 +956,41 @@ def plan_queries(seeds, planned, offset, cap=4):
         if q and q.lower() not in {o.lower() for o in out}:
             out.append(q)
     return out[:cap]
+
+
+def capture_candidates(candidates, media, min_width, ai_mode):
+    """Download previews in parallel, never more than CAPTURE_PER_HOST at once per image host.
+
+    Host guards (social_fetch spacing, Pinterest budgets) still apply inside capture_image. Order is kept.
+    """
+    host_slots, slots_lock = {}, threading.Lock()
+
+    def one(item):
+        host = urlsplit(item['image_url']).hostname or ''
+        with slots_lock:
+            slot = host_slots.setdefault(host, threading.Semaphore(CAPTURE_PER_HOST))
+        try:
+            with slot:
+                data, mime, width, height = capture_image(item['image_url'])
+        except Exception:
+            return 'failed'
+        if (min_width and width and width < min_width) or (media == 'photos' and mime == 'image/gif') \
+                or (media == 'gifs' and mime != 'image/gif'):
+            return None  # Owner's size/media filter: no vision call spent on it.
+        try:
+            flag = ai_detect.detect(data) if ai_mode != 'ignore' else ''
+        except Exception:
+            return 'failed'
+        if flag and ai_mode == 'reject':
+            log.info('Mood Board skip AI image %s: %s', item['image_url'][:120], flag)
+            return None  # Declared AI generation: no vision call spent on it.
+        return {**item, '_captured': (data, mime, width, height), **({'_ai_flag': flag} if flag else {})}
+
+    if not candidates:
+        return [], 0
+    with ThreadPoolExecutor(max_workers=CAPTURE_WORKERS, thread_name_prefix='moodboard-capture') as pool:
+        outcomes = list(pool.map(one, candidates))
+    return [o for o in outcomes if isinstance(o, dict)], sum(o == 'failed' for o in outcomes)
 
 
 def heartbeat(bid, lease):
@@ -983,7 +1024,7 @@ def collect(bid, lease, revision):
     results, failures = [], 0
     error = ''
     candidates, captured = [], []
-    searched = 0
+    searched = hits = 0
     def milestone(step, message, **details):
         activity.emit_board(board, lease, step, message, **details)
     try:
@@ -991,39 +1032,25 @@ def collect(bid, lease, revision):
         milestone('search', 'Planning image searches for ' + board.name + '.')
         planned = discovery_queries(context, instructions, reference_data) if reference_data else discovery_queries(context, instructions)
         queries = plan_queries(seeds, planned, offset)
-        seen_candidates = set()
+        seen_candidates, seen_images = set(), set()
         for search_query in queries:
-            milestone('search', 'Searching images: ' + search_query, query=search_query)
-            found = moodboard_sources.search(search_query, limit=max(1, 30 // len(queries)), offset=page_offset, safe_only=child)
-            searched += 1
-            for item in found:
-                key = item.get('source_url')
-                if key and key not in seen_candidates and len(candidates) < 30:
-                    seen_candidates.add(key)
-                    candidates.append(item)
-        milestone('capture', f'Found {len(candidates)} candidates; downloading image previews for visual review.', candidates=len(candidates))
-        for item in candidates[:30]:
-            if not remaining:
+            if len(candidates) >= CANDIDATES_PER_RUN:
                 break
-            if item['source_url'] in existing:
-                continue
-            # Provider links remain constrained even if a future provider regresses.
-            source, image = moodboard_sources.valid_candidate(item)
-            if not source or not image:
-                continue
-            item = {**item, 'source_url': source, 'image_url': image}
-            try:
-                data, mime, width, height = capture_image(item['image_url'])
-                if (min_width and width and width < min_width) or (media == 'photos' and mime == 'image/gif') \
-                        or (media == 'gifs' and mime != 'image/gif'):
-                    continue  # Owner's size/media filter: no vision call spent on it.
-                flag = ai_detect.detect(data) if ai_mode != 'ignore' else ''
-                if flag and ai_mode == 'reject':
-                    log.info('Mood Board skip AI image %s: %s', item['image_url'][:120], flag)
-                    continue  # Declared AI generation: no vision call spent on it.
-                captured.append({**item, '_captured': (data, mime, width, height), **({'_ai_flag': flag} if flag else {})})
-            except Exception:
-                failures += 1
+            milestone('search', 'Searching images: ' + search_query, query=search_query)
+            found = moodboard_sources.search(search_query, limit=30, offset=page_offset, safe_only=child)
+            searched += 1
+            hits += len(found)
+            for item in found:
+                # Provider links remain constrained even if a future provider regresses.
+                source, image = moodboard_sources.valid_candidate(item)
+                if not source or not image or source in existing or source in seen_candidates \
+                        or moodboard_sources._image_key(image) in seen_images or len(candidates) >= CANDIDATES_PER_RUN:
+                    continue  # Already pinned or duplicate: never spend a slot, download or vision call on it.
+                seen_candidates.add(source)
+                seen_images.add(moodboard_sources._image_key(image))
+                candidates.append({**item, 'source_url': source, 'image_url': image})
+        milestone('capture', f'Found {len(candidates)} new candidates; downloading image previews for visual review.', candidates=len(candidates))
+        captured, failures = capture_candidates(candidates if remaining else [], media, min_width, ai_mode)
         def progress(start, end):
             heartbeat(bid, lease)  # Slow worker batches must not look like a dead run (30 min stale lease).
             milestone('judge', f'Vision reviewing images {start + 1}–{end} of {len(captured)} against your instructions.',
@@ -1081,9 +1108,13 @@ def collect(bid, lease, revision):
         if not error:
             board.source_offset = (offset + 30) % (300 * len(interests))
         board.last_status = 'error' if error else 'partial' if failures else 'ok' if added else 'no_matches'
-        if not error and added and visible + added < board.target_images and count < MAX_PINS:
-            board.next_run = time.time() + 5
-            board.last_status = 'queued'
+        if not error and visible + added < board.target_images and count < MAX_PINS:
+            if added:
+                board.next_run = time.time() + 5
+                board.last_status = 'queued'
+            elif hits and board.enabled and board.source_offset:  # Page had results but nothing new fit: try the next page soon, until pages wrap.
+                board.next_run = time.time() + EMPTY_RETRY_S
+                board.last_status = 'queued'
         board.error = error or ('This board has reached its 1,000-image limit. Move images to another board to make room.'
                                if count >= MAX_PINS else (f'{failures} images could not be captured.' if failures else ''))
         board.lease = ''

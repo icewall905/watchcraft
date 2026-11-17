@@ -93,14 +93,16 @@ def normalize_username(name: str) -> str:
 _failures: dict[str, list[float]] = {}
 FAIL_LIMIT = 5
 FAIL_WINDOW = 300.0
+LOGIN_USER_LIMIT = 10  # wrong passwords per username per window
+LOGIN_IP_LIMIT = 20  # per address: a household shares one IP across several people
 
 
-def throttle_check(*keys: str) -> None:
+def throttle_check(*keys: str, limit: int = FAIL_LIMIT) -> None:
     t = time.time()
     for k in keys:
         recent = [x for x in _failures.get(k, []) if t - x < FAIL_WINDOW]
         _failures[k] = recent
-        if len(recent) >= FAIL_LIMIT:
+        if len(recent) >= (LOGIN_IP_LIMIT if k.startswith('login-ip:') else limit):
             wait = int(FAIL_WINDOW - (t - recent[0])) + 1
             raise HTTPException(429, f'Too many attempts. Try again in {max(wait // 60, 1)} minute(s).')
 

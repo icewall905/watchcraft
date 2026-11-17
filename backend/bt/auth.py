@@ -174,8 +174,8 @@ def login(body: Login, request: Request, response: Response):
     if A.is_open():
         return {"ok": True}
     name = (body.username or "").strip().lower()
-    keys = ("user:" + name, "ip:" + _client_ip(request))
-    A.throttle_check(*keys)
+    keys = ("user:" + name, "login-ip:" + _client_ip(request))
+    A.throttle_check(*keys, limit=A.LOGIN_USER_LIMIT)
     with session() as s:
         acc = s.exec(select(Account).where(Account.username == name)).first()
         if not acc or not acc.password_hash or acc.disabled:
