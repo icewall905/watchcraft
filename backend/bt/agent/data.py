@@ -18,6 +18,7 @@ from .runtime import aware, parse_ts
 BLOCK_TRUST = -0.8
 FOUND_CAP = 12  # max `found` backlog per category
 LOW_WATER = 4  # discover more when pending (found+enriched) drops below this
+FAILURE_SETTLE = timedelta(days=7)  # failed accepted videos older than this stop holding a ceiling slot
 
 
 def lessons_for(s: Session, cat: Category, channel_id: Optional[str] = None,
@@ -238,12 +239,32 @@ def accepted_variety(s: Session, cat: Category, at=None) -> tuple[int, int]:
 
 def terminal_failures(s: Session, cat: Category, at=None) -> int:
     """Count bounded accepted inventory that cannot become locally ready as-is."""
+    return len(_terminal_failure_ages(s, cat, at))
+
+
+def settled_failures(s: Session, cat: Category, at=None) -> int:
+    """Terminal failures accepted at least FAILURE_SETTLE ago.
+
+    They no longer count against the refill ceiling: evicted copies are never re-queued and
+    failed captions never heal, so counting them forever pins an underfilled list at "full".
+    Recent failures still count, so a broken source can add at most one headroom batch per window."""
+    instant = aware(at) if at is not None else now()
+    if instant is None:
+        instant = now()
+    cutoff = instant - FAILURE_SETTLE
+    return sum(1 for accepted_at in _terminal_failure_ages(s, cat, instant).values()
+               if accepted_at is not None and accepted_at <= cutoff)
+
+
+def _terminal_failure_ages(s: Session, cat: Category, at=None) -> dict:
+    """Failed accepted video id -> acceptance time (judged, else discovered)."""
     instant = aware(at) if at is not None else now()
     if instant is None:
         instant = now()
     watched = select(WatchHistory.video_id).where(WatchHistory.profile_id == cat.profile_id,
                                                   WatchHistory.finished == True)  # noqa: E712
-    q = select(Video.id, Download.status, Download.path, Download.attempts)\
+    q = select(Video.id, Download.status, Download.path, Download.attempts,
+               func.coalesce(Candidate.judged_at, Candidate.created_at))\
         .join(Candidate, Candidate.video_id == Video.id)\
         .outerjoin(Download, Download.video_id == Video.id)\
         .where(Candidate.category_id == cat.id, Candidate.status == "accepted",
@@ -255,11 +276,11 @@ def terminal_failures(s: Session, cat: Category, at=None) -> int:
         q = q.where(or_(Video.published_at.is_(None),
                         Video.published_at >= instant - timedelta(days=cat.max_age_days)))
     rows = s.exec(q.limit(2000)).all()
-    failed = set()
+    failed = {}
     file_cache = {}
     for row in rows:
-        vid, download_status, path, attempts = row[:4]
-        subtitle_status, vtt = row[4:6] if cat.kind == "shorts" else (None, None)
+        vid, download_status, path, attempts, accepted_at = row[:5]
+        subtitle_status, vtt = row[5:7] if cat.kind == "shorts" else (None, None)
         is_failed = download_status == "evicted" or (
             download_status == "error" and (attempts or 0) >= 3)
         if download_status == "done":
@@ -274,8 +295,9 @@ def terminal_failures(s: Session, cat: Category, at=None) -> int:
                                       (subtitle_status == "ready" and not subtitle_jobs.usable_vtt(vtt))):
             is_failed = True
         if is_failed:
-            failed.add(vid)
-    return len(failed)
+            stamp = parse_ts(accepted_at)
+            failed[vid] = max(filter(None, (failed.get(vid), stamp)), default=None)
+    return failed
 
 
 def category_refill_deficit(s: Session, cat: Category, at=None,
@@ -292,10 +314,12 @@ def category_refill_deficit(s: Session, cat: Category, at=None,
     deficit = max(0, target - max(0, accepted - failed))
     headroom = max(3, min(10, target // 2))
     ceiling = target + headroom
-    if accepted < target or target < 5:
-        # Terminal media failures create replacement demand, but cap the total
-        # accepted inventory so a broken source cannot grow the queue forever.
-        return min(deficit, max(0, ceiling - accepted))
+    # Inventory that counts against the ceiling: settled failures are dead weight, not queue.
+    held = max(0, accepted - settled_failures(s, cat, instant))
+    if held < target or target < 5:
+        # Terminal media failures create replacement demand, but cap the held
+        # inventory so a broken source cannot grow the queue forever.
+        return min(deficit, max(0, ceiling - held))
     counts = status_counts(s, cat.id)
     backlog = counts.get("found", 0) + counts.get("enriched", 0) if pending is None else pending
     if backlog >= LOW_WATER:
@@ -305,7 +329,7 @@ def category_refill_deficit(s: Session, cat: Category, at=None,
         return 0
     fresh, creators = accepted_variety(s, cat, instant)
     gap = max(deficit, max(3 - fresh, 3 - creators, 0))
-    available = max(0, ceiling - accepted)
+    available = max(0, ceiling - held)
     # Account for work already in the candidate pipeline before adding more.
     return min(gap, available, max(0, LOW_WATER - backlog))
 
