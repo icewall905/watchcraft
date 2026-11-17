@@ -313,9 +313,14 @@ from `/{id}/pins/{pin}/media`. All routes require Hub access and ownership; orig
 never fetched directly by the browser. Board/profile deletion removes private archived image bytes.
 
 Public Pinterest boards can be imported into an existing board using `/{id}/pinterest` (POST a
-`url`, GET latest job status). Imports run in a durable queue and capture up to 25 latest feed pins
-locally, preserve Pinterest links, mark imported pins saved and skip duplicates. This is a snapshot
-of the public RSS feed, not full-board history; private boards and short links are unsupported.
+`url`, GET latest job status). Imports walk the whole board in the background, one slice per
+scheduler tick (one guarded Pinterest page request or one spaced image capture), through
+`pinterest_guard` (same spacing, budgets and auto-pause as Pinterest search, opt-in not required for
+an explicit import). Progress (board id, feed bookmark, counters) is durable: a budget pause, 429,
+block, captcha or restart sets `waiting` with a resume time and the job continues where it stopped.
+Pins already on the board are counted as `existing` without fetching their image. Re-importing the
+same link after an error continues that job; a periodic sweep resumes older partial imports.
+Imported pins are saved with their Pinterest links; private boards and short links are unsupported.
 Original creators retain rights. Explicit imports do not undergo automatic curator screening.
 
 `/today` is a compact overview of everything curated today: the master edition's lead, a few top

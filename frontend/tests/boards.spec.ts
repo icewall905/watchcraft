@@ -17,7 +17,7 @@ async function setup(page:Page,empty=false,tweak?:(rows:any[])=>void,pageSize=0)
   if(path==='/api/hub/boards/pinterest/status')return route.fulfill({json:{enabled:false,blocked:false,blocked_until:0,reason:'',last_block_at:0,last_reason:'',hour_left:15,day_left:80,images_left:400}});
   if(path==='/api/hub/boards'){if(method==='POST'){const made={...board(8,body.name),...body};boards.push(made);return route.fulfill({json:{board:made}});}return route.fulfill({json:{boards}});}
   const id=Number(path.split('/')[4]);
-  if(path.endsWith('/pinterest')){if(method==='POST')importJob={id:1,board_id:id,status:'queued',imported:0,skipped:0,total:0,error:''};return route.fulfill({json:{import:importJob}});}
+  if(path.endsWith('/pinterest')){if(method==='POST')importJob={id:1,board_id:id,status:'waiting',imported:118,skipped:2,existing:0,done:120,total:480,error:'',note:'',next_at:0};return route.fulfill({json:{import:importJob}});}
   if(path.endsWith('/reference')){const b=boards.find(b=>b.id===id)!;if(method==='DELETE'){b.reference_url=null;b.reference_name='';return route.fulfill({json:{board:b}});}b.reference_url=`/api/hub/boards/${id}/reference/media?v=1`;b.reference_name=body.title||'Reference image';return route.fulfill({json:{board:b}});}
   if(path.endsWith('/images')){const known:any=body.source_url&&pins.find((p:any)=>p.source_url===body.source_url);if(known)return route.fulfill({json:{pin:known,existing:true}});const added=pin(9,body.title||'Uploaded image',id);if(body.source_url)added.source_url=body.source_url;added.saved=true;if(body.data_base64)added.source_url='upload:sha256:abc';pins=[added,...pins];return route.fulfill({json:{pin:added}});}
   if(path.endsWith('/reshuffle')){const b:any=boards.find(b=>b.id===id)!;const gone=pins.filter((p:any)=>p.board_id===id&&!p.saved&&p.feedback!=='good');pins=pins.filter(p=>!gone.includes(p));Object.assign(b,{last_status:'queued',pin_count:pins.filter(p=>p.board_id===id).length});return route.fulfill({json:{replaced:gone.length,kept:b.pin_count,board:b}});}
@@ -126,13 +126,13 @@ test('a delayed board response cannot cross a profile switch',async({page,reques
  }finally{release?.();await request.delete(`/api/profiles/${other.id}`);}
 });
 
- test('import public Pinterest board shows scope and queued status',async({page})=>{
+ test('import public Pinterest board shows background progress',async({page})=>{
  const writes=await setup(page);await freshPage(page,'/boards?board=1');
  await page.getByRole('button',{name:'Import Pinterest',exact:true}).click();
- await expect(page.getByText('Import up to 25', {exact:false})).toBeVisible();
+ await expect(page.getByText('Import every pin', {exact:false})).toBeVisible();
  await page.getByLabel('Public board link').fill('https://www.pinterest.com/contemporist/architecture/');
- await page.getByRole('button',{name:'Import pins',exact:true}).click();
- await expect(page.getByRole('status').filter({hasText:'Pinterest: queued'})).toBeVisible();
+ await page.getByRole('button',{name:'Import board',exact:true}).click();
+ await expect(page.getByRole('status').filter({hasText:'importing 120 / 480 (118 new, 2 skipped), continues in background.'})).toBeVisible();
  expect(writes.find(w=>w.path.endsWith('/pinterest'))?.body).toEqual({url:'https://www.pinterest.com/contemporist/architecture/'});
  });
 

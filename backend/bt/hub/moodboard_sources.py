@@ -606,22 +606,35 @@ def parse_pinterest(payload, limit=30):
     return results
 
 
+def pinterest_resource(base, source_url, options, origin='curator', refusal_blocks=True, what='request'):
+    """One guarded Pinterest resource request -> (data, next bookmark). Raises pinterest_guard.Paused.
+
+    A refused resource pauses Pinterest unless ``refusal_blocks`` is off (a private or missing board is
+    not a block); then it raises ValueError.
+    """
+    url = base + '?' + urlencode({'source_url': source_url,
+                                  'data': json.dumps({'options': options, 'context': {}}, separators=(',', ':'))})
+    try:
+        payload = json.loads(pinterest_guard.fetch(url, origin=origin, limit=MAX_RESPONSE_BYTES))
+    except json.JSONDecodeError:
+        pinterest_guard.block('Pinterest returned something other than results')
+        raise pinterest_guard.Paused('Pinterest returned an unexpected page and is now paused.', 86_400, blocked=True) from None
+    response = payload.get('resource_response') if isinstance(payload, dict) else None
+    if not isinstance(response, dict) or response.get('status', 'success') != 'success' or response.get('error'):
+        message = str((response or {}).get('message') or 'error')[:80]
+        if not refusal_blocks:
+            raise ValueError('Pinterest refused the request (' + message + ')')
+        pinterest_guard.block('Pinterest refused the ' + what + ' (' + message + ')')
+        raise pinterest_guard.Paused('Pinterest refused the request and is now paused.', 86_400, blocked=True)
+    return response.get('data'), _bookmark(payload)
+
+
 def pinterest_page(query, bookmark='', origin='curator', limit=25):
     """One guarded search request -> (candidates, next bookmark). Raises pinterest_guard.Paused."""
     query = query.strip()
     options = {'query': query, 'scope': 'pins', 'page_size': 25, 'bookmarks': [bookmark] if bookmark else []}
-    url = PINTEREST_SEARCH + '?' + urlencode({'source_url': '/search/pins/?q=' + quote(query),
-                                              'data': json.dumps({'options': options, 'context': {}}, separators=(',', ':'))})
-    try:
-        payload = json.loads(pinterest_guard.fetch(url, origin=origin, limit=MAX_RESPONSE_BYTES))
-    except json.JSONDecodeError:
-        pinterest_guard.block('Pinterest returned something other than search results')
-        raise pinterest_guard.Paused('Pinterest returned an unexpected page and is now paused.', 86_400, blocked=True) from None
-    response = payload.get('resource_response') if isinstance(payload, dict) else None
-    if not isinstance(response, dict) or response.get('status', 'success') != 'success' or response.get('error'):
-        pinterest_guard.block('Pinterest refused the search (' + str((response or {}).get('message') or 'error')[:80] + ')')
-        raise pinterest_guard.Paused('Pinterest refused the search and is now paused.', 86_400, blocked=True)
-    return parse_pinterest(response.get('data'), limit), _bookmark(payload)
+    data, following = pinterest_resource(PINTEREST_SEARCH, '/search/pins/?q=' + quote(query), options, origin, what='search')
+    return parse_pinterest(data, limit), following
 
 
 def pinterest_search(query, limit=30, offset=0):

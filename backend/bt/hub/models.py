@@ -660,6 +660,15 @@ class MoodImport(SQLModel, table=True):
     lease: str = ''
     lease_until: float = 0
     created_at: float = Field(default_factory=time.time)
+    # Whole-board paging, a slice per scheduler tick; see moodboard_imports.
+    full: bool = False          # False: legacy 25-pin RSS snapshot (resumed once by resume_partial)
+    board_ref: str = ''         # Pinterest board id
+    cursor: str = ''            # bookmark of the next feed page
+    exhausted: bool = False     # no further pages
+    existing: int = 0           # pins already on the board
+    failures: int = 0           # consecutive failed attempts, for backoff
+    next_at: float = 0          # do not touch Pinterest for this job before this time
+    note: str = ''              # why it is waiting
 
 
 class MoodReference(SQLModel, table=True):

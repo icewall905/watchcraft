@@ -114,6 +114,13 @@ def init_db() -> None:
                                  ('ai_images', "VARCHAR NOT NULL DEFAULT 'reject'")):
             if name not in board_columns:
                 connection.exec_driver_sql(f'ALTER TABLE moodboard ADD COLUMN "{name}" {definition}')
+        import_columns = {c['name'] for c in inspect(connection).get_columns('moodimport')}
+        for name, definition in (('full', 'BOOLEAN NOT NULL DEFAULT 0'), ('board_ref', "VARCHAR NOT NULL DEFAULT ''"),
+                                 ('cursor', "VARCHAR NOT NULL DEFAULT ''"), ('exhausted', 'BOOLEAN NOT NULL DEFAULT 0'),
+                                 ('existing', 'INTEGER NOT NULL DEFAULT 0'), ('failures', 'INTEGER NOT NULL DEFAULT 0'),
+                                 ('next_at', 'FLOAT NOT NULL DEFAULT 0'), ('note', "VARCHAR NOT NULL DEFAULT ''")):
+            if name not in import_columns:
+                connection.exec_driver_sql(f'ALTER TABLE moodimport ADD COLUMN "{name}" {definition}')
         if 'ai_flag' not in {c['name'] for c in inspect(connection).get_columns('moodpin')}:
             connection.exec_driver_sql("ALTER TABLE moodpin ADD COLUMN ai_flag VARCHAR NOT NULL DEFAULT ''")
         # Additive shared-learning type columns. Existing rows are videos by default;

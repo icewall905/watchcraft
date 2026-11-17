@@ -74,7 +74,7 @@
    const imported = await boardsApi.pinterestStatus(selected, signal);
    if (signal.aborted || token !== generation || owner !== stamp() || !allowed()) return;
    importJob = imported.import;
-   if (importJob && ['queued', 'importing'].includes(importJob.status)) pollUntil = Date.now() + 180000;
+   if (importRunning(importJob) && !importJob?.note) pollUntil = Date.now() + 180000;
    if (quiet && !append && pins.length) {
     // Background poll: keep what is on screen (and every page already scrolled to). Only genuinely new pins
     // are added; unchanged pins keep their object so no tile re-renders or refetches its image.
@@ -115,10 +115,19 @@
   observer.observe(node);
   return () => observer.disconnect();
  });
+ function importRunning(job: PinterestImport | null) { return !!job && ['queued', 'importing', 'waiting'].includes(job.status); }
+ function importText(job: PinterestImport) {
+  const counts = `${job.imported} new` + (job.existing ? `, ${job.existing} already here` : '') + (job.skipped ? `, ${job.skipped} skipped` : '');
+  if (job.status === 'complete') return `Pinterest import complete: ${counts}.${job.error ? ' ' + job.error : ''}`;
+  if (job.status === 'error') return `Pinterest import stopped at ${job.done}${job.total ? ' / ' + job.total : ''} (${counts}). ${job.error}`;
+  const of = job.total ? `${job.done} / ${job.total}` : `${job.done}`;
+  const later = job.note && job.next_at ? ` ${job.note} Resumes around ${new Date(job.next_at * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}.` : '';
+  return `Pinterest: importing ${of} (${counts}), continues in background.${later}`;
+ }
  async function importPinterest(e: SubmitEvent) {
   e.preventDefault(); if (!selected || !allowed() || importing) return;
   importing = true; const id = selected, owner = stamp();
-  try { const result = await boardsApi.pinterest(id, pinterestUrl.trim()); if (owner !== stamp() || selected !== id || !allowed()) return; importJob = result.import; importOpen = false; pollUntil = Date.now() + 180000; notice = 'Pinterest import queued. Images will appear as they are saved.'; }
+  try { const result = await boardsApi.pinterest(id, pinterestUrl.trim()); if (owner !== stamp() || selected !== id || !allowed()) return; importJob = result.import; importOpen = false; pollUntil = Date.now() + 180000; notice = 'Pinterest import started. It continues slowly in the background; images appear as they are saved.'; }
   catch (e) { if (owner === stamp() && selected === id && allowed()) error = message(e); }
   finally { if (owner === stamp() && selected === id) importing = false; }
  }
@@ -413,7 +422,7 @@
    </div>
    <a class="activity-link" href="/team">Activity</a>
   </section>
-  {#if importJob}<p class="feedback" role="status">Pinterest: {importJob.status === 'complete' ? 'import complete' : importJob.status}. {importJob.imported} imported, {importJob.skipped} skipped.{#if importJob.error} {importJob.error}{/if}{#if importJob.status === 'complete'} Latest feed pins only; Pinterest does not expose the whole board here.{/if}</p>{/if}
+  {#if importJob}<p class="feedback" role="status" data-testid="pinterest-import">{importText(importJob)}</p>{/if}
  {/if}
 
  {#if loading}<div class="masonry skeleton" role="status" aria-label="Gathering your images…">{#each [14, 20, 11, 17, 22, 13, 18, 12] as h}<div class="ghost" style:height="{h}rem"></div>{/each}</div>
@@ -501,7 +510,7 @@
  </form>
 </Modal>{/if}
 
-{#if importOpen}<Modal portal title="Import a Pinterest board" onClose={() => { if (!importing) importOpen = false; }}><form class="board-form" onsubmit={importPinterest}><p class="muted">Import up to 25 of the latest pins exposed by a public board’s feed into this board. Images are saved locally with their original Pinterest links. Existing pins are skipped.</p><label>Public board link<input type="url" required maxlength="1000" bind:value={pinterestUrl} placeholder="https://www.pinterest.com/username/board-name/" /></label><small>Private boards, short links and full-history imports need a Pinterest connection and are not supported by this public feed import.</small>{#if error}<p class="error" role="alert">{error}</p>{/if}<div class="form-actions"><button type="button" class="btn" onclick={() => { importOpen = false; }}>Cancel</button><button class="btn primary" disabled={importing}>{importing ? 'Queuing…' : 'Import pins'}</button></div></form></Modal>{/if}
+{#if importOpen}<Modal portal title="Import a Pinterest board" onClose={() => { if (!importing) importOpen = false; }}><form class="board-form" onsubmit={importPinterest}><p class="muted">Import every pin of a public board into this board. Pinterest is asked gently, so a large board takes a while: the import continues in the background, pauses when Pinterest asks it to slow down and picks up where it stopped. Images are saved locally with their original Pinterest links. Existing pins are skipped.</p><label>Public board link<input type="url" required maxlength="1000" bind:value={pinterestUrl} placeholder="https://www.pinterest.com/username/board-name/" /></label><small>Private boards and short links are not supported.</small>{#if error}<p class="error" role="alert">{error}</p>{/if}<div class="form-actions"><button type="button" class="btn" onclick={() => { importOpen = false; }}>Cancel</button><button class="btn primary" disabled={importing}>{importing ? 'Starting…' : 'Import board'}</button></div></form></Modal>{/if}
 {#if reviewing}<Modal title="Why doesn't this fit?" portal onClose={() => { if (busy === null) reviewing = null; }}>
  <form class="board-form" onsubmit={(e) => { e.preventDefault(); if (reviewing) void review(reviewing, 'bad', reviewNote.trim()); }}>
   <p class="muted">The image is removed from the board and your curator learns to skip images like it.</p>

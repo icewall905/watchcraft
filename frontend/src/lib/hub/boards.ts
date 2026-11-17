@@ -16,7 +16,7 @@ export interface BoardPin {
 export type BoardInput = Pick<MoodBoard, 'name' | 'interests' | 'instructions' | 'enabled' | 'interval_hours'> & {target_images: number; avoid: string; seed_searches: string; media: 'any' | 'photos' | 'gifs'; min_width: number; strictness: 'strict' | 'balanced'; child_friendly: boolean; ai_images: 'ignore' | 'mark' | 'reject'};
 export type BoardImageInput = {url?: string; data_base64?: string; title?: string; source_url?: string};
 export interface BoardPage { board: MoodBoard; pins: BoardPin[]; next_cursor: string | null; has_more: boolean }
-export interface PinterestImport { id: number; board_id: number; status: string; imported: number; skipped: number; total: number; error: string }
+export interface PinterestImport { id: number; board_id: number; status: string; imported: number; skipped: number; existing: number; done: number; total: number; error: string; note: string; next_at: number }
 export interface FoundPin extends BoardPin { board_name: string; similarity: number }
 export interface BoardSearch { available: boolean; reason: string; indexed: number; pins_total: number; pins: FoundPin[] }
 export interface ExtensionKey { id: number; name: string; hint: string; created_at: number; last_used: number | null }
