@@ -44,11 +44,11 @@
 	onMount(load);
 </script>
 
-<svelte:head><title>The Cinema · The Hub</title></svelte:head>
+<svelte:head><title>The Marquee · The Hub</title></svelte:head>
 
 <div class="page jf">
 	<header class="top">
-		<h1>The Cinema</h1>
+		<h1>The Marquee</h1>
 		{#if status?.linked}
 			<form class="search" onsubmit={search} role="search">
 				<input type="search" placeholder="Search movies and shows" aria-label="Search Jellyfin" bind:value={text} use:focusable={{ group: 'jf-top' }} />

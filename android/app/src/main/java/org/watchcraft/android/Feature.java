@@ -13,6 +13,7 @@ final class Feature {
         new Feature("The Screen", "/", "tv", "Watch"),
         new Feature("The Scroll", "/shorts", "play", "Watch"),
         new Feature("The Jukebox", "/music", "music", "Watch"),
+        new Feature("The Marquee", "/jellyfin", "screen", "Watch"),
         new Feature("Subscriptions", "/subscriptions", "list", "Watch"),
         new Feature("The Front Page", "/today", "today", "Explore"),
         new Feature("The Finds", "/discover", "compass", "Explore"),

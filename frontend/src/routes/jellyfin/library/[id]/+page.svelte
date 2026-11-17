@@ -45,11 +45,11 @@
 	function toggle(k: 'unplayed' | 'favorite') { if (k === 'unplayed') unplayed = !unplayed; else favorite = !favorite; void fetchPage(true); }
 </script>
 
-<svelte:head><title>{view?.name ?? 'Library'} · The Cinema</title></svelte:head>
+<svelte:head><title>{view?.name ?? 'Library'} · The Marquee</title></svelte:head>
 
 <div class="page lib">
 	<header>
-		<a class="btn" href="/jellyfin" use:focusable={{ group: 'lib-top' }}>← The Cinema</a>
+		<a class="btn" href="/jellyfin" use:focusable={{ group: 'lib-top' }}>← The Marquee</a>
 		<h1>{view?.name ?? '…'}</h1>
 		{#if total}<span class="muted small">{total} titles</span>{/if}
 	</header>

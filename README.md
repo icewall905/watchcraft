@@ -30,7 +30,7 @@ It started as a self-hosted YouTube front end, and video remains the default hom
 - **Briefings and Alerts** turn findings into cited daily or weekly digests and severity-filtered alerts.
 - **Meme Radar** collects image memes, removes duplicates, groups templates and tracks trends.
 - **Team and Scout Report** show what your curators actually did and found, built only from real runs.
-- **The Cinema** plays your Jellyfin movies and shows: continue watching, next up, libraries, resume, audio and subtitle tracks and a quality picker. Jellyfin does the transcoding, with its hardware encoder when one is set up; The Hub passes the stream through, so devices never need to reach Jellyfin or hold its sign-in.
+- **The Marquee** plays your Jellyfin movies and shows: continue watching, next up, libraries, resume, audio and subtitle tracks and a quality picker. Jellyfin does the transcoding, with its hardware encoder when one is set up; The Hub passes the stream through, so devices never need to reach Jellyfin or hold its sign-in.
 - **Play on** sends a video from your phone to a paired screen in the house and lets you pause, resume and seek from the phone.
 - **Profiles** keep each person's curators, library, history and AI memory separate. Each profile belongs to an account (username and password); adult and child roles and optional PINs control who sees what.
 

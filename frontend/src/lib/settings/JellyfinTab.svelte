@@ -50,7 +50,7 @@
 </script>
 
 {#if admin}
-	<Section title="Jellyfin server" intro="Browse and play your Jellyfin movies and shows in The Cinema. The Hub talks to Jellyfin from the server and passes video through, so the Jellyfin address only has to be reachable from this server. Needs Jellyfin 10.9 or newer.">
+	<Section title="Jellyfin server" intro="Browse and play your Jellyfin movies and shows in The Marquee. The Hub talks to Jellyfin from the server and passes video through, so the Jellyfin address only has to be reachable from this server. Needs Jellyfin 10.9 or newer.">
 		<form class="cfg" onsubmit={save}>
 			<label>Address
 				<input placeholder="http://192.168.1.20:8096" bind:value={url} use:focusable={{ group: 'jf-cfg' }} />

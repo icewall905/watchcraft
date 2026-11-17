@@ -29,6 +29,7 @@ final class LineIcon extends Drawable {
             case "arrow": path(c, 10, 5, 17, 12, 10, 19); break;
             case "back": path(c, 15, 5, 8, 12, 15, 19); break;
             case "play": path(c, 8, 4, 21, 12, 8, 20, 8, 4); break;
+            case "screen": line(c, 2, 4, 22, 4); path(c, 4, 4, 4, 15, 20, 15, 20, 4); line(c, 12, 15, 12, 19); path(c, 8, 21, 12, 19, 16, 21); break;
             case "music": path(c, 9, 18, 9, 5, 21, 3, 21, 16); c.drawOval(3, 16, 9, 21, p); c.drawOval(15, 14, 21, 19, p); break;
             case "compass": c.drawCircle(12, 12, 9, p); path(c, 16, 8, 14, 14, 8, 16, 10, 10, 16, 8); break;
             case "globe": c.drawCircle(12, 12, 9, p); c.drawOval(8, 3, 16, 21, p); line(c, 3, 12, 21, 12); break;

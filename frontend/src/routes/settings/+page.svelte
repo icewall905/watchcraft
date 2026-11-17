@@ -49,7 +49,7 @@
 		{ label: 'Watching', tabs: [
 			{ key: 'player', label: 'Player', icon: '▶', hint: 'Quality, speed, captions' },
 			{ key: 'sponsorblock', label: 'SponsorBlock', icon: '⏭', hint: 'Skip sponsors and intros' },
-			{ key: 'jellyfin', label: 'Jellyfin', icon: '🎬', hint: 'Your media server in The Cinema' },
+			{ key: 'jellyfin', label: 'Jellyfin', icon: '🎬', hint: 'Your media server in The Marquee' },
 			{ key: 'extras', label: 'YouTube extras', icon: '🧩', hint: 'Shorts, dislikes, better titles' },
 			{ key: 'storage', label: 'Storage', icon: '💾', hint: 'Videos saved on the server' }
 		] },

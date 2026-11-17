@@ -19,5 +19,7 @@ public class FeatureTest {
         assertEquals("Curators", Feature.titleFor("/curators/7"));
         assertEquals("The Boards", Feature.titleFor("/boards"));
         assertEquals("The Screen", Feature.titleFor("/category/2"));
+        assertEquals("The Marquee", Feature.titleFor("/jellyfin/play/abc"));
+        assertNotNull(Navigation.feature("/jellyfin"));
     }
 }
