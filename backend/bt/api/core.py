@@ -454,21 +454,19 @@ def _category_items(s: Session, pid: int, cid: int, status: str = "accepted", in
     return out
 
 
-def _local_short_rows(s: Session, pid: int, cid: int):
+def _local_short_rows(s: Session, pid: int, cid: int, excluded=frozenset()):
+    """Ordered (candidate, video, path) rows whose local file is present (stat only).
+    The caller opens files only for the page it serves: opening every clip on NFS made
+    each page cost one round trip per stored clip."""
     watched = _watched_ids(s, pid)
-    rows = s.exec(select(Candidate, Video, Download)
+    rows = s.exec(select(Candidate, Video, Download.path)
         .join(Video, Video.id == Candidate.video_id)
         .join(Download, Download.video_id == Candidate.video_id)
         .where(Candidate.category_id == cid, Candidate.status == "accepted",
                Candidate.dismissed == False, Video.is_short == True, Download.status == "done")
         .order_by(col(Candidate.score).desc(), col(Candidate.judged_at).desc(), Candidate.id)).all()  # noqa: E712
-    ready = []
-    for c, v, d in rows:
-        if v.id in watched:
-            continue
-        if _readable_short_file(d.path):
-            ready.append((c, v))
-    return ready
+    return [(c, v, path) for c, v, path in rows
+            if v.id not in watched and v.id not in excluded and _short_file_present(path)]
 
 
 def _short_file_present(relative):
@@ -511,14 +509,17 @@ def shorts_feeds(pid: int = Depends(profile_id), s: Session = Depends(get_sessio
     # Counts do not need transcripts, comments or any other video payload. Read
     # only the availability columns, once across all of this profile's feeds.
     rows = s.exec(select(Candidate.category_id, Candidate.video_id, Download.status, Download.path,
-                         GeneratedSubtitles.status, GeneratedSubtitles.vtt)
+                         GeneratedSubtitles.status, GeneratedSubtitles.updated_at,
+                         func.length(GeneratedSubtitles.vtt))
         .join(Video, Video.id == Candidate.video_id)
         .outerjoin(Download, Download.video_id == Candidate.video_id)
         .outerjoin(GeneratedSubtitles, GeneratedSubtitles.video_id == Candidate.video_id)
         .where(Candidate.category_id.in_(ids), Candidate.status == "accepted",
                Candidate.dismissed == False, Video.is_short == True)).all()  # noqa: E712
+    usable = subtitle_jobs.usable_vtt_batch(s, [(vid, upd, size) for _, vid, _, _, sub, upd, size in rows
+                                                if sub == 'ready' and vid not in watched])
     readable = {}
-    for cid, vid, status, path, substatus, vtt in rows:
+    for cid, vid, status, path, substatus, _updated, _size in rows:
         if vid in watched:
             continue
         if status == 'done' and path not in readable:
@@ -527,7 +528,7 @@ def shorts_feeds(pid: int = Depends(profile_id), s: Session = Depends(get_sessio
                'ready_count' if status == 'done' and readable[path] else 'pending_count')
         counts[cid][key] += 1
         if key == 'ready_count':
-            caption_key = ('caption_ready_count' if substatus == 'ready' and subtitle_jobs.usable_vtt(vtt) else
+            caption_key = ('caption_ready_count' if substatus == 'ready' and usable.get(vid) else
                            'caption_error_count' if substatus in ('failed', 'ready') else 'caption_pending_count')
             counts[cid][caption_key] += 1
     return [{**c.model_dump(), 'stats': stats[c.id], **counts[c.id]} for c in categories]
@@ -547,10 +548,19 @@ def shorts_feed(limit: int = 10, offset: int = 0, category_id: Optional[int] = N
     if any(not re.fullmatch(r'[A-Za-z0-9_-]{11}', vid) for vid in excluded):
         raise HTTPException(400, 'Invalid excluded video id')
     limit, offset = max(1, min(limit, 30)), max(0, offset)
-    rows = [(c, v) for c, v in _local_short_rows(s, pid, category_id) if v.id not in excluded]
-    total = len(rows)
+    rows = _local_short_rows(s, pid, category_id, excluded)
     items = []
-    page = rows[offset:offset + limit]
+    # A real read only for the clips about to be served; an unreadable one is skipped
+    # and the next present clip takes its place.
+    page, at = [], offset
+    while len(page) < limit and at < len(rows):
+        c, v, path = rows[at]
+        if _readable_short_file(path):
+            page.append((c, v))
+            at += 1
+        else:
+            rows.pop(at)
+    total = len(rows)
     tracks = {row.video_id: row for row in s.exec(select(GeneratedSubtitles).where(
         GeneratedSubtitles.video_id.in_([v.id for _, v in page]))).all()} if page else {}
     configured = subtitle_jobs.enabled()
