@@ -8,6 +8,19 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — The Hub rebrand and The Cinema (`ac689f7`, 2026-11-17)
+
+- Ships `73ad776` (The Cinema, Jellyfin browse/play; `jellyfinlink` table created on startup) and `ac689f7` (WatchCraft →
+  The Hub: names, new logo/icons, in-app Hub section renamed Today). Served at `hub.tdgs.org` (DNS + Traefik set up by
+  the owner); `wc.tdgs.org` keeps serving directly, no redirect. Android 0.1.14 (`android-v0.1.14`) moves saved
+  `wc.tdgs.org` installs to `hub.tdgs.org`.
+- Backup `/root/compose/watchcraft-backups/20261117-thehub-ac689f7` (online DB quick_check ok, config hashes, previous
+  source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261117-thehub-*`). rsync (checksum) of the 116
+  non-`android/` files of `eab933b..ac689f7` (20 new). Pruned `20261117-player-ca70c40` and its rollback tags
+  (`PRUNE-MANIFEST-20261117T101621Z.txt`).
+- All four `wc-*` run `sha256:a88d93dd…`, zero restarts, no tracebacks; DB quick_check ok; health, `/`, `/today`,
+  `/jellyfin`, manifest, icons 200 on `hub.tdgs.org`; title and manifest name "The Hub"; `wc.tdgs.org` health 200.
+
 ## Deployment record — Pinterest whole-board imports in the background (`eab933b`, 2026-11-17)
 
 - Board imports page through Pinterest's board feed a slice per scheduler tick via `pinterest_guard`, resume after
