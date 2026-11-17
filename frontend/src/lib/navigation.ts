@@ -14,11 +14,12 @@ export const DISCOVER = entry('/discover', 'The Finds', 'compass', 'discover_unr
 export const LIBRARY = entry('/library', 'The Stacks', 'library');
 export const SHORTS = entry('/shorts', 'The Scroll', 'play');
 export const MUSIC = entry('/music', 'The Jukebox', 'music');
+export const CINEMA = entry('/jellyfin', 'The Cinema', 'tv');
 export const ALERTS = entry('/alerts', 'Alerts', 'alert', 'alerts_new');
 export const SETTINGS = entry('/settings', 'Settings', 'settings');
 
 export const SECTIONS: NavSection[] = [
-	{ key: 'watch', title: 'Watch', items: [TV, SHORTS, MUSIC, entry('/subscriptions', 'Subscriptions', 'subs')] },
+	{ key: 'watch', title: 'Watch', items: [TV, SHORTS, MUSIC, CINEMA, entry('/subscriptions', 'Subscriptions', 'subs')] },
 	{ key: 'explore', title: 'Explore', items: [entry('/today', 'The Front Page', 'news'), DISCOVER, entry('/news', 'The Wire', 'news'), entry('/boards', 'The Boards', 'library', 'boards_shared_new'), entry('/common-room', 'The Commons', 'team', 'commonroom', (p) => prefix('/common-room')(p) || prefix('/memes')(p)), LIBRARY, entry('/knowledge', 'The Almanac', 'book'), entry('/briefings', 'The Dispatch', 'briefing'), ALERTS] },
 	{ key: 'research', title: 'Research', items: [entry('/research', 'The Study', 'research'), entry('/scout-report', 'The Scout', 'briefing')] },
 	{ key: 'workshop', title: 'Workshop', quiet: true, items: [entry('/team', 'Agent Activity', 'team'), entry('/curators', 'Curators', 'curator'), entry('/sources', 'Sources', 'source'), entry('/agent', 'Video AI', 'agent'), entry('/stats', 'Statistics', 'chart')] }
@@ -41,6 +42,7 @@ export const TV_DRAWER: DrawerEntry[] = [
 	{ href: '/search', label: 'Video search', icon: 'search', active: (p) => p.startsWith('/search') },
 	{ href: '/subscriptions', label: 'Subscriptions', icon: 'subs', active: (p) => p.startsWith('/subscriptions') },
 	{ href: '/music', label: 'The Jukebox', icon: 'music', active: (p) => p === '/music' || p.startsWith('/music/') },
+	{ href: '/jellyfin', label: 'The Cinema', icon: 'tv', active: (p) => p === '/jellyfin' || p.startsWith('/jellyfin/') },
 	{ href: '/settings?tab=categories', label: 'Playlists', icon: 'list', active: (p, s) => p.startsWith('/settings') && s.includes('tab=categories') },
 	{ href: '/today', label: 'Hub', icon: 'compass', active: (p) => p === '/today' || p.startsWith('/today/') },
 	{ href: '/settings', label: 'Settings', icon: 'settings', active: (p, s) => p.startsWith('/settings') && !s.includes('tab=categories') }

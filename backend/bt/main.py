@@ -13,6 +13,7 @@ from .knowledge import api as knowledge_api
 from .commonroom import api as commonroom_api, scheduler as commonroom_scheduler
 from .api import agent as agent_api
 from .music import api as music_api, service as music_service
+from .jellyfin import api as jellyfin_api
 from .api import core
 from .api import proxy as proxy_api
 from .api import video
@@ -78,6 +79,7 @@ app.include_router(subtitle_api.router, prefix="/api")
 
 app.include_router(agent_api.router, prefix="/api")
 app.include_router(music_api.router, prefix="/api")
+app.include_router(jellyfin_api.router, prefix="/api")
 
 @app.get("/api/health")
 def health():

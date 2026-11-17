@@ -107,7 +107,7 @@
 
 	// Calm editorial styling (tokens.css [data-area='hub']) applies only to non-video routes.
 	const hubArea = $derived(isHubPath(page.url.pathname) || ['/settings', '/stats', '/agent', '/welcome'].some((p) => page.url.pathname === p || page.url.pathname.startsWith(p + '/')));
-	const fullscreen = $derived(page.url.pathname.startsWith('/watch/') || page.url.pathname === '/shorts');
+	const fullscreen = $derived(page.url.pathname.startsWith('/watch/') || page.url.pathname.startsWith('/jellyfin/play/') || page.url.pathname === '/shorts');
 </script>
 
 {#if publicShare}

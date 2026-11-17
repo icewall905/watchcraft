@@ -96,6 +96,7 @@ def init_db() -> None:
         from . import curation  # noqa: F401  (registers v1 + hub tables)
         from .hub import migrate, models as _hub_models  # noqa: F401
         from .music import models as _music_models  # noqa: F401
+        from .jellyfin import models as _jellyfin_models  # noqa: F401
         from .knowledge import models as _knowledge_models  # noqa: F401
         from .commonroom import models as _commonroom_models  # noqa: F401
         SQLModel.metadata.create_all(connection)

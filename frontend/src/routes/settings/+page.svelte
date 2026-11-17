@@ -22,6 +22,7 @@
 	import NotificationsTab from '$lib/settings/NotificationsTab.svelte';
 	import CuratorTab from '$lib/settings/CuratorTab.svelte';
 	import MemeLanguagesTab from '$lib/settings/MemeLanguagesTab.svelte';
+	import JellyfinTab from '$lib/settings/JellyfinTab.svelte';
 
 	// Grouped by what you are doing: what gets collected, how the AI learns, where it may look,
 	// how things play, the devices around the house, and who lives here.
@@ -46,6 +47,7 @@
 		{ label: 'Watching', tabs: [
 			{ key: 'player', label: 'Player', icon: '▶', hint: 'Quality, speed, captions' },
 			{ key: 'sponsorblock', label: 'SponsorBlock', icon: '⏭', hint: 'Skip sponsors and intros' },
+			{ key: 'jellyfin', label: 'Jellyfin', icon: '🎬', hint: 'Your media server in The Cinema' },
 			{ key: 'extras', label: 'YouTube extras', icon: '🧩', hint: 'Shorts, dislikes, better titles' },
 			{ key: 'storage', label: 'Storage', icon: '💾', hint: 'Videos saved on the server' }
 		] },
@@ -98,6 +100,7 @@
 						<h2>Administrator access required</h2><p class="muted">Switch to an administrator profile to change shared server settings.</p>
 					{:else if tab === 'categories'}<CategoriesTab />
 					{:else if tab === 'feeds'}<FeedsTab />
+					{:else if tab === 'jellyfin'}<JellyfinTab />
 					{:else if tab === 'curator'}<CuratorTab />
 					{:else if tab === 'memory'}<MemoryTab />
 					{:else if tab === 'ai'}<AiTab />
