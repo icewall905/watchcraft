@@ -19,6 +19,18 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — watch page full screen + stream retry (`da896c9`, 2026-11-17)
+
+- Watch page: full screen button in the player controls (Android app hides its bars via the WebView custom view);
+  a failed progressive stream or a 30 s stall now spins ("Reconnecting…") and rebuilds the stream from the last position
+  with backoff for up to 90 s before the error card; Try again resumes from that position. 404/live still fail at once.
+  Web only; no schema or `android/` change.
+- Backup `/root/compose/watchcraft-backups/20261117-player-da896c9` (online DB quick_check ok, config hashes, previous
+  source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261117-player-*`). rsync (checksum) of the 6
+  non-`android/` files of `fceafda..b94bd16` (one new). Pruned `20261117-hubzip-7de0bd5` and its rollback tags
+  (`PRUNE-MANIFEST-20261117T164555Z.txt`).
+- All four `wc-*` run `sha256:c28eca39…`, zero restarts, no tracebacks; health 200; served bundle has the retry UI.
+
 ## Deployment record — shared Mood Boards (`fceafda`, 2026-11-17)
 
 - Boards can have members (`moodboardmember` table, created on startup) who work on one board; child members force
