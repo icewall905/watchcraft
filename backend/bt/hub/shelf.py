@@ -45,7 +45,7 @@ def snapshot(s: Session, pid: int, now: float | None = None) -> dict:
     from ..access import is_child
     if is_child(s, pid):
         from . import kidsafe
-        visible = kidsafe.safe_ids().where(kidsafe.KidSafeVerdict.item_id.in_(visible))
+        visible = kidsafe.safe_ids(pid).where(kidsafe.KidSafeVerdict.item_id.in_(visible))
     rows = s.exec(
         select(ContentItem.id, ContentItem.title, ContentItem.summary, ContentItem.publisher,
                ContentItem.first_seen, published,

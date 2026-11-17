@@ -223,7 +223,7 @@ def test_child_curator_run_skips_unsafe_sources_and_uses_safe_search(client, fam
 
 def _judged(iid):
     with session() as s:
-        return s.get(KidSafeVerdict, iid)
+        return s.get(KidSafeVerdict, (iid, ''))
 
 
 def test_judge_stores_only_explicit_true_as_safe(client, family, monkeypatch):
@@ -375,3 +375,80 @@ def test_child_cannot_restart_a_paused_person_curator(client, family):
     assert client.patch(f'/api/hub/curators/{c.id}', json={'enabled': True}, headers=h(child)).status_code == 403
     assert client.post(f'/api/hub/curators/{c.id}/resume', headers=h(child)).status_code == 403
     assert client.post(f'/api/hub/curators/{c.id}/run', headers=h(child)).status_code == 403
+
+
+# ---------- per-child safety rails
+
+def test_safety_rails_only_by_grown_ups_and_only_for_children(client, family):
+    admin, child = family
+    url = f"/api/profiles/{child['id']}/safety-rails"
+    assert client.put(url, json={'rails': 'No scary stuff.'}, headers=h(child)).status_code == 403
+    r = client.put(url, json={'rails': '  She is 8. No scary stuff.  '}, headers=h(admin))
+    assert r.status_code == 200 and r.json()['safety_rails'] == 'She is 8. No scary stuff.'
+    assert client.put(f"/api/profiles/{admin['id']}/safety-rails", json={'rails': 'x'}, headers=h(admin)).status_code == 400
+    assert client.put(url, json={'rails': 'x' * (kidsafe.RAILS_MAX + 1)}, headers=h(admin)).status_code == 400
+    # A child's own profile edit cannot touch the rails (they are not in prefs).
+    client.patch(f"/api/profiles/{child['id']}", json={'prefs': {'safety_rails': ''}, 'safety_rails': ''}, headers=h(child))
+    with session() as s:
+        assert s.get(Profile, child['id']).safety_rails == 'She is 8. No scary stuff.'
+
+
+def test_each_child_is_gated_by_verdicts_for_its_own_rails(client, family, monkeypatch):
+    admin, older = family
+    younger = client.post('/api/profiles', json={'name': 'Small', 'role': 'child'}).json()
+    client.put(f"/api/profiles/{younger['id']}/safety-rails", json={'rails': 'He is 8. No battles.'}, headers=h(admin))
+    battle = find(older['id'], 'https://example.org/battle', 'A famous battle')
+    assert find(younger['id'], 'https://example.org/battle', 'A famous battle') == battle
+    monkeypatch.setattr(ai, 'enabled', lambda: True)
+    monkeypatch.setattr(kidsafe, '_vision', lambda: False)
+    systems = []
+    def call(system, user, schema, **kw):
+        systems.append(system)
+        return {'verdicts': [{'n': 1, 'kid_safe': 'No battles' not in system, 'reason': ''}]}
+    monkeypatch.setattr(ai, '_call', call)
+    with session() as s:
+        kidsafe.judge_pending(s)
+    assert len(systems) == 2 and sum('He is 8. No battles.' in x for x in systems) == 1
+    ids = lambda p: [i['id'] for i in client.get('/api/hub/items?curation=all', headers=h(p)).json()['items']]
+    assert battle in ids(older)
+    assert battle not in ids(younger)
+    with session() as s:
+        assert kidsafe.is_safe(s, battle, older['id']) and not kidsafe.is_safe(s, battle, younger['id'])
+    # Changing the rails hides the item for that child until it is judged again; the old verdicts go.
+    client.put(f"/api/profiles/{younger['id']}/safety-rails", json={'rails': 'He is 8.'}, headers=h(admin))
+    with session() as s:
+        assert not kidsafe.is_safe(s, battle, younger['id'])
+        kidsafe.judge_pending(s)
+        assert kidsafe.is_safe(s, battle, younger['id'])
+        assert len(s.exec(select(KidSafeVerdict)).all()) == 2
+
+
+def test_child_rule_and_video_judge_carry_the_rails(client, family):
+    admin, child = family
+    client.put(f"/api/profiles/{child['id']}/safety-rails", json={'rails': 'Nothing about sharks.'}, headers=h(admin))
+    from bt.agent import judge as video_judge, prompts
+    from bt.models import Category
+    with session() as s:
+        assert 'Nothing about sharks.' in kidsafe.child_rule(s, child['id'])
+        assert 'Nothing about sharks.' not in kidsafe.child_rule(s, admin['id'])
+        assert 'Nothing about sharks.' in kidsafe.household_rails(s)
+    cat = Category(profile_id=child['id'], name='Fun')
+    assert 'Nothing about sharks.' in prompts.judge_system(cat)
+    assert video_judge.decide(cat, {'kid_safe': False, 'score': 99, 'red_flags': [], 'summary': ''}) == (False, 'not kid-safe')
+    grown = Category(profile_id=admin['id'], name='Fun')
+    assert 'RAILS' not in prompts.judge_system(grown)
+    assert video_judge.decide(grown, {'kid_safe': False, 'score': 99, 'red_flags': [], 'summary': 'ok'})[0] is True
+
+
+def test_verdict_table_migration_keeps_existing_verdicts(client):
+    from bt.hub import migrate
+    with db.engine.begin() as conn:
+        conn.exec_driver_sql('DROP TABLE kidsafeverdict')
+        conn.exec_driver_sql('CREATE TABLE kidsafeverdict (item_id INTEGER PRIMARY KEY, safe BOOLEAN, image_checked BOOLEAN, '
+                             'reason VARCHAR, version INTEGER, judged_at FLOAT)')
+        conn.exec_driver_sql(f"INSERT INTO kidsafeverdict VALUES (7, 1, 1, 'ok', {kidsafe.VERSION}, 1.0)")
+        migrate._kidsafe_rules(conn)
+        migrate._kidsafe_rules(conn)  # idempotent
+    with session() as s:
+        v = s.get(KidSafeVerdict, (7, ''))
+        assert v and v.safe and v.image_checked

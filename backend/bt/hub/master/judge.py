@@ -123,8 +123,8 @@ def reader(s: Session, pid: int, include_articles: bool = True) -> str:
     from ...models import Profile
     p = s.get(Profile, pid)
     if p and p.role == 'child':
-        from ..kidsafe import TEXT_RULE
-        base = 'This reader is a child. ' + TEXT_RULE + ' Give quality 0 to anything not kid-safe.\n' + base
+        from ..kidsafe import child_rule
+        base = 'This reader is a child. ' + child_rule(s, pid) + ' Give quality 0 to anything not kid-safe.\n' + base
     from ..article_preferences import context
     # With woven knowledge the core above already carries the article sections; don't repeat them.
     article_memory = context(s, pid, include_core=not (core and 'knowledge_version' in (core.sources or {}))) \

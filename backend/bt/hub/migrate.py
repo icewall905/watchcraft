@@ -38,9 +38,24 @@ def _add_missing_columns(conn) -> None:
             conn.exec_driver_sql('UPDATE curator SET created_at = ? WHERE created_at IS NULL', (time.time(),))
 
 
+def _kidsafe_rules(conn) -> None:
+    """Per-child safety rails: verdicts gain a `rules` key in the primary key. Rebuild the table,
+    keeping every existing verdict as a default-rules verdict, so children see no gap."""
+    names = inspect(conn).get_table_names()
+    if 'kidsafeverdict' not in names or 'rules' in {c['name'] for c in inspect(conn).get_columns('kidsafeverdict')}:
+        return
+    from .models import KidSafeVerdict
+    conn.exec_driver_sql('ALTER TABLE kidsafeverdict RENAME TO kidsafeverdict_old')
+    KidSafeVerdict.__table__.create(conn)
+    conn.exec_driver_sql("INSERT INTO kidsafeverdict (item_id, rules, safe, image_checked, reason, version, judged_at) "
+                         "SELECT item_id, '', safe, image_checked, reason, version, judged_at FROM kidsafeverdict_old")
+    conn.exec_driver_sql('DROP TABLE kidsafeverdict_old')
+
+
 def migrate(conn) -> None:
     from .engine import canonical_url, ensure_fts
     _add_missing_columns(conn)
+    _kidsafe_rules(conn)
     ensure_fts(conn)
     conn.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_agentevent_profile_kind_id ON agentevent (profile_id, kind, id)')
     with Session(conn) as s:

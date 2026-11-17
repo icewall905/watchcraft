@@ -55,7 +55,7 @@ def generate(pid: int, period: str, curator_id: int | None = None):
         if curator_id is not None: q = q.where(Curator.id == curator_id)
         rows = s.exec(q.order_by(CuratorDiscovery.found_at.desc()).limit(500)).all()
         kid = is_child(s, pid)
-        safe = kidsafe.safe_set(s, [item.id for _, item, _ in rows]) if kid else set()
+        safe = kidsafe.safe_set(s, [item.id for _, item, _ in rows], pid) if kid else set()
         findings, seen = [], set()
         for discovery, item, owner in rows:
             if item.id in already or item.id in seen: continue

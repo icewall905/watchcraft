@@ -111,7 +111,8 @@ def _stored(s, bid):
 
 def _kid_check(pictures: list[tuple[int, bytes]], unchecked: set[int] | None = None,
                reasons: dict[int, str] | None = None) -> set[int]:
-    """Pin ids whose picture passes the kid-safe picture bar. Fail closed: errors approve nothing
+    """Pin ids whose picture passes the kid-safe picture bar, under every child's safety rails (a picture's
+    check is shared by every child who can reach the board). Fail closed: errors approve nothing
     (their ids go into `unchecked` when given, so a re-check can tell "failed" from "not judged")."""
     from . import ai, kidsafe
     from .moodboards import vision_image
@@ -119,12 +120,14 @@ def _kid_check(pictures: list[tuple[int, bytes]], unchecked: set[int] | None = N
         return set()
     if not kidsafe._vision():
         raise HTTPException(409, 'Images for a child profile need a kid-safety check, and the vision model is off.')
+    with session() as s:
+        rails = kidsafe.household_rails(s)
     ok: set[int] = set()
     for start in range(0, len(pictures), kidsafe.IMAGE_BATCH):
         batch = pictures[start:start + kidsafe.IMAGE_BATCH]
         try:
             images = [vision_image(data) for _, data in batch]
-            res = ai._call(kidsafe.SYSTEM + ' ' + kidsafe.IMAGE_RULE,
+            res = ai._call(kidsafe.SYSTEM + ' ' + kidsafe.IMAGE_RULE + rails,
                            ai._data([{'type': 'image', 'title': 'Mood Board image'} for _ in batch]), kidsafe.SCHEMA,
                            max_tokens=600, images=images, role='worker')
         except Exception as e:  # noqa: BLE001 — unchecked pictures are not shared

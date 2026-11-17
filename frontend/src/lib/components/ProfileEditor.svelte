@@ -25,6 +25,10 @@
 	let pin = $state('');
 	let repeatPin = $state('');
 	let removePin = $state(false);
+	// svelte-ignore state_referenced_locally
+	let rails = $state(profile?.safety_rails ?? '');
+	// Only a grown-up profile manages a child's safety rails (the server checks this too).
+	const canSetRails = $derived(role === 'child' && !session.isChild && (session.isAdmin || session.mode === 'accounts'));
 
 	async function save() {
 		if (!name.trim()) return toast.warn('Give the profile a name first.');
@@ -34,11 +38,13 @@
 		const accessChange = session.isAdmin || session.mode === 'accounts' ? { role: role === 'admin' && session.mode === 'accounts' ? 'adult' as const : role } : {};
 		busy = true;
 		try {
-			if (profile) await api.updateProfile(profile.id, { name: name.trim(), emoji, color, ...pinChange, ...accessChange });
+			let saved: Profile;
+			if (profile) saved = await api.updateProfile(profile.id, { name: name.trim(), emoji, color, ...pinChange, ...accessChange });
 			else {
-				const p = await api.createProfile({ name: name.trim(), emoji, color, ...pinChange, ...accessChange });
-				toast.success(`Added ${p.name}`);
+				saved = await api.createProfile({ name: name.trim(), emoji, color, ...pinChange, ...accessChange });
+				toast.success(`Added ${saved.name}`);
 			}
+			if (canSetRails && saved.role === 'child' && rails.trim() !== (saved.safety_rails ?? '')) await api.setSafetyRails(saved.id, rails);
 			await session.loadProfiles();
 			session.version++;
 			onClose();
@@ -80,6 +86,11 @@
 				{ value: 'child', label: 'Child', hint: 'Discovery, external sources and research are disabled.' }
 			]} />
 			{#if role === 'child'}<p class="small muted">Every administrator profile needs a PIN first. Adult profiles without a PIN stay open to anyone on this device, children included. Video playlists keep their existing kid-safe checks; this setting does not filter all video playback.</p>{/if}
+		{/if}
+		{#if canSetRails}
+			<TextField label="Safety rails for the AI (optional)" multiline rows={4} bind:value={rails} id="profile-rails"
+				placeholder="e.g. She is 8. No battles, monsters or scary stories. Animals, crafts and space are great."
+				hint="Your own instructions for this child, added to every kid-safety check the AI makes for them: Hub items, their curators, video playlists. They can be stricter or looser than the default (about 10–12 years old). After a change, this child's Hub items stay hidden until they are checked again under the new rails. Shared checks (Common Room, Mood Boards) must suit every child's rails." />
 		{/if}
 		<div class="field"><span class="label">Emoji</span><EmojiPicker bind:value={emoji} /></div>
 		<div class="field"><span class="label">Colour</span><ColorPicker bind:value={color} /></div>

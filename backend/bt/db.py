@@ -151,6 +151,8 @@ def init_db() -> None:
         if 'role' not in {c['name'] for c in inspect(connection).get_columns('profile')}:
             connection.exec_driver_sql("ALTER TABLE profile ADD COLUMN role VARCHAR NOT NULL DEFAULT 'adult'")
             connection.exec_driver_sql("UPDATE profile SET role = 'admin' WHERE id = (SELECT MIN(id) FROM profile)")
+        if 'safety_rails' not in {c['name'] for c in inspect(connection).get_columns('profile')}:
+            connection.exec_driver_sql("ALTER TABLE profile ADD COLUMN safety_rails VARCHAR NOT NULL DEFAULT ''")
         # Accounts (docs/ACCOUNTS.md): existing profiles stay unowned until an administrator assigns them.
         if 'account_id' not in {c['name'] for c in inspect(connection).get_columns('profile')}:
             connection.exec_driver_sql("ALTER TABLE profile ADD COLUMN account_id INTEGER NULL REFERENCES account (id)")

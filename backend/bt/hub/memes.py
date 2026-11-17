@@ -565,7 +565,7 @@ def trend_dict(s: Session, t: MemeTrend, pid: int) -> dict:
                    ItemState.item_id.in_(list(members) or [-1]))).all())
     if is_child(s, pid):
         from .kidsafe import image_set
-        visible &= image_set(s, visible)
+        visible &= image_set(s, visible, pid)
         exemplar = exemplar if exemplar in visible else None
         name = ''  # names are written from the whole household's memes, not kid-checked
     featured = next((m for m in members if m in visible), None)

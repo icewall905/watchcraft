@@ -216,6 +216,7 @@ export const api = {
 	unlockProfile: (id: number, pin: string) => post<{ ok: boolean }>(`/profiles/${id}/unlock`, { pin }, { toast: false }),
 	lockProfile: (id: number) => post<{ ok: boolean }>(`/profiles/${id}/lock`),
 	deleteProfile: (id: number) => del<{ ok: boolean }>(`/profiles/${id}`),
+	setSafetyRails: (id: number, rails: string) => put<Profile>(`/profiles/${id}/safety-rails`, { rails }),
 
 	// categories
 	categories: () => get<Category[]>('/categories'),

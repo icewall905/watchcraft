@@ -27,7 +27,7 @@ def curated(pid: int, col):
     hidden = col.not_in(select(ItemVerdict.item_id).where(ItemVerdict.profile_id == pid, ItemVerdict.tier.in_(HIDDEN)))
     if child(pid):
         from .. import kidsafe
-        return and_(hidden, kidsafe.ok(col))
+        return and_(hidden, kidsafe.ok(col, pid))
     return hidden
 
 
@@ -38,7 +38,7 @@ def visible(pid: int, col):
                col.in_(select(ItemState.item_id).where(ItemState.profile_id == pid)))
     if child(pid):
         from .. import kidsafe
-        return and_(seen, kidsafe.ok(col))
+        return and_(seen, kidsafe.ok(col, pid))
     return seen
 
 
@@ -50,5 +50,5 @@ def visible_set(s: Session, pid: int, ids) -> set[int]:
     found |= set(s.exec(select(ItemState.item_id).where(ItemState.profile_id == pid, ItemState.item_id.in_(ids))).all())
     if child(pid):
         from .. import kidsafe
-        found &= kidsafe.safe_set(s, found)
+        found &= kidsafe.safe_set(s, found, pid)
     return found

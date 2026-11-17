@@ -89,8 +89,9 @@ def rank(c: Curator, items: list[dict]) -> list[tuple[float, str]]:
         kid = is_child(s, c.profile_id)
         if article_indices:
             article_memory = context(s, c.profile_id)
-    from .kidsafe import TEXT_RULE
-    kid_rule = (' This curator belongs to a child profile. ' + TEXT_RULE + ' Score 0 for anything that is not kid-safe.') if kid else ''
+        from .kidsafe import child_rule
+        kid_rule = (' This curator belongs to a child profile. ' + child_rule(s, c.profile_id)
+                    + ' Score 0 for anything that is not kid-safe.') if kid else ''
     for indices in (article_indices, meme_indices, other_indices):
         for start in range(0, len(indices), 15):
             positions = indices[start:start + 15]
@@ -329,7 +330,7 @@ def research_report(cid: int) -> Curator | None:
         if kid:
             from .kidsafe import safe_set
             items = list(items)
-            safe = safe_set(s, [i.id for i in items])
+            safe = safe_set(s, [i.id for i in items], c.profile_id)
             items = [i for i in items if i.id in safe]
         items = list(islice((i for i in items if person_match(c, i.model_dump())), 40))
         if not items:
@@ -408,7 +409,7 @@ def _generate_briefing(bid: int, progress, tone: str = 'friendly', run_id: str =
         kid = is_child(s, b.profile_id)
         if kid:
             from .kidsafe import safe_set
-            safe = safe_set(s, [i.id for i in items])
+            safe = safe_set(s, [i.id for i in items], b.profile_id)
             items = [i for i in items if i.id in safe]
         limit = 12 if b.length == 'concise' else 30
         items = items[:limit]

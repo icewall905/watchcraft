@@ -223,6 +223,27 @@ def lock_profile(pid: int, response: Response):
     return {"ok": True}
 
 
+class SafetyRails(BaseModel):
+    rails: str = ""
+
+
+@router.put("/profiles/{pid}/safety-rails", dependencies=[Depends(require_manager)])
+def set_safety_rails(pid: int, body: SafetyRails, request: Request, s: Session = Depends(get_session)):
+    """A grown-up's own safety instructions for one child profile's AI checks (hub/kidsafe.py).
+    New rails hide that child's Hub items until they are judged again under them (fail closed)."""
+    from ..hub.kidsafe import RAILS_MAX, clean_rails
+    p = _scoped_profile(s, request, pid)
+    if p.role != 'child':
+        raise HTTPException(400, 'Safety rails are for child profiles.')
+    if len(body.rails.strip()) > RAILS_MAX:
+        raise HTTPException(400, f'Keep safety rails under {RAILS_MAX} characters.')
+    p.safety_rails = clean_rails(body.rails)
+    s.add(p)
+    s.commit()
+    s.refresh(p)
+    return profile_out(p, s, request)
+
+
 @router.delete("/profiles/{pid}", dependencies=[Depends(require_manager)])
 def delete_profile(pid: int, request: Request, s: Session = Depends(get_session)):
     p = _scoped_profile(s, request, pid)

@@ -126,7 +126,7 @@ def _visible(s, pid: int, ids: list[int]) -> set[int]:
     from ..access import is_child
     if is_child(s, pid):
         from .kidsafe import safe_set
-        found &= safe_set(s, found)
+        found &= safe_set(s, found, pid)
     return found
 
 

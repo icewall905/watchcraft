@@ -54,7 +54,7 @@ def normalize(out: dict) -> dict:
 
 
 def decide(cat: Category, v: dict) -> tuple[bool, str]:
-    if cat.kid_safe and not v["kid_safe"]:
+    if not v["kid_safe"] and (cat.kid_safe or prompts.child_rails(cat)):
         return False, "not kid-safe"
     if v["score"] < (cat.threshold or 0):
         return False, (v["red_flags"][0] if v["red_flags"] else v["summary"] or "below threshold")

@@ -25,7 +25,9 @@ def check_posts(post_ids: list[int]) -> tuple[set[int], set[int]]:
 
 def _judge(items: list[dict], images: list[str] | None = None) -> set[int] | None:
     """1-based indexes the model explicitly marked kid_safe; None when the model gave no usable answer."""
-    system = kidsafe.SYSTEM + (' ' + kidsafe.IMAGE_RULE if images else '')
+    with session() as s:
+        rails = kidsafe.household_rails(s)  # one verdict serves every child: it must suit each one's rails
+    system = kidsafe.SYSTEM + (' ' + kidsafe.IMAGE_RULE if images else '') + rails
     try:
         res = ai._call(system, ai._data(items), kidsafe.SCHEMA, max_tokens=900, images=images, role='worker')
     except Exception as e:  # noqa: BLE001 — unchecked means unsafe

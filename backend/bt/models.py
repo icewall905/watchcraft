@@ -27,6 +27,9 @@ class Profile(SQLModel, table=True):
     color: str = "#7c5cff"
     role: str = "adult"  # adult, child (admin = legacy open mode); changed only by the account owner
     prefs: dict = J({})  # per-profile overrides (e.g. sponsorblock, player)
+    # Child profiles: the grown-ups' own safety instructions for this child's AI checks (hub/kidsafe.py).
+    # Not part of prefs, so a child's own profile edits can never change it.
+    safety_rails: str = Field(default="", sa_column_kwargs={"server_default": ""})
     created_at: datetime = Field(default_factory=now)
     # Owning account (docs/ACCOUNTS.md). NULL = from before accounts, waiting for an admin to assign it.
     account_id: Optional[int] = Field(default=None, foreign_key="account.id", index=True)

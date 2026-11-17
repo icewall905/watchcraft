@@ -45,6 +45,8 @@ export interface Profile {
 	created_at?: string;
 	pin_required?: boolean;
 	pin_locked?: boolean;
+	/** Child profiles: the grown-ups' own instructions for this child's AI safety checks. */
+	safety_rails?: string;
 }
 
 export interface CategoryStats {

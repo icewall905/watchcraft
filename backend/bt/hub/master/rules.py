@@ -54,10 +54,8 @@ def load(s: Session, pid: int) -> ProfileRules:
     child = bool(p and p.role == 'child')
     kid_unsafe: set[int] = set()
     if child:
-        from ..kidsafe import VERSION
-        from ..models import KidSafeVerdict
-        kid_unsafe = set(s.exec(select(KidSafeVerdict.item_id).where(KidSafeVerdict.safe == False,  # noqa: E712
-                                                                      KidSafeVerdict.version == VERSION)).all())
+        from ..kidsafe import unsafe_ids
+        kid_unsafe = unsafe_ids(s, pid)
     return ProfileRules(
         child=child, kid_unsafe=kid_unsafe,
         hidden_languages={x for x in (prefs.get('hidden_meme_languages') or []) if isinstance(x, str)},

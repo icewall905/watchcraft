@@ -720,9 +720,12 @@ class MoodShareNotice(SQLModel, table=True):
 
 
 class KidSafeVerdict(SQLModel, table=True):
-    """Household-wide kid-safety check of one Hub item. Child profiles only ever see items with
-    a current, safe verdict: no verdict (model off, error, not judged yet) means hidden."""
+    """Kid-safety check of one Hub item under one set of safety rails. Child profiles only ever see
+    items with a current, safe verdict for their own rails: no verdict (model off, error, not judged
+    yet) means hidden. `rules` is kidsafe.rails_key of the child's rails; '' = the default rules only,
+    so children with the same rails share verdicts."""
     item_id: int = Field(primary_key=True)
+    rules: str = Field(default='', primary_key=True)
     safe: bool = False
     image_checked: bool = False  # the item's picture was seen by the vision model and passed
     reason: str = ''

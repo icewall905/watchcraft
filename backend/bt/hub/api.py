@@ -60,14 +60,14 @@ def visible_ids(pid: int):
     found = select(CuratorDiscovery.item_id).where(CuratorDiscovery.profile_id == pid).union(
         select(ItemState.item_id).where(ItemState.profile_id == pid))
     if curation_views.child(pid):
-        return kidsafe.safe_ids().where(KidSafeVerdict.item_id.in_(found))
+        return kidsafe.safe_ids(pid).where(KidSafeVerdict.item_id.in_(found))
     return found
 
 
 def can_see(s: Session, pid: int, item_id: int) -> bool:
     seen = bool(s.exec(select(CuratorDiscovery.id).where(CuratorDiscovery.profile_id == pid, CuratorDiscovery.item_id == item_id)).first()
                 or s.get(ItemState, (pid, item_id)))
-    return seen and (not is_child(s, pid) or kidsafe.is_safe(s, item_id))
+    return seen and (not is_child(s, pid) or kidsafe.is_safe(s, item_id, pid))
 
 
 def kid_guard(s: Session, pid: int) -> None:
@@ -98,7 +98,7 @@ def serialize(s: Session, pid: int, items: list[ContentItem]) -> list[dict]:
     if kid:
         # Defence in depth: whatever query produced these, a child gets only kid-safe items, and
         # pictures only once the vision model checked them. Clips are never vision-checked.
-        safe, pictured = kidsafe.safe_set(s, ids), kidsafe.image_set(s, ids)
+        safe, pictured = kidsafe.safe_set(s, ids, pid), kidsafe.image_set(s, ids, pid)
         items = [i for i in items if i.id in safe]
         images &= pictured
         videos = set()
@@ -172,7 +172,7 @@ def counts(pid: int = Depends(profile_id)):
             found = select(ItemVerdict.item_id).where(ItemVerdict.profile_id == pid, ItemVerdict.tier == 'feature',
                                                       curation_views.visible(pid, ItemVerdict.item_id))
         if is_child(s, pid):
-            found = kidsafe.safe_ids().where(KidSafeVerdict.item_id.in_(found))
+            found = kidsafe.safe_ids(pid).where(KidSafeVerdict.item_id.in_(found))
         unread = s.exec(select(func.count(func.distinct(ContentItem.id))).where(
             ContentItem.id.in_(found), ContentItem.id.not_in(read))).one()
         alerts = s.exec(select(func.count()).select_from(Alert).where(Alert.profile_id == pid, Alert.state == 'new',
@@ -234,7 +234,7 @@ def item_query(pid: int, *, section='discover', q='', type='', provider='', cura
     else:
         stmt = stmt.where(ContentItem.id.in_(select(CuratorDiscovery.item_id).where(CuratorDiscovery.profile_id == pid)))
         if curation_views.child(pid):
-            stmt = stmt.where(kidsafe.ok(ContentItem.id))
+            stmt = stmt.where(kidsafe.ok(ContentItem.id, pid))
         stmt = stmt.where(or_(st.dismissed == None, st.dismissed == False))  # noqa: E711
     if section == 'library':
         stmt = stmt.where(or_(st.saved == True, st.favorite == True, st.read_later == True, st.archived == True))
@@ -504,7 +504,7 @@ def item_image(iid: int, pid: int = Depends(profile_id)):
             raise HTTPException(404, 'No picture for this item.')
         if is_child(s, pid):
             # Only the captured bytes the vision model saw; the remote picture may differ.
-            asset = s.get(CapturedAsset, (iid, 'image')) if kidsafe.image_ok(s, iid) else None
+            asset = s.get(CapturedAsset, (iid, 'image')) if kidsafe.image_ok(s, iid, pid) else None
             if not asset:
                 raise HTTPException(404, 'No picture for this item.')
             return Response(asset.data, media_type=asset.mime, headers={'Cache-Control': 'private, no-store',
@@ -546,7 +546,7 @@ def item_asset(iid: int, kind: str, request: Request, pid: int = Depends(profile
         asset = s.get(CapturedAsset, (iid, kind))
         if not asset or not can_see(s, pid, iid):
             raise HTTPException(404, 'Asset not found')
-        if is_child(s, pid) and not (kind == 'image' and kidsafe.image_ok(s, iid)):
+        if is_child(s, pid) and not (kind == 'image' and kidsafe.image_ok(s, iid, pid)):
             raise HTTPException(404, 'Asset not found')
         data, mime = asset.data, asset.mime
     headers = {'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox',
@@ -1404,7 +1404,7 @@ def _finds(s: Session, pid: int, curator_id: int, limit: int = 3) -> list[dict]:
                   .join(CuratorDiscovery, CuratorDiscovery.item_id == ContentItem.id)
                   .outerjoin(Source, (Source.id == CuratorDiscovery.source_id) & (Source.profile_id == pid))
                   .where(CuratorDiscovery.curator_id == curator_id, CuratorDiscovery.profile_id == pid,
-                         *([kidsafe.ok(ContentItem.id)] if is_child(s, pid) else []))
+                         *([kidsafe.ok(ContentItem.id, pid)] if is_child(s, pid) else []))
                   .order_by(CuratorDiscovery.found_at.desc()).limit(limit)).all()
     return [{'id': item.id, 'title': item.title, 'found_at': discovery.found_at,
              'url': item.url, 'summary': item.summary[:350], 'publisher': item.publisher,
@@ -1804,7 +1804,7 @@ def curator_dict(s, c: Curator) -> dict:
     out = {**c.model_dump(exclude={'provider', 'source'}), 'source_ids': sids, 'discovery_count': n,
            'next_run': c.next_run if c.next_run < 1e11 else None}
     if is_child(s, c.profile_id):
-        if c.report_refs and len(kidsafe.safe_set(s, c.report_refs)) < len(set(c.report_refs)):
+        if c.report_refs and len(kidsafe.safe_set(s, c.report_refs, c.profile_id)) < len(set(c.report_refs)):
             out.update(report='', report_at=None, report_refs=[])  # written from items a child may not see
         if c.report and not c.report_refs:
             out['report'] = ''  # an unavailable-AI notice is fine; prose without citations is not checkable
@@ -2159,7 +2159,7 @@ def _kid_issue(s: Session, pid: int, issue: dict) -> dict:
         return issue
     sections = dict(issue.get('sections') or {})
     findings = sections.get('findings') or []
-    safe = kidsafe.safe_set(s, [f.get('id') for f in findings if isinstance(f, dict)])
+    safe = kidsafe.safe_set(s, [f.get('id') for f in findings if isinstance(f, dict)], pid)
     sections['findings'] = [f for f in findings if isinstance(f, dict) and f.get('id') in safe]
     sections['memes'], sections['alerts'] = [], []
     sections['stories'] = [x for x in sections.get('stories') or [] if isinstance(x, dict) and x.get('kind') not in ('meme', 'alerts')]
@@ -2280,7 +2280,7 @@ def issues(bid: int, pid: int = Depends(profile_id)):
         rows = s.exec(select(BriefingIssue).where(BriefingIssue.briefing_id == bid).order_by(BriefingIssue.created_at.desc()).limit(50)).all()
         if is_child(s, pid):
             # Written prose cannot be partly filtered: a child reads only issues built from kid-safe items.
-            rows = [r for r in rows if len(kidsafe.safe_set(s, r.item_ids or [])) == len(set(r.item_ids or []))]
+            rows = [r for r in rows if len(kidsafe.safe_set(s, r.item_ids or [], pid)) == len(set(r.item_ids or []))]
         return rows
 
 
@@ -2495,7 +2495,7 @@ def _visible_to(col, pid: int):
     touched = select(ItemState.item_id).where(ItemState.profile_id == pid, ItemState.item_id.in_(meme_ids))
     seen = or_(col.in_(found), col.in_(touched))
     if curation_views.child(pid):
-        return seen & col.in_(kidsafe.safe_ids().where(KidSafeVerdict.image_checked == True))  # noqa: E712
+        return seen & col.in_(kidsafe.safe_ids(pid).where(KidSafeVerdict.image_checked == True))  # noqa: E712
     return seen
 
 
@@ -2754,7 +2754,7 @@ def meme_formats(q: str = '', sort: str = 'new', offset: int = 0, limit: int = 3
                  'created_at': f.created_at}
             trend = s.exec(select(MemeTrend).where(MemeTrend.target_kind == 'format', MemeTrend.target_key == str(f.id))).first()
             d['state'] = trend.state if trend else 'newly_observed'
-            d['featured_item_id'] = f.exemplar_item_id if not kid or kidsafe.image_ok(s, f.exemplar_item_id or 0) else None
+            d['featured_item_id'] = f.exemplar_item_id if not kid or kidsafe.image_ok(s, f.exemplar_item_id or 0, pid) else None
             out.append(d)
         return {'formats': out, 'total': total}
 
