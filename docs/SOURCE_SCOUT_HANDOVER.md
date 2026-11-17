@@ -8,6 +8,20 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Pinterest whole-board imports in the background (`eab933b`, 2026-11-17)
+
+- Board imports page through Pinterest's board feed a slice per scheduler tick via `pinterest_guard`, resume after
+  blocks/429s, and a sweep turns old 25-pin RSS imports into whole-board imports. Additive `moodimport` columns
+  (`full`, `board_ref`, `cursor`, `exhausted`, `existing`, `failures`, `next_at`, `note`) created on startup; the old
+  image ignores them. No Android change.
+- Backup `/root/compose/watchcraft-backups/20261117-pinimport-eab933b` (online DB quick_check ok, config hashes,
+  previous source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261117-pinimport-*`). rsync (checksum) of
+  the 9 files of `fff47bc..eab933b`. Pruned `20261116-frontpage-25997ec` and its rollback tags
+  (`PRUNE-MANIFEST-20261117T084638Z.txt`).
+- All four `wc-*` run `sha256:e30a1690…`, zero restarts, no tracebacks; health, `/`, `/boards` 200; DB quick_check ok.
+  Board 2's import requeued as whole-board (import 6, `full=1`), waiting on the existing 24 h Pinterest pause from a
+  403 at 2026-11-16 18:40 CET (old importer); resumes around 2026-11-17 18:40 CET.
+
 ## Deployment record — The Scroll speed-up and redesign (`651c59b`, 2026-11-17)
 
 - Feed status caches the caption check per video; clip pages open only the clips they serve; the player reads ahead
