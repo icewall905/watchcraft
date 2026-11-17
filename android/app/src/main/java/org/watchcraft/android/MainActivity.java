@@ -288,8 +288,8 @@ public final class MainActivity extends ComponentActivity {
 
     private void showTvMenu(View anchor) {
         PopupMenu popup = new PopupMenu(this, anchor);
-        String[] titles = {"The Screen", "Playlists", "The Scroll", "The Jukebox"};
-        String[] paths = {"/", "/settings?tab=categories", "/shorts", "/music"};
+        String[] titles = {"The Screen", "Playlists", "The Scroll", "The Jukebox", "The Marquee"};
+        String[] paths = {"/", "/settings?tab=categories", "/shorts", "/music", "/jellyfin"};
         for (int i = 0; i < titles.length; i++) popup.getMenu().add(0, i, i, titles[i]);
         popup.setOnMenuItemClickListener(item -> { navigate(paths[item.getItemId()]); return true; });
         popup.show();
@@ -345,7 +345,7 @@ public final class MainActivity extends ComponentActivity {
         int selected = 4;
         for (int i = 0; i < 4; i++) {
             String destination = (String) bottom.getChildAt(i).getTag();
-            boolean tvPage = playlists || path.equals("/") || path.equals("/tv") || path.startsWith("/watch/") || path.startsWith("/category/") || path.startsWith("/channel/") || path.equals("/shorts") || path.startsWith("/shorts/") || path.equals("/music") || path.startsWith("/music/");
+            boolean tvPage = playlists || path.equals("/") || path.equals("/tv") || path.startsWith("/watch/") || path.startsWith("/category/") || path.startsWith("/channel/") || path.equals("/shorts") || path.startsWith("/shorts/") || path.equals("/music") || path.startsWith("/music/") || path.equals("/jellyfin") || path.startsWith("/jellyfin/");
             if ((destination.equals("/") && tvPage && selected == 4) || (!destination.equals("/") && !playlists && Navigation.matches(destination, path))) selected = i;
         }
         for (int i = 0; i < bottom.getChildCount(); i++) {
