@@ -19,6 +19,22 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — shared Mood Boards (`fceafda`, 2026-11-17)
+
+- Boards can have members (`moodboardmember` table, created on startup) who work on one board; child members force
+  child-friendly and per-pin `kid_state`/`kid_reason` (`moodpin` columns, additive) decide what children see.
+  Background `kid_sweep` in the worker judges unchecked pictures. Old image ignores the new table and columns.
+  No `android/` change.
+- Backup `/root/compose/watchcraft-backups/20261117-shared-fceafda` (online DB quick_check ok, config hashes, previous
+  source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261117-shared-*`). rsync (checksum) of the 17
+  non-`android/` files of `bb57c38..fceafda` (two new). Pruned `20261117-kidcheck-4c2700b` and its rollback tags
+  (`PRUNE-MANIFEST-20261117T154427Z.txt`).
+- All four `wc-*` run `sha256:7eb457f0…`, zero restarts, no tracebacks; health, `/boards` 200.
+- Converted M's board 3 "Ria" into a shared board: `board_members add 3 4` (Ria; board became child-friendly/strict),
+  `board_members merge 7 3` (Ria's copy: 11 copied as checked, board 7 deleted). Kid sweep judged the 84 existing
+  images in ~8 min: 87 shown to Ria, 8 hidden from her with reasons (pins 317, 330, 414, 471, 610, 1048, 1389, 1400),
+  visible to M with "Hidden from kids".
+
 ## Deployment record — browser extension 1.3.0, menu on covered pictures (`bb57c38`, 2026-11-17)
 
 - Extension zips only: The Hub menu also shows on link/page right-clicks and adds the picture underneath (Pinterest's
