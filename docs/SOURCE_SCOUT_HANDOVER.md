@@ -19,6 +19,20 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Play on for Marquee titles across accounts (`24869ac`, 2026-11-17)
+
+- Screens signed in to another account (the shared `tv` account on "Media center") failed Marquee casts with
+  "Playback could not start": the receiver could not switch to the sender's profile. Jellyfin commands now carry a
+  signed 6 h cast grant (`bt/jellyfin/cast.py`, salt `jellyfin-cast`, delivered only in the receiver's heartbeat);
+  `require_jellyfin` and the parental gate act as the grant's profile on `/api/jellyfin/*`. The player sends the
+  `X-Cast-Grant` header while open and drops it on leave. YouTube casts from another account now play on the
+  screen's own profile (no playlist context). No schema or `android/` change.
+- Backup `/root/compose/watchcraft-backups/20261117-cast-24869ac` (online DB quick_check ok, config hashes,
+  previous source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261117-cast-*`). rsync (checksum) of the
+  10 non-`android/` files of `13343e2..24869ac` (one new). Pruned `20261117-rails-21835db` and its rollback tags
+  (`PRUNE-MANIFEST-20261117T194819Z.txt`).
+- All four `wc-*` run `sha256:0d359275…`, zero restarts, no tracebacks; health 200; served bundle sends the grant.
+
 ## Deployment record — Marquee library age/genre filters, back keeps place (`13343e2`, 2026-11-17)
 
 - Library pages get Age (3/7/10/13/16, steps that exist in the library) and Genre filter rows. Ages map the
