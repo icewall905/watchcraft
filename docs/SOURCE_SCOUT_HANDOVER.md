@@ -8,6 +8,17 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — player autoplay and preview settings (`ca70c40`, 2026-11-17)
+
+- Settings → Player: autoplay countdown length (0–60 s), preview autoplay on/off, preview time limit (0 = none).
+  Server-wide `player` settings with new defaults; no DB migration. Android-only `325a2ce` is not part of the server.
+- Backup `/root/compose/watchcraft-backups/20261117-player-ca70c40` (online DB quick_check ok, config hashes, previous
+  source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261117-player-*`). rsync (checksum) of the 9
+  non-Android files of `25997ec..ca70c40`. Pruned `20261116-aimode-34b6bb6`, `daily-20261116T023455Z` and the
+  `aimode` rollback tags (`PRUNE-MANIFEST-20261117T075806Z.txt`).
+- All four `wc-*` run `sha256:bb9c11d8…`, zero restarts, no tracebacks; health, `/`, `/tv`, `/settings` 200; new
+  settings in the served bundle.
+
 ## Deployment record — section names, What's new Front Page, landing page (`25997ec`, 2026-11-16)
 
 - New section names (The Screen, The Scroll, The Jukebox, The Front Page, The Finds, The Wire, The Stacks, The
