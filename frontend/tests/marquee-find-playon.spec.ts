@@ -80,3 +80,30 @@ test('a registered screen opens a received Marquee title at the sent position', 
 	await page.reload();
 	await expect(page).toHaveURL(new RegExp(`/jellyfin/play/${MOVIE}\\?cast=cmd1&start=42$`), { timeout: 10000 });
 });
+
+test('a shared screen on another account plays a received Marquee title with the cast grant', async ({ page }) => {
+	let delivered = false;
+	const grants: (string | undefined)[] = [];
+	await page.route('**/api/playback/targets/rx1/heartbeat', (route) => {
+		// The sender's profile is not one of this screen's profiles: no switch, the grant does the work.
+		const command = delivered ? null : { id: 'cmd2', action: 'play', video_id: null, jellyfin_id: MOVIE, category_id: null, position_s: null, profile_id: 987654, grant: 'g1', created_at: Date.now() / 1000 };
+		delivered = true;
+		return route.fulfill({ json: { command, pair_code: '123456' } });
+	});
+	let reported = '';
+	await page.route('**/api/playback/targets/rx1/heartbeat', async (route) => {
+		reported = route.request().postDataJSON()?.error ?? reported;
+		return route.fallback();
+	});
+	await page.route('**/api/jellyfin/items/*/play', (route) => {
+		grants.push(route.request().headers()['x-cast-grant']);
+		return route.fulfill({ status: 409, json: { detail: 'mocked' } });
+	});
+	await freshPage(page, '/');
+	await page.evaluate(() => localStorage.setItem('bt.playback.receiver', JSON.stringify({ id: 'rx1', name: 'Den TV', token: 't' })));
+	await page.reload();
+	await expect(page).toHaveURL(new RegExp(`/jellyfin/play/${MOVIE}\\?cast=cmd2$`), { timeout: 10000 });
+	await expect.poll(() => grants.length).toBeGreaterThan(0);
+	expect(grants[0]).toBe('g1');
+	expect(reported).toBe('');
+});

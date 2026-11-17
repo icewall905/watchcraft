@@ -2,6 +2,7 @@ import { goto } from '$app/navigation';
 import { request, ApiError } from '$lib/api';
 import { session } from './session.svelte';
 import { toast } from './toast.svelte';
+import { setCastGrant } from '$lib/jellyfin/api';
 
 export interface PlaybackTarget {
 	id: string;
@@ -13,7 +14,7 @@ export interface PlaybackTarget {
 	state: { video_id?: string | null; jellyfin_id?: string | null; paused?: boolean; position_s?: number; duration_s?: number | null; error?: string };
 }
 interface Receiver { id: string; name: string; token: string; ack?: string; pair_code?: string }
-interface Command { id: string; action: string; video_id: string | null; jellyfin_id?: string | null; category_id: number | null; position_s?: number | null; profile_id: number }
+interface Command { id: string; action: string; video_id: string | null; jellyfin_id?: string | null; grant?: string; category_id: number | null; position_s?: number | null; profile_id: number }
 const KEY = 'bt.playback.receiver';
 const JF_PLAY = /^\/jellyfin\/play\/([0-9a-fA-F-]{32,36})\/?$/;
 /** The playing <video> on this screen: the YouTube watch page or The Marquee player. */
@@ -201,13 +202,14 @@ class Playback {
 		try {
 			if (command.action === 'play' && command.video_id) {
 				window.dispatchEvent(new Event('bt:before-cast'));
-				if (!(await session.switchProfile(command.profile_id))) throw new Error('Profile was not unlocked');
+				const own = await this.becomeSender(command.profile_id);
 				const query = new URLSearchParams({ cast: command.id });
-				if (command.category_id) query.set('c', String(command.category_id));
+				if (command.category_id && own) query.set('c', String(command.category_id));
 				await goto(`/watch/${command.video_id}?${query}`);
 			} else if (command.action === 'play' && command.jellyfin_id) {
 				window.dispatchEvent(new Event('bt:before-cast'));
-				if (!(await session.switchProfile(command.profile_id))) throw new Error('Profile was not unlocked');
+				await this.becomeSender(command.profile_id);
+				setCastGrant(command.grant ?? null);
 				// No start resumes from Jellyfin's saved position; a sender mid-film hands over its own position.
 				const query = new URLSearchParams({ cast: command.id });
 				if (command.position_s != null) query.set('start', String(Math.floor(command.position_s)));
@@ -223,6 +225,16 @@ class Playback {
 				}
 			}
 		} catch { this.error = 'Playback could not start. Press Play on this screen.'; }
+	}
+
+	/** Switch to the sending profile when it belongs to this screen's account (true). A shared screen
+	 * signed in to another account stays on its own profile (false); Marquee titles then play with the
+	 * command's cast grant, YouTube videos simply play here. */
+	private async becomeSender(pid: number): Promise<boolean> {
+		await session.loadProfiles();
+		if (!session.profiles.some(p => p.id === pid)) return false;
+		if (!(await session.switchProfile(pid))) throw new Error('Profile was not unlocked');
+		return true;
 	}
 
 	private async poll() {

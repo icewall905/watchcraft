@@ -296,6 +296,9 @@ def test_play_on_sends_marquee_titles_to_linked_profiles_only(fake):
             assert sent.status_code == 200
             cmd = c.post(path + '/heartbeat', json={}, headers=rx).json()['command']
             assert cmd['jellyfin_id'] == MOVIE and cmd['video_id'] is None and cmd['position_s'] == 42
+            from bt.jellyfin import cast
+            assert cast.grant_pid(cmd['grant']) == cmd['profile_id']  # a screen on another account plays as the sender
+            assert 'grant' not in json.dumps(c.get('/api/playback/targets').json())
             beat = {'ack': cmd['id'], 'jellyfin_id': MOVIE, 'paused': False, 'position_s': 50, 'duration_s': 7200}
             assert c.post(path + '/heartbeat', json=beat, headers=rx).json()['command'] is None
             state = next(t for t in c.get('/api/playback/targets').json() if t['id'] == r['id'])['state']
@@ -327,3 +330,21 @@ def test_age_and_genre_filters(fake):
         assert q['officialRatings'] == 'G|FSK-6' and q['genres'] == 'Action'
         c.get('/api/jellyfin/items', params={'parent_id': 'e' * 32})
         assert 'officialRatings' not in dict(fake.calls[-1].url.params)
+
+
+def test_cast_grant_plays_as_sender(fake):
+    from bt.jellyfin import cast
+    assert cast.grant_pid(cast.grant(7, 't')) == 7
+    assert cast.grant_pid('forged') is None and cast.grant_pid(None) is None
+    with TestClient(app) as c:
+        _setup(c)
+        sender = c.get('/api/jellyfin/status').json()
+        assert sender['linked']
+        pids = [p['id'] for p in c.get('/api/profiles').json()]
+        other = c.post('/api/profiles', json={'name': 'Shared TV'}).json()['id']
+        h = {'X-Profile-Id': str(other)}
+        assert c.get('/api/jellyfin/home', headers=h).status_code == 409  # the screen's own profile is unlinked
+        h['X-Cast-Grant'] = cast.grant(pids[0], 'rx')
+        assert c.get('/api/jellyfin/home', headers=h).status_code == 200
+        h['X-Cast-Grant'] = 'forged'
+        assert c.get('/api/jellyfin/home', headers=h).status_code == 409

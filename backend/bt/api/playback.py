@@ -200,6 +200,9 @@ def send_command(target_id: str, body: Command, pid: int = Depends(profile_id),
         raise HTTPException(429, "Too many commands to this screen. Wait a moment.")
     command = {**body.model_dump(), "id": secrets.token_urlsafe(16),
                "profile_id": pid, "created_at": now}
+    if body.jellyfin_id:
+        from ..jellyfin import cast
+        command["grant"] = cast.grant(pid, target_id)
     s.exec(update(PlaybackTarget).where(PlaybackTarget.id == target_id).values(
         command=command, rate={"ts": now if count == 0 else window["ts"], "n": count + 1}))
     s.commit()

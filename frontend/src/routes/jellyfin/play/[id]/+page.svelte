@@ -5,7 +5,7 @@
 	import { focusable, navScope, nav, type NavKey } from '$lib/nav';
 	import Icon from '$lib/components/Icon.svelte';
 	import { loadShakaHls } from '$lib/player/shaka';
-	import { QUALITIES, deviceCaps, fmtTime, jellyfin, type Play, type Playing } from '$lib/jellyfin/api';
+	import { QUALITIES, deviceCaps, fmtTime, jellyfin, setCastGrant, type Play, type Playing } from '$lib/jellyfin/api';
 	import { playback } from '$lib/stores/playback.svelte';
 
 	const id = $derived(page.params.id ?? '');
@@ -241,7 +241,8 @@
 		clearInterval(infoTimer);
 		document.removeEventListener('visibilitychange', onHide);
 		window.removeEventListener('pagehide', onPageHide);
-		void teardown();
+		void teardown(); // reports the stop with the cast grant still set
+		setCastGrant(null);
 	});
 
 	const title = $derived(info?.item.type === 'Episode'

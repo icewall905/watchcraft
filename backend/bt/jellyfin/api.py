@@ -21,6 +21,7 @@ from ..access import grown_up_access, profile_id, require_admin
 from ..config import SECRET
 from ..db import session
 from ..models import Profile
+from . import cast
 from . import client as jf
 from .models import JellyfinLink
 
@@ -45,7 +46,9 @@ def _allowed(pid: int) -> bool:
         return grown_up_access(s, p) or (p.role == 'child' and bool(jf.config().get('allow_children')))
 
 
-def require_jellyfin(pid: int = Depends(profile_id)) -> int:
+def require_jellyfin(request: Request, pid: int = Depends(profile_id)) -> int:
+    # A screen playing a title sent to it acts as the sending profile (see cast.py).
+    pid = cast.grant_pid(request.headers.get(cast.HEADER)) or pid
     if not _allowed(pid):
         raise HTTPException(403, 'Jellyfin is unavailable for this profile.')
     return pid

@@ -28,8 +28,13 @@ export type Playing = {
 export type Encoding = { known: boolean; reason?: string; hardware?: string | null; decoding_codecs?: string[]; hevc_encoding?: boolean; av1_encoding?: boolean; tonemapping?: boolean; low_power?: boolean };
 
 const J = '/jellyfin';
-const get = <T>(p: string, toast = true) => request<T>(J + p, { toast });
-const send = <T>(method: string, p: string, body?: unknown, toast = true) => request<T>(J + p, { method, body: body ?? {}, toast });
+// Set while this screen plays a title another profile sent to it: requests then act as the sender,
+// even when this screen is signed in to another account (backend/bt/jellyfin/cast.py).
+let castGrant: string | null = null;
+export const setCastGrant = (g: string | null) => { castGrant = g; };
+const hdrs = () => (castGrant ? { 'X-Cast-Grant': castGrant } : undefined);
+const get = <T>(p: string, toast = true) => request<T>(J + p, { toast, headers: hdrs() });
+const send = <T>(method: string, p: string, body?: unknown, toast = true) => request<T>(J + p, { method, body: body ?? {}, toast, headers: hdrs() });
 const qs = (o: Record<string, string | number | boolean | undefined | null>) =>
 	new URLSearchParams(Object.entries(o).filter(([, v]) => v !== undefined && v !== null && v !== '' && v !== false).map(([k, v]) => [k, String(v)])).toString();
 
@@ -52,7 +57,7 @@ export const jellyfin = {
 	favorite: (id: string, on: boolean) => send<{ ok: boolean }>('POST', `/items/${id}/favorite`, { on }),
 	play: (id: string, body: PlayIn) => send<Play>('POST', `/items/${id}/play`, body, false),
 	progress: (session: string, position_s: number, paused: boolean, event: 'progress' | 'stopped' = 'progress', keepalive = false) =>
-		request<{ ok: boolean }>(J + '/progress', { method: 'POST', body: { session, position_s, paused, event }, toast: false, keepalive }),
+		request<{ ok: boolean }>(J + '/progress', { method: 'POST', body: { session, position_s, paused, event }, toast: false, keepalive, headers: hdrs() }),
 	playing: (session: string) => get<Playing>(`/playing?${qs({ session })}`, false)
 };
 

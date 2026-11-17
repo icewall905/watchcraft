@@ -130,11 +130,14 @@ def gate(request: Request) -> None:
     if not features:
         return
     from .access import profile_id
+    from .jellyfin import cast
     try:
         raw = request.headers.get('x-profile-id')
         pid = profile_id(request, int(raw) if raw and raw.isdigit() else None)
     except HTTPException:
         return  # no usable profile: the route's own checks answer
+    if path.startswith('/api/jellyfin/'):
+        pid = cast.grant_pid(request.headers.get(cast.HEADER)) or pid  # a screen playing what a sender cast
     with session() as s:
         p = s.get(Profile, pid)
         if p and p.role == 'child' and not any(allowed(p, f) for f in features):
