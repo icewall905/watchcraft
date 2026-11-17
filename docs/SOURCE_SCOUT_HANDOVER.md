@@ -19,6 +19,17 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — faster Mood Board collector, login allows 10 tries (`81334bb`, 2026-11-17)
+
+- Collector: already-pinned/duplicate hits no longer use run slots; 48 fresh candidates per run (30 hits per phrase,
+  up to 4 planned phrases); previews download 4 at once, at most 2 per image host (social_fetch spacing and Pinterest
+  budgets unchanged); a page with hits but nothing new retries the next page after 10 min. Login throttle 10 per
+  username, 20 per address per 5 min (was 5/5). No schema or `android/` change.
+- Backup `/root/compose/watchcraft-backups/20261117-collector-81334bb` (online DB quick_check ok, config hashes, previous
+  source, empty `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261117-collector-*`). rsync (checksum) of the 6
+  non-`android/` files of `da896c9..81334bb`. Pruned `20261117-extmenu-bb57c38` (5.2 GB) and its rollback tags.
+- All four `wc-*` run `sha256:4ccda997…`, zero restarts, no tracebacks; health 200.
+
 ## Deployment record — watch page full screen + stream retry (`da896c9`, 2026-11-17)
 
 - Watch page: full screen button in the player controls (Android app hides its bars via the WebView custom view);
