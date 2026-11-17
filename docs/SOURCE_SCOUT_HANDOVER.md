@@ -19,6 +19,22 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — accounts and sign-in (`28c3d1a`, 2026-11-17)
+
+- Real accounts (docs/ACCOUNTS.md): one-way migration adds `account`, `accountsession`, `accountinvite`, `devicecode`
+  and nullable `profile.account_id`. `BT_AUTH` unset = accounts mode; old `BT_PASSWORD` in `.env` is now ignored
+  (left in place). No `android/` change, no app release.
+- Backup `/root/compose/watchcraft-backups/20261117-accounts-28c3d1a` (online DB quick_check ok, config hashes,
+  previous source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261117-accounts-*`; the old image ignores
+  the new tables). rsync (checksum) of the 57 non-`android/` files of `2ef1016..28c3d1a` (11 new). Pruned
+  `20261117-scroll-651c59b` and its rollback tags (`PRUNE-MANIFEST-20261117T121108Z.txt`).
+- All four `wc-*` run `sha256:5dfbeb89…`, zero restarts; DB quick_check ok. "database is locked" in scheduler ticks
+  and the first CLI call for ~20 s after start only (12:12:58–12:13:19 UTC), none after. `hub.tdgs.org` health and
+  `/` 200, `/api/profiles` without cookie 401; `wc.tdgs.org` health 200.
+- `bt.accounts_cli`: invited mika (admin), ice (admin), tv, lily, ria (links valid 14 days, single use, sent to the
+  owner); profiles H → ice, M → mika, Fredagsfest! + Eveningfun → tv, Lily → lily, Ria → ria. H and M now list as
+  `adult` profiles (admin is an account role).
+
 ## Deployment record — The Hub rebrand and The Cinema (`ac689f7`, 2026-11-17)
 
 - Ships `73ad776` (The Cinema, Jellyfin browse/play; `jellyfinlink` table created on startup) and `ac689f7` (WatchCraft →
