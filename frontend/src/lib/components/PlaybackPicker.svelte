@@ -64,13 +64,13 @@
 				</button>
 			{/each}
 			{#if !playback.targets.some(t => t.online && t.id !== playback.receiver?.id)}
-				<p class="muted small">To add a screen, open WatchCraft on it and register it below. Keep that browser or PWA open.</p>
+				<p class="muted small">To add a screen, open The Hub on it and register it below. Keep that browser or PWA open.</p>
 			{/if}
 		</div>
 		{#if playback.selectedId}
 			<section>
 				<h3>{playback.selected?.name ?? 'Selected screen'}</h3>
-				<p class="muted small">{playback.selected?.online ? (playback.needsPair ? 'Enter the pairing code shown on that screen to send from this profile.' : 'Tap any video to play it on this screen.') : 'Screen offline. Open WatchCraft on it to reconnect.'}</p>
+				<p class="muted small">{playback.selected?.online ? (playback.needsPair ? 'Enter the pairing code shown on that screen to send from this profile.' : 'Tap any video to play it on this screen.') : 'Screen offline. Open The Hub on it to reconnect.'}</p>
 				{#if playback.needsPair === playback.selectedId}
 					<form class="pair-row" onsubmit={(e) => { e.preventDefault(); void pair(); }}>
 						<label for="pair-code">Pairing code</label>
@@ -114,7 +114,7 @@
 				<button class="btn" disabled={working || !name.trim()} use:focusable={{ group: 'cast', onSelect: register }}>Register this screen</button>
 			{/if}
 			{#if playback.error}<p role="status">{playback.error}</p>{/if}
-			<p class="muted small">If the browser asks, allow sound and autoplay for WatchCraft. Household profiles that entered this screen's pairing code can send videos to it.</p>
+			<p class="muted small">If the browser asks, allow sound and autoplay for The Hub. Household profiles that entered this screen's pairing code can send videos to it.</p>
 		</section>
 		<button class="btn" use:focusable={{ group: 'cast', onSelect: () => (playback.open = false) }}>Done</button>
 	</Modal>

@@ -35,7 +35,7 @@
 	<button class="btn primary" type="submit" disabled={busy || !username.trim()} use:focusable={{ group: 'jf-link-go' }}>
 		{busy ? 'Signing in…' : 'Sign in to Jellyfin'}
 	</button>
-	<p class="small muted">WatchCraft keeps only the sign-in token on the server, never your password. Watched state and resume points are your Jellyfin user's.</p>
+	<p class="small muted">The Hub keeps only the sign-in token on the server, never your password. Watched state and resume points are your Jellyfin user's.</p>
 </form>
 
 <style>

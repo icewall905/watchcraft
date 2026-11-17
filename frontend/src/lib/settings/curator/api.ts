@@ -81,7 +81,7 @@ export const SURFACE: Record<Surface, { icon: string; label: string; one: string
 	moodboard: { icon: '📌', label: 'Mood boards', one: 'pin', many: 'pins' },
 	music: { icon: '🎵', label: 'Music', one: 'track', many: 'tracks' },
 	web: { icon: '🌐', label: 'Web', one: 'page', many: 'pages' },
-	hub: { icon: '✧', label: 'Hub', one: 'item', many: 'items' },
+	hub: { icon: '✧', label: 'Today', one: 'item', many: 'items' },
 	correction: { icon: '✍️', label: 'Corrections', one: 'correction', many: 'corrections' }
 };
 const surface = (s: string) => SURFACE[s as Surface] ?? { icon: '•', label: s, one: 'item', many: 'items' };

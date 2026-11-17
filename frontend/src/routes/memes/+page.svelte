@@ -319,7 +319,7 @@
 	const spark = (t: MemeTrend) => t.observations.map((o) => o.count);
 </script>
 
-<svelte:head><title>Meme Radar · The Commons · WatchCraft</title></svelte:head>
+<svelte:head><title>Meme Radar · The Commons · The Hub</title></svelte:head>
 
 <svelte:window onkeydown={onKey} />
 

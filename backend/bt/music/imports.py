@@ -59,7 +59,7 @@ def _ma_tracks(reference: str) -> tuple[str, list[dict], bool]:
     if not match:
         raise ValueError('Use a Music Assistant playlist URI, such as library://playlist/13.')
     if not configured():
-        raise ValueError('Music Assistant is not connected. Set MUSIC_ASSISTANT_URL and MUSIC_ASSISTANT_TOKEN on the WatchCraft server.')
+        raise ValueError('Music Assistant is not connected. Set MUSIC_ASSISTANT_URL and MUSIC_ASSISTANT_TOKEN on the Hub server.')
     base = os.environ['MUSIC_ASSISTANT_URL'].strip().rstrip('/')
     u = urlsplit(base)
     if u.scheme not in ('http', 'https') or not u.hostname or u.username or u.password or u.query or u.fragment:

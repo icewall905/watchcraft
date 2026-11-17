@@ -52,7 +52,7 @@ test('desktop sidebar, device preference, and TV remote drawer', async ({ page }
 	await toggle.click();
 	// The TV drawer stays minimal; Today is the landing point for curated reading.
 	await expect(navigation.getByRole('link', { name: 'The Wire' })).toHaveCount(0);
-	await navigation.getByRole('link', { name: 'Hub' }).click();
+	await navigation.getByRole('link', { name: 'Today' }).click();
 	await expect(page).toHaveURL(/\/today$/);
 	await expect(navigation).toHaveCount(0);
 	await page.goto('/settings?tab=appearance');

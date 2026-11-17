@@ -1,4 +1,4 @@
-"""/api/hub — WatchCraft Hub endpoints. Contract: docs/HUB.md. All data is profile-scoped."""
+"""/api/hub — The Hub endpoints. Contract: docs/HUB.md. All data is profile-scoped."""
 import hashlib
 import json
 import math
@@ -27,7 +27,7 @@ from .master.cluster import same_story, title_key
 from .providers import PROVIDERS, TYPE_KEYS, TYPES
 from .templates import TEMPLATES
 
-router = APIRouter(prefix='/hub', tags=['WatchCraft Hub'], dependencies=[Depends(require_hub)])
+router = APIRouter(prefix='/hub', tags=['The Hub'], dependencies=[Depends(require_hub)])
 MAX_CURATORS = 50
 
 

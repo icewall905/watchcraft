@@ -326,7 +326,7 @@
 	const manualMixes = $derived(mixes.filter((m) => m.kind === 'manual')); // curated mixes get rebuilt, so hand-picks go in your own
 </script>
 
-<svelte:head><title>The Jukebox · WatchCraft</title></svelte:head>
+<svelte:head><title>The Jukebox · The Hub</title></svelte:head>
 
 {#snippet grid(tracks: Track[], source: string)}
 	<div class="grid">
@@ -592,7 +592,7 @@
 			{:else}
 				<p class="muted">Requires Music Assistant 2.11 or newer. Paste a playlist URI, such as library://playlist/13. Songs are matched to YouTube music videos; unavailable matches are skipped.</p>
 				{#if importStatus && !importStatus.music_assistant_configured}
-					<p class="hint">To connect, set MUSIC_ASSISTANT_URL and MUSIC_ASSISTANT_TOKEN on the WatchCraft server and restart it. Create a long-lived token in Music Assistant → Settings → Profile.</p>
+					<p class="hint">To connect, set MUSIC_ASSISTANT_URL and MUSIC_ASSISTANT_TOKEN on the Hub server and restart it. Create a long-lived token in Music Assistant → Settings → Profile.</p>
 				{/if}
 			{/if}
 			<label for="playlist-reference">{importSource === 'youtube' ? 'Playlist link' : 'Playlist URI'}</label>

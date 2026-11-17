@@ -87,7 +87,7 @@
 	}
 </script>
 
-<svelte:head><title>The Finds · WatchCraft</title></svelte:head>
+<svelte:head><title>The Finds · The Hub</title></svelte:head>
 
 <div class="page reading-page">
 	<header class="head">

@@ -87,14 +87,14 @@
 	}
 </script>
 
-<svelte:head><title>The Study · WatchCraft</title></svelte:head>
+<svelte:head><title>The Study · The Hub</title></svelte:head>
 
 <div class="page reading-page">
 	<header class="head">
 		<div>
 			<p class="eyebrow">RESEARCH</p>
 			<h1>Deep research from public sources</h1>
-			<p class="muted">Name a subject. WatchCraft searches, collects findings, and writes a cited report you can verify.</p>
+			<p class="muted">Name a subject. The Hub searches, collects findings, and writes a cited report you can verify.</p>
 		</div>
 		{#if !showNew}<button class="btn primary big" use:focusable onclick={() => (showNew = true)}>＋ New research</button>{/if}
 	</header>

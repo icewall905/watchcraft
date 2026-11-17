@@ -1,4 +1,4 @@
-// WatchCraft Hub types. Contract: docs/HUB.md.
+// The Hub types. Contract: docs/HUB.md.
 export type ItemState = {
 	saved: boolean; favorite: boolean; read_later: boolean; archived: boolean; dismissed: boolean;
 	read_at: number | null; notes: string; tags: string[]; rating: number;

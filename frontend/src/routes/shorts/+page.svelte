@@ -452,10 +452,10 @@
 		if (preloader) { preloader.removeAttribute('src'); preloader.load(); preloader = null; }
 	});
 </script>
-<svelte:head><title>The Scroll · WatchCraft</title></svelte:head>
+<svelte:head><title>The Scroll · The Hub</title></svelte:head>
 <div class="feed" class:playing={!!selected} role="region" aria-label="Video feed" ontouchstart={onTouchStart} ontouchend={onTouchEnd} ontouchcancel={()=>touchStart=null}>
 	<nav class="shorts-navigation" aria-label="Feeds navigation">
-		<a class="btn" href="/" use:focusable>← Back to WatchCraft</a>
+		<a class="btn" href="/" use:focusable>← Back to The Hub</a>
 		{#if selected}<button class="btn" use:focusable onclick={picker}>← Feeds</button>
 			<span class="now-feed" aria-hidden="true">{selected.emoji} {selected.name}{#if items.length}<span class="count">{index + 1} / {items.length}{nextOffset !== null ? '+' : ''}</span>{/if}</span>{/if}
 		{#if current}<button class="btn" disabled={captionState !== 'ready'} use:focusable onclick={()=>{if(videoEl){muted=!muted;videoEl.muted=muted;}}}>{muted ? 'Unmute' : 'Mute'}</button>{/if}

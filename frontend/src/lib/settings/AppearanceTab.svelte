@@ -57,7 +57,7 @@
 <div class="device-section">
 <Section title="Landing page" intro={inAndroidApp() ? 'The Android app picks its own start page: open the app menu and choose Landing page.' : 'The page this browser opens on. Saved in this browser only.'}>
 	{#if !inAndroidApp()}
-		<label class="landing">Open WatchCraft on
+		<label class="landing">Open The Hub on
 			<select value={landingPath(deviceMode.landing)} onchange={(e) => deviceMode.setLanding(e.currentTarget.value)} use:focusable={{ group: 'landing', id: 'landing' }}>
 				{#each LANDING_CHOICES as c (c.href)}<option value={c.href}>{c.label}</option>{/each}
 			</select>
@@ -104,7 +104,7 @@
 </div>
 {/if}
 
-<Section title="Appearance" intro="Choose a look for WatchCraft. Your selection is shared across profiles and devices and applies immediately.">
+<Section title="Appearance" intro="Choose a look for The Hub. Your selection is shared across profiles and devices and applies immediately.">
 	<div class="themes" aria-label="Themes">
 		{#each THEMES as theme (theme.id)}
 			<button class="theme-card" class:selected={selected === theme.id} aria-pressed={selected === theme.id}

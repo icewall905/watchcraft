@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="272.0" y1="416.0" x2="752.0" y2="608.0"><stop offset="0" stop-color="#00F0FF"/><stop offset=".45" stop-color="#2BB8FF"/><stop offset=".72" stop-color="#6A5CF5"/><stop offset="1" stop-color="#7C4DEE"/></linearGradient></defs>
+  <rect width="1024" height="1024" rx="224" fill="#151518"/>
+  <polygon points="512.0,352.0 650.6,432.0 650.6,592.0 512.0,672.0 373.4,592.0 373.4,432.0" fill="none" stroke="url(#g)" stroke-width="36.8" stroke-linejoin="round"/>
+  <line x1="512.0" y1="352.0" x2="512.0" y2="225.6" stroke="url(#g)" stroke-width="22.8"/>
+  <circle cx="512.0" cy="225.6" r="30.4" fill="url(#g)"/>
+  <line x1="613.4" y1="410.6" x2="714.5" y2="309.5" stroke="url(#g)" stroke-width="22.8"/>
+  <circle cx="714.5" cy="309.5" r="30.4" fill="url(#g)"/>
+  <line x1="650.6" y1="512.0" x2="798.4" y2="512.0" stroke="url(#g)" stroke-width="22.8"/>
+  <circle cx="798.4" cy="512.0" r="30.4" fill="url(#g)"/>
+  <line x1="613.4" y1="613.4" x2="714.5" y2="714.5" stroke="url(#g)" stroke-width="22.8"/>
+  <circle cx="714.5" cy="714.5" r="30.4" fill="url(#g)"/>
+  <line x1="512.0" y1="672.0" x2="512.0" y2="798.4" stroke="url(#g)" stroke-width="22.8"/>
+  <circle cx="512.0" cy="798.4" r="30.4" fill="url(#g)"/>
+  <line x1="410.6" y1="613.4" x2="309.5" y2="714.5" stroke="url(#g)" stroke-width="22.8"/>
+  <circle cx="309.5" cy="714.5" r="30.4" fill="url(#g)"/>
+  <line x1="373.4" y1="512.0" x2="225.6" y2="512.0" stroke="url(#g)" stroke-width="22.8"/>
+  <circle cx="225.6" cy="512.0" r="30.4" fill="url(#g)"/>
+  <line x1="410.6" y1="410.6" x2="309.5" y2="309.5" stroke="url(#g)" stroke-width="22.8"/>
+  <circle cx="309.5" cy="309.5" r="30.4" fill="url(#g)"/>
+</svg>

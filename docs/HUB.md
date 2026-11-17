@@ -1,6 +1,6 @@
-# WatchCraft Hub — "Watching the Internet for you."
+# The Hub — "Watching the Internet for you."
 
-Instead of going on the internet yourself, you configure WatchCraft to go on the internet
+Instead of going on the internet yourself, you configure The Hub to go on the internet
 for you: curators and research briefs search, filter, organise and summarise locally.
 Video stays front and centre (TV is the default landing page).
 

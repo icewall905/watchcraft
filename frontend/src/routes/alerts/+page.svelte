@@ -48,7 +48,7 @@
 	function applyFilters() { void load(); }
 </script>
 
-<svelte:head><title>Alerts · WatchCraft</title></svelte:head>
+<svelte:head><title>Alerts · The Hub</title></svelte:head>
 
 <div class="page reading-page">
 	<header>

@@ -82,8 +82,8 @@ jobs:
         run: |
           version="$(sed -n 's/^versionName=//p' android/version.properties | head -n 1)"
           mkdir -p dist
-          cp android/app/build/outputs/apk/release/app-release.apk "dist/watchcraft-${version}.apk"
-          (cd dist && sha256sum "watchcraft-${version}.apk" > SHA256SUMS)
+          cp android/app/build/outputs/apk/release/app-release.apk "dist/the-hub-${version}.apk"
+          (cd dist && sha256sum "the-hub-${version}.apk" > SHA256SUMS)
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
       - name: Upload release files
@@ -112,4 +112,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ github.ref_name }}
-        run: gh release create "$TAG" dist/*.apk dist/SHA256SUMS --verify-tag --title "WatchCraft ${TAG#android-v}" --generate-notes
+        run: gh release create "$TAG" dist/*.apk dist/SHA256SUMS --verify-tag --title "The Hub ${TAG#android-v}" --generate-notes

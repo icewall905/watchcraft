@@ -66,7 +66,7 @@
 	const st = $derived(c ? statusOf(c) : 'Active');
 </script>
 
-<svelte:head><title>{c?.name ?? 'Curator'} · WatchCraft</title></svelte:head>
+<svelte:head><title>{c?.name ?? 'Curator'} · The Hub</title></svelte:head>
 
 <div class="page workshop-page">
 	<a class="small muted" href="/curators" use:focusable>← Curators</a>

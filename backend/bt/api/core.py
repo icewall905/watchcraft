@@ -294,7 +294,7 @@ class CategoryBriefIn(BaseModel):
     kind: Literal["playlist", "shorts"] = "playlist"
 
 
-BRIEF_SYSTEM = """You write the brief for one WatchCraft playlist or Shorts feed. The brief is the only instruction the AI curator gets, so it must say what to collect, what to avoid and who is watching.
+BRIEF_SYSTEM = """You write the brief for one Hub playlist or Shorts feed. The brief is the only instruction the AI curator gets, so it must say what to collect, what to avoid and who is watching.
 
 Write 2-4 plain sentences under 600 characters, in the same language as the name.
 - Name the subject concretely and give 2-4 example creators, series or kinds of video that fit.

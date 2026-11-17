@@ -98,9 +98,9 @@
 		<button class="toggle" aria-label={compact ? 'Expand sidebar' : 'Collapse sidebar'} aria-pressed={compact} title={compact ? 'Expand sidebar' : 'Collapse sidebar'} onclick={toggleCompact}>
 			<span aria-hidden="true">{compact ? '>>' : '<<'}</span>
 		</button>
-		<a class="brand" href="/tv" aria-label="WatchCraft">
+		<a class="brand" href="/tv" aria-label="The Hub">
 			<img src="/logo.png" alt="" width="36" height="36" />
-			{#if !compact}<span class="bt"><b>WatchCraft</b><small>Watching the Internet for you.</small></span>{/if}
+			{#if !compact}<span class="bt"><b>The Hub</b><small>Watching the Internet for you.</small></span>{/if}
 		</a>
 		<nav aria-label="Main" data-nav-skip-initial>
 			{#each sections as sec}
@@ -155,7 +155,7 @@
 		<div class="overlay" bind:this={panel} use:navScope={{ onBack: () => close() }}>
 			<button class="backdrop" aria-label="Close navigation" tabindex="-1" onclick={() => close()}></button>
 			<aside id="tv-navigation" class="sidebar tv" aria-label="Navigation drawer">
-				<div class="brand"><img src="/logo.png" alt="" width="40" height="40" /><span class="bt"><b>WatchCraft</b></span></div>
+				<div class="brand"><img src="/logo.png" alt="" width="40" height="40" /><span class="bt"><b>The Hub</b></span></div>
 				<nav aria-label="Main" data-nav-zone="main-navigation" data-nav-skip-initial>
 					{#each drawer as it}
 						{@const on = it.active(path, search)}

@@ -133,7 +133,7 @@
 	<section class="whatsnew" aria-label="What's new">
 		<header class="wn-head">
 			<h2>What's new</h2>
-			<p>Across WatchCraft in the last 24 hours.</p>
+			<p>Across The Hub in the last 24 hours.</p>
 		</header>
 		<div class="grid" data-nav-row>
 			{#each cards as c (c.key)}
@@ -163,7 +163,7 @@
 		{#if quiet.length}<p class="quiet">Nothing new in {quiet.join(', ')}.</p>{/if}
 	</section>
 {:else if done}
-	<section class="whatsnew" aria-label="What's new"><p class="quiet">Nothing new across WatchCraft in the last 24 hours.</p></section>
+	<section class="whatsnew" aria-label="What's new"><p class="quiet">Nothing new across The Hub in the last 24 hours.</p></section>
 {/if}
 
 <style>

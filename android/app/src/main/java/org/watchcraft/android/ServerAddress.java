@@ -10,7 +10,7 @@ final class ServerAddress {
 
     static String normalize(String input, boolean allowHttp) {
         String value = input.trim();
-        if (value.isEmpty()) throw new IllegalArgumentException("Enter your WatchCraft server address.");
+        if (value.isEmpty()) throw new IllegalArgumentException("Enter your Hub server address.");
         if (!value.contains("://")) value = "https://" + value;
         URI uri = parse(value);
         String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
@@ -24,7 +24,7 @@ final class ServerAddress {
             throw new IllegalArgumentException("The server port must be between 1 and 65535.");
         if (uri.getRawQuery() != null || uri.getRawFragment() != null ||
                 !(uri.getRawPath() == null || uri.getRawPath().isEmpty() || uri.getRawPath().equals("/")))
-            throw new IllegalArgumentException("Enter only the server address, for example https://wc.tdgs.org.");
+            throw new IllegalArgumentException("Enter only the server address, for example https://hub.tdgs.org.");
         try {
             int port = uri.getPort();
             if (port == (scheme.equals("https") ? 443 : 80)) port = -1;
@@ -32,6 +32,11 @@ final class ServerAddress {
         } catch (URISyntaxException e) {
             throw new IllegalArgumentException("That server address is not valid.");
         }
+    }
+
+    /** The household server moved from wc.tdgs.org to hub.tdgs.org; saved installs follow it. */
+    static String migrate(String server) {
+        return "https://wc.tdgs.org".equals(server) ? "https://hub.tdgs.org" : server;
     }
 
     static boolean sameOrigin(String server, String target) {

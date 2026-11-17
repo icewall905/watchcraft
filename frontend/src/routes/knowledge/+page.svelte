@@ -38,7 +38,7 @@
 	}
 </script>
 
-<svelte:head><title>The Almanac · WatchCraft</title></svelte:head>
+<svelte:head><title>The Almanac · The Hub</title></svelte:head>
 
 <div class="page reading-page">
 	<header class="head">

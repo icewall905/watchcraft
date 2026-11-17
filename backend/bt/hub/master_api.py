@@ -17,7 +17,7 @@ from .api import can_see, item_query, serialize
 from .master import edition, schedule, views
 from .models import Briefing, BriefingIssue, ContentItem, Curator, Edition, HubLesson, HubPreferenceCore, ItemVerdict, StoryItem, Topic
 
-router = APIRouter(prefix='/hub', tags=['WatchCraft Hub'], dependencies=[Depends(require_hub)])
+router = APIRouter(prefix='/hub', tags=['The Hub'], dependencies=[Depends(require_hub)])
 SET_ASIDE_DAYS = 7
 
 

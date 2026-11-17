@@ -49,7 +49,7 @@
 	const href = (c: Curator) => (c.kind === 'research' ? `/research/${c.id}` : `/curators/${c.id}`);
 </script>
 
-<svelte:head><title>Curators · WatchCraft</title></svelte:head>
+<svelte:head><title>Curators · The Hub</title></svelte:head>
 
 <div class="page workshop-page">
 	<header class="head">

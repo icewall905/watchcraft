@@ -112,12 +112,12 @@ function qualitySummary(s: Source) {
 }
 </script>
 
-<svelte:head><title>Sources · WatchCraft</title></svelte:head>
+<svelte:head><title>Sources · The Hub</title></svelte:head>
 
 <div class="page workshop-page">
 	<header>
 		<p class="eyebrow">AUTOMATION</p>
-		<h1>Where WatchCraft is allowed to look</h1>
+		<h1>Where The Hub is allowed to look</h1>
 		<p class="muted">Curators can only visit what is listed here. Public sources only. Nothing is fetched outside these providers.</p>
 	</header>
 

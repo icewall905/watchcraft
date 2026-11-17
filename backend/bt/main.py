@@ -52,7 +52,7 @@ async def lifespan(_app):
             with suppress(asyncio.CancelledError):
                 await running
 
-app = FastAPI(title="WatchCraft", docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=lifespan)
+app = FastAPI(title="The Hub", docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=lifespan)
 
 app.add_middleware(auth.AuthMiddleware)
 app.include_router(auth.router, prefix="/api")

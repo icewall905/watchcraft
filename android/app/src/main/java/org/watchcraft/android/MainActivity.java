@@ -63,7 +63,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Native device shell. Feature pages remain served by the user's WatchCraft instance. */
+/** Native device shell. Feature pages remain served by the user's Hub instance. */
 public final class MainActivity extends ComponentActivity {
     private static final int BG = 0xff110e26, PANEL = 0xff1b1740, TEXT = 0xfff0edff,
             MUTED = 0xffaaa4d2, AMBER = 0xffffb547, LINE = 0xff383252, INK = 0xff211706;
@@ -112,7 +112,11 @@ public final class MainActivity extends ComponentActivity {
         String saved = prefs.getString("server", "");
         if (!saved.isEmpty()) {
             if (savedInstanceState == null) currentPath = landing();
-            try { server = ServerAddress.normalize(saved, prefs.getBoolean("http", false)); hasConnected = true; showService(savedInstanceState); }
+            try {
+                server = ServerAddress.migrate(ServerAddress.normalize(saved, prefs.getBoolean("http", false)));
+                if (!server.equals(saved)) prefs.edit().putString("server", server).apply();
+                hasConnected = true; showService(savedInstanceState);
+            }
             catch (IllegalArgumentException ignored) { showSetup(); }
         } else showSetup();
     }
@@ -130,14 +134,14 @@ public final class MainActivity extends ComponentActivity {
         outer.addView(form, new LinearLayout.LayoutParams(max, -2));
         ImageView mark = new ImageView(this); mark.setImageResource(R.drawable.ic_badge); mark.setScaleType(ImageView.ScaleType.FIT_CENTER);
         form.addView(mark, new LinearLayout.LayoutParams(dp(80), dp(80))); gap(form, 28);
-        TextView name = text("WatchCraft", 34, TEXT, true); form.addView(name);
+        TextView name = text("The Hub", 34, TEXT, true); form.addView(name);
         TextView intro = text("Your world. Your server.", 21, TEXT, false); form.addView(intro); gap(form, 12);
-        form.addView(text("Connect to your WatchCraft to watch, read, discover and pick up where you left off.", 16, MUTED, false)); gap(form, 32);
+        form.addView(text("Connect to your Hub to watch, read, discover and pick up where you left off.", 16, MUTED, false)); gap(form, 32);
         LinearLayout card = column(); card.setPadding(dp(20), dp(22), dp(20), dp(20)); card.setBackground(round(PANEL, 24));
         card.addView(text("Server address", 15, TEXT, true)); gap(card, 10);
         EditText address = new EditText(this); address.setSingleLine(true); address.setTextSize(17); address.setTextColor(TEXT);
-        address.setHintTextColor(MUTED); address.setHint("https://wc.tdgs.org");
-        address.setText(server.isEmpty() ? "https://wc.tdgs.org" : server);
+        address.setHintTextColor(MUTED); address.setHint("https://hub.tdgs.org");
+        address.setText(server.isEmpty() ? "https://hub.tdgs.org" : server);
         address.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
         address.setImeOptions(EditorInfo.IME_ACTION_GO); address.setSelectAllOnFocus(true);
         address.setBackground(outline(BG, 14)); address.setPadding(dp(14), dp(12), dp(14), dp(12));
@@ -147,19 +151,19 @@ public final class MainActivity extends ComponentActivity {
         card.addView(http); gap(card, 8);
         TextView feedback = text("Use your own server or keep the address above.", 14, MUTED, false);
         feedback.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); card.addView(feedback); gap(card, 18);
-        Button connect = action("Connect to WatchCraft", true); card.addView(connect, new LinearLayout.LayoutParams(-1, dp(54)));
+        Button connect = action("Connect to The Hub", true); card.addView(connect, new LinearLayout.LayoutParams(-1, dp(54)));
         View.OnClickListener start = v -> {
             final String target;
             try { target = ServerAddress.normalize(address.getText().toString(), http.isChecked()); }
             catch (IllegalArgumentException e) { feedback.setText(e.getMessage()); feedback.setTextColor(0xffff8a9f); return; }
             int attempt = ++connectionAttempt;
             connect.setEnabled(false); connect.setText("Connecting…"); address.setEnabled(false); http.setEnabled(false);
-            feedback.setText("Checking your WatchCraft server…"); feedback.setTextColor(MUTED);
+            feedback.setText("Checking your Hub server…"); feedback.setTextColor(MUTED);
             io.execute(() -> {
                 String issue = checkServer(target);
                 runOnUiThread(() -> {
                     if (destroyed || attempt != connectionAttempt) return;
-                    connect.setEnabled(true); connect.setText("Connect to WatchCraft"); address.setEnabled(true); http.setEnabled(true);
+                    connect.setEnabled(true); connect.setText("Connect to The Hub"); address.setEnabled(true); http.setEnabled(true);
                     if (issue != null) { feedback.setText(issue); feedback.setTextColor(0xffff8a9f); return; }
                     ((InputMethodManager)getSystemService(INPUT_METHOD_SERVICE)).hideSoftInputFromWindow(address.getWindowToken(), 0);
                     boolean changed = !target.equals(server);
@@ -172,8 +176,8 @@ public final class MainActivity extends ComponentActivity {
         connect.setOnClickListener(start);
         address.setOnEditorActionListener((v, action, event) -> { if (action == EditorInfo.IME_ACTION_GO && connect.isEnabled()) { start.onClick(v); return true; } return false; });
         form.addView(card); gap(form, 22);
-        form.addView(text("Your content stays on your server. No WatchCraft cloud account needed.", 13, MUTED, false));
-        if (hasConnected) { gap(form, 18); Button cancel = action("Back to WatchCraft", false); cancel.setOnClickListener(v -> showService(null)); form.addView(cancel); }
+        form.addView(text("Your content stays on your server. No cloud account needed.", 13, MUTED, false));
+        if (hasConnected) { gap(form, 18); Button cancel = action("Back to The Hub", false); cancel.setOnClickListener(v -> showService(null)); form.addView(cancel); }
         scroll.addView(outer); root.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
     }
 
@@ -185,7 +189,7 @@ public final class MainActivity extends ComponentActivity {
             connection.setConnectTimeout(12000); connection.setReadTimeout(12000); connection.setInstanceFollowRedirects(false);
             connection.setRequestProperty("Accept", "application/json");
             int code = connection.getResponseCode();
-            if (code >= 300 && code < 400) return "This address redirects. Enter the final WatchCraft HTTPS address instead.";
+            if (code >= 300 && code < 400) return "This address redirects. Enter the final Hub HTTPS address instead.";
             if (code != 200) return "The server returned HTTP " + code + ". Check the address and try again.";
             try (InputStream in = connection.getInputStream()) {
                 java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
@@ -193,13 +197,13 @@ public final class MainActivity extends ComponentActivity {
                 while (buffer.size() <= 8192 && (n = in.read(chunk, 0, Math.min(chunk.length, 8193 - buffer.size()))) != -1) buffer.write(chunk, 0, n);
                 byte[] data = buffer.toByteArray();
                 if (data.length > 8192 || !new JSONObject(new String(data, StandardCharsets.UTF_8)).optBoolean("ok"))
-                    return "This address did not return a WatchCraft health response. Check the server address.";
+                    return "This address did not return a Hub health response. Check the server address.";
             }
             return null;
         } catch (javax.net.ssl.SSLException e) { return "The server's HTTPS certificate could not be verified. Check its certificate and address."; }
         catch (java.net.UnknownHostException e) { return "Server name not found. Check the address, network or VPN connection."; }
         catch (java.net.SocketTimeoutException e) { return "The server took too long to respond. Check your connection and try again."; }
-        catch (Exception e) { return "Could not connect to WatchCraft. Check the address and that your server is running."; }
+        catch (Exception e) { return "Could not connect to The Hub. Check the address and that your server is running."; }
         finally { if (connection != null) connection.disconnect(); }
     }
 
@@ -213,7 +217,7 @@ public final class MainActivity extends ComponentActivity {
         LinearLayout header = row(); header.setGravity(Gravity.CENTER_VERTICAL); header.setPadding(dp(14), 0, dp(6), 0);
         ImageView logo = new ImageView(this); logo.setImageResource(R.drawable.ic_badge); logo.setScaleType(ImageView.ScaleType.FIT_CENTER);
         header.addView(logo, new LinearLayout.LayoutParams(dp(30), dp(30)));
-        heading = text("WatchCraft", 17, TEXT, true);
+        heading = text("The Hub", 17, TEXT, true);
         LinearLayout.LayoutParams title = new LinearLayout.LayoutParams(0, -2, 1); title.leftMargin = dp(10);
         header.addView(heading, title);
         header.addView(iconButton("bell", "Notifications", v -> navigate("/alerts")));
@@ -315,10 +319,10 @@ public final class MainActivity extends ComponentActivity {
     private void chooseLanding() {
         Feature[] choices = Feature.ALL; String[] names = new String[choices.length]; int selected = -1; String current = landing();
         for (int i = 0; i < choices.length; i++) { names[i] = choices[i].title; if (choices[i].path.equals(current)) selected = i; }
-        new AlertDialog.Builder(this).setTitle("Open WatchCraft on")
+        new AlertDialog.Builder(this).setTitle("Open The Hub on")
                 .setSingleChoiceItems(names, selected, (dialog, which) -> {
                     prefs.edit().putString("landing", choices[which].path).apply(); dialog.dismiss();
-                    toast("WatchCraft will open on " + choices[which].title);
+                    toast("The Hub will open on " + choices[which].title);
                 }).setNegativeButton("Cancel", null).show();
     }
 
@@ -361,7 +365,7 @@ public final class MainActivity extends ComponentActivity {
         }
         @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
             denyMicrophone();
-            if (!ServerAddress.sameOrigin(server, url)) { view.stopLoading(); showError("This page is outside your WatchCraft server."); return; }
+            if (!ServerAddress.sameOrigin(server, url)) { view.stopLoading(); showError("This page is outside your Hub server."); return; }
             pageReady = false; loadingFailed = false; clearError(); progress.setVisibility(View.VISIBLE); updateLocation(url);
         }
         @Override public void onPageFinished(WebView view, String url) {
@@ -373,7 +377,7 @@ public final class MainActivity extends ComponentActivity {
         }
         @Override public void doUpdateVisitedHistory(WebView view, String url, boolean reload) { denyMicrophone(); updateLocation(url); }
         @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
-            if (request.isForMainFrame()) { loadingFailed = true; showError("Can't reach your WatchCraft server. Check your network or VPN, then try again."); }
+            if (request.isForMainFrame()) { loadingFailed = true; showError("Can't reach your Hub server. Check your network or VPN, then try again."); }
         }
         @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
             if (request.isForMainFrame()) { loadingFailed = true; showError("Your server returned HTTP " + response.getStatusCode() + ". Try again or check the server address."); }
@@ -475,7 +479,7 @@ public final class MainActivity extends ComponentActivity {
         if (menu != null) menu.dismiss();
         menu = new Dialog(this); ScrollView scroll = new ScrollView(this);
         LinearLayout sheet = column(); sheet.setBackground(round(PANEL, 28)); sheet.setPadding(dp(20), dp(24), dp(20), dp(24));
-        LinearLayout top = row(); top.setGravity(Gravity.CENTER_VERTICAL); top.addView(text("Your WatchCraft", 24, TEXT, true), new LinearLayout.LayoutParams(0, -2, 1));
+        LinearLayout top = row(); top.setGravity(Gravity.CENTER_VERTICAL); top.addView(text("Your Hub", 24, TEXT, true), new LinearLayout.LayoutParams(0, -2, 1));
         Button close = action("Done", false); close.setOnClickListener(v -> menu.dismiss()); top.addView(close); sheet.addView(top);
         String group = "";
         for (Feature f : Feature.ALL) {
@@ -501,7 +505,7 @@ public final class MainActivity extends ComponentActivity {
         new AlertDialog.Builder(this).setTitle(Feature.titleFor(Uri.parse(server + currentPath).getPath())).setItems(options, (dialog, which) -> {
             if (which == 0) search();
             else if (which == 1) {
-                Intent share = new Intent(Intent.ACTION_SEND); share.setType("text/plain"); share.putExtra(Intent.EXTRA_TEXT, pageUrl()); startActivity(Intent.createChooser(share, "Share WatchCraft page"));
+                Intent share = new Intent(Intent.ACTION_SEND); share.setType("text/plain"); share.putExtra(Intent.EXTRA_TEXT, pageUrl()); startActivity(Intent.createChooser(share, "Share The Hub page"));
             } else if (which == 2) { if (web == null) showService(null); else web.reload(); }
             else if (which == 3) openExternal(pageUrl()); else connectionOptions();
         }).show();
@@ -510,14 +514,14 @@ public final class MainActivity extends ComponentActivity {
     private String pageUrl() { String url = web == null ? null : web.getUrl(); return ServerAddress.sameOrigin(server, url) ? url : server + "/"; }
     private void connectionOptions() {
         new AlertDialog.Builder(this).setTitle("Server & app")
-                .setMessage("Connected to " + server + "\n\nWatchCraft " + BuildConfig.VERSION_NAME + "\nYour profile and settings belong to this server.")
+                .setMessage("Connected to " + server + "\n\nThe Hub " + BuildConfig.VERSION_NAME + "\nYour profile and settings belong to this server.")
                 .setPositiveButton("Change server", (d, w) -> showSetup())
                 .setNeutralButton("Updates", (d, w) -> openExternal("https://github.com/icewall905/watchcraft/releases"))
                 .setNegativeButton("Close", null).show();
     }
 
     private void search() {
-        EditText query = new EditText(this); query.setSingleLine(true); query.setHint("Search your WatchCraft"); query.setTextColor(TEXT); query.setTextSize(18);
+        EditText query = new EditText(this); query.setSingleLine(true); query.setHint("Search your Hub"); query.setTextColor(TEXT); query.setTextSize(18);
         query.setPadding(dp(24), dp(16), dp(24), dp(16)); query.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         AlertDialog dialog = new AlertDialog.Builder(this).setTitle("Find something good")
                 .setView(query).setPositiveButton("Search", (d, w) -> navigate("/find?q=" + Uri.encode(query.getText().toString().trim())))
@@ -541,7 +545,7 @@ public final class MainActivity extends ComponentActivity {
         downloadCookie = CookieManager.getInstance().getCookie(url); downloadAgent = userAgent;
         Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT); save.addCategory(Intent.CATEGORY_OPENABLE);
         save.setType(mime == null || mime.isEmpty() ? "application/octet-stream" : mime);
-        save.putExtra(Intent.EXTRA_TITLE, name.trim().isEmpty() ? "watchcraft-download" : name);
+        save.putExtra(Intent.EXTRA_TITLE, name.trim().isEmpty() ? "the-hub-download" : name);
         try { startActivityForResult(save, DOWNLOAD_FILE); }
         catch (ActivityNotFoundException e) { pendingDownload = null; toast("No file picker is available. Try opening this page in your browser."); }
     }
@@ -602,7 +606,7 @@ public final class MainActivity extends ComponentActivity {
                     String data = (String)value; int comma = data.indexOf(','); if (comma < 0 || data.length() > MAX_EXPORT_BYTES * 1.4) throw new IllegalArgumentException();
                     exportBytes = android.util.Base64.decode(data.substring(comma + 1), android.util.Base64.DEFAULT); exportOrigin = origin;
                     Intent save = new Intent(Intent.ACTION_CREATE_DOCUMENT); save.addCategory(Intent.CATEGORY_OPENABLE); save.setType(mime == null || mime.isEmpty() ? "application/octet-stream" : mime);
-                    save.putExtra(Intent.EXTRA_TITLE, mime != null && mime.contains("json") ? "watchcraft-export.json" : "watchcraft-export"); startActivityForResult(save, EXPORT_FILE);
+                    save.putExtra(Intent.EXTRA_TITLE, mime != null && mime.contains("json") ? "the-hub-export.json" : "the-hub-export"); startActivityForResult(save, EXPORT_FILE);
                 } catch (Exception e) { exportBytes = null; toast("This export could not be saved. Exports up to 16 MB are supported; try your browser for larger files."); }
             });
         }, 200);
@@ -622,7 +626,7 @@ public final class MainActivity extends ComponentActivity {
             String url = pendingDownload, origin = downloadOrigin, cookie = downloadCookie, agent = downloadAgent;
             pendingDownload = null; downloadCookie = null;
             if (result == RESULT_OK && data != null && data.getData() != null && url != null && server.equals(origin)) {
-                Uri destination = data.getData(); toast("Downloading… Keep WatchCraft open until the file is saved.");
+                Uri destination = data.getData(); toast("Downloading… Keep The Hub open until the file is saved.");
                 io.execute(() -> saveDownload(url, origin, cookie, agent, destination));
             }
         } else if (request == EXPORT_FILE) {

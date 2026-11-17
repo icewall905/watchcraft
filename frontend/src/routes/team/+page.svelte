@@ -126,7 +126,7 @@
 	const entryHref = (e: TeamEntry) => (e.kind === 'moodboard_run' ? '/boards' : e.kind === 'scout_run' ? '/sources' : e.kind === 'briefing' ? '/briefings' : `/curators/${e.agent.split('-')[1]}`);
 </script>
 
-<svelte:head><title>Agent Activity · WatchCraft</title></svelte:head>
+<svelte:head><title>Agent Activity · The Hub</title></svelte:head>
 
 <div class="page team workshop-page">
 	<a class="btn report-shortcut" href="/scout-report" use:focusable>Open Scout Report →</a>

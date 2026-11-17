@@ -1,4 +1,4 @@
-// WatchCraft browser extension: right-click an image → WatchCraft → Add to <board> (or New board…).
+// The Hub browser extension: right-click an image → The Hub → Add to <board> (or New board…).
 // Works in Chrome (service worker) and Firefox (event page); uses the promise-based chrome.* API.
 const MENU_ROOT = 'wc-root';
 
@@ -9,7 +9,7 @@ async function settings() {
 
 async function api(path, init = {}) {
   const { server, key } = await settings();
-  if (!server || !key) throw new Error('Connect the extension to WatchCraft first (extension options).');
+  if (!server || !key) throw new Error('Connect the extension to The Hub first (extension options).');
   const res = await fetch(`${server}/api/ext/v1${path}`, {
     ...init,
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}`, ...(init.headers || {}) },
@@ -17,7 +17,7 @@ async function api(path, init = {}) {
   let body = null;
   try { body = await res.json(); } catch { /* not JSON */ }
   if (!res.ok) {
-    const detail = body && typeof body.detail === 'string' ? body.detail : `WatchCraft answered ${res.status}.`;
+    const detail = body && typeof body.detail === 'string' ? body.detail : `The Hub answered ${res.status}.`;
     const err = new Error(detail); err.status = res.status; throw err;
   }
   return body;
@@ -25,11 +25,11 @@ async function api(path, init = {}) {
 
 async function rebuildMenus() {
   await chrome.contextMenus.removeAll();
-  chrome.contextMenus.create({ id: MENU_ROOT, title: 'WatchCraft', contexts: ['image'] });
+  chrome.contextMenus.create({ id: MENU_ROOT, title: 'The Hub', contexts: ['image'] });
   let boards = [], problem = '';
   try { boards = (await api('/boards')).boards; } catch (e) { problem = e.message; }
   if (problem) {
-    chrome.contextMenus.create({ id: 'wc-setup', parentId: MENU_ROOT, title: 'Connect to WatchCraft…', contexts: ['image'] });
+    chrome.contextMenus.create({ id: 'wc-setup', parentId: MENU_ROOT, title: 'Connect to The Hub…', contexts: ['image'] });
   } else if (!boards.length) {
     chrome.contextMenus.create({ id: 'wc-none', parentId: MENU_ROOT, title: 'No mood boards yet', enabled: false, contexts: ['image'] });
   } else {
@@ -43,7 +43,7 @@ async function rebuildMenus() {
   chrome.contextMenus.create({ id: 'wc-open', parentId: MENU_ROOT, title: 'Open Mood Boards', contexts: ['image'] });
 }
 
-// Runs inside the page when WatchCraft cannot download the image itself (logins, hotlink protection).
+// Runs inside the page when The Hub cannot download the image itself (logins, hotlink protection).
 async function grabFromPage(src) {
   const toBase64 = (blob) => new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -93,7 +93,7 @@ async function saveImage(boardId, info, tab) {
       return await api(`/boards/${boardId}/images`, { method: 'POST', body: JSON.stringify({ url: src, title, page_url: pageUrl }) });
     } catch (e) {
       if (e.status !== 422) throw e;
-      // WatchCraft could not fetch it; copy it from the page the user is looking at.
+      // The Hub could not fetch it; copy it from the page the user is looking at.
       const [result] = await chrome.scripting.executeScript({
         target: { tabId: tab.id, frameIds: [info.frameId || 0] }, func: grabFromPage, args: [src],
       });

@@ -158,7 +158,7 @@
 		if (slowTimer) clearTimeout(slowTimer);
 		video.play().then(() => { if (playback.receiver) playback.error = ''; }).catch(() => {
 			paused = true;
-			if (playback.receiver) playback.error = 'Autoplay was blocked. Press Play on this screen, or allow autoplay for WatchCraft.';
+			if (playback.receiver) playback.error = 'Autoplay was blocked. Press Play on this screen, or allow autoplay for The Hub.';
 		});
 		poke();
 

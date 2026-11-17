@@ -311,7 +311,7 @@ test('main navigation remains available while the initial feed request is pendin
  });
  await freshPage(page, '/shorts');
  await expect(page.getByText('Loading feeds…', { exact: true })).toBeVisible();
- const back = page.getByRole('link', { name: '← Back to WatchCraft', exact: true });
+ const back = page.getByRole('link', { name: '← Back to The Hub', exact: true });
  await expect(back).toBeVisible();
  await back.click();
  await expect(page).toHaveURL('/');
@@ -324,7 +324,7 @@ test('main navigation remains available over blocked playback and playback error
  await freshPage(page, '/shorts');
  await page.getByRole('button', { name: /Science clips/ }).click();
  await expect(page.getByRole('button', { name: '▶ Tap to play', exact: true })).toBeVisible();
- const back = page.getByRole('link', { name: '← Back to WatchCraft', exact: true });
+ const back = page.getByRole('link', { name: '← Back to The Hub', exact: true });
  await expect(back).toBeVisible();
  await page.locator('video').dispatchEvent('error');
  await expect(page.getByRole('alert')).toBeVisible();
@@ -347,7 +347,7 @@ test('phone navigation leaves empty availability and does not overlap the picker
  await expect(page.getByText('No local clips ready yet.', { exact: true })).toBeVisible();
  await page.getByRole('button', { name: '← Feeds', exact: true }).click();
  await page.getByRole('button', { name: /Science clips/ }).click();
- await page.getByRole('link', { name: '← Back to WatchCraft', exact: true }).click();
+ await page.getByRole('link', { name: '← Back to The Hub', exact: true }).click();
  await expect(page).toHaveURL('/');
 });
 
@@ -428,7 +428,7 @@ test('unreadable captions block video and retry can recover', async ({ page }) =
  await page.getByRole('button', { name: /Science clips/ }).click();
  await expect(page.getByRole('alert')).toContainText('no readable subtitles');
  await expect(page.locator('video')).not.toHaveAttribute('src');
- await expect(page.getByRole('link', { name: '← Back to WatchCraft' })).toBeVisible();
+ await expect(page.getByRole('link', { name: '← Back to The Hub' })).toBeVisible();
  broken = false;
  await page.getByRole('button', { name: 'Retry captions' }).click();
  await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');

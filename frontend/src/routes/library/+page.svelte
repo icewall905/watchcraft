@@ -189,13 +189,13 @@
 		const blob = new Blob([JSON.stringify(items.map((i) => ({ id: i.id, title: i.title, url: i.url, type: i.type, publisher: i.publisher, published_at: i.published_at, summary: i.summary, tags: i.state.tags, notes: i.state.notes, meta: i.meta })), null, 2)], { type: 'application/json' });
 		const a = document.createElement('a');
 		a.href = URL.createObjectURL(blob);
-		a.download = `watchcraft-${activeCol ? activeCol.name.replace(/\W+/g, '-').toLowerCase() : view}.json`;
+		a.download = `the-hub-${activeCol ? activeCol.name.replace(/\W+/g, '-').toLowerCase() : view}.json`;
 		document.body.appendChild(a); a.click(); a.remove();
 		setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 	}
 </script>
 
-<svelte:head><title>The Stacks · WatchCraft</title></svelte:head>
+<svelte:head><title>The Stacks · The Hub</title></svelte:head>
 
 <div class="page reading-page">
 	<header class="head">

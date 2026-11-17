@@ -352,7 +352,7 @@ def run(cid: int, trigger: str = 'schedule') -> CuratorRun | None:
         with session() as s:
             row, cur = s.get(CuratorRun, r.id), s.get(Curator, cid)
             row.finished_at, row.status = time.time(), 'failed'
-            row.errors = [*row.errors, {'source': 'WatchCraft', 'message': 'Internal error during the run; it will retry on schedule.'}]
+            row.errors = [*row.errors, {'source': 'The Hub', 'message': 'Internal error during the run; it will retry on schedule.'}]
             if cur:
                 cur.last_run, cur.last_status = time.time(), 'failed'
                 cur.error = 'Internal error during the last run.'
@@ -377,7 +377,7 @@ def recover_stale() -> None:
     with session() as s:
         for row in s.exec(select(CuratorRun).where(CuratorRun.status == 'running', CuratorRun.started_at < time.time() - LEASE_S)).all():
             row.status, row.finished_at = 'failed', time.time()
-            row.errors = [*row.errors, {'source': 'WatchCraft', 'message': 'Interrupted (server restart or crash).'}]
+            row.errors = [*row.errors, {'source': 'The Hub', 'message': 'Interrupted (server restart or crash).'}]
             s.add(row)
         for c in s.exec(select(Curator).where(Curator.last_status.in_(['running', 'queued']), Curator.next_run < time.time())).all():
             c.last_status = 'failed'

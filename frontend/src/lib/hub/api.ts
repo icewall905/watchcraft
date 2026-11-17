@@ -1,4 +1,4 @@
-// WatchCraft Hub API client (/api/hub). Contract: docs/HUB.md.
+// The Hub API client (/api/hub). Contract: docs/HUB.md.
 import { request } from '$lib/api';
 import type {
 	Alert, Briefing, Collection, Counts, Curator, CuratorDetail, CuratorInput, Issue, Item, ItemDetail, ItemState,

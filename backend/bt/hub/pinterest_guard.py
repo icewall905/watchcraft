@@ -3,7 +3,7 @@
 Pinterest's robots.txt disallows non-allowlisted bots and its terms forbid scraping; the owner
 opted in knowingly (Settings → Search, off by default). This module keeps that access small:
 
-* every request uses the normal WatchCraft User-Agent through ``social_fetch`` (per-host lock,
+* every request uses the normal Hub User-Agent through ``social_fetch`` (per-host lock,
   Retry-After cooldowns) - no cookies, spoofed fingerprints, proxies or captcha solving;
 * requests are spaced by a random 12-30 s and capped per 10 minutes (curator), hour and day,
   shared across processes through one settings row;
@@ -153,7 +153,7 @@ def fetch(url, origin='curator', kinds=('application/json',), limit=2_000_000):
             block('Pinterest answered with a web page (login or captcha) instead of results')
             raise Paused('Pinterest asked for a login or captcha and is now paused.', BLOCK_S, blocked=True) from None
         if 'requested a pause' in text:
-            raise Paused('Pinterest asked WatchCraft to slow down.', 300) from None
+            raise Paused('Pinterest asked The Hub to slow down.', 300) from None
         raise
 
 

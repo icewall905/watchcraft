@@ -44,7 +44,7 @@ export const TV_DRAWER: DrawerEntry[] = [
 	{ href: '/music', label: 'The Jukebox', icon: 'music', active: (p) => p === '/music' || p.startsWith('/music/') },
 	{ href: '/jellyfin', label: 'The Cinema', icon: 'tv', active: (p) => p === '/jellyfin' || p.startsWith('/jellyfin/') },
 	{ href: '/settings?tab=categories', label: 'Playlists', icon: 'list', active: (p, s) => p.startsWith('/settings') && s.includes('tab=categories') },
-	{ href: '/today', label: 'Hub', icon: 'compass', active: (p) => p === '/today' || p.startsWith('/today/') },
+	{ href: '/today', label: 'Today', icon: 'compass', active: (p) => p === '/today' || p.startsWith('/today/') },
 	{ href: '/settings', label: 'Settings', icon: 'settings', active: (p, s) => p.startsWith('/settings') && !s.includes('tab=categories') }
 ];
 

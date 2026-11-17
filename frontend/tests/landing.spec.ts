@@ -3,7 +3,7 @@ import { freshPage } from './helpers';
 
 test('a browser opens on its chosen landing page, and The Screen stays reachable', async ({ page }) => {
 	await freshPage(page, '/settings?tab=appearance');
-	const select = page.getByRole('combobox', { name: 'Open WatchCraft on' });
+	const select = page.getByRole('combobox', { name: 'Open The Hub on' });
 	await expect(select).toHaveValue('/');
 	await select.selectOption({ label: 'The Wire' });
 	expect(await page.evaluate(() => localStorage.getItem('wc.landing'))).toBe('/news');
@@ -28,6 +28,6 @@ test('inside the Android app the web choice is not applied', async ({ browser })
 	await expect(page).toHaveURL(/\/$/);
 	await page.goto('/settings?tab=appearance');
 	await expect(page.getByText('The Android app picks its own start page')).toBeVisible();
-	await expect(page.getByRole('combobox', { name: 'Open WatchCraft on' })).toHaveCount(0);
+	await expect(page.getByRole('combobox', { name: 'Open The Hub on' })).toHaveCount(0);
 	await context.close();
 });

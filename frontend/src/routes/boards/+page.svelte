@@ -276,7 +276,7 @@
  async function removeBoard() { if (!selected || !allowed()) return; const owner = stamp(); try { await boardsApi.remove(selected); if (owner !== stamp() || !allowed()) return; deleteConfirm = false; selected = null; void goto('/boards', {keepFocus: true}); await load(); } catch(e) { if (owner === stamp()) error = message(e); } }
 </script>
 
-<svelte:head><title>Mood boards · WatchCraft</title></svelte:head>
+<svelte:head><title>Mood boards · The Hub</title></svelte:head>
 {#snippet icon(name: string)}
  <svg class="i" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   {#if name === 'plus'}<path d="M12 5v14M5 12h14"/>
@@ -521,7 +521,7 @@
 </Modal>{/if}
 {#if extOpen}<Modal portal size="lg" title="Add images from any website" onClose={() => { extOpen = false; }}>
  <div class="ext">
-  <p class="muted">With the WatchCraft extension, right-click any image on the web, choose <strong>WatchCraft</strong> and pick a board, or <strong>New board…</strong> to start one from that image. The image is saved here with a link to where you found it.</p>
+  <p class="muted">With the Hub extension, right-click any image on the web, choose <strong>The Hub</strong> and pick a board, or <strong>New board…</strong> to start one from that image. The image is saved here with a link to where you found it.</p>
   <div class="segmented ext-tabs" role="tablist" aria-label="Browser">
    <button role="tab" aria-selected={extBrowser === 'chrome'} class:on={extBrowser === 'chrome'} onclick={() => { extBrowser = 'chrome'; }}>Chrome, Edge, Brave</button>
    <button role="tab" aria-selected={extBrowser === 'firefox'} class:on={extBrowser === 'firefox'} onclick={() => { extBrowser = 'firefox'; }}>Firefox</button>
@@ -540,7 +540,7 @@
       <li><em>Keep it:</em> in Firefox Developer Edition, Nightly or ESR, set <code>xpinstall.signatures.required</code> to <code>false</code> in <code>about:config</code>, then open <code>about:addons</code>, click the gear and <em>Install Add-on From File…</em></li>
      </ul></li>
    {/if}
-   <li><strong>Connect it to WatchCraft</strong>
+   <li><strong>Connect it to The Hub</strong>
     <p class="muted">The extension opens its settings after installing (or click its icon). Paste this address and a connection key:</p>
     <div class="copy-row"><code>{location.origin}</code><button class="btn pill" onclick={() => copy(location.origin, 'address')}>{extCopied === 'address' ? 'Copied' : 'Copy address'}</button></div>
     {#if extNew}

@@ -32,11 +32,11 @@ def _hash(key: str) -> str:
 def key_profile(authorization: str | None = Header(default=None)) -> int:
     token = (authorization or '').removeprefix('Bearer ').strip()
     if not token.startswith(PREFIX) or len(token) > 200:
-        raise HTTPException(401, 'Connect the extension with a WatchCraft key (Mood Board → Browser extension).')
+        raise HTTPException(401, 'Connect the extension with a Hub key (Mood Board → Browser extension).')
     with session() as s:
         row = s.exec(select(ExtensionKey).where(ExtensionKey.key_hash == _hash(token))).first()
         if not row:
-            raise HTTPException(401, 'This extension key was revoked or is unknown. Create a new one in WatchCraft.')
+            raise HTTPException(401, 'This extension key was revoked or is unknown. Create a new one in The Hub.')
         if not hub_allowed(s, row.profile_id):
             raise HTTPException(403, 'This profile cannot use Mood Boards.')
         if time.time() - row.last_used > 300:

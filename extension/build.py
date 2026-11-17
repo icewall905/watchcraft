@@ -1,4 +1,4 @@
-"""Build the WatchCraft browser extension for Chrome and Firefox.
+"""Build the Hub browser extension for Chrome and Firefox.
 
     backend/.venv/bin/python extension/build.py
 
@@ -18,13 +18,13 @@ VERSION = '1.1.0'
 
 BASE = {
     'manifest_version': 3,
-    'name': 'WatchCraft',
+    'name': 'The Hub',
     'version': VERSION,
-    'description': 'Right-click any image to add it to one of your WatchCraft mood boards.',
+    'description': 'Right-click any image to add it to one of your Hub mood boards.',
     'permissions': ['contextMenus', 'storage', 'activeTab', 'scripting', 'notifications', 'alarms'],
-    # Only the user's own WatchCraft address is requested, at setup time.
+    # Only the user's own Hub address is requested, at setup time.
     'optional_host_permissions': ['https://*/*', 'http://*/*'],
-    'action': {'default_title': 'WatchCraft settings', 'default_icon': {'16': 'icons/icon-16.png', '32': 'icons/icon-32.png'}},
+    'action': {'default_title': 'The Hub settings', 'default_icon': {'16': 'icons/icon-16.png', '32': 'icons/icon-32.png'}},
     'options_ui': {'page': 'options.html', 'open_in_tab': True},
     'icons': {str(s): f'icons/icon-{s}.png' for s in (16, 32, 48, 128)},
 }

@@ -114,7 +114,7 @@ export async function request<T>(path: string, opts: ReqOpts = {}): Promise<T> {
 		});
 	} catch (e) {
 		if ((e as Error).name === 'AbortError') throw e;
-		if (opts.toast !== false) toast.error('Cannot reach the WatchCraft server. Check that it is running.');
+		if (opts.toast !== false) toast.error('Cannot reach the Hub server. Check that it is running.');
 		throw new ApiError(0, 'network error');
 	}
 	const ct = res.headers.get('content-type') ?? '';

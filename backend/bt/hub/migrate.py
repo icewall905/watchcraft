@@ -1,4 +1,4 @@
-"""Versioned, additive migrations for WatchCraft Hub. Runs inside init_db's BEGIN IMMEDIATE.
+"""Versioned, additive migrations for The Hub. Runs inside init_db's BEGIN IMMEDIATE.
 
 v1 → v2: add curator columns, create Source per v1 curator, move v1 discoveries into
 canonical ContentItem + CuratorDiscovery + ItemState. The v1 discovery table is kept.

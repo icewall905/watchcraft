@@ -50,7 +50,7 @@
 </script>
 
 {#if admin}
-	<Section title="Jellyfin server" intro="Browse and play your Jellyfin movies and shows in The Cinema. WatchCraft talks to Jellyfin from the server and passes video through, so the Jellyfin address only has to be reachable from this server. Needs Jellyfin 10.9 or newer.">
+	<Section title="Jellyfin server" intro="Browse and play your Jellyfin movies and shows in The Cinema. The Hub talks to Jellyfin from the server and passes video through, so the Jellyfin address only has to be reachable from this server. Needs Jellyfin 10.9 or newer.">
 		<form class="cfg" onsubmit={save}>
 			<label>Address
 				<input placeholder="http://192.168.1.20:8096" bind:value={url} use:focusable={{ group: 'jf-cfg' }} />
@@ -65,7 +65,7 @@
 	</Section>
 
 	{#if status?.configured}
-		<Section title="Hardware transcoding" intro="Jellyfin does the transcoding. Choose the hardware encoder in the Jellyfin dashboard under Playback → Transcoding, and give the Jellyfin container the GPU (/dev/dri for Intel and AMD, the NVIDIA runtime for NVIDIA). WatchCraft direct-plays whatever this device can decode and asks for H.264 otherwise, which every hardware encoder supports.">
+		<Section title="Hardware transcoding" intro="Jellyfin does the transcoding. Choose the hardware encoder in the Jellyfin dashboard under Playback → Transcoding, and give the Jellyfin container the GPU (/dev/dri for Intel and AMD, the NVIDIA runtime for NVIDIA). The Hub direct-plays whatever this device can decode and asks for H.264 otherwise, which every hardware encoder supports.">
 			{#if !enc}
 				<p class="muted">Checking…</p>
 			{:else if !enc.known}

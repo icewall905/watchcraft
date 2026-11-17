@@ -44,7 +44,7 @@
 	onMount(load);
 </script>
 
-<svelte:head><title>The Cinema · WatchCraft</title></svelte:head>
+<svelte:head><title>The Cinema · The Hub</title></svelte:head>
 
 <div class="page jf">
 	<header class="top">

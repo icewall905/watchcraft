@@ -1,6 +1,6 @@
 # Security review
 
-Scope: the WatchCraft server as deployed (`wc-api`, `wc-worker`, `wc-downloader` behind a
+Scope: the Hub server as deployed (`wc-api`, `wc-worker`, `wc-downloader` behind a
 reverse proxy). This is a household appliance on a private network, optionally exposed at
 `https://wc.tdgs.org`. It is not multi-tenant and does not defend against a hostile
 administrator — an administrator can already read the database.

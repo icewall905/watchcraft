@@ -64,7 +64,7 @@
 	}
 </script>
 
-<svelte:head><title>The Dispatch · WatchCraft</title></svelte:head>
+<svelte:head><title>The Dispatch · The Hub</title></svelte:head>
 
 <div class="page reading-page">
 	<header class="head">

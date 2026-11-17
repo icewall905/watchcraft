@@ -155,7 +155,7 @@
 	}
 </script>
 
-<svelte:head><title>{item ? `${item.title} · ` : ''}WatchCraft</title></svelte:head>
+<svelte:head><title>{item ? `${item.title} · ` : ''}The Hub</title></svelte:head>
 
 <div class="page reading-page">
 	<a class="back small muted" href="/discover" use:focusable>← Back to Discover</a>
@@ -176,7 +176,7 @@
 				<div class="hstack top">
 					{#if str(m, 'article_url') && safeUrl(str(m, 'article_url')) && str(m, 'article_url') !== item.url}<a class="btn" href={safeUrl(str(m, 'article_url'))} target="_blank" rel="noopener noreferrer" use:focusable>Linked article ↗</a>{/if}
 					<a class="btn" href={safeUrl(item.url) || undefined} target="_blank" rel="noopener noreferrer" use:focusable>Open original ↗ <span class="faint host">{host(item.url)}</span></a>
-					{#if item.type === 'video' && str(m, 'video_id')}<a class="btn" href={`/watch/${encodeURIComponent(str(m, 'video_id'))}`} use:focusable>Watch in WatchCraft</a>{/if}
+					{#if item.type === 'video' && str(m, 'video_id')}<a class="btn" href={`/watch/${encodeURIComponent(str(m, 'video_id'))}`} use:focusable>Watch in The Hub</a>{/if}
 					<button class="btn" aria-pressed={item.state.saved} use:focusable onclick={() => patch({ saved: !item!.state.saved })}>{item.state.saved ? '✓ Saved' : 'Save'}</button>
 					<button class="btn" aria-pressed={item.state.favorite} use:focusable onclick={() => patch({ favorite: !item!.state.favorite })}>{item.state.favorite ? '★ Favorite' : '☆ Favorite'}</button>
 					<button class="btn" aria-pressed={item.state.read_later} use:focusable onclick={() => patch({ read_later: !item!.state.read_later })}>{item.state.read_later ? 'Queued' : 'Read later'}</button>
@@ -216,7 +216,7 @@
 				{/if}
 
 				<section>
-					<h2>Read in WatchCraft</h2>
+					<h2>Read in The Hub</h2>
 					{#if item.capture}<p class="small muted">Local capture: {item.capture.status} · Summary: {item.capture.summary_status}{item.capture.error ? ` · ${item.capture.error}` : ''}</p>{/if}
 					{#if item.type === 'video'}<p class="small muted">Video download: {item.media_status || 'not queued'}</p>{/if}
 					{#if item.capture_truncated}<p class="small muted">This page was longer than the local text limit; the saved text is partial.</p>{/if}

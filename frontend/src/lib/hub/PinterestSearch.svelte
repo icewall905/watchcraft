@@ -13,7 +13,7 @@
 
 <script lang="ts">
  // Pinterest for a board. When the owner opted in (Settings), "Search Pinterest live" runs a slow,
- // budgeted server-side search with previews proxied through WatchCraft. Always available: open
+ // budgeted server-side search with previews proxied through The Hub. Always available: open
  // Pinterest's own search in a new tab and paste back an image address.
  import { onDestroy } from 'svelte';
  import { boardsApi, type PinterestResult, type PinterestStatus } from '$lib/hub/boards';

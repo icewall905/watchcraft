@@ -23,7 +23,7 @@
 				<Avatar emoji={p.emoji} color={p.color} size="3rem" />
 				<div class="grow">
 					<strong>{p.name}{p.pin_required ? ' 🔒' : ''}</strong>
-					<span class="small muted">{p.role === 'admin' ? 'Administrator' : p.role === 'child' ? 'Child · Kid-safe Hub' : 'Adult'}</span>
+					<span class="small muted">{p.role === 'admin' ? 'Administrator' : p.role === 'child' ? 'Child · Kid-safe discovery' : 'Adult'}</span>
 					{#if p.id === session.profileId}<span class="small" style="color:var(--accent)">Watching now</span>{/if}
 				</div>
 				{#if p.id !== session.profileId}

@@ -174,10 +174,10 @@
 	function clearFilters() { type = ''; curator = ''; source = ''; topic = ''; tags = ''; filterState = 'any'; sort = 'relevance'; days = ''; minScore = ''; }
 </script>
 
-<svelte:head><title>Find · WatchCraft</title></svelte:head>
+<svelte:head><title>Find · The Hub</title></svelte:head>
 
 <div class="page reading-page">
-	<header><h1>Find</h1><p class="muted">Search everything WatchCraft has collected, or look live on the web.</p></header>
+	<header><h1>Find</h1><p class="muted">Search everything The Hub has collected, or look live on the web.</p></header>
 
 	<search class="bar">
 		<input class="input big" type="search" bind:value={q} placeholder="Search items, videos, curators, topics…" aria-label="Search" autocomplete="off" />

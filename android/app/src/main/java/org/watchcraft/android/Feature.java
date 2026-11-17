@@ -40,6 +40,6 @@ final class Feature {
         if (path.startsWith("/category/") || path.startsWith("/channel/")) return "The Screen";
         if (path.equals("/tv")) return "The Screen";
         for (Feature f : ALL) if (path.equals(f.path) || (!f.path.equals("/") && path.startsWith(f.path + "/"))) return f.title;
-        return "WatchCraft";
+        return "The Hub";
     }
 }

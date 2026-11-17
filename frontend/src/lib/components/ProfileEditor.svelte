@@ -70,8 +70,8 @@
 		{#if session.isAdmin}
 			<Select label="Profile access" bind:value={role} options={[
 				{ value: 'admin', label: 'Administrator', hint: 'Manage shared settings and profile access.' },
-				{ value: 'adult', label: 'Adult', hint: 'Use Hub content and manage personal playlists and curators.' },
-				{ value: 'child', label: 'Child', hint: 'Hub discovery, external sources and research are disabled.' }
+				{ value: 'adult', label: 'Adult', hint: 'Use discovery and manage personal playlists and curators.' },
+				{ value: 'child', label: 'Child', hint: 'Discovery, external sources and research are disabled.' }
 			]} />
 			{#if role === 'child'}<p class="small muted">Every administrator profile needs a PIN first. Adult profiles without a PIN stay open to anyone on this device, children included. Video playlists keep their existing kid-safe checks; this setting does not filter all video playback.</p>{/if}
 		{/if}

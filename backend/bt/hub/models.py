@@ -1,4 +1,4 @@
-"""WatchCraft Hub tables (schema v2). Canonical content is stored once; everything
+"""The Hub tables (schema v2). Canonical content is stored once; everything
 profile-specific (discoveries, state, collections, topics, alerts) is a relation."""
 import time
 from typing import Optional

@@ -1,4 +1,4 @@
-"""Jellyfin tables: one linked Jellyfin user per WatchCraft profile."""
+"""Jellyfin tables: one linked Jellyfin user per Hub profile."""
 import time
 
 from sqlmodel import Field, SQLModel

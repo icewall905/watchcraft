@@ -135,7 +135,7 @@ def put_config(body: ConfigIn):
         raise HTTPException(502, 'That address did not answer like a Jellyfin server.')
     major, minor = (int(x) if x.isdigit() else 0 for x in (str(info.get('Version', '0.0')).split('.') + ['0'])[:2])
     if (major, minor) < (10, 9):
-        raise HTTPException(422, f'Jellyfin {info.get("Version")} is too old. WatchCraft needs Jellyfin 10.9 or newer.')
+        raise HTTPException(422, f'Jellyfin {info.get("Version")} is too old. The Hub needs Jellyfin 10.9 or newer.')
     jf.save_config({'url': url, 'allow_children': body.allow_children, 'server_id': info['Id'],
                     'server_name': info.get('ServerName', ''), 'version': info.get('Version', '')})
     return {'url': url, 'allow_children': body.allow_children, 'server_name': info.get('ServerName', ''),

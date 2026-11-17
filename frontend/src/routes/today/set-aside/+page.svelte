@@ -72,7 +72,7 @@
 	}
 </script>
 
-<svelte:head><title>Set aside · WatchCraft</title></svelte:head>
+<svelte:head><title>Set aside · The Hub</title></svelte:head>
 
 <div class="set-aside page" data-area="hub">
 	<a class="back" href="/today" use:focusable>← Today</a>

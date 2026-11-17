@@ -121,7 +121,7 @@
  async function deleted() { editing = null; try { await loadThreads(); } catch { /* keep */ } await start('all'); }
 </script>
 
-<svelte:head><title>The Commons · WatchCraft</title></svelte:head>
+<svelte:head><title>The Commons · The Hub</title></svelte:head>
 {#snippet wall(list: Post[])}
  <!-- Desktop: posts dealt left to right into columns that each stack tightly (no holes under short cards);
       new pages append to the same columns, so nothing already on screen moves. -->

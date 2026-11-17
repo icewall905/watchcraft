@@ -29,7 +29,7 @@
 </script>
 
 <svelte:head>
- <title>{data?.title ? `${data.title} · ` : ''}Shared on WatchCraft</title>
+ <title>{data?.title ? `${data.title} · ` : ''}Shared on The Hub</title>
  <meta name="robots" content="noindex, nofollow, noarchive" />
  <meta name="referrer" content="no-referrer" />
 </svelte:head>
@@ -63,7 +63,7 @@
    {#if data.next_cursor}<button class="more" disabled={loadingMore} onclick={more}>{loadingMore ? 'Loading…' : 'Show more'}</button>{/if}
   {:else}<p class="muted">This board has no images yet.</p>{/if}
  {/if}
- <footer class="muted">Shared with WatchCraft</footer>
+ <footer class="muted">Shared with The Hub</footer>
 </main>
 
 {#if open}

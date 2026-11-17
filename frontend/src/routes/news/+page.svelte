@@ -343,7 +343,7 @@
 	}
 </script>
 
-<svelte:head><title>The Wire · WatchCraft</title></svelte:head>
+<svelte:head><title>The Wire · The Hub</title></svelte:head>
 
 <svelte:window ontouchstart={touchStart} ontouchmove={touchMove} ontouchend={touchEnd} />
 

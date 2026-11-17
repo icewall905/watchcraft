@@ -39,7 +39,7 @@
 	}
 </script>
 
-<svelte:head><title>The Scout · WatchCraft</title></svelte:head>
+<svelte:head><title>The Scout · The Hub</title></svelte:head>
 <div class="page report reading-page">
 	<header><p class="eyebrow">RESEARCH TEAM</p><h1>The Scout</h1><p class="muted">What your research team has been up to, with the discoveries and sources behind it.</p></header>
 	{#if error}<ErrorBox message={error} onretry={load} />{/if}
