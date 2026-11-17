@@ -8,6 +8,17 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — The Scroll speed-up and redesign (`651c59b`, 2026-11-17)
+
+- Feed status caches the caption check per video; clip pages open only the clips they serve; the player reads ahead
+  (captions, thumbnails, next video, next page). New feed cards and player look. No DB migration; no Android change.
+- Backup `/root/compose/watchcraft-backups/20261117-scroll-651c59b` (online DB quick_check ok, config hashes, previous
+  source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261117-scroll-*`). rsync (checksum) of the 5 files
+  of `0afec30..651c59b` (one new). Pruned `20261116-commons-6742bca` and its rollback tags
+  (`PRUNE-MANIFEST-20261117T082837Z.txt`).
+- All four `wc-*` run `sha256:502df1f3…`, zero restarts, no tracebacks; health, `/`, `/shorts` 200. Real-feed
+  timings not taken: the profiles with Scroll feeds (2, 6) are PIN-protected (V-128).
+
 ## Deployment record — player autoplay and preview settings (`ca70c40`, 2026-11-17)
 
 - Settings → Player: autoplay countdown length (0–60 s), preview autoplay on/off, preview time limit (0 = none).
