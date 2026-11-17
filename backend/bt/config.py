@@ -10,7 +10,8 @@ COOKIES_PATH = DATA_DIR / "cookies.txt"
 MEDIA_DIR = Path(os.environ.get("BT_MEDIA_DIR", DATA_DIR / "media")).resolve()
 STATIC_DIR = Path(os.environ.get("BT_STATIC_DIR", Path(__file__).parent / "static"))
 
-PASSWORD = os.environ.get("BT_PASSWORD", "")
+# "accounts" (default): sign-in required. "open": legacy no-login household, for tests/dev only.
+AUTH_MODE = os.environ.get("BT_AUTH", "accounts").strip().lower() or "accounts"
 
 
 def _secret() -> str:

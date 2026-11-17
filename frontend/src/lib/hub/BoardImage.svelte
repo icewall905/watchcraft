@@ -1,5 +1,5 @@
 <script lang="ts" module>
- import { currentProfileId } from '$lib/api';
+ import { currentProfileId, profileHeaders } from '$lib/api';
  // Blob URLs shared across mounts: polling, moving between views or reopening the viewer never refetches
  // an image already on screen. Bounded; the oldest entries are revoked. Keyed per profile.
  const MAX = 1500; // grid previews are ~30 KB; full images are only cached as the viewer opens them
@@ -13,7 +13,7 @@
   const key = `${profile ?? ''}|${url}`;
   const hit = cache.get(key);
   if (hit) { cache.delete(key); cache.set(key, hit); return hit; }
-  const job = fetch(url, {credentials: 'same-origin', headers: profile ? {'X-Profile-Id': profile} : {}})
+  const job = fetch(url, {credentials: 'same-origin', headers: profileHeaders()})
    .then(r => { if (!r.ok) throw new Error('Image unavailable'); return r.blob(); })
    .then(blob => { const u = URL.createObjectURL(blob); if (cache.get(key) === job) ready.set(key, u); return u; });
   job.catch(() => cache.delete(key));

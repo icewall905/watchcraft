@@ -59,8 +59,9 @@ def _paired(target, pid: int) -> bool:
 
 
 def _is_admin(s, pid: int) -> bool:
+    from ..access import is_admin_profile
     p = s.get(Profile, pid)
-    return bool(p and p.role == 'admin')
+    return bool(p and is_admin_profile(s, p))
 
 
 def _public(target, pid: int, admin: bool = False):

@@ -1,9 +1,8 @@
-"""Household authorization built on server-verified profile PIN sessions.
+"""Household authorization built on accounts and server-verified profile PIN sessions.
 
-An open household keeps its first administrator accessible without a PIN. Child
-profiles require PINs on every administrator profile. Adult profiles may stay
-open by the household's choice: anyone on the device, children included, can
-then switch to them, so they are the household's own call.
+Accounts mode (docs/ACCOUNTS.md): the signed-in account owns its profiles; administrator rights
+belong to the account and are used from its non-child profiles. Profile PINs are always optional.
+Open mode (BT_AUTH=open, tests/dev) keeps the legacy household: role 'admin' on the profile.
 Roles are dedicated fields; arbitrary profile preferences never grant access.
 """
 from typing import Optional
@@ -12,38 +11,110 @@ from fastapi import Depends, Header, HTTPException, Request
 from sqlmodel import Session, select
 
 from . import profile_pins
+from .accounts import PROFILE_COOKIE, is_open
 from .db import session
-from .models import Profile
+from .models import Account, Profile
 
 
-def has_children(s: Session) -> bool:
-    return s.exec(select(Profile.id).where(Profile.role == 'child')).first() is not None
+def has_children(s: Session, account_id: Optional[int] = None) -> bool:
+    q = select(Profile.id).where(Profile.role == 'child')
+    if account_id is not None:
+        q = q.where(Profile.account_id == account_id)
+    return s.exec(q).first() is not None
+
+
+def account_of(s: Session, p: Profile) -> Optional[Account]:
+    return s.get(Account, p.account_id) if p.account_id is not None else None
+
+
+def is_admin_profile(s: Session, p: Profile) -> bool:
+    """Profile that carries administrator rights (before any PIN requirement)."""
+    if is_open():
+        return p.role == 'admin'
+    acc = account_of(s, p)
+    return bool(acc and acc.role == 'admin' and not acc.disabled and p.role != 'child')
+
+
+def _owned(s: Session, pid, account_id: int) -> Optional[Profile]:
+    try:
+        p = s.get(Profile, int(pid))
+    except (TypeError, ValueError):
+        return None
+    return p if p and p.account_id == account_id else None
 
 
 def profile_id(request: Request, x_profile_id: Optional[int] = Header(default=None)) -> int:
     with session() as s:
-        p = s.get(Profile, x_profile_id) if x_profile_id is not None else s.exec(select(Profile).order_by(Profile.id)).first()
-        if not p:
-            raise HTTPException(404 if x_profile_id is not None else 400,
-                                'profile not found' if x_profile_id is not None else 'no profiles')
+        if is_open():
+            p = s.get(Profile, x_profile_id) if x_profile_id is not None else s.exec(select(Profile).order_by(Profile.id)).first()
+            if not p:
+                raise HTTPException(404 if x_profile_id is not None else 400,
+                                    'profile not found' if x_profile_id is not None else 'no profiles')
+        else:
+            aid = getattr(request.state, 'account_id', None)
+            if aid is None:
+                raise HTTPException(401, 'auth required')
+            if x_profile_id is not None:
+                p = _owned(s, x_profile_id, aid)
+                if not p:
+                    raise HTTPException(404, 'profile not found')
+            else:
+                # Media tags can't send headers: the web app mirrors its choice in a plain cookie.
+                public = getattr(request.state, 'session_public', '')
+                p = _owned(s, request.cookies.get(PROFILE_COOKIE + public), aid) or \
+                    s.exec(select(Profile).where(Profile.account_id == aid).order_by(Profile.id)).first()
+                if not p:
+                    raise HTTPException(400, 'no profiles')
         profile_pins.require(s, p.id, request)
         return p.id
+
+
+def own_profile_ids(request: Request) -> Optional[set[int]]:
+    """Profiles of the signed-in account; None in open mode (whole household)."""
+    if is_open():
+        return None
+    aid = getattr(request.state, 'account_id', None)
+    if aid is None:
+        raise HTTPException(401, 'auth required')
+    with session() as s:
+        return set(s.exec(select(Profile.id).where(Profile.account_id == aid)).all())
 
 
 def require_admin(pid: int = Depends(profile_id)) -> int:
     with session() as s:
         p = s.get(Profile, pid)
-        if not p or p.role != 'admin':
-            raise HTTPException(403, 'Administrator profile required. Switch to an administrator profile.')
-        if has_children(s) and not profile_pins.record(s, pid):
+        if not p or not is_admin_profile(s, p):
+            raise HTTPException(403, 'Administrator profile required. Switch to an administrator profile.'
+                                if is_open() else 'Administrator account required.')
+        if needs_pin(s, p) and not profile_pins.record(s, pid):
             raise HTTPException(403, 'An administrator PIN is required while child profiles are enabled.')
+    return pid
+
+
+def require_account_admin(request: Request, x_profile_id: Optional[int] = Header(default=None)) -> Optional[int]:
+    """Admin-only in accounts mode; open mode keeps household-wide access (e.g. stats), no profile needed."""
+    if is_open():
+        return None
+    return require_admin(profile_id(request, x_profile_id))
+
+
+def require_manager(pid: int = Depends(profile_id)) -> int:
+    """Manage the account's own profiles: any non-child profile of the account (open mode: an administrator)."""
+    if is_open():
+        return require_admin(pid)
+    with session() as s:
+        p = s.get(Profile, pid)
+        if not p or p.role == 'child':
+            raise HTTPException(403, 'Switch to a grown-up profile to manage profiles.')
     return pid
 
 
 def needs_pin(s: Session, p: Profile) -> bool:
     """Whether this profile must have a PIN to keep its grown-up access: administrators do once
     child profiles exist; adult profiles may stay open."""
-    return p.role == 'admin' and has_children(s)
+    if is_open():
+        return p.role == 'admin' and has_children(s)
+    return False  # accounts mode: PINs are always optional, the account owner decides
 
 
 def grown_up_access(s: Session, p: Profile) -> bool:
@@ -144,9 +215,12 @@ def require_grown_up(pid: int = Depends(profile_id)) -> int:
 def validate_household(s: Session) -> None:
     """Validate after flushing profile/PIN mutations; a failure rolls them back."""
     profiles = s.exec(select(Profile)).all()
-    if not any(p.role == 'admin' for p in profiles):
-        raise HTTPException(400, 'Keep at least one administrator profile.')
-    if any(p.role == 'child' for p in profiles):
-        missing = [p.name for p in profiles if p.role == 'admin' and not profile_pins.record(s, p.id)]
-        if missing:
-            raise HTTPException(400, 'Set a PIN on every administrator profile before enabling child profiles: ' + ', '.join(missing))
+    if is_open():
+        if not any(p.role == 'admin' for p in profiles):
+            raise HTTPException(400, 'Keep at least one administrator profile.')
+        missing = [p.name for p in profiles if p.role == 'admin' and not profile_pins.record(s, p.id)] \
+            if any(p.role == 'child' for p in profiles) else []
+    else:
+        missing = [p.name for p in profiles if needs_pin(s, p) and not profile_pins.record(s, p.id)]
+    if missing:
+        raise HTTPException(400, 'Set a PIN on every administrator profile before enabling child profiles: ' + ', '.join(missing))

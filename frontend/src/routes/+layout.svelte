@@ -71,8 +71,8 @@
 		else nav.setRoute(key);
 	});
 
-	// Public share links (/s/<token>) render alone: no sign-in, profile, agents or app chrome.
-	const publicShare = page.url.pathname.startsWith('/s/');
+	// Public share links (/s/<token>) and invite links (/join/<token>) render alone: no sign-in, profile, agents or app chrome.
+	const publicShare = page.url.pathname.startsWith('/s/') || page.url.pathname.startsWith('/join/');
 
 	onMount(() => {
 		if (publicShare) return;

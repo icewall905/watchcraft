@@ -2,7 +2,7 @@
 	// The music deck: one <video> that docks at the bottom of /music or fills the screen in party mode.
 	import { onDestroy, onMount } from 'svelte';
 	import { focusable, nav, isTextInput } from '$lib/nav';
-	import { api } from '$lib/api';
+	import { api, accountHeaders } from '$lib/api';
 	import { session } from '$lib/stores/session.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { warmVideo } from '$lib/prefetch';
@@ -62,7 +62,7 @@
 				const url = new URL(u, location.href);
 				return url.origin === location.origin && /^\/api\/video\/[^/]+\/manifest\.mpd$/.test(url.pathname);
 			});
-			if (ok) req.headers['X-Profile-Id'] = String(profileId);
+			if (ok) Object.assign(req.headers, accountHeaders(), { 'X-Profile-Id': String(profileId) });
 		});
 		await p.attach(el);
 		p.configure({

@@ -23,11 +23,13 @@
 	import CuratorTab from '$lib/settings/CuratorTab.svelte';
 	import MemeLanguagesTab from '$lib/settings/MemeLanguagesTab.svelte';
 	import JellyfinTab from '$lib/settings/JellyfinTab.svelte';
+	import AccountsTab from '$lib/settings/AccountsTab.svelte';
+	import DevicesTab from '$lib/settings/DevicesTab.svelte';
 
 	// Grouped by what you are doing: what gets collected, how the AI learns, where it may look,
 	// how things play, the devices around the house, and who lives here.
 	type Tab = { key: string; label: string; icon: string; hint: string };
-	const GROUPS: { label: string; tabs: Tab[] }[] = [
+	const ALL_GROUPS: { label: string; tabs: Tab[] }[] = [
 		{ label: 'Collections', tabs: [
 			{ key: 'categories', label: 'Playlists', icon: '🗂️', hint: 'What the AI looks for' },
 			{ key: 'feeds', label: 'Feeds', icon: '▶', hint: 'Local short-video collections' }
@@ -58,10 +60,24 @@
 			{ key: 'keys', label: 'Remote test', icon: '🎮', hint: 'See what buttons send' }
 		] },
 		{ label: 'Household', tabs: [
-			{ key: 'profiles', label: 'Profiles', icon: '👪', hint: 'Family members' }
+			{ key: 'profiles', label: 'Profiles', icon: '👪', hint: 'Family members' },
+			{ key: 'accounts', label: 'Accounts', icon: '🔑', hint: 'Invite people, reset passwords' },
+			{ key: 'devices', label: 'Devices and password', icon: '📱', hint: 'Where you are signed in' }
 		] }
 	];
-	const TABS = GROUPS.flatMap((g) => g.tabs);
+	// Accounts mode: everyone keeps the personal tabs; server and admin tabs need an administrator.
+	const OPEN_TABS = ['categories', 'feeds', 'profiles', 'keys', 'appearance'];
+	const OWN_TABS = ['player', 'sponsorblock', 'extras', 'devices'];
+	const allowed = (key: string) =>
+		session.isAdmin ||
+		(key !== 'accounts' && (key === 'curator' ? session.grownUp : OPEN_TABS.includes(key) || (session.mode === 'accounts' && OWN_TABS.includes(key))));
+	const GROUPS = $derived(
+		ALL_GROUPS.map((g) => ({
+			...g,
+			tabs: g.tabs.filter((t) => (t.key === 'accounts' ? session.mode === 'accounts' && session.account?.role === 'admin' : t.key === 'devices' ? session.mode === 'accounts' : session.mode !== 'accounts' || allowed(t.key)))
+		})).filter((g) => g.tabs.length)
+	);
+	const TABS = $derived(GROUPS.flatMap((g) => g.tabs));
 	type TabKey = string;
 	const tab = $derived((TABS.find((t) => t.key === (page.url.searchParams.get('tab') === 'playlists' ? 'categories' : page.url.searchParams.get('tab')))?.key ?? 'categories') as TabKey);
 
@@ -96,7 +112,7 @@
 		{:else}
 			{#key tab}
 				<div class="pane">
-					{#if !session.isAdmin && !['categories', 'feeds', 'profiles', 'keys', 'appearance', ...(session.grownUp ? ['curator'] : [])].includes(tab)}
+					{#if !allowed(tab)}
 						<h2>Administrator access required</h2><p class="muted">Switch to an administrator profile to change shared server settings.</p>
 					{:else if tab === 'categories'}<CategoriesTab />
 					{:else if tab === 'feeds'}<FeedsTab />
@@ -116,6 +132,8 @@
 					{:else if tab === 'extras'}<ExtrasTab />
 					{:else if tab === 'cookies'}<CookiesTab />
 					{:else if tab === 'profiles'}<ProfilesTab />
+					{:else if tab === 'accounts'}<AccountsTab />
+					{:else if tab === 'devices'}<DevicesTab />
 					{:else if tab === 'screens'}<ScreensTab />
 					{:else}<KeysTab />{/if}
 				</div>

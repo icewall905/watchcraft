@@ -23,6 +23,7 @@ try {
     Invoke-Compose @('config', '--quiet')
     if (-not $Action) {
         Write-Host '1) Start  2) Update  3) Backup  4) Restore  5) Status  6) Stop  7) Reset profile PIN'
+        Write-Host '8) Create account invite  9) Reset account password  10) List accounts'
         $Action = Read-Host 'Choose an action'
     }
     switch -Regex ($Action) {
@@ -64,6 +65,22 @@ try {
             if ((Read-Host 'Reset this profile PIN? Adult PINs are replaced when child profiles are enabled [y/N]') -match '^(y|yes)$') { Invoke-StorageHelper @('bt-api', '-', 'reset-pin', $profileId) }
             break
         }
-        default { throw 'Choose start, update, backup, restore, status, stop or reset-pin.' }
+        '^(8|invite)$' {
+            $name = Read-Host 'Username for the new account'
+            if ($name -notmatch '^[A-Za-z0-9._-]+$') { throw 'Use letters, numbers, dots, dashes or underscores.' }
+            $cli = @('exec', 'bt-api', 'python', '-m', 'bt.accounts_cli', 'invite', $name)
+            if ((Read-Host 'Make this account an administrator? [y/N]') -match '^(y|yes)$') { $cli += '--admin' }
+            Invoke-Compose $cli
+            break
+        }
+        '^(9|reset-account)$' {
+            Invoke-Compose @('exec', 'bt-api', 'python', '-m', 'bt.accounts_cli', 'list')
+            $name = Read-Host 'Username to reset the password for'
+            if ($name -notmatch '^[A-Za-z0-9._-]+$') { throw 'Enter a username shown above.' }
+            Invoke-Compose @('exec', 'bt-api', 'python', '-m', 'bt.accounts_cli', 'reset', $name)
+            break
+        }
+        '^(10|accounts)$' { Invoke-Compose @('exec', 'bt-api', 'python', '-m', 'bt.accounts_cli', 'list'); break }
+        default { throw 'Choose start, update, backup, restore, status, stop, reset-pin, invite, reset-account or accounts.' }
     }
 } catch { Write-Host "BetterTube: $($_.Exception.Message)" -ForegroundColor Red; exit 1 }

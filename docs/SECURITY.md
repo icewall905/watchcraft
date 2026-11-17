@@ -13,7 +13,7 @@ so a claim can be checked rather than trusted.
 | Boundary | Crossing | Enforced by |
 |---|---|---|
 | Internet → server | every fetched URL | `bt/curation.py` |
-| Browser → API | session cookie, `X-Profile-Id` | `bt/auth.py`, `bt/access.py` |
+| Browser → API | session cookie, `X-Account`, `X-Profile-Id` | `bt/auth.py`, `bt/access.py` |
 | Profile → profile | every row read or written | `owned()` / `profile_id` dependency |
 | Child profile → Hub | discovery, research, memes | `require_hub` |
 | Retrieved content → prompt | curator and research prompts | `bt/hub/ai.py` |
@@ -21,14 +21,19 @@ so a claim can be checked rather than trusted.
 
 ## Authentication and authorization
 
-- **Shared passphrase** (`BT_PASSWORD`) is optional. When set, `AuthMiddleware` rejects every
-  `/api/*` path except `/api/health`, `/api/auth/login` and `/api/auth/status` with 401. The
-  session is a signed cookie (`itsdangerous`, `SECRET`), `httponly`, `samesite=lax`, one year.
-  When unset, the API is open — the deployment relies on the network boundary. This is a
-  deliberate appliance trade-off, not an oversight.
-- **Profiles** carry a role: `admin`, `adult` or `child`. `require_admin` gates shared settings,
-  credentials, proxy/AI tests, worker controls, profile roles and profile creation/deletion.
-  The last administrator cannot be deleted or demoted (`validate_household`).
+- **Accounts** (`BT_AUTH=accounts`, the default; details in `docs/ACCOUNTS.md`). `AuthMiddleware`
+  rejects every `/api/*` path except the sign-in exemptions with 401. Each signed-in account on a
+  client is a server-side session row; the cookie carries a random token and only its SHA-256 is
+  stored. Cookies are `httponly`, `samesite=lax`. Sessions end on sign-out, revoke, disable/delete,
+  password reset or long disuse. Passwords are hashed; invite and reset links are random, single use and
+  valid 14 days; TV/device codes live 10 minutes. Login attempts are throttled (429).
+- **Profile scoping is server-enforced.** An account owns its profiles; `X-Profile-Id` is validated
+  against the signed-in account (403 otherwise) and admins cannot select other accounts' profiles.
+- **Admin is an account role.** `require_admin` gates server settings, credentials, proxy/AI tests,
+  worker controls and accounts administration. The last enabled admin cannot be deleted, disabled or
+  demoted. Profiles carry `adult` or `child` (legacy `admin` counts as adult).
+- **`BT_AUTH=open`** disables sign-in entirely (tests, local development). It must never be used on a
+  reachable server.
 - **Profile PINs** are optional per profile, PBKDF2-SHA256 with 260k iterations and a random
   salt, stored as a hash. Five wrong attempts lock the profile for 30 seconds. A signed cookie
   records the unlock and is invalidated when the PIN changes (`version`).
@@ -83,6 +88,9 @@ Covered by `tests/test_curation.py::test_private_network_and_entity_rejection`.
 | Registered screens | 10 | `api/playback.py` |
 | Profiles paired per screen | 20 | `api/playback.py` |
 | Wrong profile PINs | 5, then 30 s lockout | `profile_pins.py` |
+| Wrong sign-in attempts | throttled, then 429 (per process, in memory) | `bt/auth.py` |
+| Invite/reset links | 14 days, single use | `bt/accounts.py` |
+| TV device codes | 10 minutes | `api/accounts.py` |
 | Curators per profile | capped | `hub/api.py` |
 | Concurrent agents | 1–8, configurable | `hub/slots.py` |
 
@@ -119,13 +127,13 @@ sandbox review.
 
 ## Known limits
 
-- **No CSRF token.** The session cookie is `samesite=lax`, which blocks cross-site form posts
+- **No CSRF token.** Session cookies are `samesite=lax`, which blocks cross-site form posts
   but not every cross-site request. A hostile page on the same site could act as the user.
   Acceptable for a single-household appliance; not acceptable if this ever becomes multi-tenant.
-- **No rate limit on login.** `POST /api/auth/login` compares with `hmac.compare_digest` but
-  does not throttle. The passphrase is the only defence.
-- **The API is open when `BT_PASSWORD` is unset.** Anyone who can reach the port has full
-  access, including administrator actions.
+- **Login throttling is per api process, in memory.** It resets on restart and is not shared
+  between processes.
+- **`BT_AUTH=open` must never be used in production.** It removes sign-in; anyone who can reach
+  the port has full access, including administrator actions.
 - **Notification webhooks can reach the LAN.** That is the point (Home Assistant), but it means
   an administrator can make the server POST to any internal address.
 - **Browser rendering is disabled on every host.** JavaScript-only pages without an API, feed

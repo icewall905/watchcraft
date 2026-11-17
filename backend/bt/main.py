@@ -15,6 +15,7 @@ from .api import agent as agent_api
 from .music import api as music_api, service as music_service
 from .jellyfin import api as jellyfin_api
 from .api import core
+from .api import accounts as accounts_api
 from .api import proxy as proxy_api
 from .api import video
 from .api import ytimport
@@ -57,6 +58,7 @@ app = FastAPI(title="The Hub", docs_url="/api/docs", openapi_url="/api/openapi.j
 app.add_middleware(auth.AuthMiddleware)
 app.include_router(auth.router, prefix="/api")
 app.include_router(core.router, prefix="/api")
+app.include_router(accounts_api.router, prefix="/api")
 app.include_router(hub_api.router, prefix="/api")
 app.include_router(moodboards.router, prefix="/api")
 app.include_router(commonroom_api.router, prefix="/api")

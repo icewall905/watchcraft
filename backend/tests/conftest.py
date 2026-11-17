@@ -6,6 +6,8 @@ import asyncio
 # Before anything imports bt.config: DATA_DIR is resolved at import time, and a conftest that
 # imported it first would point the whole suite at the real ./data directory.
 os.environ.setdefault('BT_DATA_DIR', tempfile.mkdtemp(prefix='bt-test-'))
+# Legacy no-login mode for the suite; account tests switch config.AUTH_MODE themselves.
+os.environ.setdefault('BT_AUTH', 'open')
 
 import pytest  # noqa: E402
 

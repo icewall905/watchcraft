@@ -47,3 +47,10 @@ export async function freshPage(page: Page, url = '/') {
 export async function remoteKeys(page: Page) {
 	await page.addInitScript(() => { try { localStorage.setItem('wc.remoteKeys', 'on'); } catch { /* opaque origin */ } });
 }
+
+/** Sign in through the accounts login screen (BT_AUTH=accounts backends only). */
+export async function login(page: Page, username: string, password: string) {
+	await page.getByLabel('Username').fill(username);
+	await page.getByLabel('Password', { exact: true }).fill(password);
+	await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+}

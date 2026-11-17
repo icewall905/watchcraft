@@ -70,8 +70,14 @@ def targets(pid: int = Depends(require_hub)):
     """Other household profiles that can receive Mood Board images, child profiles included."""
     with session() as s:
         rows = s.exec(select(Profile).where(Profile.id != pid).order_by(Profile.name)).all()
-        return {'profiles': [{'id': p.id, 'name': p.name, 'emoji': p.emoji, 'color': p.color, 'child': p.role == 'child'}
-                             for p in rows if boards_allowed(s, p.id)]}
+        # Accounts mode: a copy may go to any assigned profile on the server; the owner's name tells
+        # same-named profiles ("Kids") apart. Unassigned profiles from before accounts are skipped.
+        from ..accounts import is_open
+        from ..models import Account
+        names = {a.id: a.username for a in s.exec(select(Account)).all()}
+        return {'profiles': [{'id': p.id, 'name': p.name, 'emoji': p.emoji, 'color': p.color, 'child': p.role == 'child',
+                              'account': names.get(p.account_id)}
+                             for p in rows if boards_allowed(s, p.id) and (is_open() or p.account_id in names)]}
 
 
 class ToProfile(BaseModel):
@@ -156,7 +162,9 @@ def _child_approved(bid: int, data: 'ToProfile', pid: int) -> tuple[set[int] | N
 def to_profile(bid: int, data: ToProfile, pid: int = Depends(require_hub)):
     with session() as s:
         recipient = s.get(Profile, data.to)
-        if data.to == pid or not recipient or not boards_allowed(s, data.to):
+        from ..accounts import is_open
+        if data.to == pid or not recipient or not boards_allowed(s, data.to) or \
+                (not is_open() and recipient.account_id is None):
             raise HTTPException(404, 'That profile cannot receive Mood Board images.')
     approved, held = _child_approved(bid, data, pid)
     if approved is not None and not approved:

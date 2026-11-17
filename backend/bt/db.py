@@ -149,6 +149,10 @@ def init_db() -> None:
         if 'role' not in {c['name'] for c in inspect(connection).get_columns('profile')}:
             connection.exec_driver_sql("ALTER TABLE profile ADD COLUMN role VARCHAR NOT NULL DEFAULT 'adult'")
             connection.exec_driver_sql("UPDATE profile SET role = 'admin' WHERE id = (SELECT MIN(id) FROM profile)")
+        # Accounts (docs/ACCOUNTS.md): existing profiles stay unowned until an administrator assigns them.
+        if 'account_id' not in {c['name'] for c in inspect(connection).get_columns('profile')}:
+            connection.exec_driver_sql("ALTER TABLE profile ADD COLUMN account_id INTEGER NULL REFERENCES account (id)")
+            connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_profile_account_id ON profile (account_id)")
         # Additive playback pairing columns; existing screens get a pairing code so their
         # receivers can rediscover it on the next heartbeat (notification via the response).
         have = {c['name'] for c in inspect(connection).get_columns('playbacktarget')}
@@ -171,8 +175,11 @@ def init_db() -> None:
                 s.commit()
         migrate.migrate(connection)
         with Session(connection) as s:
-            if not s.exec(select(Profile)).first():
-                s.add(Profile(name="Family", emoji="🏠", color="#7c5cff", role="admin"))
+            from .accounts import is_open
+            # Accounts mode: the first admin is created at sign-in (bootstrap) with its own profile.
+            if not s.exec(select(Profile)).first() and (is_open() or not s.get(Setting, "setup")):
+                if is_open():
+                    s.add(Profile(name="Family", emoji="🏠", color="#7c5cff", role="admin"))
                 s.merge(Setting(key="setup", value={"completed": False}))
                 s.merge(Setting(key="agent", value={"enabled": False}))
                 s.commit()

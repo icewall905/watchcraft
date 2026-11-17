@@ -35,34 +35,16 @@ try {
             if ([int]::TryParse($port, [ref]$number) -and $number -ge 1 -and $number -le 65535) { break }
             Write-Host 'Choose a number from 1 to 65535.'
         }
-        $password = ''
-        if ((Read-Host 'Protect the whole app with a shared password? [y/N]') -match '^(y|yes)$') {
-            while ($true) {
-                $password = Read-PasswordText 'Web password (Enter generates one)'
-                if (-not $password) {
-                    $bytes = New-Object byte[] 18
-                    $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
-                    try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
-                    $password = [Convert]::ToBase64String($bytes)
-                    Write-Host "Your generated password: $password"
-                    Write-Host 'Save it somewhere safe before continuing.'
-                    break
-                }
-                if ($password -eq (Read-PasswordText 'Repeat password')) { break }
-                Write-Host 'The passwords did not match. Try again.'
-            }
-        } else { Write-Host 'Shared login is off. Optional profile PINs are available in Settings.' }
         function Quote-EnvValue([string]$Value) {
             return '"' + $Value.Replace('\', '\\').Replace('"', '\"').Replace('$', '$$') + '"'
         }
         $data = Quote-EnvValue ($data.Replace('\', '/'))
         $media = Quote-EnvValue ($media.Replace('\', '/'))
-        $password = Quote-EnvValue $password
         $content = @"
 BT_DATA_HOST_DIR=$data
 BT_MEDIA_HOST_DIR=$media
 BT_PORT=$number
-BT_PASSWORD=$password
+BT_AUTH=accounts
 BT_SECRET=
 BT_LLM_BASE_URL=
 BT_LLM_MODEL=
@@ -71,11 +53,15 @@ BT_POT_URL=http://pot:4416
 BT_YTDLP_AUTOUPDATE=1
 "@
         [IO.File]::WriteAllText((Join-Path (Get-Location).Path '.env'), $content + "`n", (New-Object Text.UTF8Encoding($false)))
-        $password = $null
         Write-Host 'Saved configuration to .env. More settings are available in the web app.'
-    } else { Write-Host 'Using your existing .env. Your password and storage choices are preserved.' }
+    } else { Write-Host 'Using your existing .env. Your sign-in mode and storage choices are preserved.' }
     if ($ConfigureOnly) {
         Invoke-Compose @('config', '--quiet')
         Write-Host 'Configuration saved. You can now restore a backup with manage.bat.'
-    } else { Start-BetterTube }
+    } else {
+        Start-BetterTube
+        Write-Host 'Open the site. On a fresh install the sign-in screen offers "create the first admin".'
+        Write-Host 'On an existing install, create an invite link for each person (add --admin for administrators):'
+        Write-Host '  docker compose exec bt-api python -m bt.accounts_cli invite <username> [--admin]'
+    }
 } catch { Write-Host "BetterTube: $($_.Exception.Message)" -ForegroundColor Red; exit 1 }

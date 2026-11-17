@@ -2,7 +2,7 @@
 	import { onMount, onDestroy, tick } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { api } from '$lib/api';
+	import { api, accountHeaders } from '$lib/api';
 	import { session } from '$lib/stores/session.svelte';
 	import { playback } from '$lib/stores/playback.svelte';
 	import { preview } from '$lib/preview';
@@ -198,7 +198,7 @@
 						const url = new URL(uri, location.href);
 						return url.origin === location.origin && /^\/api\/video\/[^/]+\/manifest\.mpd$/.test(url.pathname);
 					});
-					if (sameOriginManifest) request.headers['X-Profile-Id'] = String(profileId);
+					if (sameOriginManifest) Object.assign(request.headers, accountHeaders(), { 'X-Profile-Id': String(profileId) });
 				});
 				await player.attach(video);
 				player.configure({

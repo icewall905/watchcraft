@@ -31,7 +31,7 @@
 		if (pin && !/^[0-9]{4,8}$/.test(pin)) return toast.warn('Use a PIN with 4 to 8 digits.');
 		if (pin && pin !== repeatPin) return toast.warn('The PINs do not match.');
 		const pinChange = removePin ? { pin: '' } : pin ? { pin } : {};
-		const accessChange = session.isAdmin ? { role } : {};
+		const accessChange = session.isAdmin || session.mode === 'accounts' ? { role: role === 'admin' && session.mode === 'accounts' ? 'adult' as const : role } : {};
 		busy = true;
 		try {
 			if (profile) await api.updateProfile(profile.id, { name: name.trim(), emoji, color, ...pinChange, ...accessChange });
@@ -67,7 +67,13 @@
 			<div class="pname">{name || 'Name'}</div>
 		</div>
 		<TextField label="Name" bind:value={name} placeholder="e.g. Maja" autofocus id="profile-name" />
-		{#if session.isAdmin}
+		{#if session.mode === 'accounts'}
+			<Select label="Profile type" bind:value={role} options={[
+				{ value: 'adult', label: 'Adult', hint: 'Use Hub content and manage personal playlists and curators.' },
+				{ value: 'child', label: 'Child', hint: 'Hub discovery, external sources and research are disabled.' }
+			]} />
+			{#if role === 'child'}<p class="small muted">Child profiles are kid-safe. PINs are optional: a grown-up profile without one is open to anyone signed in on this device, children included.</p>{/if}
+		{:else if session.isAdmin}
 			<Select label="Profile access" bind:value={role} options={[
 				{ value: 'admin', label: 'Administrator', hint: 'Manage shared settings and profile access.' },
 				{ value: 'adult', label: 'Adult', hint: 'Use discovery and manage personal playlists and curators.' },
@@ -87,7 +93,7 @@
 		{/if}
 	</div>
 	{#snippet footer()}
-		{#if profile && session.profiles.length > 1 && session.isAdmin}
+		{#if profile && session.profiles.length > 1 && (session.isAdmin || session.mode === 'accounts')}
 			<button class="btn danger" use:focusable={{ onSelect: remove, scroll: 'nearest' }}>{confirmDelete ? 'Press again to delete everything' : 'Delete profile'}</button>
 		{/if}
 		<span class="spacer"></span>

@@ -1,5 +1,40 @@
 // Shapes returned by the Hub backend (see docs/CONTRACT.md, backend/bt/api/*.py).
 
+export interface Account {
+	id?: number;
+	public_id?: string;
+	username: string;
+	role: 'admin' | 'user';
+}
+export interface AuthStatus {
+	mode: 'open' | 'accounts';
+	bootstrap: boolean;
+	active: string | null;
+	account: Account | null;
+	accounts: { public_id: string; username: string; role: 'admin' | 'user'; active: boolean }[];
+}
+export interface AuthDevice {
+	public_id: string;
+	device_label: string;
+	user_agent: string;
+	created_at: string;
+	last_seen_at: string;
+	current: boolean;
+}
+export interface InviteInfo { username: string | null; role: 'admin' | 'user'; purpose: 'register' | 'reset' }
+export interface DeviceStart { code: string; poll: string; expires_in: number; link: string }
+export interface AdminAccount {
+	id: number;
+	username: string | null;
+	role: 'admin' | 'user';
+	disabled: boolean;
+	registered: boolean;
+	created_at: string;
+	profiles: { id: number; name: string; emoji: string; color: string; role: string }[];
+	sessions: number;
+	invite: { purpose: 'register' | 'reset'; expires_at: string } | null;
+}
+
 export interface Profile {
 	id: number;
 	role: 'admin' | 'adult' | 'child';

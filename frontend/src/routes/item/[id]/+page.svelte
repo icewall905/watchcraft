@@ -12,7 +12,7 @@
 	import LocalImage from '$lib/hub/LocalImage.svelte';
 	import ShareArticle from '$lib/hub/ShareArticle.svelte';
 	import ArticleFeedback from '$lib/hub/ArticleFeedback.svelte';
-	import { currentProfileId } from '$lib/api';
+	import { profileHeaders } from '$lib/api';
 
 	let item = $state<ItemDetail | null>(null);
 	let loading = $state(true);
@@ -95,9 +95,7 @@
 
 	async function openDocument() {
 		if (!item) return;
-		const headers: Record<string, string> = {};
-		const profile = currentProfileId();
-		if (profile) headers['X-Profile-Id'] = profile;
+		const headers = profileHeaders();
 		try {
 			const response = await fetch(`/api/hub/items/${item.id}/assets/document`, { headers, credentials: 'same-origin' });
 			if (!response.ok) throw new Error('Could not open the local document.');

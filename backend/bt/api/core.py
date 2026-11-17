@@ -13,12 +13,14 @@ from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import load_only
 
 from .. import profile_pins, subtitle_jobs
-from ..access import profile_id, require_admin, validate_household
+from ..access import own_profile_ids, profile_id, require_account_admin, require_admin, require_manager, validate_household
+from ..accounts import ACCOUNT_KEYS, is_open
+from ..db import _deep_merge
 from ..config import COOKIES_PATH, DEFAULT_SETTINGS
 from ..db import emit, get_session, get_settings, save_setting, session, yt_request_counts
 from ..downloader.service import abs_path, drop_unwanted
 from ..playlist import order_playlist
-from ..models import (AgentEvent, Candidate, Category, Channel, Download, Feedback, Lesson, LessonEvidenceState, LessonRevision, PlaybackTarget, Profile, ProfileChannel, ReencodeJob, ReencodeResult, Video,
+from ..models import (Account, AgentEvent, Candidate, Category, Channel, Download, Feedback, Lesson, LessonEvidenceState, LessonRevision, PlaybackTarget, Profile, ProfileChannel, ReencodeJob, ReencodeResult, Video,
                       GeneratedSubtitles, WatchHistory, YtRequest, now)
 
 router = APIRouter()
@@ -112,15 +114,43 @@ def profile_out(p: Profile, s: Session, request: Request):
             "pin_locked": profile_pins.locked(s, p.id, request)}
 
 
+def _account_scope(request: Request):
+    """Accounts mode: the signed-in account; open mode: None (whole household)."""
+    if is_open():
+        return None
+    aid = getattr(request.state, "account_id", None)
+    if aid is None:
+        raise HTTPException(401, "auth required")
+    return aid
+
+
+def _scoped_profile(s: Session, request: Request, pid: int) -> Profile:
+    p = s.get(Profile, pid)
+    aid = _account_scope(request)
+    if not p or (aid is not None and p.account_id != aid):
+        _404()
+    return p
+
+
+def _check_role(role):
+    if role == 'admin' and not is_open():
+        raise HTTPException(400, 'Profiles are adult or child; administrator rights belong to the account.')
+
+
 @router.get("/profiles")
 def list_profiles(request: Request, s: Session = Depends(get_session)):
-    return [profile_out(p, s, request) for p in s.exec(select(Profile).order_by(Profile.id)).all()]
+    q = select(Profile).order_by(Profile.id)
+    aid = _account_scope(request)
+    if aid is not None:
+        q = q.where(Profile.account_id == aid)
+    return [profile_out(p, s, request) for p in s.exec(q).all()]
 
 
-@router.post("/profiles", dependencies=[Depends(require_admin)])
+@router.post("/profiles", dependencies=[Depends(require_manager)])
 def create_profile(body: ProfileIn, request: Request, s: Session = Depends(get_session)):
     profile_pins.validate(body.pin)
-    p = Profile(**body.model_dump(exclude={"pin"}))
+    _check_role(body.role)
+    p = Profile(**body.model_dump(exclude={"pin"}), account_id=_account_scope(request))
     s.add(p)
     s.flush()
     if body.pin:
@@ -135,9 +165,10 @@ def create_profile(body: ProfileIn, request: Request, s: Session = Depends(get_s
 @router.patch("/profiles/{pid}")
 def patch_profile(pid: int, body: ProfilePatch, request: Request, response: Response, s: Session = Depends(get_session),
                   actor: int = Depends(profile_id)):
-    p = s.get(Profile, pid) or _404()
+    p = _scoped_profile(s, request, pid)
     if actor != pid or body.role is not None:
-        require_admin(actor)
+        require_manager(actor)
+    _check_role(body.role)
     profile_pins.require(s, pid, request)
     profile_pins.validate(body.pin)
     _apply(p, body.model_dump(exclude_none=True, exclude={"pin"}))
@@ -164,8 +195,7 @@ def patch_profile(pid: int, body: ProfilePatch, request: Request, response: Resp
                 s.add(curator)
     s.commit()
     if body.pin is not None:
-        first_id = s.exec(select(Profile.id).order_by(Profile.id)).first()
-        is_active = request.headers.get("X-Profile-Id", str(first_id)) == str(pid)
+        is_active = actor == pid
         if is_active:
             profile_pins.unlock_cookie(s, pid, response)
         else:
@@ -181,9 +211,8 @@ class ProfileUnlock(BaseModel):
 
 
 @router.post("/profiles/{pid}/unlock")
-def unlock_profile(pid: int, body: ProfileUnlock, response: Response, s: Session = Depends(get_session)):
-    if not s.get(Profile, pid):
-        _404()
+def unlock_profile(pid: int, body: ProfileUnlock, request: Request, response: Response, s: Session = Depends(get_session)):
+    _scoped_profile(s, request, pid)
     profile_pins.unlock(s, pid, body.pin, response)
     return {"ok": True}
 
@@ -194,14 +223,24 @@ def lock_profile(pid: int, response: Response):
     return {"ok": True}
 
 
-@router.delete("/profiles/{pid}", dependencies=[Depends(require_admin)])
+@router.delete("/profiles/{pid}", dependencies=[Depends(require_manager)])
 def delete_profile(pid: int, request: Request, s: Session = Depends(get_session)):
-    if s.exec(select(func.count()).select_from(Profile)).one() <= 1:
+    p = _scoped_profile(s, request, pid)
+    aid = _account_scope(request)
+    q = select(func.count()).select_from(Profile)
+    if s.exec(q if aid is None else q.where(Profile.account_id == aid)).one() <= 1:
         raise HTTPException(400, "cannot delete the last profile")
-    p = s.get(Profile, pid) or _404()
     profile_pins.require(s, pid, request)
-    if p.role == 'admin' and s.exec(select(func.count()).select_from(Profile).where(Profile.role == 'admin')).one() <= 1:
+    if is_open() and p.role == 'admin' and s.exec(select(func.count()).select_from(Profile).where(Profile.role == 'admin')).one() <= 1:
         raise HTTPException(400, 'Keep at least one administrator profile.')
+    purge_profile(s, p)
+    s.commit()
+    return {"ok": True}
+
+
+def purge_profile(s: Session, p: Profile) -> None:
+    """Delete a profile and everything it owns (caller commits)."""
+    pid = p.id
     cats = [c.id for c in s.exec(select(Category).where(Category.profile_id == pid)).all()]
     if cats:
         s.exec(delete(Candidate).where(col(Candidate.category_id).in_(cats)))
@@ -219,10 +258,10 @@ def delete_profile(pid: int, request: Request, s: Session = Depends(get_session)
             if (t.command or {}).get("profile_id") == pid:
                 t.command = {}
             s.add(t)
+    from ..jellyfin.models import JellyfinLink
+    s.exec(delete(JellyfinLink).where(JellyfinLink.profile_id == pid))
     profile_pins.set_pin(s, pid, "")
     s.delete(p)
-    s.commit()
-    return {"ok": True}
 
 
 def _404():
@@ -1112,18 +1151,46 @@ def _redact(st: dict) -> dict:
     return st
 
 
+def _account_settings(s: Session, request: Request):
+    """Accounts mode: the signed-in account row whose settings overlay ACCOUNT_KEYS."""
+    if is_open():
+        return None
+    aid = getattr(request.state, "account_id", None)
+    return s.get(Account, aid) if aid is not None else None
+
+
+def settings_for(s: Session, request: Request) -> dict:
+    st = get_settings(s)
+    acc = _account_settings(s, request)
+    for k in ACCOUNT_KEYS if acc else ():
+        st[k] = _deep_merge(st[k], (acc.settings or {}).get(k, {}))
+    return st
+
+
+# Server settings that carry hosts, webhooks, mail accounts or keys: non-admin accounts get defaults.
+ADMIN_ONLY_READ = ("notify", "llm", "search", "throttle", "stt", "moodboard_sources", "commonroom")
+
+
 @router.get("/settings")
-def read_settings(s: Session = Depends(get_session)):
-    st = _redact(get_settings(s))
+def read_settings(request: Request, s: Session = Depends(get_session)):
+    st = _redact(settings_for(s, request))
+    if not is_open() and getattr(request.state, "account_role", None) != "admin":
+        import copy
+        for k in ADMIN_ONLY_READ:
+            st[k] = copy.deepcopy(DEFAULT_SETTINGS[k])
     st["cookies"] = {"present": COOKIES_PATH.exists()}
     return st
 
 
-@router.put("/settings/{key}", dependencies=[Depends(require_admin)])
-def write_settings(key: str, value: dict, s: Session = Depends(get_session)):
+@router.put("/settings/{key}")
+def write_settings(key: str, value: dict, request: Request, s: Session = Depends(get_session),
+                   pid: int = Depends(profile_id)):
     if key not in DEFAULT_SETTINGS:
         raise HTTPException(404, "unknown settings key")
-    cur = get_settings(s)[key]
+    acc = _account_settings(s, request) if key in ACCOUNT_KEYS else None
+    if acc is None:
+        require_admin(pid)  # server settings; open mode: every key is household-wide
+    cur = settings_for(s, request)[key]
     if key == "stt":
         from .. import stt
         value = stt.prepare_config(value, cur)
@@ -1236,6 +1303,11 @@ def write_settings(key: str, value: dict, s: Session = Depends(get_session)):
             raise HTTPException(400, "Unknown minimum severity")
         if type(value.get("email_starttls", cur.get("email_starttls"))) is not bool:
             raise HTTPException(400, "StartTLS must be on or off")
+    if acc is not None:
+        acc.settings = {**(acc.settings or {}), key: {**(acc.settings or {}).get(key, {}), **value}}
+        s.add(acc)
+        s.commit()
+        return _redact(settings_for(s, request))[key]
     save_setting(key, {**cur, **value}, s)
     if key == "team":
         from ..hub import slots
@@ -1296,12 +1368,15 @@ def subtitle_statistics(response: Response, pid: int = Depends(profile_id), s: S
     return snapshot(s, pid)
 
 
-@router.get("/stats/page")
-def stats_page(days: int = 30, s: Session = Depends(get_session)):
-    """Statistics across every profile, independent of the active profile."""
+@router.get("/stats/page", dependencies=[Depends(require_account_admin)])
+def stats_page(days: int = 30, s: Session = Depends(get_session), request: Request = None):
+    """Statistics across every profile (accounts mode: the administrator's own account's playlists;
+    library and server totals stay server-wide)."""
     days = max(1, min(120, days))
     since = (now() - timedelta(days=days - 1)).date().isoformat()
-    cats = s.exec(select(Category).order_by(Category.profile_id, Category.position, Category.id)).all()
+    own = own_profile_ids(request) if request is not None else None
+    cats = [c for c in s.exec(select(Category).order_by(Category.profile_id, Category.position, Category.id)).all()
+            if own is None or c.profile_id in own]
     profiles = {p.id: p for p in s.exec(select(Profile)).all()}
     cat_profiles = {c.id: c.profile_id for c in cats}
     cat_ids = [c.id for c in cats]
@@ -1486,7 +1561,7 @@ def stats_page(days: int = 30, s: Session = Depends(get_session)):
         "saved_bytes": saved_original - saved_output,
     }
     from ..llm_metrics import overview as context_overview
-    return {"overview": overview, "categories": list(per_cat.values()), "daily": list(daily.values()), "context": context_overview(s),
+    return {"overview": overview, "categories": list(per_cat.values()), "daily": list(daily.values()), "context": _own_context(context_overview(s), own),
             "reencode": reencode, "decisions": decisions,
             "library": {"duration_s": sum(durations), "duration_known": len(durations),
                         "duration_unknown": len(offline_rows) - len(durations),
@@ -1497,9 +1572,32 @@ def stats_page(days: int = 30, s: Session = Depends(get_session)):
                         "longest": {"id": longest.id, "title": longest.title, "duration_s": longest.duration_s} if longest else None}}
 
 
-@router.get("/stats/explore")
-def stats_explore(metric: str, category_id: Optional[int] = None, day: Optional[date] = None,
+def _own_context(ctx: dict, own) -> dict:
+    if own is not None and isinstance(ctx.get("profiles"), list):
+        ctx = {**ctx, "profiles": [p for p in ctx["profiles"] if p.get("profile_id") in own]}
+    return ctx
+
+
+@router.get("/stats/explore", dependencies=[Depends(require_account_admin)])
+def stats_explore(request: Request, metric: str, category_id: Optional[int] = None, day: Optional[date] = None,
                   offset: int = Query(0, ge=0), limit: int = Query(40, ge=1, le=100),
                   height: Optional[int] = Query(None, ge=0), s: Session = Depends(get_session)):
     from ..stats_details import explore
-    return explore(s, metric, category_id, day, offset, limit, height)
+    own = own_profile_ids(request)
+    if own is not None and category_id is not None:
+        c = s.get(Category, category_id)
+        if not c or c.profile_id not in own:
+            raise HTTPException(404, "playlist not found")
+    out = explore(s, metric, category_id, day, offset, limit, height)
+    if own is not None:
+        # Other accounts' playlist rows are dropped; shared-library rows lose foreign profile/playlist names.
+        items = []
+        for it in out.get("items", []):
+            if it.get("candidate_id") is not None and it.get("profile_id") not in own:
+                continue
+            if it.get("profile_id") is not None and it["profile_id"] not in own:
+                it.update(profile_id=None, profile_name="", category_id=None, category_name="",
+                          score=None, rating=None, detail="")
+            items.append(it)
+        out["items"] = items
+    return out

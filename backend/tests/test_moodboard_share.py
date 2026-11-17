@@ -8,7 +8,7 @@ from test_curation import client  # noqa: F401
 from test_extension import png
 from test_master_api import other_profile
 from test_moodboards import make
-from bt import auth
+from bt import config
 from bt.db import session
 from bt.hub import moodboard_share as share
 from bt.hub.models import (MoodAsset, MoodBoard, MoodFeedback, MoodPin, MoodPinNote, MoodShareLink,
@@ -128,7 +128,7 @@ def test_link_stores_hash_only_and_shows_only_the_image(client, monkeypatch):
         assert token not in row.token_hash and len(row.token_hash) == 64
     listed = client.get('/api/hub/mood-share/links').json()['links']
     assert token not in str(listed)
-    monkeypatch.setattr(auth, 'PASSWORD', 'secret-test-password')
+    monkeypatch.setattr(config, 'AUTH_MODE', 'accounts')
     assert client.get(f"/api/hub/boards/{b['id']}").status_code == 401
     r = client.get(f'/api/public/mood/{token}')
     assert r.status_code == 200, r.text

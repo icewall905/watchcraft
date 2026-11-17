@@ -39,6 +39,13 @@ def key_profile(authorization: str | None = Header(default=None)) -> int:
             raise HTTPException(401, 'This extension key was revoked or is unknown. Create a new one in The Hub.')
         if not hub_allowed(s, row.profile_id):
             raise HTTPException(403, 'This profile cannot use Mood Boards.')
+        from ..accounts import is_open
+        from ..models import Account, Profile
+        if not is_open():  # keys die with a disabled account and on unassigned profiles
+            p = s.get(Profile, row.profile_id)
+            acc = s.get(Account, p.account_id) if p and p.account_id else None
+            if not acc or acc.disabled:
+                raise HTTPException(401, 'This extension key was revoked or is unknown. Create a new one in The Hub.')
         if time.time() - row.last_used > 300:
             row.last_used = time.time()
             s.add(row)

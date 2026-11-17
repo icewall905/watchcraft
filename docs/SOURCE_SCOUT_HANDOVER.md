@@ -1,5 +1,16 @@
 # Source Scout handover — 2026-10-30
 
+## Accounts migration (one-way)
+
+- Back up first (the standard deploy backup). The migration adds tables and a nullable column only.
+- After deploy, existing profiles are unowned and nobody can sign in until an invite is redeemed. Run
+  `docker compose exec bt-api python -m bt.accounts_cli invite mika --admin --base https://hub.tdgs.org`
+  (and again for `ice`), open each link and register, then **Settings → Accounts → Unassigned profiles**
+  to assign the old profiles.
+- Rollback = restore the backup. The new tables and column are additive and old code ignores them, but old
+  code has no account login: the previous shared-passphrase env (`BT_PASSWORD`) would be needed again.
+- Spec and CLI: `docs/ACCOUNTS.md`.
+
 
 ## Data change — text-only Mastodon "memes" hidden (2026-11-13, user-approved)
 

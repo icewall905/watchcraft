@@ -1,11 +1,10 @@
 <script lang="ts" module>
- import { currentProfileId } from '$lib/api';
+ import { profileHeaders } from '$lib/api';
  // Only this authenticated, throttled preview route is loaded; never a provider URL.
  const PREVIEW = /^\/api\/hub\/boards\/\d+\/pinterest\/preview\/[\w-]{1,40}$/;
  async function previewBlob(url: string): Promise<string> {
   if (!PREVIEW.test(url)) throw new Error('Preview unavailable');
-  const profile = currentProfileId();
-  const r = await fetch(url, {credentials: 'same-origin', headers: profile ? {'X-Profile-Id': profile} : {}});
+  const r = await fetch(url, {credentials: 'same-origin', headers: profileHeaders()});
   if (!r.ok) throw new Error('Preview unavailable');
   return URL.createObjectURL(await r.blob());
  }

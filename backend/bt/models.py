@@ -25,9 +25,55 @@ class Profile(SQLModel, table=True):
     name: str
     emoji: str = "🙂"
     color: str = "#7c5cff"
-    role: str = "adult"  # admin, adult, child; changed only by an administrator
+    role: str = "adult"  # adult, child (admin = legacy open mode); changed only by the account owner
     prefs: dict = J({})  # per-profile overrides (e.g. sponsorblock, player)
     created_at: datetime = Field(default_factory=now)
+    # Owning account (docs/ACCOUNTS.md). NULL = from before accounts, waiting for an admin to assign it.
+    account_id: Optional[int] = Field(default=None, foreign_key="account.id", index=True)
+
+
+class Account(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(index=True, unique=True)  # lowercase
+    password_hash: str = ""  # empty until the invite is redeemed
+    role: str = "user"  # admin | user
+    disabled: bool = False
+    settings: dict = J({})  # per-account settings keys (accounts.ACCOUNT_KEYS)
+    created_at: datetime = Field(default_factory=now)
+
+
+class AccountSession(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    public_id: str = Field(index=True, unique=True)
+    token_hash: str = Field(index=True, unique=True)
+    account_id: int = Field(foreign_key="account.id", index=True)
+    device_label: str = ""
+    user_agent: str = ""
+    created_at: datetime = Field(default_factory=now)
+    last_seen_at: datetime = Field(default_factory=now)
+    revoked_at: Optional[datetime] = None
+
+
+class AccountInvite(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    token_hash: str = Field(index=True, unique=True)
+    account_id: int = Field(foreign_key="account.id", index=True)
+    purpose: str = "register"  # register | reset
+    created_by: Optional[int] = None
+    created_at: datetime = Field(default_factory=now)
+    expires_at: datetime
+    used_at: Optional[datetime] = None
+
+
+class DeviceCode(SQLModel, table=True):
+    id: Optional[int] = Field(default=None, primary_key=True)
+    code: str = Field(index=True, unique=True)
+    poll_hash: str = Field(index=True, unique=True)
+    device_label: str = ""
+    user_agent: str = ""
+    expires_at: datetime
+    account_id: Optional[int] = None  # set on approval
+    claimed: bool = False
 
 
 class Category(SQLModel, table=True):

@@ -1,7 +1,7 @@
 """Public capabilities expose only one selected archive and revoke immediately."""
 from test_curation import client  # noqa: F401
 from test_master_api import add, other_profile
-from bt import auth
+from bt import config
 from bt.db import session
 from bt.hub.models import ContentItem, CapturedAsset, ItemState
 
@@ -19,7 +19,7 @@ def test_public_share_without_login_is_minimal_escaped_and_revocable(client, mon
     assert client.get(f'/api/hub/items/{iid}/share').json() == {'path': None}
     path = client.post(f'/api/hub/items/{iid}/share').json()['path']
     assert client.post(f'/api/hub/items/{iid}/share').json()['path'] == path
-    monkeypatch.setattr(auth, 'PASSWORD', 'secret-test-password')
+    monkeypatch.setattr(config, 'AUTH_MODE', 'accounts')
     assert client.get(f'/api/hub/items/{iid}').status_code == 401
     response = client.get(path)
     assert response.status_code == 200
@@ -33,7 +33,7 @@ def test_public_share_without_login_is_minimal_escaped_and_revocable(client, mon
     assert 'noindex' in response.headers['x-robots-tag']
     assert client.get(path+'/image').content == b'picture'
     assert client.get('/share/'+'x'*43).status_code == 404
-    monkeypatch.setattr(auth, 'PASSWORD', '')
+    monkeypatch.setattr(config, 'AUTH_MODE', 'open')
     assert client.delete(f'/api/hub/items/{iid}/share').json() == {'path': None}
     assert client.get(path).status_code == 404
     assert client.get(path+'/image').status_code == 404

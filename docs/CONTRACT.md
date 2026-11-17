@@ -7,7 +7,9 @@ Deploy: `root@10.0.10.73:/root/compose/bt`, port **6645**, public URL `https://b
 ## Changes after plan approval (user requests)
 - **Profiles** (family members): switcher top-right, no PIN. Profile owns categories, feedback,
   lessons, subscriptions/blocks, watch history. Frontend sends `X-Profile-Id: <id>` header on every
-  API call (stored in localStorage `bt.profile`). Backend falls back to first profile.
+  API call (stored in localStorage `bt.profile`). In accounts mode the id is validated against the signed-in
+  account (403 for another account's profile); `X-Account: <public_id>` picks which signed-in account a tab uses.
+  Without the header the backend falls back to the account's first profile. See `docs/ACCOUNTS.md`.
 - **Pause AI** button always visible (status pill in top bar + Agent page): `POST /api/agent/pause`
   / `/api/agent/resume` (`/api/agent/reset-backoff` separately clears a bot-check backoff). When paused the worker makes **no YouTube and no LLM calls**.
 - **Queue-aware curation (diversity)**: the planner and the judge both receive the current category queue
@@ -58,7 +60,7 @@ backend/
   bt/config.py                env + DEFAULT_SETTINGS                     [lead, done]
   bt/models.py                SQLModel tables                             [lead, done]
   bt/db.py                    engine, settings, agent state/control, emit(), log_yt_request() [lead, done]
-  bt/auth.py                  optional BT_PASSWORD cookie auth            [lead, done]
+  bt/auth.py                  accounts auth middleware, sessions (docs/ACCOUNTS.md) [lead, done]
   bt/main.py                  app, routers, SPA serving                   [lead, done]
   bt/api/core.py              profiles/categories/feeds/channels/feedback/lessons/history/settings [lead, done]
   bt/api/agent.py             agent status/control/SSE/llm-test          [lead, done]
