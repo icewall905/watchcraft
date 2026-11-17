@@ -19,6 +19,20 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — The Marquee: Find, Play on, HDR profile, rename (`73f2a2d`, `3c78e01`, 2026-11-17)
+
+- Ships `73f2a2d` (Jellyfin titles in Find and Play on, `VideoRangeType` in the device profile so HDR is tonemapped on
+  the GPU for SDR screens, client name "The Hub") and `3c78e01` (The Cinema → The Marquee, projector-screen icon).
+  No schema change. Android 0.1.15 (`android-v0.1.15`, APK released) adds The Marquee to the app menu.
+- Prod Jellyfin (`jellyfin` container, 10.0.10.73:8096) runs NVENC on the RTX 3060 (encoding.xml `nvenc`, tonemapping
+  on); a 4K HDR10 → `h264_nvenc` 720p test encode ran at 46 fps. The Hub has no Jellyfin configured yet.
+- Backup `/root/compose/watchcraft-backups/20261117-marquee-3c78e01` (online DB quick_check ok, config hashes, previous
+  source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261117-marquee-*`). rsync (checksum) of the 19
+  non-`android/` files of `9784620..3c78e01` (one new). Pruned `20261117-pinimport-eab933b` and its rollback tags
+  (`PRUNE-MANIFEST-20261117T125349Z.txt`).
+- All four `wc-*` run `sha256:1c730a4b…`, zero restarts, no tracebacks; DB quick_check ok; `hub.tdgs.org` health,
+  `/jellyfin`, `/find` 200; `wc.tdgs.org` health 200.
+
 ## Deployment record — accounts and sign-in (`28c3d1a`, 2026-11-17)
 
 - Real accounts (docs/ACCOUNTS.md): one-way migration adds `account`, `accountsession`, `accountinvite`, `devicecode`
