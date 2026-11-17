@@ -19,6 +19,20 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — parental controls (`9405dcb`, 2026-11-17)
+
+- Per child switches for each page and action (`bt/parental.py`; `profile.parental` JSON column, additive). An
+  app-wide FastAPI dependency (`parental.gate`) answers 403 to a child's request for a switched-off feature; the web
+  app hides it. Children start locked down (only The Screen): Ria (4) and Lily (5) had `{}` at deploy, so they see
+  only The Screen until a grown-up opens Settings → Accounts → Parental controls. Safety rails moved into that panel
+  and are now settable for children on their own accounts (`/api/admin/profiles/{id}/safety-rails|parental`).
+  No `android/` change.
+- Backup `/root/compose/watchcraft-backups/20261117-parental-9405dcb` (online DB quick_check ok, config hashes,
+  previous source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261117-parental-*`). Old code ignores the
+  new column. rsync (checksum) of the 28 non-`android/` files of `35662fe..9405dcb` (three new). Pruned
+  `20261117-player-da896c9` and its rollback tags (`PRUNE-MANIFEST-20261117T184718Z.txt`).
+- All four `wc-*` run `sha256:d16c68c1…`, zero restarts, no tracebacks; health 200; served bundle has the panel.
+
 ## Deployment record — per-child safety rails (`21835db`, 2026-11-17)
 
 - Grown-ups write each child profile's own AI safety instructions (`profile.safety_rails`, additive column; set via
