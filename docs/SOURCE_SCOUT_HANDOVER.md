@@ -19,6 +19,18 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — extension downloads renamed to the-hub-*.zip (`7de0bd5`, 2026-11-17)
+
+- `/extensions/the-hub-chrome.zip` and `the-hub-firefox.zip` replace `watchcraft-*.zip` (removed on prod; the old URLs
+  now fall through to the app page). Same extension 1.2.0 "The Hub"; Firefox add-on id unchanged so it updates in place.
+  No schema change; no `android/` change.
+- Backup `/root/compose/watchcraft-backups/20261117-hubzip-7de0bd5` (online DB quick_check ok, config hashes, previous
+  source incl. old zips, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261117-hubzip-*`). rsync (checksum) of
+  the 6 non-`android/` files of `4c2700b..7de0bd5`. Pruned `20261117-accounts-28c3d1a` and its rollback tags
+  (`PRUNE-MANIFEST-20261117T145618Z.txt`).
+- All four `wc-*` run `sha256:b9986222…`, zero restarts, no tracebacks; health, `/boards`, both new zips 200
+  (`application/zip`, manifest "The Hub" 1.2.0).
+
 ## Deployment record — kid-checked Mood Board adds, kid album fix, extension 1.2.0 (`4c2700b`, 2026-11-17)
 
 - Every image shared to a child is vision kid-checked (child-friendly source boards no longer trusted); child profiles
