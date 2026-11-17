@@ -19,6 +19,21 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — kid-checked Mood Board adds, kid album fix, extension 1.2.0 (`4c2700b`, 2026-11-17)
+
+- Every image shared to a child is vision kid-checked (child-friendly source boards no longer trusted); child profiles
+  may add images (upload/link) only through the check; kid "Shared with you" album no longer blank (Pinterest status
+  403 aborted the load); extension zips rebuilt as "The Hub" 1.2.0. No schema change; no `android/` change.
+- Backup `/root/compose/watchcraft-backups/20261117-kidcheck-4c2700b` (online DB quick_check ok, config hashes, previous
+  source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261117-kidcheck-*`). rsync (checksum) of the 13
+  non-`android/` files of `3c78e01..4c2700b` (one new). Pruned `20261117-thehub-ac689f7` and its rollback tags
+  (`PRUNE-MANIFEST-20261117T145018Z.txt`).
+- All four `wc-*` run `sha256:532a1961…`, zero restarts, no tracebacks; `hub.tdgs.org` health, `/boards` 200; served
+  extension zip is "The Hub" 1.2.0.
+- `python -m bt.hub.kid_recheck --apply --profile 4` (Ria): 92 judged, 5 hidden (pins 1441, 1457, 1459, 1497, 1503;
+  `hidden=1`, reversible). Verdicts vary slightly between runs (a report-only run flagged 1521 instead of 1459).
+  Lily's boards hold no stored images.
+
 ## Deployment record — The Marquee: Find, Play on, HDR profile, rename (`73f2a2d`, `3c78e01`, 2026-11-17)
 
 - Ships `73f2a2d` (Jellyfin titles in Find and Play on, `VideoRangeType` in the device profile so HDR is tonemapped on
