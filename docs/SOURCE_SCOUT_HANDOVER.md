@@ -19,6 +19,19 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — per-child safety rails (`21835db`, 2026-11-17)
+
+- Grown-ups write each child profile's own AI safety instructions (`profile.safety_rails`, additive column; set via
+  `PUT /api/profiles/{id}/safety-rails`). `kidsafeverdict` rebuilt on startup with a `rules` key in the primary key
+  (verdicts per distinct rail set; prod had 0 rows). Rails also reach the child's curators, Master Curator and video
+  playlist judge; Common Room and Mood Board checks must suit every child's rails. No `android/` change.
+- Backup `/root/compose/watchcraft-backups/20261117-rails-21835db` (online DB quick_check ok, config hashes, previous
+  source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261117-rails-*`). Rollback note: old code reads
+  `kidsafeverdict` by `item_id` only; after rollback restore the DB backup or verdicts with non-empty `rules` confuse
+  it. rsync (checksum) of the 25 non-`android/` files of `81334bb..21835db` (one new). Pruned `20261117-shared-fceafda`
+  and its rollback tags (`PRUNE-MANIFEST-20261117T174601Z.txt`).
+- All four `wc-*` run `sha256:ea5ceae0…`, zero restarts, no tracebacks; health 200; served bundle has the rails field.
+
 ## Deployment record — faster Mood Board collector, login allows 10 tries (`81334bb`, 2026-11-17)
 
 - Collector: already-pinned/duplicate hits no longer use run slots; 48 fresh candidates per run (30 hits per phrase,
