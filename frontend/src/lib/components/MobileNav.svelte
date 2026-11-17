@@ -1,15 +1,15 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { deviceMode } from '$lib/stores/deviceMode.svelte';
-	import { ALL_ENTRIES, MOBILE_PRIMARY, MOBILE_MORE, FIND, isHubPath } from '$lib/navigation';
+	import { ALL_ENTRIES, MOBILE_PRIMARY, MOBILE_MORE, FIND } from '$lib/navigation';
 	import { session } from '$lib/stores/session.svelte';
 	import Icon from './Icon.svelte';
 
 	let more = $state(false);
 	let narrow = $state(false);
 	const path = $derived(page.url.pathname);
-	const primary = $derived(MOBILE_PRIMARY.filter(e => session.canOpen(e.href) || !isHubPath(e.href)));
-	const rest = $derived(ALL_ENTRIES.filter((e) => !MOBILE_PRIMARY.includes(e) && (session.canOpen(e.href) || !isHubPath(e.href))));
+	const primary = $derived(MOBILE_PRIMARY.filter(e => session.canOpen(e.href)));
+	const rest = $derived(ALL_ENTRIES.filter((e) => !MOBILE_PRIMARY.includes(e) && session.canOpen(e.href)));
 	const moreActive = $derived(rest.some((e) => e.active(path)));
 
 	$effect(() => {

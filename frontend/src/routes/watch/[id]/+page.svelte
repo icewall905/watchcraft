@@ -1045,12 +1045,14 @@
 						</div>
 						{#if detail.channel?.id}
 							<a class="btn" href="/channel/{detail.channel.id}" use:focusable={{ group: 'i-chan', scroll: 'nearest' }}>Channel</a>
+							{#if session.allows('subscribe')}
 							<button class="btn" class:primary={!detail.channel.subscribed} use:focusable={{ group: 'i-chan', autofocus: true, scroll: 'nearest', onSelect: () => channelAction({ subscribed: !detail!.channel!.subscribed }) }}>
 								{detail.channel.subscribed ? 'Unsubscribe' : 'Subscribe'}
 							</button>
 							<button class="btn danger" use:focusable={{ group: 'i-chan', scroll: 'nearest', onSelect: () => channelAction({ blocked: !detail!.channel!.blocked }) }}>
 								{detail.channel.blocked ? 'Unblock' : 'Block channel'}
 							</button>
+							{/if}
 						{/if}
 					</div>
 					<div class="hstack">

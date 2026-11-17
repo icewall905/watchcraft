@@ -365,7 +365,7 @@ test('child friendly: grown-ups can switch it on; child profiles always have it 
  await page.getByRole('button',{name:'Save changes'}).click();
  expect(writes.at(-1)).toMatchObject({method:'PATCH',body:{child_friendly:true,strictness:'strict'}});
  // A child profile: Mood Boards and the kid-safe Hub open, Music stays hidden, only the curator adds images.
- await page.route('**/api/profiles',async route=>{if(route.request().method()!=='GET')return route.fallback();const res=await route.fetch();const list=await res.json();return route.fulfill({json:list.map((p:any,i:number)=>i===0?{...p,role:'child'}:p)});});
+ await page.route('**/api/profiles',async route=>{if(route.request().method()!=='GET')return route.fallback();const res=await route.fetch();const list=await res.json();return route.fulfill({json:list.map((p:any,i:number)=>i===0?{...p,role:'child',controls:{screen:true,boards:true,board_search:true,wire:true}}:p)});});
  await page.reload();
  await expect(page.getByRole('heading',{name:'Garden inspiration'})).toBeVisible();
  await expect(page.getByRole('button',{name:'Browser extension'})).toHaveCount(0);

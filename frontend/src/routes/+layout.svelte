@@ -101,7 +101,7 @@
 		landingPending = false;
 		const target = landingPath(deviceMode.landing);
 		if (target === '/' || inAndroidApp() || page.url.pathname !== '/' || session.settings?.setup?.completed === false) return;
-		if (isHubPath(target) && !session.hubAllowed) return;
+		if (!session.canOpen(target)) return;
 		goto(target, { replaceState: true });
 	});
 
@@ -122,8 +122,10 @@
 		<div class:desktop={!fullscreen && deviceMode.mode === 'desktop'}>
 		{#if !fullscreen}<TopBar />{:else if page.url.pathname.startsWith('/watch/')}<PlaybackPicker floating />{:else if page.url.pathname.startsWith('/jellyfin/play/')}<PlaybackPicker trigger={false} />{/if}
 		<main class:fullscreen data-area={hubArea ? 'hub' : undefined}>
-			{#if !session.canOpen(page.url.pathname) && isHubPath(page.url.pathname)}
-				{#if session.isChild}
+			{#if !session.canOpen(page.url.pathname)}
+				{#if session.isChild && !isHubPath(page.url.pathname)}
+				<div class="page"><h1>Switched off</h1><p>A grown-up has switched this off for your profile. Ask them if you would like to use it.</p><a class="btn primary" href="/tv" use:focusable>Back to The Screen</a></div>
+				{:else if session.isChild}
 				<div class="page"><h1>Not available on kid profiles</h1><p>This part of The Hub is for grown-ups. Ask a grown-up if you need it.</p><a class="btn primary" href="/today" use:focusable>Back to Today</a></div>
 				{:else}
 				<div class="page"><h1>Discovery is unavailable for this profile</h1><p>Discovery, external sources and research are disabled. Switch to an adult profile to use the Hub.</p><a class="btn primary" href="/tv" use:focusable>Back to TV</a></div>

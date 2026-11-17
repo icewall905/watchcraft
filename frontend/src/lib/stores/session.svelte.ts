@@ -2,6 +2,7 @@
 import { api, profileKey, currentAccountId, setCurrentAccountId, setProfileCookie, onUnauthorized, onProfileLocked } from '../api';
 import { thumbnailPreference } from './thumbnailPreference.svelte';
 import type { Account, AuthStatus, Category, Profile, Settings } from '../types';
+import { featureFor, isHubPath } from '../navigation';
 
 /** Hub areas a child profile cannot open. */
 const KID_LOCKED_PATHS = ['/music', '/sources'];
@@ -56,8 +57,18 @@ class Session {
 	canOpen(path: string): boolean {
 		const p = path.split(/[?#]/)[0];
 		if (this.grownUp) return true;
+		if (this.isChild) {
+			const key = featureFor(p);
+			if (key && !this.allows(key)) return false;
+		}
+		if (!isHubPath(p)) return true;
 		if (!this.hubAllowed) return false;
 		return !KID_LOCKED_PATHS.some((x) => p === x || p.startsWith(x + '/'));
+	}
+	/** A parental-control switch for the current profile (grown-ups: always on). */
+	allows(key: string): boolean {
+		if (!this.isChild) return true;
+		return this.profile?.controls?.[key] ?? key === 'screen';
 	}
 	needsLogin = $derived(this.mode === 'accounts' ? !this.account || this.adding : this.authRequired && !this.authenticated);
 

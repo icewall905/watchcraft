@@ -6,7 +6,7 @@
 	import { hub } from '$lib/hub/api';
 	import { session } from '$lib/stores/session.svelte';
 	import type { Counts, Collection, Topic } from '$lib/hub/types';
-	import { LEGACY_SECTION_KEYS, SECTIONS, SETTINGS, TV_DRAWER, isHubPath } from '$lib/navigation';
+	import { LEGACY_SECTION_KEYS, SECTIONS, SETTINGS, TV_DRAWER } from '$lib/navigation';
 	import Icon from './Icon.svelte';
 
 	const store = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -22,8 +22,8 @@
 	const path = $derived(page.url.pathname);
 	const search = $derived(page.url.search);
 	const isTv = $derived(deviceMode.mode === 'tv');
-	const sections = $derived(SECTIONS.map(s => ({ ...s, items: s.items.filter(it => session.canOpen(it.href) || !isHubPath(it.href)) })).filter(s => s.items.length));
-	const drawer = $derived(TV_DRAWER.filter(it => session.canOpen(it.href) || !isHubPath(it.href)));
+	const sections = $derived(SECTIONS.map(s => ({ ...s, items: s.items.filter(it => session.canOpen(it.href)) })).filter(s => s.items.length));
+	const drawer = $derived(TV_DRAWER.filter(it => session.canOpen(it.href)));
 
 	$effect(() => {
 		document.documentElement.style.setProperty('--sidebar-width', isTv ? '0rem' : compact ? '4.5rem' : '15rem');
@@ -51,8 +51,8 @@
 		if (!session.hubAllowed) { pinned = []; return; }
 		const pid = session.profileId;
 		const out: typeof pinned = [];
-		try { (await hub.collections() as Collection[]).filter((c) => c.pinned).forEach((c) => out.push({ href: `/library?collection=${c.id}`, label: c.name, icon: 'collection' })); } catch { /* optional */ }
-		try { (await hub.topics() as Topic[]).filter((t) => t.pinned).forEach((t) => out.push({ href: `/knowledge/${t.id}`, label: t.name, icon: 'pin' })); } catch { /* optional */ }
+		if (session.allows('stacks')) try { (await hub.collections() as Collection[]).filter((c) => c.pinned).forEach((c) => out.push({ href: `/library?collection=${c.id}`, label: c.name, icon: 'collection' })); } catch { /* optional */ }
+		if (session.allows('almanac')) try { (await hub.topics() as Topic[]).filter((t) => t.pinned).forEach((t) => out.push({ href: `/knowledge/${t.id}`, label: t.name, icon: 'pin' })); } catch { /* optional */ }
 		if (session.hubAllowed && session.profileId === pid) pinned = out;
 	}
 

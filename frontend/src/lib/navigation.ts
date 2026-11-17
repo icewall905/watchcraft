@@ -52,6 +52,20 @@ export const MOBILE_PRIMARY: NavEntry[] = [TV, entry('/today', 'The Front Page',
 export const MOBILE_MORE = { label: 'More', icon: 'more' };
 export const FIND = { href: '/find', label: 'Find', icon: 'search' };
 
+/** Parental-control switch (bt/parental.py) that opens a page for a child profile; null = not switchable. */
+const FEATURE_PATHS: [string, string][] = [
+	['/tv', 'screen'], ['/category', 'screen'], ['/channel', 'screen'], ['/shorts', 'scroll'], ['/subscriptions', 'subscriptions'],
+	['/jellyfin', 'marquee'], ['/search', 'yt_search'], ['/today', 'front_page'], ['/discover', 'finds'], ['/news', 'wire'],
+	['/boards', 'boards'], ['/common-room', 'commons'], ['/memes', 'commons'], ['/library', 'stacks'], ['/knowledge', 'almanac'],
+	['/briefings', 'dispatch'], ['/alerts', 'alerts'], ['/research', 'study'], ['/scout-report', 'scout'], ['/curators', 'curators'],
+	['/team', 'curators'], ['/sources', 'curators_edit']
+];
+export function featureFor(path: string): string | null {
+	const p = path.split(/[?#]/)[0];
+	if (p === '/') return 'screen';
+	return FEATURE_PATHS.find(([x]) => p === x || p.startsWith(x + '/'))?.[1] ?? null;
+}
+
 export function isHubPath(path: string): boolean {
 	return ['/today', '/discover', '/news', '/knowledge', '/library', '/memes', '/boards', '/common-room', '/music', '/briefings', '/alerts', '/research', '/scout-report', '/team', '/curators', '/sources', '/find', '/item']
 		.some((p) => path === p || path.startsWith(p + '/'));

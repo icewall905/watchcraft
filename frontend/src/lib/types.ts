@@ -30,7 +30,7 @@ export interface AdminAccount {
 	disabled: boolean;
 	registered: boolean;
 	created_at: string;
-	profiles: { id: number; name: string; emoji: string; color: string; role: string }[];
+	profiles: { id: number; name: string; emoji: string; color: string; role: string; safety_rails?: string; controls?: Record<string, boolean> }[];
 	sessions: number;
 	invite: { purpose: 'register' | 'reset'; expires_at: string } | null;
 }
@@ -47,7 +47,11 @@ export interface Profile {
 	pin_locked?: boolean;
 	/** Child profiles: the grown-ups' own instructions for this child's AI safety checks. */
 	safety_rails?: string;
+	/** Parental-control switches (all on for grown-ups). */
+	controls?: Record<string, boolean>;
 }
+
+export interface ParentalFeature { key: string; label: string; group: string; hint: string; default: boolean }
 
 export interface CategoryStats {
 	found?: number;

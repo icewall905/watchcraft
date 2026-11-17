@@ -30,6 +30,8 @@ class Profile(SQLModel, table=True):
     # Child profiles: the grown-ups' own safety instructions for this child's AI checks (hub/kidsafe.py).
     # Not part of prefs, so a child's own profile edits can never change it.
     safety_rails: str = Field(default="", sa_column_kwargs={"server_default": ""})
+    # Child profiles: parental-control switches set by grown-ups ({feature: bool}; bt/parental.py).
+    parental: dict = Field(default_factory=dict, sa_column=Column(JSON, nullable=False, server_default="{}"))
     created_at: datetime = Field(default_factory=now)
     # Owning account (docs/ACCOUNTS.md). NULL = from before accounts, waiting for an admin to assign it.
     account_id: Optional[int] = Field(default=None, foreign_key="account.id", index=True)

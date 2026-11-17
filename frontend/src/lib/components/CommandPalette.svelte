@@ -5,7 +5,7 @@
 	import { palette } from '$lib/stores/palette.svelte';
 	import { nav, navScope, focusable } from '$lib/nav';
 	import { onMount } from 'svelte';
-	import { ALL_ENTRIES, FIND, isHubPath } from '$lib/navigation';
+	import { ALL_ENTRIES, FIND } from '$lib/navigation';
 	import { session } from '$lib/stores/session.svelte';
 	import Icon from './Icon.svelte';
 	import VoiceSearch from './VoiceSearch.svelte';
@@ -22,7 +22,7 @@
 		const t = q.trim();
 		return t ? [{ href: `/search?q=${encodeURIComponent(t)}`, label: `Search YouTube for “${t}”`, icon: 'search' }] : [];
 	});
-	const results = $derived([...actions, ...ALL_ENTRIES.filter((e) => (session.canOpen(e.href) || !isHubPath(e.href)) && e.label.toLowerCase().includes(q.trim().toLowerCase()))]);
+	const results = $derived([...actions, ...ALL_ENTRIES.filter((e) => session.canOpen(e.href) && e.label.toLowerCase().includes(q.trim().toLowerCase()))]);
 
 	$effect(() => { void q; idx = -1; });
 	$effect(() => {

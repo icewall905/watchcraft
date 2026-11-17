@@ -2,6 +2,7 @@
 import { toast } from './stores/toast.svelte';
 import { thumbnailPreference } from './stores/thumbnailPreference.svelte';
 import type {
+	ParentalFeature,
 	AgentEvent,
 	AgentStatus,
 	CandidateDetail,
@@ -217,6 +218,10 @@ export const api = {
 	lockProfile: (id: number) => post<{ ok: boolean }>(`/profiles/${id}/lock`),
 	deleteProfile: (id: number) => del<{ ok: boolean }>(`/profiles/${id}`),
 	setSafetyRails: (id: number, rails: string) => put<Profile>(`/profiles/${id}/safety-rails`, { rails }),
+	setChildRails: (id: number, rails: string) => put<{ id: number; safety_rails: string }>(`/admin/profiles/${id}/safety-rails`, { rails }),
+	parentalFeatures: () => get<ParentalFeature[]>('/parental/features'),
+	setParental: (id: number, controls: Record<string, boolean>) => put<Profile>(`/profiles/${id}/parental`, { controls }),
+	setChildParental: (id: number, controls: Record<string, boolean>) => put<{ id: number; controls: Record<string, boolean> }>(`/admin/profiles/${id}/parental`, { controls }),
 
 	// categories
 	categories: () => get<Category[]>('/categories'),

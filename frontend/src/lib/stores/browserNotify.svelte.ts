@@ -45,7 +45,7 @@ class BrowserNotify {
 
 	private async poll() {
 		if (this.busy || !this.enabled || this.permission !== 'granted') return;
-		if (!session.ready || session.needsLogin || !session.profileId) return;
+		if (!session.ready || session.needsLogin || !session.profileId || !session.allows('alerts')) return;
 		this.busy = true;
 		try {
 			const page = await hub.alerts('new');

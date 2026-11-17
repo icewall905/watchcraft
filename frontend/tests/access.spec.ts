@@ -23,6 +23,9 @@ test('child access, administrator PIN and shared settings are enforced in the UI
 		await expect(page.getByRole('dialog', { name: 'New profile', exact: true })).toHaveCount(0);
 		const child = (await (await request.get('/api/profiles')).json()).find((p: { name: string }) => p.name === 'Child access test');
 		childId = child.id;
+		expect(child.controls.finds).toBe(false); // parental controls: children start locked down
+		const everything = Object.fromEntries(Object.keys(child.controls).map((k) => [k, true]));
+		expect((await page.request.put(`/api/profiles/${child.id}/parental`, { headers: { 'X-Profile-Id': String(admin.id) }, data: { controls: everything } })).ok()).toBe(true);
 		const row = page.locator('.item').filter({ hasText: 'Child access test' });
 		await row.getByRole('button', { name: 'Switch to', exact: true }).click();
 		await expect(page.getByRole('button', { name: 'Add person' })).toHaveCount(0);

@@ -110,7 +110,8 @@ class ProfilePatch(BaseModel):
 
 
 def profile_out(p: Profile, s: Session, request: Request):
-    return {**p.model_dump(), "pin_required": profile_pins.record(s, p.id) is not None,
+    from ..parental import effective
+    return {**p.model_dump(exclude={"parental"}), "controls": effective(p), "pin_required": profile_pins.record(s, p.id) is not None,
             "pin_locked": profile_pins.locked(s, p.id, request)}
 
 
@@ -231,17 +232,49 @@ class SafetyRails(BaseModel):
 def set_safety_rails(pid: int, body: SafetyRails, request: Request, s: Session = Depends(get_session)):
     """A grown-up's own safety instructions for one child profile's AI checks (hub/kidsafe.py).
     New rails hide that child's Hub items until they are judged again under them (fail closed)."""
-    from ..hub.kidsafe import RAILS_MAX, clean_rails
     p = _scoped_profile(s, request, pid)
+    save_safety_rails(s, p, body.rails)
+    return profile_out(p, s, request)
+
+
+class ParentalIn(BaseModel):
+    controls: dict
+
+
+@router.get("/parental/features")
+def parental_features():
+    from ..parental import catalog
+    return catalog()
+
+
+@router.put("/profiles/{pid}/parental", dependencies=[Depends(require_manager)])
+def set_parental(pid: int, body: ParentalIn, request: Request, s: Session = Depends(get_session)):
+    """Parental-control switches for one child profile of this account."""
+    p = _scoped_profile(s, request, pid)
+    save_parental(s, p, body.controls)
+    return profile_out(p, s, request)
+
+
+def save_parental(s: Session, p: Profile, controls) -> None:
+    from ..parental import clean
     if p.role != 'child':
-        raise HTTPException(400, 'Safety rails are for child profiles.')
-    if len(body.rails.strip()) > RAILS_MAX:
-        raise HTTPException(400, f'Keep safety rails under {RAILS_MAX} characters.')
-    p.safety_rails = clean_rails(body.rails)
+        raise HTTPException(400, 'Parental controls are for child profiles.')
+    p.parental = {**(p.parental or {}), **clean(controls)}
     s.add(p)
     s.commit()
     s.refresh(p)
-    return profile_out(p, s, request)
+
+
+def save_safety_rails(s: Session, p: Profile, rails: str) -> None:
+    from ..hub.kidsafe import RAILS_MAX, clean_rails
+    if p.role != 'child':
+        raise HTTPException(400, 'Safety rails are for child profiles.')
+    if len(rails.strip()) > RAILS_MAX:
+        raise HTTPException(400, f'Keep safety rails under {RAILS_MAX} characters.')
+    p.safety_rails = clean_rails(rails)
+    s.add(p)
+    s.commit()
+    s.refresh(p)
 
 
 @router.delete("/profiles/{pid}", dependencies=[Depends(require_manager)])

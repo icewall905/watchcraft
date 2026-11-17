@@ -65,3 +65,13 @@ def _no_reddit_pace(monkeypatch):
     from bt.hub import providers
     monkeypatch.setattr(providers, 'REDDIT_GAP_S', 0.0)
     monkeypatch.setattr(providers, '_reddit_blocked_until', 0.0)
+
+
+@pytest.fixture(autouse=True)
+def _children_have_every_feature(monkeypatch, request):
+    """Older child-profile tests cover the kid-safe behaviour of each feature, so they run with every parental
+    switch on. Tests marked `parental_defaults` keep the real, locked-down defaults."""
+    if request.node.get_closest_marker('parental_defaults'):
+        return
+    from bt import parental
+    monkeypatch.setattr(parental, 'DEFAULTS', {k: True for k in parental.KEYS})

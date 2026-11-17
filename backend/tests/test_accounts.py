@@ -326,3 +326,31 @@ def test_review_fixes_isolation(app):
     pid = admin.get('/api/auth/status').json()['active']
     assert admin.get('/api/profiles', headers={'X-Account': 'gone'}).status_code == 401
     assert admin.get('/api/profiles', headers={'X-Account': pid}).status_code == 200
+
+
+def test_admin_sets_rails_for_a_child_on_another_account(app):
+    c = client(app)
+    bootstrap(c)
+    me = c.get('/api/profiles').json()[0]['id']
+    kid_account = client(app)
+    register(kid_account, _invite_as(c, me, 'ria'))
+    ria = kid_account.get('/api/profiles').json()[0]
+    with session() as s:  # an admin made this account's profile a child (as on prod)
+        p = s.get(Profile, ria['id'])
+        p.role = 'child'
+        s.add(p); s.commit()
+    hk = {'X-Profile-Id': str(ria['id'])}
+    # The child's own account cannot set them; the profile is out of the admin's own Profiles scope.
+    assert kid_account.put(f"/api/profiles/{ria['id']}/safety-rails", json={'rails': 'x'}, headers=hk).status_code == 403
+    assert kid_account.put(f"/api/admin/profiles/{ria['id']}/safety-rails", json={'rails': 'x'}, headers=hk).status_code == 403
+    assert c.put(f"/api/profiles/{ria['id']}/safety-rails", json={'rails': 'x'}).status_code == 404
+    r = c.put(f"/api/admin/profiles/{ria['id']}/safety-rails", json={'rails': 'She is 8.'})
+    assert r.status_code == 200 and r.json()['safety_rails'] == 'She is 8.'
+    listed = next(a for a in c.get('/api/admin/accounts').json() if a['username'] == 'ria')
+    assert listed['profiles'][0]['safety_rails'] == 'She is 8.'
+    assert c.put(f"/api/admin/profiles/{me}/safety-rails", json={'rails': 'x'}).status_code == 400
+    # Parental switches too: the admin sets them, the child's own account cannot.
+    assert kid_account.put(f"/api/admin/profiles/{ria['id']}/parental", json={'controls': {'boards': True}}, headers=hk).status_code == 403
+    r = c.put(f"/api/admin/profiles/{ria['id']}/parental", json={'controls': {'boards': False, 'yt_search': False}})
+    assert r.status_code == 200 and r.json()['controls']['boards'] is False
+    assert kid_account.get('/api/hub/boards', headers=hk).status_code == 403

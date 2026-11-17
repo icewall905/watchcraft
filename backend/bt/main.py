@@ -3,11 +3,11 @@ from contextlib import asynccontextmanager, suppress
 import asyncio
 import os
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth
+from . import auth, parental
 from .hub import api as hub_api, engine as hub_engine, master_api as hub_master_api, sharing as hub_sharing, moodboards, moodboard_imports, pinterest_live, extension as hub_extension, moodboard_share
 from .knowledge import api as knowledge_api
 from .commonroom import api as commonroom_api, scheduler as commonroom_scheduler
@@ -53,7 +53,8 @@ async def lifespan(_app):
             with suppress(asyncio.CancelledError):
                 await running
 
-app = FastAPI(title="The Hub", docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=lifespan)
+app = FastAPI(title="The Hub", docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=lifespan,
+              dependencies=[Depends(parental.gate)])
 
 app.add_middleware(auth.AuthMiddleware)
 app.include_router(auth.router, prefix="/api")

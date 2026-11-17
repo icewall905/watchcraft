@@ -10,7 +10,7 @@ from ..access import require_admin
 from ..auth import PLACEHOLDER
 from ..db import get_session
 from ..models import Account, AccountSession, Profile, now
-from .core import purge_profile
+from .core import ParentalIn, SafetyRails, purge_profile, save_parental, save_safety_rails
 
 router = APIRouter(prefix="/admin", dependencies=[Depends(require_admin)])
 
@@ -28,7 +28,12 @@ def _account(s: Session, aid: int) -> Account:
 
 
 def _profile_out(p: Profile) -> dict:
-    return {"id": p.id, "name": p.name, "emoji": p.emoji, "color": p.color, "role": p.role}
+    out = {"id": p.id, "name": p.name, "emoji": p.emoji, "color": p.color, "role": p.role}
+    if p.role == "child":
+        from ..parental import effective
+        out["safety_rails"] = p.safety_rails or ""
+        out["controls"] = effective(p)
+    return out
 
 
 def account_out(s: Session, acc: Account) -> dict:
@@ -48,6 +53,26 @@ def _keep_an_admin(s: Session, changing: Account) -> None:
                                           Account.id != changing.id)).all()
     if not others:
         raise HTTPException(400, "Keep at least one enabled administrator account.")
+
+
+@router.put("/profiles/{pid}/safety-rails")
+def set_child_rails(pid: int, body: SafetyRails, s: Session = Depends(get_session)):
+    """Administrators set any account's child profile rails: a child's own account has no grown-up to do it."""
+    p = s.get(Profile, pid)
+    if not p:
+        raise HTTPException(404, "not found")
+    save_safety_rails(s, p, body.rails)
+    return _profile_out(p)
+
+
+@router.put("/profiles/{pid}/parental")
+def set_child_parental(pid: int, body: ParentalIn, s: Session = Depends(get_session)):
+    """Administrators switch features for any account's child profile."""
+    p = s.get(Profile, pid)
+    if not p:
+        raise HTTPException(404, "not found")
+    save_parental(s, p, body.controls)
+    return _profile_out(p)
 
 
 @router.get("/accounts")

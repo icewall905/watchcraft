@@ -9,6 +9,7 @@
 	import Avatar from '$lib/components/Avatar.svelte';
 	import TextField from '$lib/components/form/TextField.svelte';
 	import Select from '$lib/components/form/Select.svelte';
+	import ParentalControls from '$lib/components/ParentalControls.svelte';
 
 	let accounts = $state<AdminAccount[]>([]);
 	let unowned = $state<Profile[]>([]);
@@ -18,6 +19,7 @@
 	let link = $state<{ who: string; url: string } | null>(null);
 	let confirmDelete = $state<number | null>(null);
 	let assignTo = $state<Record<number, number>>({});
+	let parentalFor = $state<{ id: number; name: string; controls?: Record<string, boolean>; safety_rails?: string } | null>(null);
 
 	async function load() {
 		try {
@@ -109,8 +111,14 @@
 					</span>
 				</div>
 				<div class="profiles">
-					{#each a.profiles as p (p.id)}<span class="chip" title={p.name}><Avatar emoji={p.emoji} color={p.color} size="1.6rem" /> {p.name}</span>{:else}<span class="small muted">No profiles yet</span>{/each}
+					{#each a.profiles as p (p.id)}<span class="chip" title={p.name}><Avatar emoji={p.emoji} color={p.color} size="1.6rem" /> {p.name}{p.role === 'child' ? ' · child' : ''}</span>{:else}<span class="small muted">No profiles yet</span>{/each}
 				</div>
+				{#each a.profiles.filter((p) => p.role === 'child') as p (p.id)}
+					<div class="rails">
+						<span class="small muted">{p.name}: {Object.values(p.controls ?? {}).filter(Boolean).length} of {Object.keys(p.controls ?? {}).length} switched on · safety rails {p.safety_rails ? 'set' : 'default'}</span>
+						<button class="btn mini" use:focusable={{ group: `ac-${a.id}`, onSelect: () => (parentalFor = p) }}>Parental controls for {p.name}</button>
+					</div>
+				{/each}
 				<div class="hstack acts">
 					<button class="btn mini" use:focusable={{ group: `ac-${a.id}`, onSelect: () => reset(a) }}>{a.registered ? 'Reset password link' : 'New invite link'}</button>
 					{#if !isMe(a)}
@@ -140,6 +148,8 @@
 	</Section>
 {/if}
 
+{#if parentalFor}<ParentalControls child={parentalFor} admin onClose={() => (parentalFor = null)} onSaved={load} />{/if}
+
 <style>
 	.invite { display: grid; gap: 0.8rem; max-width: 30rem; }
 	.linkbox { display: grid; gap: 0.5rem; }
@@ -157,6 +167,7 @@
 	.grow { flex: 1; }
 	.head { display: grid; }
 	.profiles { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+	.rails { display: flex; flex-direction: column; align-items: flex-start; gap: 0.4rem; white-space: pre-line; }
 	.chip { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.85rem; padding: 0.15rem 0.6rem 0.15rem 0.2rem; border-radius: 999px; border: 1px solid var(--line); }
 	.acts { flex-wrap: wrap; gap: 0.4rem; }
 	.btn.mini { min-height: 2.2rem; padding: 0.2rem 0.85rem; font-size: 0.85rem; }
