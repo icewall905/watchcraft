@@ -784,9 +784,10 @@ def test_child_profiles_get_their_own_always_child_friendly_boards(client):
     assert client.get(pins[0]['thumb_url'], headers=kid).status_code == 200
     assert client.put(f"{base}/pins/{pins[0]['id']}/feedback", headers=kid, json={'verdict': 'good'}).status_code == 200
     assert client.post(f"{base}/reshuffle", headers=kid).status_code == 200
-    # Only the safety-checked curator adds images for children: no uploads, links, imports or extension keys.
+    # Children add images only through the kid-safety check (fails closed without a vision model);
+    # no inspiration images, imports or extension keys.
     body, _ = image_upload()
-    assert client.post(f"{base}/images", headers=kid, json=body).status_code == 403
+    assert client.post(f"{base}/images", headers=kid, json=body).status_code in (409, 422)
     assert client.post(f"{base}/reference", headers=kid, json=body).status_code == 403
     assert client.post(f"{base}/pinterest", headers=kid, json={'url': 'https://www.pinterest.com/a/b/'}).status_code == 403
     assert client.post('/api/ext/keys', headers=kid, json={}).status_code == 403

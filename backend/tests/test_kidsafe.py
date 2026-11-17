@@ -147,8 +147,8 @@ def test_music_stays_grown_up_only(client, family):
 def test_every_child_route_is_a_real_route():
     """The allowlist names routes that exist, so a typo cannot silently lock children out."""
     from bt.access import CHILD_HUB_ROUTES
-    from bt.hub import api, master_api
-    real = {(m, r.path[len('/hub'):]) for mod in (api, master_api) for r in mod.router.routes for m in r.methods}
+    from bt.hub import api, master_api, moodboards
+    real = {(m, r.path[len('/hub'):]) for mod in (api, master_api, moodboards) for r in mod.router.routes for m in r.methods}
     assert CHILD_HUB_ROUTES <= real, CHILD_HUB_ROUTES - real
 
 

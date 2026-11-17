@@ -174,6 +174,7 @@ CHILD_HUB_ROUTES = frozenset({
     ('GET', '/memes/formats'), ('GET', '/memes/formats/{fid}'), ('GET', '/memes/items/{iid}/similar'),
     ('POST', '/memes/languages/{code}/hide'),
     ('GET', '/today'), ('POST', '/today/rerun'),
+    ('POST', '/boards/{bid}/images'),  # kid-safety checked in moodboards.add_image_for
 })
 # Curator actions a child may take; 'duplicate' copies sources, 'report' is the kid-safe report.
 CHILD_CURATOR_ACTIONS = frozenset({'run', 'pause', 'resume', 'report', 'duplicate'})

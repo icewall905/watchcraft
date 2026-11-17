@@ -482,7 +482,12 @@ def _public_http(url):
 def add_image_for(pid, bid, data):
     with session() as s:
         owned(s, pid, bid)
+        child = is_child(s, pid)
     raw, mime, width, height = input_image(data)
+    if child:  # every picture a child adds passes the kid-safe picture bar first; fails closed
+        from .moodboard_share import _kid_check
+        if not _kid_check([(0, raw)]):
+            raise HTTPException(422, 'This picture did not pass the kid-safety check, so it was not added.')
     linked = _public_http(data.source_url) if data.data_base64 else None
     page = _public_http(data.page_url)
     # A pasted Pinterest pin link (copied by the user from Pinterest in their own browser) identifies the

@@ -369,7 +369,7 @@ test('child friendly: grown-ups can switch it on; child profiles always have it 
  await page.reload();
  await expect(page.getByRole('heading',{name:'Garden inspiration'})).toBeVisible();
  await expect(page.getByRole('button',{name:'Browser extension'})).toHaveCount(0);
- await expect(page.getByRole('button',{name:'Add image',exact:true})).toHaveCount(0);
+ await expect(page.getByRole('button',{name:'Add image',exact:true})).toHaveCount(1); // kid-safety checked server-side
  await expect(page.getByRole('button',{name:'Import Pinterest'})).toHaveCount(0);
  await page.getByLabel("Search your boards by what's in the picture").fill('cat');await page.getByRole('button',{name:'Search',exact:true}).click();
  await expect(page.getByRole('region',{name:'Search Pinterest'})).toHaveCount(0);

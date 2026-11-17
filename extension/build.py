@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent
 OUT = ROOT.parent / 'frontend' / 'static' / 'extensions'
-VERSION = '1.1.0'
+VERSION = '1.2.0'
 
 BASE = {
     'manifest_version': 3,

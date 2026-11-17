@@ -46,7 +46,7 @@ TOKEN_RE = re.compile(r'wcs_[A-Za-z0-9_-]{43}')
 MAX_LINKS = 50
 INBOX = 'Shared with you'
 PAGE = 60
-KID_CHECK_MAX = 40  # images from a non-child-friendly board checked per share to a child (vision model, in the request)
+KID_CHECK_MAX = 40  # images checked per share to a child (vision model, in the request)
 HEADERS = {'Cache-Control': 'no-store', 'X-Robots-Tag': 'noindex, nofollow, noarchive',
            'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff'}
 JSON_HEADERS = {**HEADERS, 'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'"}
@@ -109,8 +109,9 @@ def _stored(s, bid):
                   .where(MoodPin.board_id == bid)).one()
 
 
-def _kid_check(pictures: list[tuple[int, bytes]]) -> set[int]:
-    """Pin ids whose picture passes the kid-safe picture bar. Fail closed: errors approve nothing."""
+def _kid_check(pictures: list[tuple[int, bytes]], unchecked: set[int] | None = None) -> set[int]:
+    """Pin ids whose picture passes the kid-safe picture bar. Fail closed: errors approve nothing
+    (their ids go into `unchecked` when given, so a re-check can tell "failed" from "not judged")."""
     from . import ai, kidsafe
     from .moodboards import vision_image
     if not pictures:
@@ -127,6 +128,8 @@ def _kid_check(pictures: list[tuple[int, bytes]]) -> set[int]:
                            max_tokens=600, images=images, role='worker')
         except Exception as e:  # noqa: BLE001 — unchecked pictures are not shared
             log.info('kid-safe share check failed: %s', e)
+            if unchecked is not None:
+                unchecked.update(i for i, _ in batch)
             continue
         for row in res.get('verdicts', []) if isinstance(res, dict) else []:
             n, safe, _ = kidsafe.normalize(row)
@@ -137,10 +140,10 @@ def _kid_check(pictures: list[tuple[int, bytes]]) -> set[int]:
 
 def _child_approved(bid: int, data: 'ToProfile', pid: int) -> tuple[set[int] | None, int]:
     """For a child recipient: (pin ids allowed through, pins held back). None means not a child.
-    A child-friendly board's images already passed the child rule when collected; any other image
-    is checked now, outside the write transaction (vision calls take seconds)."""
+    Every image is checked now, outside the write transaction (vision calls take seconds). A child-friendly
+    board is not trusted: hand-added, extension, imported and moved images reach it without the child rule."""
     with session() as s:
-        board = owned(s, pid, bid)
+        owned(s, pid, bid)
         if not is_child(s, data.to):
             return None, 0
         if data.pin_id is not None:
@@ -150,8 +153,6 @@ def _child_approved(bid: int, data: 'ToProfile', pid: int) -> tuple[set[int] | N
                           .where(MoodPin.board_id == bid, MoodPin.profile_id == pid, MoodPin.hidden == False)  # noqa: E712
                           .order_by(MoodPin.id).limit(MAX_PINS)).all()
         ids = [p.id for p in pins]
-        if board.child_friendly:
-            return set(ids), 0
         check = ids[:KID_CHECK_MAX]
         pictures = [(i, a.data) for i in check if (a := s.get(MoodAsset, i))]
     ok = _kid_check(pictures)

@@ -369,11 +369,55 @@ def test_child_share_fails_closed_without_a_vision_model_or_on_errors(client, mo
         assert not s.exec(select(MoodShareNotice)).all()
 
 
-def test_child_friendly_board_images_go_to_a_child_without_another_check(client, monkeypatch):
-    from bt.hub import ai
+def test_child_friendly_board_images_are_still_checked_for_a_child(client, monkeypatch):
+    # Hand-added (or extension/imported/moved) images reach a child-friendly board without the child rule.
     b = make(client, name='Kid board', child_friendly=True)
     pin = add(client, b['id'])
-    kid, _ = child_profile(client)
-    monkeypatch.setattr(ai, '_call', lambda *a, **k: pytest.fail('no model call expected'))
+    kid, kh = child_profile(client)
+    calls = []
+    judge(monkeypatch, calls=calls, safe_titles=lambda n: [False] * n)
     r = client.post(f"/api/hub/mood-share/boards/{b['id']}/to-profile", json={'to': kid, 'pin_id': pin['id']})
-    assert r.status_code == 200 and r.json()['added'] == 1
+    assert r.status_code == 409 and calls == [1]
+    assert client.get('/api/hub/boards', headers=kh).json()['boards'] == []
+
+
+def test_child_can_add_images_only_after_the_kid_check(client, monkeypatch):
+    kid, kh = child_profile(client)
+    b = client.post('/api/hub/boards', json={'name': 'Mine', 'interests': 'cats', 'enabled': False}, headers=kh).json()['board']
+    url = f"/api/hub/boards/{b['id']}/images"
+    body = {'data_base64': png(), 'title': 'Cat'}
+    monkeypatch.setattr('bt.hub.kidsafe._vision', lambda: False)
+    assert client.post(url, json=body, headers=kh).status_code == 409  # no vision model: fail closed
+    calls = []
+    judge(monkeypatch, calls=calls, safe_titles=lambda n: [False] * n)
+    r = client.post(url, json=body, headers=kh)
+    assert r.status_code == 422 and 'kid-safety' in r.json()['detail'] and calls == [1]
+    assert client.get(f"/api/hub/boards/{b['id']}", headers=kh).json()['pins'] == []
+    judge(monkeypatch, calls=calls)
+    r = client.post(url, json=body, headers=kh)
+    assert r.status_code == 200 and calls == [1, 1]
+    # Grown-ups' own adds are not checked.
+    gb = make(client, name='Grown')
+    monkeypatch.setattr('bt.hub.ai._call', lambda *a, **k: pytest.fail('no check for grown-ups'))
+    add(client, gb['id'], 9)
+
+
+def test_kid_recheck_hides_only_failing_images_on_child_boards(client, monkeypatch):
+    from bt.hub import kid_recheck
+    kid, kh = child_profile(client)
+    judge(monkeypatch)
+    b = client.post('/api/hub/boards', json={'name': 'Mine', 'interests': 'cats', 'enabled': False}, headers=kh).json()['board']
+    for n in range(1, 4):
+        add(client, b['id'], n, headers=kh)
+    grown = make(client, name='Grown')
+    add(client, grown['id'], 9)
+    judge(monkeypatch, safe_titles=lambda n: [True, False, True][:n])
+    dry = kid_recheck.recheck()
+    assert dry['checked'] == 3 and len(dry['failed']) == 1 and dry['unchecked'] == 0  # grown-up board untouched
+    assert len(client.get(f"/api/hub/boards/{b['id']}", headers=kh).json()['pins']) == 3  # report only
+    kid_recheck.recheck(apply=True)
+    assert len(client.get(f"/api/hub/boards/{b['id']}", headers=kh).json()['pins']) == 2
+    monkeypatch.setattr('bt.hub.ai._call', lambda *a, **k: (_ for _ in ()).throw(RuntimeError('down')))
+    r = kid_recheck.recheck(apply=True)
+    assert r['unchecked'] == 2 and r['failed'] == []  # model errors never hide images
+    assert len(client.get(f"/api/hub/boards/{b['id']}", headers=kh).json()['pins']) == 2

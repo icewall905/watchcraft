@@ -71,7 +71,8 @@
    const data = await boardsApi.detail(selected, {saved: savedOnly, unreviewed: reviewOnly, cursor: append ? cursor ?? undefined : undefined}, signal);
    if (signal.aborted || token !== generation || owner !== stamp() || !allowed()) return;
    boards = boards.map(b => b.id === data.board.id ? data.board : b); rememberRetry([data.board]);
-   const imported = await boardsApi.pinterestStatus(selected, signal);
+   // Kid profiles have no Pinterest import (403); a status hiccup must never blank the board either.
+   const imported = session.isChild ? {import: null} : await boardsApi.pinterestStatus(selected, signal).catch(() => ({import: null}));
    if (signal.aborted || token !== generation || owner !== stamp() || !allowed()) return;
    importJob = imported.import;
    if (importRunning(importJob) && !importJob?.note) pollUntil = Date.now() + 180000;
@@ -385,8 +386,8 @@
     <div class="tools" role="toolbar" aria-label="Board actions">
      <button class="btn primary find" disabled={findDisabled} onclick={refresh}>{@render icon('spark')}{findLabel}</button>
      <button class="btn pill" disabled={curatorActive || reshuffling} title="Replace every image you have not hearted or given a thumbs up" onclick={() => { error = ''; reshuffleOpen = true; }}>{@render icon('shuffle')}Reshuffle</button>
-     {#if !session.isChild}
      <button class="btn pill" onclick={() => openImage('manual')}>{@render icon('plus')}Add image</button>
+     {#if !session.isChild}
      <button class="btn pill" onclick={() => openImage('reference')}>{@render icon('eye')}{board.reference_url ? 'Change inspiration image' : 'Add inspiration image'}</button>
      <button class="btn pill" onclick={() => { error = ''; importOpen = true; }}>{@render icon('pin')}Import Pinterest</button>
      <button class="btn pill" onclick={() => { sharing = {board: {id: board.id, name: board.name}}; }}>{@render icon('upload')}Share</button>
@@ -494,7 +495,7 @@
 
 {#if imageOpen}<Modal portal title={imageMode === 'reference' ? 'Add visual inspiration' : 'Add an image to this board'} onClose={() => { if (!imageBusy) imageOpen = false; }}>
  <form class="board-form" onsubmit={submitBoardImage}>
-  <p class="muted">{imageMode === 'reference' ? 'Show the curator an example of the look you love. It guides searches and stays separate from the board pins.' : 'Save your own find straight to this board. GIFs are welcome.'}</p>
+  <p class="muted">{imageMode === 'reference' ? 'Show the curator an example of the look you love. It guides searches and stays separate from the board pins.' : session.isChild ? 'Add your own picture. It gets a quick kid-safety check first.' : 'Save your own find straight to this board. GIFs are welcome.'}</p>
   <label class="dropzone" class:dragging class:has-file={!!imageFile} ondragover={(e) => { e.preventDefault(); dragging = true; }} ondragleave={() => { dragging = false; }} ondrop={dropFile}>
    {@render icon('upload')}
    <span class="dz-title">{imageFile ? imageFile.name : 'Drop an image here or tap to choose'}</span>
@@ -506,7 +507,7 @@
   {#if imageFile}<button type="button" class="link-btn" onclick={() => pickFile(null)}>Use a link instead</button>{/if}
   {#if imageMode === 'manual'}<label>Caption<input maxlength="300" bind:value={imageTitle} placeholder="Optional image title" /></label>{/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  <div class="form-actions"><button type="button" class="btn" disabled={imageBusy} onclick={() => { imageOpen = false; }}>Cancel</button><button class="btn primary" disabled={imageBusy || (!imageUrl.trim() && !imageFile)}>{imageBusy ? 'Saving…' : imageMode === 'reference' ? 'Save inspiration' : 'Add image'}</button></div>
+  <div class="form-actions"><button type="button" class="btn" disabled={imageBusy} onclick={() => { imageOpen = false; }}>Cancel</button><button class="btn primary" disabled={imageBusy || (!imageUrl.trim() && !imageFile)}>{imageBusy ? (session.isChild && imageMode === 'manual' ? 'Checking…' : 'Saving…') : imageMode === 'reference' ? 'Save inspiration' : 'Add image'}</button></div>
  </form>
 </Modal>{/if}
 
