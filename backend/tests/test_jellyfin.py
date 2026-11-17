@@ -57,6 +57,9 @@ class FakeJellyfin:
             assert q['startItemId'] == EP1
             return httpx.Response(200, json={'Items': [{'Id': EP1, 'Type': 'Episode'},
                                                        {'Id': EP2, 'Name': 'Second', 'Type': 'Episode'}]})
+        if p == '/Items/Filters':
+            return httpx.Response(200, json={'Genres': ['Comedy', 'Action'],
+                                             'OfficialRatings': ['G', 'PG', 'FSK-6', 'PG-13', 'R', 'NR', 'de/12']})
         if p == '/Items':
             return httpx.Response(200, json={'Items': [self.movie()], 'TotalRecordCount': 1})
         if p.endswith('/PlaybackInfo'):
@@ -301,3 +304,26 @@ def test_play_on_sends_marquee_titles_to_linked_profiles_only(fake):
             assert send({'jellyfin_id': MOVIE}).status_code == 409
         finally:
             c.delete(path, headers=rx)
+
+
+def test_rating_age():
+    cases = {'G': 0, 'TV-Y7': 7, 'PG': 8, 'US-PG-13': 13, 'FSK-6': 6, 'DE-12': 12, '12A': 12, 'PEGI 7': 7,
+             'GB-U': 0, 'AU-M': 15, 'R': 17, 'NR': None, 'Unrated': None, '': None, None: None, 'XYZ': None}
+    for r, age in cases.items():
+        assert jf.rating_age(r) == age, r
+
+
+def test_age_and_genre_filters(fake):
+    with TestClient(app) as c:
+        _setup(c)
+        f = c.get('/api/jellyfin/filters', params={'parent_id': 'e' * 32, 'types': 'Movie'}).json()
+        assert f['genres'] == ['Action', 'Comedy']
+        assert f['ages'] == [3, 7, 10, 13]  # 16 adds nothing over 13
+        assert c.get('/api/jellyfin/filters', params={'parent_id': '../x'}).status_code == 422
+        r = c.get('/api/jellyfin/items', params={'parent_id': 'e' * 32, 'types': 'Movie', 'max_age': 7,
+                                                 'genre': 'Action'})
+        assert r.json()['total'] == 1
+        q = dict(fake.calls[-1].url.params)
+        assert q['officialRatings'] == 'G|FSK-6' and q['genres'] == 'Action'
+        c.get('/api/jellyfin/items', params={'parent_id': 'e' * 32})
+        assert 'officialRatings' not in dict(fake.calls[-1].url.params)

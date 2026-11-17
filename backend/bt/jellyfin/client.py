@@ -6,6 +6,7 @@ through `netfetch` (which only allows public HTTPS). Only the configured server 
 from __future__ import annotations
 
 import asyncio
+import re
 import urllib.parse as up
 from typing import Any
 
@@ -100,6 +101,34 @@ def aclient() -> httpx.AsyncClient:
                               limits=httpx.Limits(max_connections=64, max_keepalive_connections=16))
         _aclients[loop] = c
     return c
+
+
+# ---------------------------------------------------------------- age ratings
+
+# Minimum viewer age for named ratings (US film/TV, UK BBFC, AU, NL, misc). Ratings ending in a
+# number (FSK-12, DE-6, 12A, FR-16, PEGI 7) use that number; anything unknown or unrated never
+# matches an age filter, so kids only see titles with a rating we understand.
+_NAMED_AGES = {
+    'G': 0, 'TV-Y': 0, 'TV-G': 0, 'U': 0, 'UC': 0, 'E': 0, 'AL': 0, 'TP': 0, 'ALL': 0, 'APPROVED': 0,
+    'TV-Y7': 7, 'TV-Y7-FV': 7, 'PG': 8, 'TV-PG': 8, 'M': 15, 'MA': 15, 'MA15+': 15,
+    'PG-13': 13, 'TV-14': 14, 'R': 17, 'TV-MA': 17, 'NC-17': 18, 'X': 18, 'XXX': 18, 'R18+': 18,
+}
+_UNRATED = {'NR', 'UNRATED', 'NOT RATED', 'TBA', 'TBC', 'RP', 'NONE', 'NOTRATED'}
+
+
+def rating_age(rating: str | None) -> int | None:
+    """Minimum viewer age for an official rating string, or None if unknown."""
+    r = (rating or '').strip().upper().replace('_', '-')
+    if not r or r in _UNRATED:
+        return None
+    if r in _NAMED_AGES:
+        return _NAMED_AGES[r]
+    if '-' in r and r.split('-', 1)[1] in _NAMED_AGES and len(r.split('-', 1)[0]) == 2:
+        return _NAMED_AGES[r.split('-', 1)[1]]  # country prefix: US-PG, GB-U
+    m = re.search(r'(\d{1,2})\+?A?$', r)
+    if m and int(m.group(1)) <= 21:
+        return int(m.group(1))
+    return None
 
 
 # ---------------------------------------------------------------- item shape

@@ -245,18 +245,53 @@ def home(pid: int = Depends(require_jellyfin)):
 @router.get('/items')
 def items(parent_id: str | None = None, types: str = '', sort: str = 'SortName', descending: bool = False,
           start: int = 0, limit: int = 60, q: str = '', genre: str = '', unplayed: bool = False,
-          favorite: bool = False, pid: int = Depends(require_jellyfin)):
+          favorite: bool = False, max_age: int | None = None, pid: int = Depends(require_jellyfin)):
     if parent_id and not re.match(ID, parent_id):
         raise HTTPException(422, 'bad parent id')
-    kinds = [t for t in types.split(',') if t in ITEM_TYPES]
+    kinds = ','.join(t for t in types.split(',') if t in ITEM_TYPES) or None
     filters = [f for f, on in (('IsUnplayed', unplayed), ('IsFavorite', favorite)) if on]
     link = _link(pid)
-    r = _get(link, '/Items', parentId=parent_id, includeItemTypes=','.join(kinds) or None,
+    ratings = None
+    if max_age is not None:
+        # Jellyfin's own maxOfficialRating depends on the server's rating tables; matching the
+        # library's actual rating strings against our age table is predictable and excludes unrated.
+        ok = [r for r in _filters(link, parent_id, kinds).get('OfficialRatings') or []
+              if (a := jf.rating_age(r)) is not None and a <= max_age]
+        if not ok:
+            return {'items': [], 'total': 0}
+        ratings = '|'.join(ok)
+    r = _get(link, '/Items', parentId=parent_id, includeItemTypes=kinds,
              recursive=True if (kinds or q) else None, sortBy=sort if sort in SORTS else 'SortName',
              sortOrder='Descending' if descending else 'Ascending', startIndex=max(0, start),
              limit=min(max(1, limit), 200), searchTerm=q.strip()[:100] or None, genres=genre[:80] or None,
-             filters=','.join(filters) or None, fields=LIST_FIELDS, enableTotalRecordCount=True) or {}
+             officialRatings=ratings, filters=','.join(filters) or None, fields=LIST_FIELDS,
+             enableTotalRecordCount=True) or {}
     return {'items': _items(pid, r.get('Items')), 'total': r.get('TotalRecordCount', 0)}
+
+
+def _filters(link: JellyfinLink, parent_id: str | None, kinds: str | None) -> dict:
+    return _get(link, '/Items/Filters', parentId=parent_id, includeItemTypes=kinds) or {}
+
+
+AGE_STEPS = (3, 7, 10, 13, 16)
+
+
+@router.get('/filters')
+def filters(parent_id: str | None = None, types: str = '', pid: int = Depends(require_jellyfin)):
+    """Genres and age steps that actually occur in this library, for the filter bar."""
+    if parent_id and not re.match(ID, parent_id):
+        raise HTTPException(422, 'bad parent id')
+    kinds = ','.join(t for t in types.split(',') if t in ITEM_TYPES) or None
+    f = _filters(_link(pid), parent_id, kinds)
+    ages = sorted({a for r in f.get('OfficialRatings') or [] if (a := jf.rating_age(r)) is not None})
+    # Offer an age step only if it shows something and differs from the step below it.
+    steps, seen = [], -1
+    for s in AGE_STEPS:
+        n = sum(1 for a in ages if a <= s)
+        if n and n != seen:
+            steps.append(s)
+            seen = n
+    return {'genres': sorted(g for g in f.get('Genres') or [] if isinstance(g, str)), 'ages': steps}
 
 
 @router.get('/search')

@@ -42,8 +42,9 @@ export const jellyfin = {
 	unlink: () => send<Status>('DELETE', '/link'),
 	home: () => get<Home>('/home'),
 	views: () => get<Item[]>('/views'),
-	items: (o: { parent_id?: string; types?: string; sort?: string; descending?: boolean; start?: number; limit?: number; q?: string; unplayed?: boolean; favorite?: boolean }) =>
+	items: (o: { parent_id?: string; types?: string; sort?: string; descending?: boolean; start?: number; limit?: number; q?: string; unplayed?: boolean; favorite?: boolean; genre?: string; max_age?: number | null }) =>
 		get<{ items: Item[]; total: number }>(`/items?${qs(o)}`),
+	filters: (parent_id: string, types?: string) => get<{ genres: string[]; ages: number[] }>(`/filters?${qs({ parent_id, types })}`, false),
 	search: (q: string, toast = true) => get<{ items: Item[] }>(`/search?${qs({ q })}`, toast),
 	item: (id: string) => get<Item>(`/items/${id}`),
 	episodes: (seriesId: string, seasonId?: string) => get<{ items: Item[] }>(`/shows/${seriesId}/episodes?${qs({ season_id: seasonId })}`),
