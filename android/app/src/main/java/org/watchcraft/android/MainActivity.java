@@ -50,7 +50,6 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
-import android.widget.PopupMenu;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -286,44 +285,83 @@ public final class MainActivity extends ComponentActivity {
         editor.apply(); buildBottomBar(); updateLocation(server + currentPath);
     }
 
+    private static final String[][] WATCH = {
+        {"The Screen", "/", "tv"}, {"Playlists", "/settings?tab=categories", "list"}, {"The Scroll", "/shorts", "play"},
+        {"The Jukebox", "/music", "music"}, {"The Marquee", "/jellyfin", "screen"}};
     private void showTvMenu(View anchor) {
-        PopupMenu popup = new PopupMenu(this, anchor);
-        String[] titles = {"The Screen", "Playlists", "The Scroll", "The Jukebox", "The Marquee"};
-        String[] paths = {"/", "/settings?tab=categories", "/shorts", "/music", "/jellyfin"};
-        for (int i = 0; i < titles.length; i++) popup.getMenu().add(0, i, i, titles[i]);
-        popup.setOnMenuItemClickListener(item -> { navigate(paths[item.getItemId()]); return true; });
-        popup.show();
+        LinearLayout sheet = openSheet("Watch", null, null); String here = pagePath(); gap(sheet, 12);
+        for (String[] w : WATCH) {
+            boolean on = w[1].startsWith("/settings") ? currentPath.startsWith(w[1]) : Navigation.matches(w[1], here);
+            sheetRow(sheet, w[2], w[0], null, on, v -> { menu.dismiss(); navigate(w[1]); });
+        }
+        showSheet(false);
     }
 
     private void navigationSettings() {
         String[] paths = shortcutPaths();
-        String[] titles = new String[4];
-        for (int i = 0; i < 4; i++) titles[i] = "Button " + (i + 1) + ": " + Navigation.feature(paths[i]).title;
-        new AlertDialog.Builder(this).setTitle("Bottom bar shortcuts")
-                .setItems(titles, (dialog, slot) -> chooseShortcut(slot))
-                .setNeutralButton("Reset defaults", (dialog, which) -> { saveShortcuts(Navigation.DEFAULTS.clone()); navigationSettings(); })
-                .setPositiveButton("Done", null).show();
+        LinearLayout sheet = openSheet("Bottom bar", "Pick what the four buttons open. More always stays last.", null);
+        gap(sheet, 12);
+        for (int i = 0; i < 4; i++) {
+            Feature f = Navigation.feature(paths[i]); int slot = i;
+            sheetRow(sheet, f.icon, f.path.equals("/") ? "Watch" : f.title, "Button " + (i + 1), false, v -> chooseShortcut(slot));
+        }
+        gap(sheet, 16); Button reset = action("Reset defaults", false);
+        reset.setOnClickListener(v -> { saveShortcuts(Navigation.DEFAULTS.clone()); navigationSettings(); }); sheet.addView(reset);
+        showSheet(false);
     }
 
     private void chooseShortcut(int slot) {
         String[] paths = shortcutPaths();
-        Feature[] choices = Navigation.choices(); String[] names = new String[choices.length]; int selected = -1;
-        for (int i = 0; i < choices.length; i++) { names[i] = choices[i].title; if (choices[i].path.equals(paths[slot])) selected = i; }
-        new AlertDialog.Builder(this).setTitle("Choose button " + (slot + 1))
-                .setSingleChoiceItems(names, selected, (dialog, which) -> {
-                    Navigation.replace(paths, slot, choices[which].path); saveShortcuts(paths); dialog.dismiss(); navigationSettings();
-                }).setNegativeButton("Cancel", (dialog, which) -> navigationSettings()).show();
+        LinearLayout sheet = openSheet("Button " + (slot + 1), "Choose what this button opens.", this::navigationSettings);
+        featureRows(sheet, Navigation.choices(), paths[slot], f -> { Navigation.replace(paths, slot, f.path); saveShortcuts(paths); navigationSettings(); });
+        showSheet(true);
     }
 
     private String landing() { return Navigation.landing(prefs.getString("landing", "/")); }
     private void chooseLanding() {
-        Feature[] choices = Feature.ALL; String[] names = new String[choices.length]; int selected = -1; String current = landing();
-        for (int i = 0; i < choices.length; i++) { names[i] = choices[i].title; if (choices[i].path.equals(current)) selected = i; }
-        new AlertDialog.Builder(this).setTitle("Open The Hub on")
-                .setSingleChoiceItems(names, selected, (dialog, which) -> {
-                    prefs.edit().putString("landing", choices[which].path).apply(); dialog.dismiss();
-                    toast("The Hub will open on " + choices[which].title);
-                }).setNegativeButton("Cancel", null).show();
+        LinearLayout sheet = openSheet("Start page", "The Hub opens here when you launch the app.", null);
+        featureRows(sheet, Feature.ALL, landing(), f -> {
+            prefs.edit().putString("landing", f.path).apply(); menu.dismiss(); toast("The Hub will open on " + f.title);
+        });
+        showSheet(true);
+    }
+
+    private String pagePath() { String path = Uri.parse(server + currentPath).getPath(); return path == null || path.isEmpty() ? "/" : path; }
+
+    /** Bottom sheet in the app's own look; one at a time. With onBack the corner button returns there instead of closing. */
+    private LinearLayout openSheet(String title, String subtitle, Runnable onBack) {
+        if (menu != null) menu.dismiss();
+        menu = new Dialog(this); ScrollView scroll = new ScrollView(this);
+        LinearLayout sheet = column(); sheet.setBackground(round(PANEL, 28)); sheet.setPadding(dp(20), dp(24), dp(20), dp(24));
+        LinearLayout top = row(); top.setGravity(Gravity.CENTER_VERTICAL); top.addView(text(title, 24, TEXT, true), new LinearLayout.LayoutParams(0, -2, 1));
+        Button close = action(onBack == null ? "Done" : "Back", false);
+        close.setOnClickListener(v -> { menu.dismiss(); if (onBack != null) onBack.run(); }); top.addView(close); sheet.addView(top);
+        if (subtitle != null) { gap(sheet, 4); sheet.addView(text(subtitle, 14, MUTED, false)); }
+        scroll.addView(sheet); menu.setContentView(scroll);
+        return sheet;
+    }
+    private void showSheet(boolean tall) {
+        Window w = menu.getWindow(); if (w != null) { w.setBackgroundDrawableResource(android.R.color.transparent); w.setGravity(Gravity.BOTTOM); w.setDimAmount(.55f); }
+        menu.show(); if (w != null) w.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels, dp(560)), tall ? (int)(getResources().getDisplayMetrics().heightPixels * .86) : -2);
+    }
+    private void sheetRow(LinearLayout sheet, String icon, String title, String detail, boolean on, View.OnClickListener click) {
+        LinearLayout item = row(); item.setGravity(Gravity.CENTER_VERTICAL); item.setPadding(dp(12), dp(12), dp(12), dp(12));
+        item.setBackground(ripple(round(on ? 0x29ffb547 : PANEL, 12)));
+        item.addView(icon(icon, on ? AMBER : MUTED, 23), new LinearLayout.LayoutParams(dp(24), dp(24)));
+        LinearLayout labels = column(); labels.setPadding(dp(16), 0, 0, 0);
+        labels.addView(text(title, 16, on ? AMBER : TEXT, on));
+        if (detail != null) labels.addView(text(detail, 13, MUTED, false));
+        item.addView(labels, new LinearLayout.LayoutParams(0, -2, 1));
+        item.addView(icon(on ? "check" : "arrow", on ? AMBER : MUTED, 20), new LinearLayout.LayoutParams(dp(20), dp(20)));
+        item.setMinimumHeight(dp(52)); item.setContentDescription(on ? title + ", selected" : title); item.setFocusable(true);
+        item.setOnClickListener(click); sheet.addView(item);
+    }
+    private void featureRows(LinearLayout sheet, Feature[] features, String selected, java.util.function.Consumer<Feature> pick) {
+        String group = "";
+        for (Feature f : features) {
+            if (!group.equals(f.group)) { gap(sheet, 20); sheet.addView(text(f.group, 14, AMBER, true)); gap(sheet, 8); group = f.group; }
+            sheetRow(sheet, f.icon, f.title, null, f.path.equals(selected), v -> pick.accept(f));
+        }
     }
 
     private void navigate(String path) {
@@ -476,48 +514,36 @@ public final class MainActivity extends ComponentActivity {
     private void clearError() { if (errorPanel != null && content != null) content.removeView(errorPanel); errorPanel = null; }
 
     private void showMenu() {
-        if (menu != null) menu.dismiss();
-        menu = new Dialog(this); ScrollView scroll = new ScrollView(this);
-        LinearLayout sheet = column(); sheet.setBackground(round(PANEL, 28)); sheet.setPadding(dp(20), dp(24), dp(20), dp(24));
-        LinearLayout top = row(); top.setGravity(Gravity.CENTER_VERTICAL); top.addView(text("Your Hub", 24, TEXT, true), new LinearLayout.LayoutParams(0, -2, 1));
-        Button close = action("Done", false); close.setOnClickListener(v -> menu.dismiss()); top.addView(close); sheet.addView(top);
-        String group = "";
+        LinearLayout sheet = openSheet("Your Hub", null, null); String here = pagePath(), group = "";
         for (Feature f : Feature.ALL) {
             if (!f.menu) continue;
             if (!group.equals(f.group)) { gap(sheet, 20); sheet.addView(text(f.group, 14, AMBER, true)); gap(sheet, 8); group = f.group; }
-            LinearLayout item = row(); item.setGravity(Gravity.CENTER_VERTICAL); item.setPadding(dp(12), dp(12), dp(12), dp(12)); item.setBackground(ripple(round(PANEL, 12)));
-            item.addView(icon(f.icon, MUTED, 23), new LinearLayout.LayoutParams(dp(24), dp(24)));
-            TextView title = text(f.title, 16, TEXT, false); title.setPadding(dp(16), 0, 0, 0); item.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-            item.addView(icon("arrow", MUTED, 20), new LinearLayout.LayoutParams(dp(20), dp(20)));
-            item.setMinimumHeight(dp(52)); item.setContentDescription(f.title); item.setFocusable(true);
-            item.setOnClickListener(v -> { menu.dismiss(); navigate(f.path); }); sheet.addView(item);
+            sheetRow(sheet, f.icon, f.title, null, Navigation.matches(f.path, here), v -> { menu.dismiss(); navigate(f.path); });
         }
-        gap(sheet, 24); Button navigation = action("Customize bottom bar", false); navigation.setOnClickListener(v -> { menu.dismiss(); navigationSettings(); }); sheet.addView(navigation);
-        gap(sheet, 12); Button start = action("Landing page: " + Feature.titleFor(landing()), false); start.setOnClickListener(v -> { menu.dismiss(); chooseLanding(); }); sheet.addView(start);
+        gap(sheet, 24); Button navigation = action("Customize bottom bar", false); navigation.setOnClickListener(v -> navigationSettings()); sheet.addView(navigation);
+        gap(sheet, 12); Button start = action("Start page: " + Feature.titleFor(landing()), false); start.setOnClickListener(v -> chooseLanding()); sheet.addView(start);
         gap(sheet, 12); Button connection = action("Server & app", false); connection.setOnClickListener(v -> { menu.dismiss(); connectionOptions(); }); sheet.addView(connection);
-        scroll.addView(sheet); menu.setContentView(scroll);
-        Window w = menu.getWindow(); if (w != null) { w.setBackgroundDrawableResource(android.R.color.transparent); w.setGravity(Gravity.BOTTOM); w.setDimAmount(.55f); }
-        menu.show(); if (w != null) w.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels, dp(560)), (int)(getResources().getDisplayMetrics().heightPixels * .86));
+        showSheet(true);
     }
 
     private void pageOptions() {
-        String[] options = {"Search", "Share this page", "Refresh", "Open in browser", "Server & app"};
-        new AlertDialog.Builder(this).setTitle(Feature.titleFor(Uri.parse(server + currentPath).getPath())).setItems(options, (dialog, which) -> {
-            if (which == 0) search();
-            else if (which == 1) {
-                Intent share = new Intent(Intent.ACTION_SEND); share.setType("text/plain"); share.putExtra(Intent.EXTRA_TEXT, pageUrl()); startActivity(Intent.createChooser(share, "Share The Hub page"));
-            } else if (which == 2) { if (web == null) showService(null); else web.reload(); }
-            else if (which == 3) openExternal(pageUrl()); else connectionOptions();
-        }).show();
+        LinearLayout sheet = openSheet(Feature.titleFor(pagePath()), null, null); gap(sheet, 12);
+        sheetRow(sheet, "search", "Search", null, false, v -> { menu.dismiss(); search(); });
+        sheetRow(sheet, "share", "Share this page", null, false, v -> {
+            menu.dismiss(); Intent share = new Intent(Intent.ACTION_SEND); share.setType("text/plain"); share.putExtra(Intent.EXTRA_TEXT, pageUrl()); startActivity(Intent.createChooser(share, "Share The Hub page"));
+        });
+        sheetRow(sheet, "refresh", "Refresh", null, false, v -> { menu.dismiss(); if (web == null) showService(null); else web.reload(); });
+        sheetRow(sheet, "globe", "Open in browser", null, false, v -> { menu.dismiss(); openExternal(pageUrl()); });
+        sheetRow(sheet, "server", "Server & app", null, false, v -> { menu.dismiss(); connectionOptions(); });
+        showSheet(false);
     }
 
     private String pageUrl() { String url = web == null ? null : web.getUrl(); return ServerAddress.sameOrigin(server, url) ? url : server + "/"; }
     private void connectionOptions() {
-        new AlertDialog.Builder(this).setTitle("Server & app")
-                .setMessage("Connected to " + server + "\n\nThe Hub " + BuildConfig.VERSION_NAME + "\nYour profile and settings belong to this server.")
-                .setPositiveButton("Change server", (d, w) -> showSetup())
-                .setNeutralButton("Updates", (d, w) -> openExternal("https://github.com/icewall905/watchcraft/releases"))
-                .setNegativeButton("Close", null).show();
+        LinearLayout sheet = openSheet("Server & app", null, null); gap(sheet, 12);
+        sheetRow(sheet, "server", "Change server", "Connected to " + server.replaceFirst("^https?://", "") + ". Your profile and settings belong to this server.", false, v -> { menu.dismiss(); showSetup(); });
+        sheetRow(sheet, "refresh", "Updates", "The Hub " + BuildConfig.VERSION_NAME, false, v -> { menu.dismiss(); openExternal("https://github.com/icewall905/watchcraft/releases"); });
+        showSheet(false);
     }
 
     private void search() {
