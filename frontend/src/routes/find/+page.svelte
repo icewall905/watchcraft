@@ -10,6 +10,7 @@
 	import type { Curator, Item, Registry, SavedSearch, SearchResult, Source, Topic, WebResult } from '$lib/hub/types';
 	import ContentCard from '$lib/hub/ContentCard.svelte';
 	import VoiceSearch from '$lib/components/VoiceSearch.svelte';
+	import { img as jfImg, jellyfin, openHref, subtitleLine, type Item as JfItem } from '$lib/jellyfin/api';
 
 	let q = $state('');
 	let type = $state('');
@@ -34,6 +35,10 @@
 	let days = $state('');
 	let minScore = $state('');
 	let ctl: AbortController | null = null;
+	// The Marquee (Jellyfin): searched alongside, only for linked profiles, silently skipped when unavailable.
+	let marqueeOn = $state(false);
+	let marquee = $state<JfItem[]>([]);
+	let marqueeSeq = 0;
 
 	let picked = $state<Record<string, boolean>>({});
 	let web = $state<{ results: WebResult[]; errors: { provider: string; message: string }[]; q: string } | null>(null);
@@ -76,6 +81,7 @@
 		hub.sources().then((r) => (sources = r)).catch(() => {});
 		hub.topics().then((r) => (topics = r)).catch(() => {});
 		loadSaved();
+		jellyfin.status().then((st) => (marqueeOn = st.configured && st.allowed && st.linked)).catch(() => {});
 		ready = true;
 	});
 
@@ -96,7 +102,12 @@
 		for (const [k, v] of [['q', term], ['type', t], ['scope', sc === 'all' ? '' : sc], ['curator', curatorFilter], ['source', src], ['topic', top], ['tags', tg], ['state', st === 'any' ? '' : st], ['sort', order === 'relevance' ? '' : order], ['days', age], ['min_score', score]]) { if (v) u.searchParams.set(k, v); else u.searchParams.delete(k); }
 		if (u.search !== page.url.search) goto(u, { replaceState: true, keepFocus: true, noScroll: true });
 		ctl?.abort();
-		if (!term) { res = null; loading = false; error = ''; return; }
+		const mseq = ++marqueeSeq;
+		if (!term) { res = null; loading = false; error = ''; marquee = []; return; }
+		const marqueeTimer = marqueeOn && !t && sc === 'all' ? setTimeout(() => {
+			jellyfin.search(term, false).then((r) => { if (mseq === marqueeSeq) marquee = r.items.slice(0, 12); })
+				.catch(() => { if (mseq === marqueeSeq) marquee = []; });
+		}, 300) : (marquee = [], undefined);
 		const timer = setTimeout(async () => {
 			const c = (ctl = new AbortController());
 			loading = true; error = '';
@@ -109,10 +120,10 @@
 				error = errMsg(e);
 			} finally { if (!c.signal.aborted) loading = false; }
 		}, 300);
-		return () => clearTimeout(timer);
+		return () => { clearTimeout(timer); clearTimeout(marqueeTimer); };
 	});
 
-	const empty = $derived(!!res && !res.items.length && !res.videos.length && !res.curators.length && !res.collections.length && !res.topics.length);
+	const empty = $derived(!!res && !marquee.length && !res.items.length && !res.videos.length && !res.curators.length && !res.collections.length && !res.topics.length);
 
 	async function runWeb() {
 		const term = q.trim();
@@ -264,6 +275,14 @@
 				</div>
 			{:else if res}
 				<div class="results" class:busy={loading} aria-busy={loading}>
+					{#if marquee.length}
+						<section aria-label="The Marquee"><h2>The Marquee</h2>
+							<div class="vids">{#each marquee as m (m.id)}
+								<a class="vid" href={openHref(m)} use:focusable>
+									{#if m.thumb || m.image}<img class:poster={!m.thumb} src={jfImg(m.thumb ?? m.image, 360)} alt="" loading="lazy" />{/if}
+									<span class="vt">{m.type === 'Episode' ? `${m.series_name ?? ''} · ${m.name}` : m.name}</span><span class="faint small">{subtitleLine(m)}</span>
+								</a>{/each}</div></section>
+					{/if}
 					{#if res.items.length}
 						<section><h2>Content items <span class="faint small">{res.total}</span></h2>
 							<div class="stack">{#each res.items as _, i (res.items[i].id)}<ContentCard bind:item={res.items[i]} layout="row" />{/each}</div></section>
@@ -363,6 +382,7 @@
 	.vids { display: grid; grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); gap: .8rem; }
 	.vid { display: grid; gap: .25rem; min-height: 2.75rem; }
 	.vid img { width: 100%; aspect-ratio: 16/9; object-fit: cover; border-radius: var(--r-md); background: var(--bg-2); }
+	.vid img.poster { object-position: center 20%; }
 	.vt { font-weight: 650; font-size: .9rem; line-height: 1.25; }
 	.box { border: 1px solid var(--line); background: var(--paper-raised); border-radius: var(--r-lg); padding: 1rem 1.1rem; display: grid; gap: .7rem; }
 	aside { display: grid; gap: 1rem; }

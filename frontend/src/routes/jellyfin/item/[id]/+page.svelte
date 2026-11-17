@@ -5,6 +5,7 @@
 	import Row from '$lib/components/Row.svelte';
 	import Card from '$lib/jellyfin/Card.svelte';
 	import { fmtRuntime, fmtTime, img, jellyfin, subtitleLine, type Item } from '$lib/jellyfin/api';
+	import { playback } from '$lib/stores/playback.svelte';
 
 	const id = $derived(page.params.id ?? '');
 	let it = $state<Item | null>(null);
@@ -38,6 +39,8 @@
 	const resumeAt = $derived(playTarget && playTarget.progress > 0 && !playTarget.played ? playTarget.position_s : 0);
 
 	function play(target: Item, fromStart = false) {
+		// With a screen chosen in Play on, playing sends there, like tapping a video elsewhere.
+		if (playback.selectedId) return void playback.castJellyfin(target.id, fromStart ? 0 : undefined);
 		goto(`/jellyfin/play/${target.id}${fromStart ? '?start=0' : ''}`);
 	}
 	async function toggleWatched() {
@@ -52,7 +55,7 @@
 	}
 </script>
 
-<svelte:head><title>{it?.name ?? 'Jellyfin'} · The Cinema</title></svelte:head>
+<svelte:head><title>{it?.name ?? 'Jellyfin'} · The Marquee</title></svelte:head>
 
 <div class="page detail">
 	{#if failed}
@@ -76,6 +79,9 @@
 							▶ {resumeAt ? `Resume from ${fmtTime(resumeAt)}` : it.type === 'Series' && playTarget.episode != null ? `Play S${playTarget.season}E${playTarget.episode}` : 'Play'}
 						</button>
 						{#if resumeAt}<button class="btn" use:focusable={{ group: 'd-acts', onSelect: () => play(playTarget, true) }}>Start over</button>{/if}
+						<button class="btn" use:focusable={{ group: 'd-acts', onSelect: () => { if (playTarget) void playback.castJellyfin(playTarget.id); } }}>
+							📺 {playback.selected ? `Play on ${playback.selected.name}` : 'Play on…'}
+						</button>
 					{/if}
 					<button class="btn" use:focusable={{ group: 'd-acts', onSelect: toggleWatched }}>{it.played ? '✓ Watched' : 'Mark watched'}</button>
 					<button class="btn" aria-pressed={it.favorite} use:focusable={{ group: 'd-acts', onSelect: toggleFav }}>{it.favorite ? '❤️' : '🤍'} Favourite</button>

@@ -6,8 +6,15 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import { loadShakaHls } from '$lib/player/shaka';
 	import { QUALITIES, deviceCaps, fmtTime, jellyfin, type Play, type Playing } from '$lib/jellyfin/api';
+	import { playback } from '$lib/stores/playback.svelte';
 
 	const id = $derived(page.params.id ?? '');
+
+	/** Hand this title to another screen at the current position; this one pauses. */
+	function playOn() {
+		video?.pause();
+		void playback.castJellyfin(id, current);
+	}
 
 	let video = $state<HTMLVideoElement | null>(null);
 	let shakaPlayer: any = null; // shaka.Player for HLS; direct play uses video.src
@@ -243,7 +250,7 @@
 	const methodLabel = (m?: string | null) => (m === 'DirectPlay' ? 'Direct play' : m === 'DirectStream' ? 'Direct stream (remux)' : m === 'Transcode' ? 'Transcoding' : m ?? '…');
 </script>
 
-<svelte:head><title>{info?.item.name ?? 'Playing'} · The Cinema</title></svelte:head>
+<svelte:head><title>{info?.item.name ?? 'Playing'} · The Marquee</title></svelte:head>
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="player" class:hide={!controls && !menu && !paused} onpointermove={poke}>
@@ -310,6 +317,7 @@
 			{/if}
 			<button class="btn icon round" aria-label="Quality" use:focusable={{ group: 'jf-btns', scroll: 'none', onSelect: () => (menu = 'quality') }}><Icon name="quality" /></button>
 			<button class="btn icon round" aria-label="Playback info" use:focusable={{ group: 'jf-btns', scroll: 'none', onSelect: () => (menu = 'info') }}><Icon name="info" /></button>
+			<button class="btn" use:focusable={{ group: 'jf-btns', scroll: 'none', onSelect: playOn }}>Play on…</button>
 		</div>
 	</div>
 

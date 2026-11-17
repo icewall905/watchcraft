@@ -120,7 +120,7 @@
 	{#if !session.profile?.pin_locked}
 		{#if !fullscreen}<Sidebar /><MobileNav />{/if}
 		<div class:desktop={!fullscreen && deviceMode.mode === 'desktop'}>
-		{#if !fullscreen}<TopBar />{:else if page.url.pathname.startsWith('/watch/')}<PlaybackPicker floating />{/if}
+		{#if !fullscreen}<TopBar />{:else if page.url.pathname.startsWith('/watch/')}<PlaybackPicker floating />{:else if page.url.pathname.startsWith('/jellyfin/play/')}<PlaybackPicker trigger={false} />{/if}
 		<main class:fullscreen data-area={hubArea ? 'hub' : undefined}>
 			{#if !session.canOpen(page.url.pathname) && isHubPath(page.url.pathname)}
 				{#if session.isChild}

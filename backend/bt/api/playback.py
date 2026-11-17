@@ -15,6 +15,7 @@ from ..models import Category, PlaybackTarget, Profile
 from .core import profile_id
 
 router = APIRouter(prefix="/playback")
+JELLYFIN_ID = r"^[0-9a-fA-F-]{32,36}$"
 ONLINE_SECONDS = 20
 COMMAND_SECONDS = 30
 MAX_TARGETS = 10
@@ -36,6 +37,7 @@ class PairCode(BaseModel):
 class Heartbeat(BaseModel):
     ack: str = ""
     video_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{11}$")
+    jellyfin_id: str | None = Field(default=None, pattern=JELLYFIN_ID)
     paused: bool = True
     position_s: float = Field(default=0, ge=0, le=864000, allow_inf_nan=False)
     error: str = Field(default="", max_length=200)
@@ -45,6 +47,8 @@ class Heartbeat(BaseModel):
 class Command(BaseModel):
     action: str = Field(pattern=r"^(play|pause|resume|stop|seek)$")
     video_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9_-]{11}$")
+    # A title in The Marquee (Jellyfin): the screen opens /jellyfin/play/{id} as the sending profile.
+    jellyfin_id: str | None = Field(default=None, pattern=JELLYFIN_ID)
     category_id: int | None = None
     position_s: float | None = Field(default=None, ge=0, le=864000, allow_inf_nan=False)
 
@@ -72,6 +76,17 @@ def _public(target, pid: int, admin: bool = False):
     if admin:
         info["paired_profiles"] = _pair(target)["profiles"]
     return info
+
+
+def _require_jellyfin(s, pid: int):
+    """The screen plays as the sending profile, so that profile needs The Marquee and a Jellyfin link."""
+    from ..jellyfin.api import _allowed
+    from ..jellyfin.models import JellyfinLink
+    if not _allowed(pid):
+        raise HTTPException(409, "The Marquee is unavailable for this profile.")  # 403 means "pair first" to senders
+    link = s.get(JellyfinLink, pid)
+    if not link or not link.token:
+        raise HTTPException(409, "Link this profile to Jellyfin in Settings before sending titles from The Marquee.")
 
 
 def _receiver(s, target_id, token):
@@ -168,8 +183,12 @@ def send_command(target_id: str, body: Command, pid: int = Depends(profile_id),
         raise HTTPException(409, "This screen is offline. Open BetterTube on it first.")
     if body.action == "seek" and body.position_s is None:
         raise HTTPException(422, "Choose a position to seek to")
-    if body.action == "play" and not body.video_id:
+    if body.action == "play" and not (body.video_id or body.jellyfin_id):
         raise HTTPException(422, "Choose a video to play")
+    if body.video_id and body.jellyfin_id:
+        raise HTTPException(422, "Send one video at a time")
+    if body.jellyfin_id:
+        _require_jellyfin(s, pid)
     if body.category_id is not None:
         category = s.get(Category, body.category_id)
         if not category or category.profile_id != pid:

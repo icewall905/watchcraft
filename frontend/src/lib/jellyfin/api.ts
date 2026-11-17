@@ -14,7 +14,7 @@ export type Item = {
 };
 export type Status = { configured: boolean; allowed: boolean; linked: boolean; user_name: string; is_admin: boolean; server_name: string; version: string };
 export type Home = { resume: Item[]; next_up: Item[]; views: Item[]; latest: { view: Item; items: Item[] }[] };
-export type Caps = { hevc: boolean; av1: boolean; vp9: boolean; ac3: boolean; surround: boolean; max_height: number };
+export type Caps = { hevc: boolean; av1: boolean; vp9: boolean; ac3: boolean; surround: boolean; hdr: boolean; max_height: number };
 export type PlayIn = { caps: Caps; max_bitrate?: number; start_s?: number; audio_index?: number | null; subtitle_index?: number | null; force_transcode?: boolean };
 export type Play = {
 	session: string; method: 'DirectPlay' | 'DirectStream' | 'Transcode'; kind: 'file' | 'hls'; url: string; start_s: number; duration_s: number;
@@ -44,7 +44,7 @@ export const jellyfin = {
 	views: () => get<Item[]>('/views'),
 	items: (o: { parent_id?: string; types?: string; sort?: string; descending?: boolean; start?: number; limit?: number; q?: string; unplayed?: boolean; favorite?: boolean }) =>
 		get<{ items: Item[]; total: number }>(`/items?${qs(o)}`),
-	search: (q: string) => get<{ items: Item[] }>(`/search?${qs({ q })}`),
+	search: (q: string, toast = true) => get<{ items: Item[] }>(`/search?${qs({ q })}`, toast),
 	item: (id: string) => get<Item>(`/items/${id}`),
 	episodes: (seriesId: string, seasonId?: string) => get<{ items: Item[] }>(`/shows/${seriesId}/episodes?${qs({ season_id: seasonId })}`),
 	played: (id: string, on: boolean) => send<{ ok: boolean }>('POST', `/items/${id}/played`, { on }),
@@ -95,6 +95,8 @@ export function deviceCaps(): Caps {
 		vp9: can('video/webm; codecs="vp9"'),
 		ac3: can('audio/mp4; codecs="ac-3"') || can('audio/mp4; codecs="ec-3"'),
 		surround: false,
+		// HDR sources stay HDR only on HDR screens; elsewhere Jellyfin tonemaps them to SDR while transcoding.
+		hdr: typeof matchMedia === 'function' && matchMedia('(dynamic-range: high)').matches,
 		max_height: Math.round(Math.max(screen.height, screen.width * 9 / 16) * (window.devicePixelRatio || 1)) >= 1440 ? 2160 : 1080
 	};
 }
@@ -106,3 +108,6 @@ export const QUALITIES: { label: string; bitrate: number; force: boolean }[] = [
 	{ label: '4 Mbps', bitrate: 4_000_000, force: true },
 	{ label: '1.5 Mbps', bitrate: 1_500_000, force: true }
 ];
+
+/** Where a search hit opens: playable titles start playing (resuming), everything else shows its page. */
+export const openHref = (it: Item) => (it.playable ? `/jellyfin/play/${it.id}` : `/jellyfin/item/${it.id}`);

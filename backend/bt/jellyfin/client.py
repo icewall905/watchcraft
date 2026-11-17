@@ -14,7 +14,7 @@ from fastapi import HTTPException
 
 from ..db import get_kv, save_setting
 
-CLIENT = 'WatchCraft'
+CLIENT = 'The Hub'  # shown in Jellyfin's dashboard (Devices, Activity)
 VERSION = '1.0.0'
 TICKS = 10_000_000  # Jellyfin positions are 100 ns ticks
 CONFIG_KEY = 'jellyfin'
@@ -50,7 +50,7 @@ def normalize_url(raw: str) -> str:
 
 
 def auth_header(device_id: str, token: str = '') -> str:
-    parts = [f'Client="{CLIENT}"', 'Device="WatchCraft"', f'DeviceId="{device_id}"', f'Version="{VERSION}"']
+    parts = [f'Client="{CLIENT}"', f'Device="{CLIENT}"', f'DeviceId="{device_id}"', f'Version="{VERSION}"']
     if token:
         parts.append(f'Token="{token}"')
     return 'MediaBrowser ' + ', '.join(parts)
@@ -181,6 +181,9 @@ def subtitle_tracks(streams: list[dict]) -> list[dict]:
 
 # ---------------------------------------------------------------- device profile
 
+SDR_RANGES = 'SDR|DOVIWithSDR'
+HDR_RANGES = 'SDR|DOVIWithSDR|HDR10|HDR10Plus|HLG|DOVIWithHDR10|DOVIWithHDR10Plus|DOVIWithHLG'
+
 def device_profile(caps: dict) -> dict:
     """What the browser can play. Direct play when it can; otherwise Jellyfin transcodes to HLS,
     using the server's hardware encoder when one is configured in Jellyfin."""
@@ -188,8 +191,12 @@ def device_profile(caps: dict) -> dict:
     audio = 'aac,mp3,opus,flac' + (',ac3,eac3' if caps.get('ac3') else '')
     max_h = caps.get('max_height') or 0
     conditions = [{'Condition': 'LessThanEqual', 'Property': 'Height', 'Value': str(max_h), 'IsRequired': False}] if max_h else []
+    # Without a range condition Jellyfin remuxes HDR10/HLG/Dolby Vision as-is and an SDR screen shows it washed out.
+    # Declaring SDR-only makes it transcode instead, tonemapping on the server's GPU (tonemap_cuda / VPP / OpenCL).
+    ranges = conditions + [{'Condition': 'EqualsAny', 'Property': 'VideoRangeType', 'IsRequired': False,
+                            'Value': HDR_RANGES if caps.get('hdr') else SDR_RANGES}]
     return {
-        'Name': 'WatchCraft',
+        'Name': CLIENT,
         'MaxStreamingBitrate': caps['max_bitrate'],
         'MaxStaticBitrate': caps['max_bitrate'],
         'MusicStreamingTranscodingBitrate': 384000,
@@ -209,10 +216,13 @@ def device_profile(caps: dict) -> dict:
         # Browsers decode 8-bit H.264 and HEVC Main/Main 10 only; anything else (4:4:4, 10-bit H.264) is transcoded.
         'CodecProfiles': [
             {'Type': 'Video', 'Codec': 'h264', 'Conditions': conditions + [
+                {'Condition': 'EqualsAny', 'Property': 'VideoRangeType', 'Value': SDR_RANGES, 'IsRequired': False},
                 {'Condition': 'EqualsAny', 'Property': 'VideoProfile', 'Value': 'high|main|baseline|constrained baseline', 'IsRequired': False},
                 {'Condition': 'LessThanEqual', 'Property': 'VideoBitDepth', 'Value': '8', 'IsRequired': False}]},
-            {'Type': 'Video', 'Codec': 'hevc', 'Conditions': conditions + [
+            {'Type': 'Video', 'Codec': 'hevc', 'Conditions': ranges + [
                 {'Condition': 'EqualsAny', 'Property': 'VideoProfile', 'Value': 'main|main 10', 'IsRequired': False}]},
+            {'Type': 'Video', 'Codec': 'av1', 'Conditions': ranges},
+            {'Type': 'Video', 'Codec': 'vp9', 'Conditions': ranges},
         ],
         'SubtitleProfiles': [
             {'Format': 'vtt', 'Method': 'External'},

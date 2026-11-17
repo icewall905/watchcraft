@@ -244,3 +244,60 @@ def test_config_requires_admin_and_rejects_bad_urls(fake):
         assert c.put('/api/jellyfin/config', json={'url': 'ftp://x'}).status_code == 422
         assert c.put('/api/jellyfin/config', json={'url': 'http://u:p@x'}).status_code == 422
         assert c.post('/api/jellyfin/progress', json={'session': 'x' * 20}).status_code == 403
+
+
+def test_device_profile_keeps_hdr_off_sdr_screens(fake):
+    """HDR sources must transcode (and tonemap on the server's GPU) unless the screen shows HDR."""
+    def ranges(profile, codec):
+        cp = next(x for x in profile['CodecProfiles'] if x['Codec'] == codec)
+        return next(c['Value'] for c in cp['Conditions'] if c['Property'] == 'VideoRangeType').split('|')
+    sdr = jf.device_profile({'max_bitrate': 8_000_000, 'hevc': True})
+    hdr = jf.device_profile({'max_bitrate': 8_000_000, 'hevc': True, 'hdr': True})
+    assert 'HDR10' not in ranges(sdr, 'hevc') and 'SDR' in ranges(sdr, 'hevc')
+    assert 'HDR10' in ranges(hdr, 'hevc') and 'DOVI' not in ranges(hdr, 'hevc')
+    assert ranges(hdr, 'h264') == ['SDR', 'DOVIWithSDR']  # 8-bit H.264 output is always SDR
+    assert sdr['TranscodingProfiles'][0]['VideoCodec'] == 'hevc,h264'
+    with TestClient(app) as c:
+        _setup(c)
+        c.post(f'/api/jellyfin/items/{MOVIE}/play', json={'caps': {'hevc': True, 'hdr': True}})
+        info = next(x for x in fake.calls if x.url.path.endswith('/PlaybackInfo'))
+        assert 'HDR10' in ranges(json.loads(info.content)['DeviceProfile'], 'hevc')
+
+
+def test_search_feeds_find(fake):
+    with TestClient(app) as c:
+        assert c.get('/api/jellyfin/search', params={'q': 'film'}).status_code == 409  # unset: Find skips it
+        _setup(c)
+        assert c.get('/api/jellyfin/search', params={'q': ' '}).json() == {'items': []}
+        r = c.get('/api/jellyfin/search', params={'q': 'film'})
+        assert r.status_code == 200 and TOKEN not in r.text
+        hit = r.json()['items'][0]
+        assert hit['id'] == MOVIE and hit['playable'] and hit['image'].startswith('/api/jellyfin/img/')
+        sent = up.parse_qs(fake.calls[-1].url.query.decode())
+        assert sent['searchTerm'] == ['film'] and sent['recursive'] == ['true']
+
+
+def test_play_on_sends_marquee_titles_to_linked_profiles_only(fake):
+    with TestClient(app) as c:
+        r = c.post('/api/playback/targets', json={'name': 'Den TV'}).json()
+        path = f'/api/playback/targets/{r["id"]}'
+        rx = {'X-Receiver-Token': r['token']}
+        try:
+            assert c.post(path + '/pair', json={'code': r['pair_code']}).status_code == 200
+            send = lambda body: c.post(path + '/commands', json={'action': 'play', **body})  # noqa: E731
+            assert send({'jellyfin_id': '../../x'}).status_code == 422
+            assert send({'jellyfin_id': MOVIE}).status_code == 409  # not linked to Jellyfin yet
+            _setup(c)
+            assert send({'jellyfin_id': MOVIE, 'video_id': 'abcdefghijk'}).status_code == 422
+            sent = send({'jellyfin_id': MOVIE, 'position_s': 42})
+            assert sent.status_code == 200
+            cmd = c.post(path + '/heartbeat', json={}, headers=rx).json()['command']
+            assert cmd['jellyfin_id'] == MOVIE and cmd['video_id'] is None and cmd['position_s'] == 42
+            beat = {'ack': cmd['id'], 'jellyfin_id': MOVIE, 'paused': False, 'position_s': 50, 'duration_s': 7200}
+            assert c.post(path + '/heartbeat', json=beat, headers=rx).json()['command'] is None
+            state = next(t for t in c.get('/api/playback/targets').json() if t['id'] == r['id'])['state']
+            assert state['jellyfin_id'] == MOVIE and state['position_s'] == 50
+            c.delete('/api/jellyfin/link')
+            assert send({'jellyfin_id': MOVIE}).status_code == 409
+        finally:
+            c.delete(path, headers=rx)

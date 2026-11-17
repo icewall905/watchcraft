@@ -2,7 +2,9 @@
 	import { playback } from '$lib/stores/playback.svelte';
 	import { focusable } from '$lib/nav';
 	import Modal from './Modal.svelte';
-	let { floating = false }: { floating?: boolean } = $props();
+	// trigger=false renders only the dialog, for full-screen players that open it from their own controls.
+	let { floating = false, trigger = true }: { floating?: boolean; trigger?: boolean } = $props();
+	function closePicker() { playback.open = false; playback.pendingJellyfin = null; }
 	let name = $state('Media center');
 	let code = $state('');
 	let working = $state(false);
@@ -26,7 +28,7 @@
 	let scrub = $state<number | null>(null);
 	let scrubTimer: ReturnType<typeof setTimeout> | undefined;
 	const remote = $derived(playback.selected?.state);
-	const duration = $derived(remote?.video_id && remote.duration_s ? remote.duration_s : 0);
+	const duration = $derived((remote?.video_id || remote?.jellyfin_id) && remote.duration_s ? remote.duration_s : 0);
 	const position = $derived(scrub ?? Math.min(remote?.position_s ?? 0, duration));
 	const controllable = $derived(!!playback.selected?.online && !playback.needsPair);
 	const clock = (s: number) => {
@@ -47,14 +49,16 @@
 	}
 </script>
 
+{#if trigger}
 <button class="btn cast" class:floating class:active={!!playback.selectedId} aria-label="Play on" title="Choose a playback screen"
 	use:focusable={{ group: 'topbar', id: 'play-on', onSelect: () => (playback.open = true) }}>
 	<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 8V4h18v16h-9M3 20h.01M3 15a5 5 0 0 1 5 5M3 10a10 10 0 0 1 10 10" /></svg>
 	<span>{playback.selected?.name ?? 'Play on'}</span>
 </button>
+{/if}
 
 {#if playback.open}
-	<Modal title="Play on" subtitle="Choose where videos play when you tap them." onClose={() => (playback.open = false)} size="sm">
+	<Modal title="Play on" subtitle={playback.pendingJellyfin ? 'Choose the screen for this title from The Marquee.' : 'Choose where videos play when you tap them.'} onClose={closePicker} size="sm">
 		<div class="choices">
 			<button class="btn" class:primary={!playback.selectedId} disabled={working} use:focusable={{ group: 'cast', autofocus: true, onSelect: () => { playback.select(null); playback.open = false; } }}>This device</button>
 			{#each playback.targets.filter(t => t.id !== playback.receiver?.id) as target (target.id)}
@@ -116,7 +120,7 @@
 			{#if playback.error}<p role="status">{playback.error}</p>{/if}
 			<p class="muted small">If the browser asks, allow sound and autoplay for The Hub. Household profiles that entered this screen's pairing code can send videos to it.</p>
 		</section>
-		<button class="btn" use:focusable={{ group: 'cast', onSelect: () => (playback.open = false) }}>Done</button>
+		<button class="btn" use:focusable={{ group: 'cast', onSelect: closePicker }}>Done</button>
 	</Modal>
 {/if}
 

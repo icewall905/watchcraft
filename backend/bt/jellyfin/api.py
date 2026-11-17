@@ -325,6 +325,7 @@ class Caps(BaseModel):
     vp9: bool = False
     ac3: bool = False
     surround: bool = False
+    hdr: bool = False
     max_height: int = Field(0, ge=0, le=4320)
 
 
