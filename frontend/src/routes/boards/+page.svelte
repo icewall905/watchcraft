@@ -529,9 +529,9 @@
   </div>
   <ol class="steps">
    <li><strong>Download the extension</strong>
-    <p><a class="btn primary pill" href="/extensions/watchcraft-{extBrowser}.zip" download>{@render icon('upload')}Download for {extBrowser === 'firefox' ? 'Firefox' : 'Chrome'}</a></p></li>
+    <p><a class="btn primary pill" href="/extensions/the-hub-{extBrowser}.zip" download>{@render icon('upload')}Download for {extBrowser === 'firefox' ? 'Firefox' : 'Chrome'}</a></p></li>
    {#if extBrowser === 'chrome'}
-    <li><strong>Unzip it</strong><p class="muted">Extract the zip into a folder you will keep, for example <code>Documents/watchcraft-extension</code>. Chrome loads it from there.</p></li>
+    <li><strong>Unzip it</strong><p class="muted">Extract the zip into a folder you will keep, for example <code>Documents/the-hub-extension</code>. Chrome loads it from there.</p></li>
     <li><strong>Load it in Chrome</strong><p class="muted">Open <code>chrome://extensions</code>, switch on <em>Developer mode</em> (top right), click <em>Load unpacked</em> and choose the folder. In Edge use <code>edge://extensions</code>, in Brave <code>brave://extensions</code>.</p></li>
    {:else}
     <li><strong>Install it in Firefox</strong>

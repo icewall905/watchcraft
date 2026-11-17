@@ -2,7 +2,7 @@
 
     backend/.venv/bin/python extension/build.py
 
-Writes frontend/static/extensions/watchcraft-chrome.zip and watchcraft-firefox.zip (served by the app at
+Writes frontend/static/extensions/the-hub-chrome.zip and the-hub-firefox.zip (served by the app at
 /extensions/…). Both share src/; only the manifest differs (Chrome: service worker, Firefox: event page + id).
 """
 import io
@@ -50,7 +50,7 @@ def icon(size):
 
 def build(name, manifest):
     OUT.mkdir(parents=True, exist_ok=True)
-    path = OUT / f'watchcraft-{name}.zip'
+    path = OUT / f'the-hub-{name}.zip'
     with zipfile.ZipFile(path, 'w', zipfile.ZIP_DEFLATED) as z:
         def add(arc, data):
             info = zipfile.ZipInfo(arc, date_time=(2026, 1, 1, 0, 0, 0))  # reproducible zips

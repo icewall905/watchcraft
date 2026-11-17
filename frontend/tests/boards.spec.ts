@@ -298,17 +298,17 @@ test('browser extension: download links, install steps and a connection key',asy
  await page.getByRole('button',{name:'Browser extension'}).click();
  await expect(page.getByRole('dialog')).toContainText('New board…');await expect(page.getByRole('dialog')).toContainText('Updating:');
  const dialog=page.getByRole('dialog',{name:'Add images from any website'});
- await expect(dialog.getByRole('link',{name:'Download for Chrome'})).toHaveAttribute('href','/extensions/watchcraft-chrome.zip');
+ await expect(dialog.getByRole('link',{name:'Download for Chrome'})).toHaveAttribute('href','/extensions/the-hub-chrome.zip');
  await expect(dialog).toContainText('Load unpacked');
  await dialog.getByRole('tab',{name:'Firefox'}).click();
- await expect(dialog.getByRole('link',{name:'Download for Firefox'})).toHaveAttribute('href','/extensions/watchcraft-firefox.zip');
+ await expect(dialog.getByRole('link',{name:'Download for Firefox'})).toHaveAttribute('href','/extensions/the-hub-firefox.zip');
  await expect(dialog).toContainText('Load Temporary Add-on');
  await dialog.getByRole('button',{name:'Create connection key'}).click();
  await expect(dialog.getByText('wcx_secretkeyw9Zk')).toBeVisible();
  await expect(dialog.getByRole('region',{name:'Connected browsers'})).toContainText('…w9Zk');
  await dialog.getByRole('button',{name:'Revoke'}).click();
  await expect(dialog.getByRole('region',{name:'Connected browsers'})).toHaveCount(0);
- const zip=await page.request.get('/extensions/watchcraft-firefox.zip');expect(zip.status()).toBe(200);expect((await zip.body()).subarray(0,2).toString()).toBe('PK');
+ const zip=await page.request.get('/extensions/the-hub-firefox.zip');expect(zip.status()).toBe(200);expect((await zip.body()).subarray(0,2).toString()).toBe('PK');
 });
 
 test('desktop mode: Backspace edits text and never closes a dialog; Escape still does',async({page})=>{
