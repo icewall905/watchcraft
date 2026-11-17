@@ -19,6 +19,18 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — curator refills lists pinned "full" by old failures (`de3f9a0`, 2026-11-17)
+
+- B-082: the curator idled with "All queues are full" while profile H lists held far fewer playable videos than
+  their target (Liked Videos 78/200, Old Watch Later 78/200, Old watch-later-list 51/100, Black hat hacker fun
+  118/150). Late-October evictions (never re-queued) and failed captions counted against the target+headroom refill
+  ceiling forever. Failures accepted over 7 days ago (`FAILURE_SETTLE`) no longer hold a ceiling slot; recent ones
+  still do. Read-only dry run on prod: deficits 0 -> 122/122/49/32 (+4 on Liked). No schema or `android/` change.
+- Backup `/root/compose/watchcraft-backups/20261117-curator-de3f9a0` (online DB quick_check ok, config hashes,
+  previous source, `rollback.sh` -> `watchcraft:rollback-20261117-curator-*`). rsync (checksum) of the 3 changed
+  non-`android/` files of `24869ac..de3f9a0`. Pruned `20261117-parental-9405dcb` and its rollback tags.
+- All four `wc-*` run `sha256:ec48550f…`, zero restarts; health 200; curator started and working.
+
 ## Deployment record — Play on for Marquee titles across accounts (`24869ac`, 2026-11-17)
 
 - Screens signed in to another account (the shared `tv` account on "Media center") failed Marquee casts with
