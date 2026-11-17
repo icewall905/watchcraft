@@ -363,7 +363,7 @@ export interface Settings {
 	appearance: { theme: string };
 	memory: { enabled: boolean; time: string; timezone: string; max_core_tokens: number };
 	stt: { base_url: string; model: string; api_key: string; language: string; subtitles_enabled: boolean };
-	player: { max_height: number; prefer_codec: string; autoplay_next: boolean; default_speed: number; captions_lang: string };
+	player: { max_height: number; prefer_codec: string; autoplay_next: boolean; autoplay_delay_s: number; preview_autoplay: boolean; preview_limit_s: number; default_speed: number; captions_lang: string };
 	sponsorblock: { enabled: boolean; categories: Record<string, SbAction>; min_segment_s: number };
 	extras: { dearrow: boolean; dearrow_thumbnails: boolean; ryd: boolean; hide_shorts: boolean };
 	cache: { enabled: boolean; auto: 'accepted' | 'manual'; max_gb: number; max_height: number; rate_limit: number; min_gap_s: number; hw_transcode: boolean };

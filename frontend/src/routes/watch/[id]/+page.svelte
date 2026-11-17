@@ -548,9 +548,12 @@
 		controls = true;
 		menu = null;
 		info = false;
-		if (session.settings?.player.autoplay_next && upNext.length) {
-			countdown = 10;
-			// Autoplay is ~10s away: warm its streams now so it starts without "Preparing video".
+		const pl = session.settings?.player;
+		if (pl?.autoplay_next && upNext.length) {
+			const delay = Math.max(0, Math.round(pl.autoplay_delay_s ?? 10));
+			if (delay === 0) return playNext();
+			countdown = delay;
+			// Autoplay is a few seconds away: warm its streams now so it starts without "Preparing video".
 			warmVideo(upNext[0].video.id, { manifest: true, force: true });
 		}
 	}

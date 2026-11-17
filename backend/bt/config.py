@@ -121,6 +121,9 @@ DEFAULT_SETTINGS: dict = {
         "max_height": 1080,
         "prefer_codec": "avc1",  # avc1 | vp9 | av01
         "autoplay_next": True,
+        "autoplay_delay_s": 10,  # countdown before the next suggestion plays (0 = at once)
+        "preview_autoplay": True,  # silent card previews on hover/focus
+        "preview_limit_s": 0,  # pause previews after this many seconds (0 = no limit)
         "default_speed": 1.0,
         "captions_lang": "",
     },

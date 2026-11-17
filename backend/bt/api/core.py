@@ -1201,6 +1201,15 @@ def write_settings(key: str, value: dict, s: Session = Depends(get_session)):
         n = value.get("max_parallel", cur["max_parallel"])
         if type(n) is not int or not 1 <= n <= 8:
             raise HTTPException(400, "Allow between 1 and 8 parallel agents")
+    if key == "player":
+        for k, lo, hi, msg in (("autoplay_delay_s", 0, 60, "Autoplay countdown must be 0 to 60 seconds"),
+                               ("preview_limit_s", 0, 300, "Preview limit must be 0 to 300 seconds")):
+            n = value.get(k, cur[k])
+            if type(n) is not int or not lo <= n <= hi:
+                raise HTTPException(400, msg)
+        for k in ("autoplay_next", "preview_autoplay"):
+            if type(value.get(k, cur[k])) is not bool:
+                raise HTTPException(400, "Autoplay settings must be on or off")
     if key == "throttle" and value.get("proxy") == "********":
         value["proxy"] = cur.get("proxy", "")
     if key == "notify":
