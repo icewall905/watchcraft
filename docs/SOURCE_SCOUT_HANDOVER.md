@@ -19,6 +19,17 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — browser extension 1.3.0, menu on covered pictures (`bb57c38`, 2026-11-17)
+
+- Extension zips only: The Hub menu also shows on link/page right-clicks and adds the picture underneath (Pinterest's
+  transparent overlay). No server code, schema or `android/` change.
+- Backup `/root/compose/watchcraft-backups/20261117-extmenu-bb57c38` (online DB quick_check ok, config hashes, previous
+  source, empty `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261117-extmenu-*`). rsync (checksum) of the 5
+  non-`android/` files of `7de0bd5..bb57c38`. Pruned `20261117-marquee-3c78e01` and its rollback tags
+  (`PRUNE-MANIFEST-20261117T151122Z.txt`).
+- All four `wc-*` run `sha256:3f65ec0e…`, zero restarts, no tracebacks; health, `/boards` 200; both served zips are
+  1.3.0 with the image finder.
+
 ## Deployment record — extension downloads renamed to the-hub-*.zip (`7de0bd5`, 2026-11-17)
 
 - `/extensions/the-hub-chrome.zip` and `the-hub-firefox.zip` replace `watchcraft-*.zip` (removed on prod; the old URLs
