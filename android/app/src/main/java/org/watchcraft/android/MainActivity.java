@@ -251,12 +251,12 @@ public final class MainActivity extends ComponentActivity {
         String[][] tabs = new String[5][];
         for (int i = 0; i < 4; i++) {
             Feature f = Navigation.feature(shortcuts[i]);
-            tabs[i] = new String[]{f.path.equals("/") ? "TV ▴" : f.title, f.icon, f.path};
+            tabs[i] = new String[]{f.path.equals("/") ? "Watch ▴" : f.title, f.icon, f.path};
         }
         tabs[4] = new String[]{"More", "more", "more"};
         for (String[] tab : tabs) {
             LinearLayout item = column(); item.setGravity(Gravity.CENTER); item.setTag(tab[2]);
-            item.setBackground(ripple(round(BG, 18))); item.setContentDescription(tab[2].equals("/") ? "TV menu" : tab[0]);
+            item.setBackground(ripple(round(BG, 18))); item.setContentDescription(tab[2].equals("/") ? "Watch menu" : tab[0]);
             item.setFocusable(true); item.addView(icon(tab[1], MUTED, 23), new LinearLayout.LayoutParams(dp(24), dp(24)));
             TextView label = text(tab[0], 11, MUTED, true); label.setGravity(Gravity.CENTER); label.setMaxLines(2); label.setEllipsize(android.text.TextUtils.TruncateAt.END); item.addView(label);
             item.setOnClickListener(v -> { v.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK); if (tab[2].equals("more")) showMenu(); else if (tab[2].equals("/")) showTvMenu(v); else navigate(tab[2]); });
