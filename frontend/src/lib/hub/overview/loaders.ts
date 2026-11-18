@@ -10,7 +10,7 @@ import type { HomeRow } from '$lib/types';
 import type { OverviewPage, TodayOverview } from '$lib/hub/types';
 
 /** A picture or line: `img` is a plain URL; `itemId` / `boardUrl` go through the profile-aware loaders. */
-export type Pic = { title: string; href: string; img?: string; itemId?: number; boardUrl?: string; meta?: string };
+export type Pic = { title: string; href: string; img?: string; itemId?: number; boardUrl?: string; meta?: string; summary?: string };
 export type Chip = Pic & { count?: number };
 export type Panel = {
 	key: string; href: string; waiting: number; today: number; unit: [string, string];
@@ -34,7 +34,7 @@ function panel(key: string, href: string, waiting: number, unit: [string, string
 /** Server-summarised item page → panel. */
 function fromServer(key: string, href: string, page: OverviewPage | undefined, unit: [string, string], urgent = false): Panel | null {
 	if (!page) return null;
-	const pics = page.previews.map((p) => ({ title: p.title, href: urgent ? '/alerts' : `/item/${p.item_id}`, itemId: p.has_image ? p.item_id : undefined, meta: p.meta || undefined }));
+	const pics = page.previews.map((p) => ({ title: p.title, href: urgent ? '/alerts' : `/item/${p.item_id}`, itemId: p.has_image ? p.item_id : undefined, meta: p.meta || undefined, summary: p.summary || undefined }));
 	return panel(key, href, page.waiting, unit, {
 		today: page.new_today, urgent, pics,
 		lines: pics.filter((p) => !p.itemId).slice(0, 3),
@@ -60,7 +60,7 @@ export const LOADERS: Loader[] = [
 		const all = rows.flatMap(videoPics).filter((v) => !seen.has(v.href) && !!seen.add(v.href));
 		return panel('screen', '/tv', all.length, ['video lined up', 'videos lined up'], {
 			today: all.filter((v) => within(v.at, DAY)).length,
-			pics: [...all].sort((a, b) => b.at - a.at).slice(0, 7),
+			pics: [...all].sort((a, b) => b.at - a.at).slice(0, 6),
 			chips: rows.filter((r) => r.items.length).map((r) => ({ title: `${r.emoji} ${r.title}`.trim(), href: r.category_id ? `/category/${r.category_id}` : '/tv', count: r.items.length, img: videoPics(r)[0]?.img }))
 		});
 	} },
@@ -69,16 +69,18 @@ export const LOADERS: Loader[] = [
 		const byChannel = new Map<string, { n: number; pic: (typeof vids)[number] }>();
 		for (const v of vids) { const c = byChannel.get(v.meta ?? ''); if (c) c.n++; else byChannel.set(v.meta ?? '', { n: 1, pic: v }); }
 		return panel('subscriptions', '/subscriptions', vids.length, ['new upload this week', 'new uploads this week'], {
-			today: vids.filter((v) => within(v.at, DAY)).length, pics: vids.slice(0, 7),
+			today: vids.filter((v) => within(v.at, DAY)).length, pics: vids.slice(0, 6),
 			chips: [...byChannel].filter(([name]) => name).sort((a, b) => b[1].n - a[1].n).slice(0, 6).map(([name, c]) => ({ title: name, href: '/subscriptions', count: c.n, img: c.pic.img }))
 		});
 	} },
 	{ key: 'scroll', href: '/shorts', load: async () => {
-		const [feeds, first] = await Promise.all([api.shortsFeeds(), api.shorts({ limit: 7 }).catch(() => null)]);
-		const ready = feeds.filter((f) => f.ready_count > 0);
+		const feeds = await api.shortsFeeds();
+		const ready = feeds.filter((f) => f.ready_count > 0).sort((a, b) => b.ready_count - a.ready_count);
+		// Shorts are read per feed; preview the fullest one.
+		const first = ready[0] ? await api.shorts({ limit: 6, category_id: ready[0].id }).catch(() => null) : null;
 		return panel('scroll', '/shorts', ready.reduce((n, f) => n + f.ready_count, 0), ['short ready', 'shorts ready'], {
 			pics: (first?.items ?? []).map((c) => ({ title: c.video.title, href: '/shorts', img: api.thumb(c.video.id, 'mq'), meta: c.video.channel_name })),
-			chips: ready.sort((a, b) => b.ready_count - a.ready_count).slice(0, 6).map((f) => ({ title: `${f.emoji ?? ''} ${f.name}`.trim(), href: '/shorts', count: f.ready_count }))
+			chips: ready.slice(0, 10).map((f) => ({ title: `${f.emoji ?? ''} ${f.name}`.trim(), href: '/shorts', count: f.ready_count }))
 		});
 	} },
 	{ key: 'commons', href: '/common-room', load: async (signal) => {
@@ -87,7 +89,7 @@ export const LOADERS: Loader[] = [
 		const posts = (feed?.posts ?? []).filter((p) => !p.nsfw && !p.spoiler);
 		const media = (p: (typeof posts)[number]) => { const m = p.media.find((x) => x.thumb || x.poster || x.kind === 'image'); return m ? m.thumb || m.poster || m.url : undefined; };
 		return panel('commons', '/common-room', live.reduce((n, t) => n + t.new_count, 0), ['new post', 'new posts'], {
-			pics: posts.filter((p) => media(p)).slice(0, 7).map((p) => ({ title: p.title || p.excerpt, href: '/common-room', img: media(p), meta: p.thread_name })),
+			pics: posts.filter((p) => media(p)).slice(0, 6).map((p) => ({ title: p.title || p.excerpt, href: '/common-room', img: media(p), meta: p.thread_name, summary: p.title ? p.excerpt : undefined })),
 			lines: posts.slice(0, 3).map((p) => ({ title: p.title || p.excerpt, href: '/common-room', meta: `${p.thread_name} · ${p.community || p.platform}` })),
 			chips: live.sort((a, b) => b.new_count - a.new_count).slice(0, 6).map((t) => ({ title: t.name, href: '/common-room', count: t.new_count }))
 		});
@@ -97,7 +99,7 @@ export const LOADERS: Loader[] = [
 		const grown = boards.filter((b) => within(b.last_added, WEEK)).sort((a, b) => (b.last_added ?? 0) - (a.last_added ?? 0));
 		return panel('boards', '/boards', grown.length, ['board grew this week', 'boards grew this week'], {
 			today: grown.filter((b) => within(b.last_added, DAY)).length,
-			pics: grown.flatMap((b) => (b.preview_urls ?? []).slice(0, 3).map((u) => ({ title: b.name, href: `/boards?board=${b.id}`, boardUrl: u }))).slice(0, 7),
+			pics: grown.flatMap((b) => (b.preview_urls ?? []).slice(0, 3).map((u) => ({ title: b.name, href: `/boards?board=${b.id}`, boardUrl: u }))).slice(0, 6),
 			chips: grown.slice(0, 6).map((b) => ({ title: b.name, href: `/boards?board=${b.id}`, boardUrl: b.cover_url || b.preview_urls?.[0] || undefined, count: b.saved_count }))
 		});
 	} },
@@ -107,7 +109,7 @@ export const LOADERS: Loader[] = [
 		const fresh = mixes.filter((m) => within(Math.max(m.created_at, m.refreshed_at), DAY));
 		return panel('jukebox', '/music', mixes.length, ['mix ready', 'mixes ready'], {
 			today: fresh.length,
-			pics: mixes.filter((m) => m.covers[0]).slice(0, 7).map((m) => ({ title: `${m.emoji} ${m.name}`, href: '/music', img: m.covers[0], meta: `${m.count} songs` })),
+			pics: mixes.filter((m) => m.covers[0]).slice(0, 6).map((m) => ({ title: `${m.emoji} ${m.name}`, href: '/music', img: m.covers[0], meta: `${m.count} songs`, summary: m.blurb || m.description || undefined })),
 			chips: mixes.slice(0, 6).map((m) => ({ title: `${m.emoji} ${m.name}`, href: '/music', count: m.count, img: m.covers[0] }))
 		});
 	} },

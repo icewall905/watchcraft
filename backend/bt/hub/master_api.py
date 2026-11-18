@@ -345,7 +345,8 @@ def delete_preference(lid: int, pid: int = Depends(profile_id)):
 
 # ---------- Front Page overview: what is waiting on each curated page
 
-OVERVIEW_GROUPS = 6
+OVERVIEW_GROUPS = 10
+OVERVIEW_FRESH = 10 * 60  # a pre-built snapshot younger than this is served as is
 OVERVIEW_PREVIEWS = 6
 OVERVIEW_SCAN = 1500  # newest waiting items considered per page; counts stay exact
 ALMANAC_DAYS = 7
@@ -376,7 +377,7 @@ def _panel(s: Session, pid: int, kid: bool, rows: list[tuple[int, float]], now: 
     picks = rank[:OVERVIEW_PREVIEWS]
     items = {i.id: i for i in s.exec(select(ContentItem).where(ContentItem.id.in_(picks))).all()} if picks else {}
     previews = [{'item_id': i, 'title': items[i].title, 'meta': items[i].publisher or items[i].author or '',
-                 'has_image': i in pictured, 'at': when[i]} for i in picks if i in items]
+                 'summary': _teaser(items[i]), 'has_image': i in pictured, 'at': when[i]} for i in picks if i in items]
     out_groups = []
     for key, label, href, members in sorted(groups, key=lambda g: -len(g[3]))[:OVERVIEW_GROUPS]:
         cover = next((m for m in sorted(members, key=lambda m: -when.get(m, 0)) if m in pictured), None)
@@ -384,6 +385,14 @@ def _panel(s: Session, pid: int, kid: bool, rows: list[tuple[int, float]], now: 
     return {'waiting': total if total is not None else len(ids),
             'new_today': sum(1 for _, t in rows if t >= now - 86400),
             'groups': out_groups, 'previews': previews}
+
+
+def _teaser(item: ContentItem) -> str:
+    """Short plain summary for a Front Page card: the archived AI summary, else the source's own."""
+    ai = (item.enrichment or {}).get('summary')
+    text = ai if isinstance(ai, str) and ai.strip() else item.summary or ''
+    text = re.sub(r'<[^>]+>', ' ', text)
+    return _excerpt(text, 240) if text.strip() != item.title.strip() else ''
 
 
 def _by(pairs, ids: set[int]) -> dict:
@@ -396,6 +405,18 @@ def _by(pairs, ids: set[int]) -> dict:
 
 @router.get('/today/overview')
 def today_overview(pid: int = Depends(profile_id)):
+    """The Front Page summary, pre-built by the scheduler (frontpage.tick); built now when stale."""
+    # Children always get a live build (cheap for their small feeds): a switch or kid-safe verdict
+    # changed since the snapshot must never show them a title.
+    snap = {} if views.child(pid) else get_kv(f'frontpage_overview:{pid}', {})
+    if snap.get('pages') is not None and time.time() - snap.get('generated_at', 0) < OVERVIEW_FRESH:
+        return snap
+    data = build_overview(pid)
+    save_setting(f'frontpage_overview:{pid}', data)
+    return data
+
+
+def build_overview(pid: int) -> dict:
     """Per curated page: how much is waiting (unread, not set aside), how much arrived today, the
     sub-categories it falls into and a few pictured previews. Each page obeys its parental switch."""
     from ..models import Profile

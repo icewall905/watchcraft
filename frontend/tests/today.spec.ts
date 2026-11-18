@@ -24,8 +24,8 @@ const edition = () => ({
 
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
 const preview = (id: number, title: string, has_image = true) => ({ item_id: id, title, meta: 'Example Journal', has_image, at: Date.now() / 1000 });
-const overview = () => ({ generated_at: 1, pages: {
-	wire: { waiting: 12, new_today: 4, previews: [preview(11, 'Rocket lands upright'), preview(12, 'Moon base plans'), preview(13, 'Comet season'), preview(14, 'Satellite swarm'), preview(15, 'Probe wakes up')],
+const overview = (): { generated_at: number; pages: Record<string, unknown> } => ({ generated_at: 1, pages: {
+	wire: { waiting: 12, new_today: 4, previews: [{ ...preview(11, 'Rocket lands upright'), summary: 'A reusable booster came back down on its legs.' }, preview(12, 'Moon base plans'), preview(13, 'Comet season'), preview(14, 'Satellite swarm'), preview(15, 'Probe wakes up')],
 		groups: [{ key: 'topic:7', label: 'Space', href: '/news?topic=7', count: 5, image_item_id: 11 }, { key: 'topic:8', label: 'Climate', href: '/news?topic=8', count: 3, image_item_id: null }] },
 	finds: { waiting: 3, new_today: 0, previews: [preview(21, 'A long read on bridges'), preview(22, 'Typography notes')],
 		groups: [{ key: 'curator:2', label: 'Design desk', href: '/discover?curator=2&tab=unread', count: 2, image_item_id: 21 }] },
@@ -33,9 +33,9 @@ const overview = () => ({ generated_at: 1, pages: {
 	stacks: { waiting: 1, new_today: 0, previews: [preview(31, 'Saved for the weekend', false)], groups: [{ key: 'later', label: 'Read later', href: '/library?view=later', count: 1, image_item_id: null }] },
 	alerts: { waiting: 2, new_today: 1, previews: [preview(41, 'Price drop spotted', false)], groups: [] }
 } });
-const mockOverview = async (page: import('@playwright/test').Page, data = overview()) => {
+const mockOverview = async (page: import('@playwright/test').Page, data: ReturnType<typeof overview> = overview()) => {
 	await page.route('**/api/hub/today/overview', route => route.fulfill({ json: data }));
-	await page.route('**/api/hub/items/*/assets/image', route => route.fulfill({ body: PNG, contentType: 'image/png' }));
+	await page.route('**/api/hub/items/*/assets/image*', route => route.fulfill({ body: PNG, contentType: 'image/png' }));
 };
 
 test('Today opens with the lead beside the masthead, with citations, reasons and curator actions', async ({ page }) => {
@@ -70,7 +70,9 @@ test('Where to next shows each page with pictures, counts and sub-categories', a
 	await expect(wire.getByText('12 stories waiting')).toBeVisible();
 	await expect(wire.getByText('+4 today')).toBeVisible();
 	await expect(wire.getByRole('link', { name: /Rocket lands upright/ }).first()).toHaveAttribute('href', '/item/11');
-	await expect(wire.locator('.strip a')).toHaveCount(4);
+	await expect(wire.getByText('A reusable booster came back down on its legs.')).toBeVisible();
+	await expect(wire.locator('.card')).toHaveCount(5);
+	await expect(wire.locator('.card img').first()).toHaveAttribute('src', /^blob:/);
 	await expect(wire.getByRole('link', { name: /Space\s*5/ })).toHaveAttribute('href', '/news?topic=7');
 	await expect(wire.getByRole('link', { name: /Climate\s*3/ })).toHaveAttribute('href', '/news?topic=8');
 	await expect(next.getByRole('article', { name: 'The Finds' }).getByRole('link', { name: /Design desk/ })).toHaveAttribute('href', '/discover?curator=2&tab=unread');
@@ -84,6 +86,21 @@ test('Where to next shows each page with pictures, counts and sub-categories', a
 		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 		await page.screenshot({ path: `/tmp/watchcraft-today-overview-${width}.png`, fullPage: true });
 	}
+});
+
+test('Where to next opens from the last overview at once, then refreshes', async ({ page }) => {
+	await page.route(/\/api\/hub\/today(?:\?.*)?$/, route => route.fulfill({ json: edition() }));
+	await mockOverview(page);
+	const thumbs: string[] = [];
+	page.on('request', (r) => { if (r.url().includes('/assets/image')) thumbs.push(r.url()); });
+	await freshPage(page, '/today');
+	await expect(page.getByRole('article', { name: 'The Wire' }).getByText('12 stories waiting')).toBeVisible();
+	expect(thumbs.every((u) => /\?w=(480|240|800)$/.test(u))).toBe(true);  // small previews, never full captures
+	await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some((k) => k.startsWith('wc-frontpage:')))).toBe(true);
+	await page.unroute('**/api/hub/today/overview');
+	await page.route('**/api/hub/today/overview', () => { /* never answers */ });
+	await page.reload();
+	await expect(page.getByRole('article', { name: 'The Wire' }).getByText('12 stories waiting')).toBeVisible();
 });
 
 test('Where to next reads video, music and board pages from their own APIs', async ({ page }) => {

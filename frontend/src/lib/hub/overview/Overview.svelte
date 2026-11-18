@@ -22,17 +22,37 @@
 	let panels = $state<Panel[]>([]);
 	let quiet = $state<string[]>([]);
 	let pending = $state(0);
+	let shownFor = '';
 
 	const ranked = $derived(rank(panels));
 	const urgent = $derived(ranked.filter((p) => p.urgent));
-	const visual = $derived(ranked.filter((p) => !p.urgent && pictured(p) >= 2));
-	const rail = $derived(ranked.filter((p) => !p.urgent && pictured(p) < 2));
-	const sizeOf = (p: Panel, i: number) => (i < 2 && pictured(p) >= 4 ? 'wide' : 'medium');
+	// Pages with a few things to show get a shelf of readable cards; mostly-text pages a small card.
+	const shelves = $derived(ranked.filter((p) => !p.urgent && (pictured(p) >= 1 ? p.pics.length >= 2 : p.pics.length >= 4)));
+	const rail = $derived(ranked.filter((p) => !p.urgent && !shelves.includes(p)));
+	const SQUARE = new Set(['memes', 'boards']);
+	// The last overview is kept per profile so Today opens with it at once, then refreshes.
+	const cacheKey = (pid: number | null) => `wc-frontpage:${pid}`;
+	function readCache(pid: number | null, version: number): { panels: Panel[]; quiet: string[] } | null {
+		try {
+			const c = JSON.parse(localStorage.getItem(cacheKey(pid)) ?? 'null');
+			return c && c.version === version && Array.isArray(c.panels) ? c : null;
+		} catch { return null; }
+	}
+	function writeCache(pid: number | null, version: number, data: { panels: Panel[]; quiet: string[] }) {
+		try { localStorage.setItem(cacheKey(pid), JSON.stringify({ version, at: Date.now(), ...data })); } catch { /* storage full or blocked */ }
+	}
 
 	$effect(() => {
 		const version = session.version;
 		refresh;
-		if (!session.ready || session.needsLogin || session.choosing || !session.hubAllowed) { panels = []; quiet = []; pending = 0; return; }
+		if (!session.ready || session.needsLogin || session.choosing || !session.hubAllowed) { panels = []; quiet = []; pending = 0; shownFor = ''; return; }
+		const pid = session.profileId;
+		// Another profile's panels never stay on screen: start from this profile's cache or nothing.
+		if (shownFor !== `${pid}:${version}`) {
+			const cached = readCache(pid, version);
+			panels = cached?.panels ?? []; quiet = cached?.quiet ?? [];
+			shownFor = `${pid}:${version}`;
+		}
 		const controller = new AbortController();
 		const current = () => !controller.signal.aborted && version === session.version;
 		let overview: Promise<TodayOverview | null> | null = null;
@@ -52,6 +72,7 @@
 				pending--;
 				// Show panels as they arrive; the first full pass replaces what an earlier load showed.
 				if (!pending || panels.length === 0 || next.length > panels.length) { panels = [...next]; quiet = [...empty]; }
+				if (!pending) writeCache(pid, version, { panels: next, quiet: empty });
 			});
 		}
 		return () => controller.abort();
@@ -61,20 +82,16 @@
 <section class="overview" aria-labelledby="where-next">
 	<header class="head">
 		<h2 id="where-next">Where to next</h2>
-		<p>What is waiting on each page, newest first.</p>
+		<p>What is waiting on each page, busiest first.</p>
 	</header>
 	{#if urgent.length}
 		<div class="urgent-row" data-nav-row>
 			{#each urgent as p (p.key)}<PagePanel panel={p} size="compact" {...meta(p.href)} />{/each}
 		</div>
 	{/if}
-	{#if visual.length || pending}
-		<div class="grid" data-nav-row>
-			{#each visual as p, i (p.key)}<div class="cell {sizeOf(p, i)}"><PagePanel panel={p} size={sizeOf(p, i)} {...meta(p.href)} /></div>{/each}
-			{#if pending && visual.length < 3}
-				{#each Array(3 - visual.length) as _, i (i)}<div class="cell medium"><div class="skeleton" aria-hidden="true"></div></div>{/each}
-			{/if}
-		</div>
+	{#each shelves as p (p.key)}<PagePanel panel={p} square={SQUARE.has(p.key)} {...meta(p.href)} />{/each}
+	{#if pending && !panels.length}
+		{#each [0, 1] as i (i)}<div class="skeleton" aria-hidden="true"></div>{/each}
 	{/if}
 	{#if rail.length}
 		<h3 class="rail-head">Also waiting</h3>
@@ -96,11 +113,7 @@
 	.head h2 { margin: 0; font: 520 clamp(1.5rem, 3vw, 2.1rem) / 1.15 var(--font-display); letter-spacing: -.015em; }
 	.head p { margin: 0; color: var(--faint); font-size: var(--fs-sm); }
 	.urgent-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: .9rem; margin-bottom: .9rem; }
-	.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr)); grid-auto-flow: row dense; gap: clamp(.75rem, 1.6vw, 1.15rem); }
-	.cell { display: grid; min-width: 0; }
-	.cell.wide { grid-column: span 2; }
-	@media (max-width: 680px) { .cell.wide { grid-column: auto; } }
-	.skeleton { min-height: 16rem; border-radius: var(--r-lg); background: linear-gradient(100deg, var(--bg-2) 30%, var(--surface-2) 50%, var(--bg-2) 70%) 0 0 / 300% 100%; animation: shimmer 1.4s linear infinite; }
+	.skeleton { min-height: 14rem; margin-top: 1rem; border-radius: var(--r-lg); background: linear-gradient(100deg, var(--bg-2) 30%, var(--surface-2) 50%, var(--bg-2) 70%) 0 0 / 300% 100%; animation: shimmer 1.4s linear infinite; }
 	@keyframes shimmer { to { background-position: -150% 0; } }
 	@media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
 	.rail-head { margin: clamp(1.4rem, 3vw, 2rem) 0 .8rem; color: var(--ink-soft); font: 500 var(--fs-md) / 1.3 var(--font-display); }

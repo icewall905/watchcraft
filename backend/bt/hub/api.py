@@ -539,14 +539,27 @@ def item_image(iid: int, pid: int = Depends(profile_id)):
 
 
 @router.api_route('/items/{iid}/assets/{kind}', methods=['GET', 'HEAD'])
-def item_asset(iid: int, kind: str, request: Request, pid: int = Depends(profile_id)):
+def item_asset(iid: int, kind: str, request: Request, w: int | None = None, pid: int = Depends(profile_id)):
+    """A captured asset; `w` asks for a small pre-made WebP preview of the picture instead."""
     if kind not in ('image', 'document', 'video'):
         raise HTTPException(404, 'Asset not found')
+    from . import thumbs
     with session() as s:
-        asset = s.get(CapturedAsset, (iid, kind))
-        if not asset or not can_see(s, pid, iid):
+        if not can_see(s, pid, iid):
             raise HTTPException(404, 'Asset not found')
         if is_child(s, pid) and not (kind == 'image' and kidsafe.image_ok(s, iid, pid)):
+            raise HTTPException(404, 'Asset not found')
+        size = thumbs.width(w) if kind == 'image' else None
+        if size:
+            data = thumbs.get(s, iid, size)
+            if data is None:
+                raise HTTPException(404, 'Asset not found')
+            # The browser may keep a preview, but only for the profile that asked for it.
+            return Response(content=data if request.method != 'HEAD' else b'', media_type='image/webp',
+                            headers={'X-Content-Type-Options': 'nosniff', 'Cache-Control': 'private, max-age=86400',
+                                     'Vary': 'X-Profile-Id', 'Content-Length': str(len(data))})
+        asset = s.get(CapturedAsset, (iid, kind))
+        if not asset:
             raise HTTPException(404, 'Asset not found')
         data, mime = asset.data, asset.mime
     headers = {'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': 'sandbox',

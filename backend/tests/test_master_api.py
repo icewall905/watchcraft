@@ -451,3 +451,22 @@ def test_overview_leaves_out_pages_a_child_is_switched_off_from(client):
     with session() as s:
         p = s.get(Profile, kid['id']); p.parental = {'finds': True}; s.add(p); s.commit()
     assert client.get('/api/hub/today/overview', headers=hk).status_code == 403
+
+
+def test_overview_is_served_from_the_prebuilt_snapshot_and_previews_are_small(client):
+    import io
+    from PIL import Image
+    from bt.hub import frontpage, thumbs
+    from bt.hub.models import CapturedAsset
+    a = add('news')
+    buf = io.BytesIO(); Image.new('RGB', (1600, 900), 'navy').save(buf, 'PNG')
+    with session() as s:
+        s.add(CapturedAsset(item_id=a, kind='image', mime='image/png', data=buf.getvalue())); s.commit()
+    frontpage.build(1)
+    assert thumbs.path(a, 480, len(buf.getvalue())).exists()  # made ahead of time
+    add('news')  # arrives after the snapshot
+    assert client.get('/api/hub/today/overview').json()['pages']['wire']['waiting'] == 1
+    r = client.get(f'/api/hub/items/{a}/assets/image?w=400')
+    assert r.status_code == 200 and r.headers['content-type'] == 'image/webp' and 'max-age' in r.headers['cache-control']
+    assert Image.open(io.BytesIO(r.content)).width == 480 and len(r.content) < len(buf.getvalue())
+    assert client.get(f'/api/hub/items/{a}/assets/image').headers['content-type'] == 'image/png'  # original unchanged

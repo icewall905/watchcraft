@@ -166,7 +166,7 @@
 			<section class="lead-section" aria-label="Today's lead" data-nav-row>
 				<p class="kicker">The lead</p>
 				<StoryCard href={itemHref(lead)} title={lead.item.title} source={lead.item.publisher || lead.item.author || undefined} summary={cardSummary(lead)} summaryLabel={summaryLabel(lead)} more={sourceCount(lead)} mediaAvailable={hasLocalImage(lead)}>
-					{#snippet image()}{#if hasLocalImage(lead)}<LocalImage id={lead.item_id} alt={lead.item.title} />{/if}{/snippet}
+					{#snippet image()}{#if hasLocalImage(lead)}<LocalImage id={lead.item_id} width={800} alt={lead.item.title} />{/if}{/snippet}
 					{#snippet why()}<WhyPopover reasons={lead.item.verdict?.reasons ?? []} /><EditionActions entry={lead} onchanged={(action) => { notice = action === 'promote' ? 'Kept in your edition.' : 'Set aside.'; revision++; }} /><SeenDismiss itemIds={[lead.item_id]} title={lead.item.title} onchanged={() => { notice = 'Removed from today.'; revision++; }} />{#if supportsArticleFeedback(lead)}<ArticleFeedback itemId={lead.item_id} title={lead.item.title} rating={lead.item.state.rating} onchanged={(state) => articleRated(lead, state)} />{/if}{/snippet}
 				</StoryCard>
 			</section>
