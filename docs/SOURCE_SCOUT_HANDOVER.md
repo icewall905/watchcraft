@@ -19,6 +19,22 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Front Page card shelves, pre-built overview and previews (`9fcc6e8`, `c607db4`, 2026-11-18)
+
+- User feedback on `d0073a7`: picture-only tiles were unreadable and slow. Each page is now a shelf of cards with
+  picture, title, summary (archived AI summary, else source summary) and source, plus all sub-category chips.
+- The hub scheduler (`frontpage.tick`, every 5 min) pre-builds each profile's overview into
+  `setting.frontpage_overview:<pid>` and 480 px WebP previews (800 px for the lead) in `data/item-previews/`
+  (`c607db4` moved them out of the video thumbnail cache `data/thumbs`). `/hub/items/{id}/assets/image?w=` serves
+  previews `private, max-age=86400`, `Vary: X-Profile-Id`; full captures unchanged (`no-store`). Children always get
+  a live overview build. The browser keeps the last overview per profile (`wc-frontpage:<pid>`). The Scroll panel no
+  longer requests shorts without a feed (400). No schema or `android/` change.
+- Code-only backup `/root/compose/watchcraft-backups/20261118-shelves-9fcc6e8` (previous source, config hashes,
+  `rollback.sh` → `watchcraft:rollback-20261118-shelves-*`; DB backup is `20261118-overview-d0073a7` from earlier
+  today). Rollback also: `rm -rf data/item-previews` (optional, cache only).
+- All four `wc-*` run `sha256:65310a11…`, zero restarts, no tracebacks. Snapshots exist for all 6 profiles; 50
+  previews, 1.1 MB (a 124 KB capture → 15 KB preview); profile 2 overview served from a snapshot 11 s old.
+
 ## Deployment record — Front Page "Where to next" overview (`d0073a7`, 2026-11-18)
 
 - Today shows the lead beside the masthead, then one panel per Hub page: cover picture, thumbnail strip, unread
