@@ -171,3 +171,7 @@ export type MemeExplain = {
 	what_shows: string; why_funny: string; referencing: string; origin: string; why_now: string;
 	uncertain: string; ai?: boolean; at?: number;
 };
+export type OverviewGroup = { key: string; label: string; href: string; count: number; image_item_id: number | null };
+export type OverviewPreview = { item_id: number; title: string; meta: string; has_image: boolean; at: number };
+export type OverviewPage = { waiting: number; new_today: number; groups: OverviewGroup[]; previews: OverviewPreview[] };
+export type TodayOverview = { generated_at: number; pages: Partial<Record<'wire' | 'finds' | 'memes' | 'stacks' | 'almanac' | 'alerts', OverviewPage>> };

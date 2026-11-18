@@ -1,6 +1,7 @@
 """Master curator P5: the edition, set-aside review, overrules, stories, explanations and curated feeds."""
 import time
 
+import pytest
 from sqlmodel import select
 
 from test_curation import client  # noqa: F401  (isolated DB/API fixture)
@@ -400,3 +401,53 @@ def test_regenerate_still_rebuilds_with_master_disabled(client):
     save_setting('hub_master', {**get_settings()['hub_master'], 'enabled': False})
     out = client.post('/api/hub/today/regenerate')
     assert out.status_code == 200 and out.json() == {'rebuilt': True, 'rerun': None}
+
+
+# ---------- Front Page overview
+
+def test_overview_counts_what_waits_per_page_with_subcategories(client):
+    from bt.hub.models import CapturedAsset, Curator, TopicItem
+    with session() as s:
+        s.add(Curator(id=1, profile_id=1, name='Tech desk', subject='tech'))
+        t = Topic(profile_id=1, name='Space', kind='news'); s.add(t); s.commit(); topic = t.id
+    a, b, c = add('news'), add('news'), add('news')
+    hidden = add('news', tier='set_aside')
+    find = add('web')
+    meme = add('meme')
+    old = time.time() - 3 * 86400
+    with session() as s:
+        s.add(TopicItem(topic_id=topic, item_id=a)); s.add(TopicItem(topic_id=topic, item_id=b))
+        s.add(ItemState(profile_id=1, item_id=c, read_at=time.time()))
+        s.add(CapturedAsset(item_id=b, kind='image', mime='image/png', data=b'x'))
+        ex = s.get(MemeExample, meme); ex.community = 'r/memes'; s.add(ex)
+        d = s.exec(select(CuratorDiscovery).where(CuratorDiscovery.item_id == find)).first(); d.found_at = old; s.add(d)
+        s.commit()
+    pages = client.get('/api/hub/today/overview').json()['pages']
+    wire = pages['wire']
+    assert wire['waiting'] == 2 and wire['new_today'] == 2  # read and set-aside items are not waiting
+    assert hidden not in [p['item_id'] for p in wire['previews']]
+    assert wire['previews'][0] == {**wire['previews'][0], 'item_id': b, 'has_image': True}  # pictured first
+    space = next(g for g in wire['groups'] if g['key'] == f'topic:{topic}')
+    assert space == {'key': f'topic:{topic}', 'label': 'Space', 'href': f'/news?topic={topic}', 'count': 2, 'image_item_id': b}
+    assert pages['finds']['waiting'] == 1 and pages['finds']['new_today'] == 0
+    assert pages['finds']['groups'][0]['label'] == 'Tech desk' and pages['finds']['groups'][0]['href'] == '/discover?curator=1&tab=unread'
+    assert pages['memes']['waiting'] == 1 and pages['memes']['groups'][0]['href'] == '/memes?community=r/memes'
+    assert pages['alerts']['waiting'] == 0 and pages['stacks']['waiting'] == 0
+
+
+@pytest.mark.parental_defaults
+def test_overview_leaves_out_pages_a_child_is_switched_off_from(client):
+    from bt.models import Profile
+    admin = client.get('/api/profiles').json()[0]
+    assert client.patch(f"/api/profiles/{admin['id']}", json={'pin': '4826'}).status_code == 200
+    kid = client.post('/api/profiles', json={'name': 'Kid', 'role': 'child'}).json()
+    hk = {'X-Profile-Id': str(kid['id'])}
+    with session() as s:
+        p = s.get(Profile, kid['id']); p.parental = {'front_page': True, 'finds': True}; s.add(p); s.commit()
+    add('web', pid=kid['id'])  # not kid-checked yet, so not waiting
+    r = client.get('/api/hub/today/overview', headers=hk)
+    assert r.status_code == 200
+    assert set(r.json()['pages']) == {'finds'} and r.json()['pages']['finds']['waiting'] == 0
+    with session() as s:
+        p = s.get(Profile, kid['id']); p.parental = {'finds': True}; s.add(p); s.commit()
+    assert client.get('/api/hub/today/overview', headers=hk).status_code == 403

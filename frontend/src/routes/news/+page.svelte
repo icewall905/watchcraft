@@ -72,7 +72,9 @@
 		controller = new AbortController();
 		const signal = controller.signal;
 		if (profileId !== loadedProfileId || version !== loadedProfileVersion) {
-			groups = []; topics = []; open = {}; publisher = ''; topic = null; topicError = ''; shown = step; clearRefreshState();
+			groups = []; topics = []; open = {}; publisher = ''; topicError = ''; shown = step; clearRefreshState();
+			// A Front Page link may open The Wire on one followed topic (?topic=ID).
+			topic = Number(page.url.searchParams.get('topic')) || null;
 			nextCursor = null; totalStories = null; totalArticles = null; totalCapped = false;
 			pendingSeen.clear(); sentSeen.clear();
 		}
