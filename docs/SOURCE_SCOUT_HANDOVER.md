@@ -19,6 +19,19 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Front Page "Where to next" overview (`d0073a7`, 2026-11-18)
+
+- Today shows the lead beside the masthead, then one panel per Hub page: cover picture, thumbnail strip, unread
+  backlog with "+N today" and sub-category chips linking to the filtered page. New `GET /api/hub/today/overview`
+  (front_page gate, child-allowed route, per-page parental switches, kid-safe ids); other pages use their own
+  APIs. The Wire accepts `?topic=`. `WhatsNew.svelte` removed. No schema or `android/` change.
+- Backup `/root/compose/watchcraft-backups/20261118-overview-d0073a7` (online DB quick_check ok, config hashes,
+  previous source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261118-overview-*`). rsync (checksum)
+  of the 12 non-`android/` files of `2194e30..d0073a7` (3 new), `WhatsNew.svelte` deleted. No pruning.
+- All four `wc-*` run `sha256:fd025042…`, zero restarts, no tracebacks; health 200; served bundle has the overview.
+  Overview per profile 0.00–0.59 s (profile 2: wire 398, finds 2539, memes 1087 waiting, all with pictures);
+  children get only switched-on pages.
+
 ## Deployment record — curator refills lists pinned "full" by old failures (`de3f9a0`, 2026-11-17)
 
 - B-082: the curator idled with "All queues are full" while profile H lists held far fewer playable videos than
