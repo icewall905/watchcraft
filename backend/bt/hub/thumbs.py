@@ -17,7 +17,7 @@ from .models import CapturedAsset
 
 log = logging.getLogger(__name__)
 WIDTHS = (240, 480, 800)
-ROOT = DATA_DIR / 'thumbs'
+ROOT = DATA_DIR / 'item-previews'  # apart from the video thumbnail cache in data/thumbs
 Image.MAX_IMAGE_PIXELS = 60_000_000
 
 
