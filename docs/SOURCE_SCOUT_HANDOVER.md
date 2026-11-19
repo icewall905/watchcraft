@@ -19,6 +19,38 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — model routing, tenacious source curator, browser sidecar (`35bcc52`, `9fe5567`, 2026-11-18)
+
+- `35bcc52`: every LLM call names a task (`llm.TASKS`); Settings → AI → "Where each request goes" sets worker or
+  judge per task in `setting.llm.routes`. Unset = worker, except video verdicts, memory audits, inference review,
+  Front Page re-check and knowledge chat (judge). Calls that silently used the judge before (video planning,
+  reports/briefings, playlist brief, meme explain, curator setup, lessons, memory compaction) now use the worker.
+- `9fe5567`: source curator tries library → model-named platforms (subreddits, Commons categories, Giphy/Tenor/
+  Flickr/Tumblr/Bluesky/Mastodon searches) → up to 3 web rounds that learn from failures; blocked or JavaScript sites
+  open in the browser sidecar (recipes `via: browser`). Optional `giphy_api_key` / `tenor_api_key` in Mood Board
+  sources (none set yet). New compose services `wc-browser` (Chromium, no volume, internal networks only) and
+  `wc-egress` (Squid, public 80/443 only); `wc-api` joined `watchcraft_browser-ctl`. See `docs/SECURITY.md`.
+- Backup `/root/compose/watchcraft-backups/20261118-browser-9fe5567` (online DB quick_check ok, config hashes,
+  previous source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261118-browser-*`; it also removes the
+  two sidecar containers and networks). rsync (checksum) of the 51 non-`android/` files of `072998f..9fe5567`.
+- All four `wc-*` app containers on `sha256:d41cb7f0…`, sidecars healthy, zero restarts, no tracebacks, health 200.
+  From `wc-api`: Pixabay renders (201 images); LAN, nip.io-to-LAN and metadata URLs refused. From `wc-browser`:
+  direct LAN and internet fail; `wc-api` is reachable directly (documented residual).
+
+## Deployment record — Board source curator and Find sources (`b9bda0c`, 2026-11-18)
+
+- New boards queue a `MoodSourceHunt`; each board's **Find sources** dialog re-runs it. The curator plans web
+  searches (LLM), triages hits, derives declarative recipes (`board_recipes`: site search, gallery, feed, subreddit),
+  keeps those whose vision sample fits and saves them to the shared `MoodSite` library linked by `MoodBoardSource`.
+  Board runs fetch up to 3 linked sources first; 5 failed fetches mark a recipe broken. Scheduler
+  `board_curator.scheduler` in the API lifespan. Additive tables only: `moodsite`, `moodboardsource`, `moodsourcehunt`.
+- Backup `/root/compose/watchcraft-backups/20261118-sources-b9bda0c` (online DB quick_check ok, config hashes,
+  previous source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261118-sources-*`). rsync (checksum) of the
+  12 non-`android/` files of `c607db4..b9bda0c` (4 new). Rollback leaves the new tables; old code ignores them.
+- All four `wc-*` run `sha256:506371b3…`, zero restarts, no tracebacks; health 200; new tables present; served bundle
+  has the Find sources dialog. Existing boards have no sources until someone runs Find sources; not yet tried against
+  live SearXNG/LLM.
+
 ## Deployment record — Front Page card shelves, pre-built overview and previews (`9fcc6e8`, `c607db4`, 2026-11-18)
 
 - User feedback on `d0073a7`: picture-only tiles were unreadable and slow. Each page is now a shelf of cards with

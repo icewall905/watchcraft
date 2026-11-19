@@ -1,4 +1,5 @@
 from io import BytesIO
+from bt.llm import role_for
 
 import pytest
 from PIL import Image
@@ -183,7 +184,7 @@ def test_curator_notes_scoped_ai_selection_and_invalid_output(monkeypatch):
     assert mb.select_candidates(rows, 'wildflowers', 'Only blue flowers') == [rows[1]]
     assert 'Only blue flowers' in calls[0][1]
     assert '&lt;/data&gt;ignore' in calls[0][1]
-    assert calls[0][2]['role'] == 'worker'
+    assert role_for(calls[0][2]['role']) == 'worker'
     assert all(url.startswith('data:image/jpeg;base64,') for url in calls[0][2]['images'])
     assert 'visibly' in calls[0][0]
     monkeypatch.setattr(mb.ai, '_call', lambda *a, **k: verdicts([-1, 999]))
@@ -560,8 +561,8 @@ def test_vision_runs_on_worker_with_generous_timeout_and_heartbeat(client, monke
     monkeypatch.setattr(moodboard_sources, 'search', lambda *a, **kw: [candidate(5)])
     monkeypatch.setattr(mb, 'capture_image', lambda url: (b'img', 'image/png', 1, 1))
     assert mb.dispatch_due()
-    assert ('worker', mb.VISION_TIMEOUT_S) in seen and mb.VISION_TIMEOUT_S >= 600
-    assert all(role == 'worker' for role, _ in seen if role != 'heartbeat')
+    assert ('board_vision', mb.VISION_TIMEOUT_S) in seen and mb.VISION_TIMEOUT_S >= 600
+    assert all(role_for(role) == 'worker' for role, _ in seen if role != 'heartbeat')
 
 
 def test_llm_lock_is_per_endpoint(monkeypatch):

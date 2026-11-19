@@ -96,4 +96,4 @@ def comments(post: dict) -> list[dict]:
 
 ADAPTER = Adapter(key='discourse', label='Discourse', parse=parse, fetch=fetch,
                   sorts=('new', 'top_week', 'top_month', 'top_year', 'top_all'), comments=comments,
-                  example='https://forum.example.com', discoverable=False)
+                  example='https://forum.example.com')

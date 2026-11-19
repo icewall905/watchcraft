@@ -120,6 +120,31 @@ above. Two are different:
   challenge. The route requires the exact NVD hostname and a valid CVE path, verifies the returned
   record ID, and keeps the API source URL with the extracted description.
 
+### The browser sidecar (source curators)
+
+Since 2026-11-18 one headless Chromium runs, for the Mood Board source curator and the Common Room source
+expedition (and their recipes marked `via: browser`) only, in its own container
+(`browser/`, compose services `browser` and `egress`):
+
+- **No data, no secrets.** The `browser` container has no volume and no `.env`; it is read-only with a tmpfs
+  `/tmp`, all capabilities dropped and `no-new-privileges`. A fresh browser is launched for every page.
+- **No direct route out.** It sits only on the internal networks `browser-ctl` (to `bt-api`) and
+  `browser-egress` (to the proxy). Chromium is started with the proxy for all requests, loopback included
+  (`<-loopback>`), QUIC off and WebRTC limited to proxied traffic; only http(s), data and blob requests leave
+  the page.
+- **Public-only egress.** `egress` (Squid, `browser/egress/squid.conf`) is the only container with an outside
+  network. It allows ports 80/443 and refuses private, loopback, link-local, CGNAT, multicast, documentation and
+  Docker ranges after resolving the name, so redirects, subresources and DNS rebinding to the LAN are denied.
+  Verified on the production host: the Proxmox UI, the Hub container, `*.nip.io` names pointing at the LAN,
+  `localhost`, the proxy itself and the cloud metadata address all return 403; direct connections from the
+  browser container fail.
+- **Residual:** the browser container can open a plain TCP connection to `bt-api` on `browser-ctl` (that is how
+  the API reaches it). Page JavaScript cannot, because all Chromium traffic goes through the proxy, which refuses
+  private addresses.
+
+`hub/browser.py` sends only lexically public URLs and treats returned HTML as untrusted. The rescue tool
+`render` above is still disabled; it could move to this sidecar after its own review.
+
 The model chooses which tool to try next, but it can only name a tool that exists. It never
 supplies a command, a URL to fetch, or a shell string, so a hostile page cannot turn the choice
 into execution. Adding a script runner later would break that property and needs its own

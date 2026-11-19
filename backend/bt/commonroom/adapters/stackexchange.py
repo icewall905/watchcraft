@@ -114,4 +114,4 @@ def comments(post: dict) -> list[dict]:
 
 ADAPTER = Adapter(key='stackexchange', label='Stack Exchange', parse=parse, fetch=fetch,
                   sorts=('new', 'hot', 'top_week', 'top_month', 'top_all'), search=search, comments=comments,
-                  example='superuser', discoverable=False)
+                  example='superuser')

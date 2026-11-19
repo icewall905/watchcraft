@@ -1,5 +1,6 @@
 """Master curator P2: debounced post-run passes and model judging of the uncertain band."""
 import os
+from bt.llm import role_for
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -259,9 +260,9 @@ def test_uncertain_worker_scores_escalate_with_source_evidence_and_cap(monkeypat
     calls = []
     def call(system, user, schema, **kw):
         calls.append((kw['role'], user))
-        return {'verdicts': [{'n': i, 'quality': 91 if kw['role'] == 'judge' else 60,
-                             'relevance': 89 if kw['role'] == 'judge' else 60,
-                             'reason': 'Evidence checked', 'uncertain': kw['role'] == 'worker'}
+        return {'verdicts': [{'n': i, 'quality': 91 if role_for(kw['role']) == 'judge' else 60,
+                             'relevance': 89 if role_for(kw['role']) == 'judge' else 60,
+                             'reason': 'Evidence checked', 'uncertain': role_for(kw['role']) == 'worker'}
                             for i in range(1, user.count('"n":') + 1)]}
     monkeypatch.setattr(ai, '_call', call)
     ids = [news(f'Council approves bridge funding {n}', body='Archived source evidence unique passage') for n in range(8)]
@@ -269,7 +270,7 @@ def test_uncertain_worker_scores_escalate_with_source_evidence_and_cap(monkeypat
     out = run_pass()
     assert out['model']['judged'] == 5
     assert queue_row() is not None  # the remaining doubtful items continue in another pass
-    assert [role for role, _ in calls] == ['worker', 'judge']
+    assert [role_for(role) for role, _ in calls] == ['worker', 'judge']
     assert calls[1][1].count('"n":') == 5
     assert 'Archived source evidence unique passage' in calls[1][1]
     with session() as s:

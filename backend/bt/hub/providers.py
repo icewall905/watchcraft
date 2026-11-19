@@ -338,16 +338,20 @@ _reddit_blocked_until = 0.0
 REDDIT_MAX_WAIT_S = 600  # a read further back in the queue than this fails fast and retries next run
 
 
-def _reddit_get(feed: str) -> bytes:
-    """One paced Reddit read. Each caller reserves the next free slot, then sleeps outside the lock."""
+def _reddit_get(feed: str, max_wait: float = REDDIT_MAX_WAIT_S) -> bytes:
+    """One paced Reddit read. Each caller reserves the next free slot, then sleeps outside the lock.
+
+    ``max_wait`` bounds how far back in the queue a caller is willing to wait."""
     global _reddit_last, _reddit_blocked_until
     with _reddit_lock:
         now = time.monotonic()
         if now < _reddit_blocked_until:
-            raise RateLimited(f'Reddit asked us to slow down; trying again in {int(_reddit_blocked_until - now)}s.')
+            raise RateLimited(f'Reddit asked us to slow down; trying again in {int(_reddit_blocked_until - now)}s.',
+                              retry_in=_reddit_blocked_until - now)
         slot = max(now, _reddit_last + REDDIT_GAP_S)
-        if slot - now > REDDIT_MAX_WAIT_S:
-            raise RateLimited(f'Reddit is busy with other sources; trying again in {int(slot - now)}s.')
+        if slot - now > max_wait:
+            raise RateLimited(f'Reddit is busy with other sources; trying again in {int(slot - now)}s.',
+                              retry_in=slot - now)
         _reddit_last = slot
     if slot > now:
         time.sleep(slot - now)
@@ -358,7 +362,8 @@ def _reddit_get(feed: str) -> bytes:
             hint = int(e.retry_after) if e.retry_after.isdigit() else 0
             with _reddit_lock:
                 _reddit_blocked_until = max(_reddit_blocked_until, time.monotonic() + min(max(REDDIT_BLOCK_S, hint), 3600))
-            raise RateLimited('Reddit asked us to slow down; trying again later.') from e
+            raise RateLimited('Reddit asked us to slow down; trying again later.',
+                              retry_in=min(max(REDDIT_BLOCK_S, hint), 3600)) from e
         raise
 
 
@@ -375,7 +380,7 @@ def reddit_feed(source: str) -> str:
     if len(path) < 2 or path[0].lower() != 'r' or not REDDIT_SUB.match(path[1]):
         raise ValueError('Use a subreddit like r/worldnews.')
     sort = path[2].lower() if len(path) > 2 and path[2].lower() in REDDIT_SORTS else 'top'
-    window = re.search(r'(?:^|&)t=(hour|day|week)(?:&|$)', parts.query or '')
+    window = re.search(r'(?:^|&)t=(hour|day|week|month|year|all)(?:&|$)', parts.query or '')
     query = f'?t={window.group(1) if window else "day"}&limit=50' if sort == 'top' else '?limit=50'
     return f'https://www.reddit.com/r/{path[1]}/{REDDIT_SORTS[sort]}.rss{query}'
 
@@ -644,6 +649,10 @@ def rss(url: str, _q: str = '') -> list[dict]:
 
 class RateLimited(ValueError):
     """A host asked us to stop; the rest of this source's queries would fail too."""
+
+    def __init__(self, message: str = '', retry_in: float = 0.0):
+        super().__init__(message)
+        self.retry_in = float(retry_in or 0)
 
 
 # GitHub's unauthenticated search API allows ten requests a minute per address. Several

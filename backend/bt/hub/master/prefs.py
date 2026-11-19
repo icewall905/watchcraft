@@ -252,7 +252,7 @@ def collect(s: Session, pid: int, at: float | None = None) -> dict:
             result = hub_ai._call(SYSTEM + (' Never propose a conclusion listed as rejected by the user.' if refused else ''),
                                   '<data>\n' + hub_ai._esc(payload) + '\n</data>'
                                   + ('\n\n<data>\n' + hub_ai._esc(refused) + '\n</data>' if refused else ''), SCHEMA,
-                                  max_tokens=1800, role='worker')
+                                  max_tokens=1800, role='taste_learning')
             by_id = {r['id']: r for r in evidence}
             valid = set(by_id)
             by_key = {(_normalize(l.text), l.scope, l.polarity): l for l in existing}

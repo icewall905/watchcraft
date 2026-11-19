@@ -10,6 +10,7 @@
  import PinColumns from '$lib/hub/PinColumns.svelte';
  import { preloadImages, stopPreloading } from '$lib/hub/preload';
  import ShareDialog from '$lib/hub/ShareDialog.svelte';
+ import BoardSources from '$lib/hub/BoardSources.svelte';
  import ShareNotices from '$lib/hub/ShareNotices.svelte';
  import Avatar from '$lib/components/Avatar.svelte';
  import { shareApi } from '$lib/hub/share';
@@ -35,6 +36,7 @@
  }
  const activityTitles: Record<string, string> = {queued: 'Curator queued', collecting: 'Curator is checking images', no_matches: 'No matching images this time', error: 'Curator needs attention', partial: 'Search finished with some problems', ok: 'Last search complete', target_reached: 'Image target reached'};
  const activityTitle = (status?: string) => activityTitles[status ?? ''] ?? 'Ready to find images';
+ let sourcesOpen = $state(false);
  let importing = $state(false), importOpen = $state(false), pinterestUrl = $state(''), importJob = $state<PinterestImport | null>(null);
  let imageOpen = $state(false), imageMode = $state<'manual' | 'reference'>('manual'), imageUrl = $state(''), imageTitle = $state(''), imageFile = $state<File | null>(null), imageBusy = $state(false);
  let query = $state(''), searching = $state(false), found = $state<FoundPin[] | null>(null), searchInfo = $state<BoardSearch | null>(null);
@@ -58,7 +60,7 @@
  const allowed = () => session.boardsAllowed && session.ready && !session.needsLogin && !session.choosing && !session.profile?.pin_locked;
  const stamp = () => `${session.profileId}:${session.version}`;
  const message = (e: unknown) => e instanceof Error ? e.message : 'Could not load your boards.';
- function clear() { clearSearch(); waiting = []; importOpen = false; importing = false; importJob = null; pinterestUrl = ''; imageOpen = false; imageBusy = false; imageUrl = ''; imageTitle = ''; imageFile = null; controller?.abort(); controller = null; generation++; boards = []; pins = []; selected = null; preview = null; editing = false; moving = null; saving = false; busy = null; deleteConfirm = false; notice = ''; error = ''; loading = false; more = false; hasMore = false; cursor = null; pollUntil = 0; refreshing = false; retryDeadlines = {}; }
+ function clear() { clearSearch(); sourcesOpen = false; waiting = []; importOpen = false; importing = false; importJob = null; pinterestUrl = ''; imageOpen = false; imageBusy = false; imageUrl = ''; imageTitle = ''; imageFile = null; controller?.abort(); controller = null; generation++; boards = []; pins = []; selected = null; preview = null; editing = false; moving = null; saving = false; busy = null; deleteConfirm = false; notice = ''; error = ''; loading = false; more = false; hasMore = false; cursor = null; pollUntil = 0; refreshing = false; retryDeadlines = {}; }
  async function load(append = false, quiet = false) {
   if (!allowed() || (append && (loading || more || !hasMore || !selected))) return;
   controller?.abort(); controller = new AbortController(); const signal = controller.signal, token = ++generation, owner = stamp();
@@ -137,7 +139,7 @@
  const urlBoard = () => Number(page.url.searchParams.get('board')) || null;
  // The open board lives in the URL (?board=7): browser Back returns to the overview, links can be shared.
  function choose(id: number | null) { void goto(id ? `/boards?board=${id}` : '/boards', {keepFocus: true, noScroll: false}); }
- function open(id: number | null) { importOpen = false; importing = false; selected = id; importJob = null; pins = []; preview = null; notice = ''; waiting = []; savedOnly = false; reviewOnly = false; void load(); if (!id) window.scrollTo({top: 0}); }
+ function open(id: number | null) { importOpen = false; sourcesOpen = false; importing = false; selected = id; importJob = null; pins = []; preview = null; notice = ''; waiting = []; savedOnly = false; reviewOnly = false; void load(); if (!id) window.scrollTo({top: 0}); }
  $effect(() => { const id = urlBoard(); untrack(() => { if (id !== selected && identity) open(id); }); });
  let boardFilter = $state(''), boardSort = $state<'recent' | 'name' | 'size'>('recent');
  try { const saved = localStorage.getItem('wc-boards-sort'); if (saved === 'name' || saved === 'size' || saved === 'recent') boardSort = saved; } catch { /* storage unavailable */ }
@@ -414,6 +416,7 @@
      <button class="btn primary find" disabled={findDisabled} onclick={refresh}>{@render icon('spark')}{findLabel}</button>
      {#if mine(board)}<button class="btn pill" disabled={curatorActive || reshuffling} title="Replace every image you have not hearted or given a thumbs up" onclick={() => { error = ''; reshuffleOpen = true; }}>{@render icon('shuffle')}Reshuffle</button>{/if}
      <button class="btn pill" onclick={() => openImage('manual')}>{@render icon('plus')}Add image</button>
+     {#if !session.isChild}<button class="btn pill" title="Let the source curator research sites for this board" onclick={() => { sourcesOpen = true; }}>{@render icon('puzzle')}Find sources</button>{/if}
      {#if !session.isChild && mine(board)}
      <button class="btn pill" onclick={() => openImage('reference')}>{@render icon('eye')}{board.reference_url ? 'Change inspiration image' : 'Add inspiration image'}</button>
      <button class="btn pill" onclick={() => { error = ''; importOpen = true; }}>{@render icon('pin')}Import Pinterest</button>
@@ -538,6 +541,7 @@
  </form>
 </Modal>{/if}
 
+{#if sourcesOpen && board}<BoardSources boardId={board.id} boardName={board.name} onClose={() => { sourcesOpen = false; }} />{/if}
 {#if importOpen}<Modal portal title="Import a Pinterest board" onClose={() => { if (!importing) importOpen = false; }}><form class="board-form" onsubmit={importPinterest}><p class="muted">Import every pin of a public board into this board. Pinterest is asked gently, so a large board takes a while: the import continues in the background, pauses when Pinterest asks it to slow down and picks up where it stopped. Images are saved locally with their original Pinterest links. Existing pins are skipped.</p><label>Public board link<input type="url" required maxlength="1000" bind:value={pinterestUrl} placeholder="https://www.pinterest.com/username/board-name/" /></label><small>Private boards and short links are not supported.</small>{#if error}<p class="error" role="alert">{error}</p>{/if}<div class="form-actions"><button type="button" class="btn" onclick={() => { importOpen = false; }}>Cancel</button><button class="btn primary" disabled={importing}>{importing ? 'Starting…' : 'Import board'}</button></div></form></Modal>{/if}
 {#if reviewing}<Modal title="Why doesn't this fit?" portal onClose={() => { if (busy === null) reviewing = null; }}>
  <form class="board-form" onsubmit={(e) => { e.preventDefault(); if (reviewing) void review(reviewing, 'bad', reviewNote.trim()); }}>

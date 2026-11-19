@@ -30,7 +30,7 @@ def test_removes_middle_chrome_without_rewriting_reporting(worker):
     calls = worker([{'drop': [1]}])
     result = cleanup.review('Title', body)
     assert result == {'body': first + '\n\n' + last, 'status': 'reviewed', 'removed': 1}
-    assert calls[0][3]['role'] == 'worker'
+    assert calls[0][3]['role'] == 'article_cleanup'
     assert calls[0][2]['additionalProperties'] is False
 
 

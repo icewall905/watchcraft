@@ -731,3 +731,54 @@ class KidSafeVerdict(SQLModel, table=True):
     reason: str = ''
     version: int = 0
     judged_at: float = Field(default_factory=time.time)
+
+
+class MoodSite(SQLModel, table=True):
+    """Shared, household-wide image-source "skill": a declarative recipe the board engine runs (never code).
+
+    Written by the board source curator; any board may link to it through MoodBoardSource."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    host: str = Field(index=True)
+    name: str = ''
+    kind: str  # feed | gallery | search_template | subreddit — see board_recipes.KINDS
+    recipe: dict = J({})
+    recipe_key: str = Field(default='', index=True)  # host+kind+recipe hash, for de-duplication
+    status: str = 'ok'  # ok | broken | disabled
+    notes: str = ''  # why it was chosen / quirks, for the next curator
+    failures: int = 0  # consecutive failed fetches
+    last_ok: float = 0
+    created_by_board: int = 0
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodBoardSource(SQLModel, table=True):
+    """A board's use of one shared site recipe, with its own parameters and track record."""
+    __table_args__ = (UniqueConstraint('board_id', 'site_id'),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    board_id: int = Field(index=True)
+    site_id: int = Field(index=True)
+    params: dict = J({})  # {'query': ...} for search templates
+    enabled: bool = True
+    added_by: str = 'curator'  # curator | user
+    fit: int = 0  # images the curator's vision trial accepted (of `tried`)
+    tried: int = 0
+    hits: int = 0  # candidates delivered to board runs
+    kept: int = 0  # of those, pinned
+    last_run: float = 0
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodSourceHunt(SQLModel, table=True):
+    """One run of the board source curator ("Find sources"); durable job row with a lease."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    board_id: int = Field(index=True)
+    profile_id: int = Field(index=True)
+    status: str = 'queued'  # queued | running | complete | failed
+    lease: str = ''
+    lease_until: float = 0
+    found: int = 0
+    error: str = ''
+    log: list = J([])  # [{at, step, message}], newest last, bounded
+    created_at: float = Field(default_factory=time.time)
+    started_at: float = 0
+    finished_at: float = 0

@@ -371,9 +371,9 @@ export interface Settings {
 	setup?: { completed: boolean };
 	hub_master: { enabled: boolean; time: string };
 	search: { provider: 'none' | 'searxng' | 'brave'; searxng_url: string; brave_api_key: string; hub_ai: boolean };
-	moodboard_sources: { web: boolean; reddit: boolean; bluesky: boolean; mastodon: boolean; mastodon_instance: string; flickr_api_key: string; tumblr_api_key: string; pinterest: boolean; source_timeout_s: number };
+	moodboard_sources: { web: boolean; reddit: boolean; bluesky: boolean; mastodon: boolean; mastodon_instance: string; flickr_api_key: string; tumblr_api_key: string; giphy_api_key: string; tenor_api_key: string; pinterest: boolean; source_timeout_s: number };
 	commonroom: { reddit_client_id: string; reddit_secret: string; stackexchange_key: string; show_nsfw: boolean };
-	llm: { base_url: string; model: string; api_key: string; timeout_s: number; vision: boolean; temperature: number; embed_model: string; embed_base_url: string; embed_api_key: string; worker_model: string; worker_base_url: string; worker_api_key: string };
+	llm: { base_url: string; model: string; api_key: string; timeout_s: number; vision: boolean; temperature: number; embed_model: string; embed_base_url: string; embed_api_key: string; worker_model: string; worker_base_url: string; worker_api_key: string; routes?: Record<string, 'worker' | 'judge'> };
 	throttle: {
 		min_delay_s: number;
 		max_delay_s: number;

@@ -8,8 +8,8 @@ RUN npm run build
 
 # --- runtime
 FROM python:3.12-slim
-# tesseract reads scanned PDFs. Browser rendering stays disabled pending network isolation;
-# Chromium/bubblewrap remain packaged for compatibility with existing deployments.
+# tesseract reads scanned PDFs. Chromium/bubblewrap remain packaged for compatibility; pages are only ever
+# rendered in the isolated browser sidecar (browser/), never in this image.
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg tzdata poppler-utils \
     chromium tesseract-ocr bubblewrap && rm -rf /var/lib/apt/lists/*
 # yt-dlp needs a JS runtime to solve YouTube player challenges

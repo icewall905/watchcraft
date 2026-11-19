@@ -12,6 +12,15 @@ from urllib.parse import urlsplit
 from .. import curation
 
 _guard = threading.Lock()
+
+
+class Paused(ValueError):
+    """The host asked for a pause; not a broken source. ``retry_in`` is seconds until it may be asked again."""
+
+    def __init__(self, message: str, retry_in: float):
+        super().__init__(message)
+        self.retry_in = float(retry_in)
+
 _hosts = {}
 
 
@@ -31,7 +40,7 @@ def fetch(url, **kwargs):
     with state[0]:
         remaining = state[1] - time.monotonic()
         if remaining > 2:
-            raise ValueError(f'This social instance requested a pause. Retry in {int(remaining) + 1} seconds.')
+            raise Paused(f'This social instance requested a pause. Retry in {int(remaining) + 1} seconds.', remaining)
         if remaining > 0:
             time.sleep(remaining)
         try:

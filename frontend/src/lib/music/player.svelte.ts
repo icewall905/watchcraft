@@ -26,6 +26,15 @@ function syncSet(set: SvelteSet<string>, want: Set<string>) {
 	for (const v of want) if (!set.has(v)) set.add(v);
 }
 
+const LYRICS_KEY = 'music.showLyrics';
+function lyricsPref(): boolean {
+	try {
+		return typeof localStorage === 'undefined' || localStorage.getItem(LYRICS_KEY) !== '0';
+	} catch {
+		return true;
+	}
+}
+
 class MusicPlayer {
 	queue = $state<Track[]>([]);
 	index = $state(-1);
@@ -39,7 +48,16 @@ class MusicPlayer {
 	djBusy = $state(false);
 	djVoice = $state(false);
 	/** Karaoke: lyrics over the video, and optionally the vocals turned down. */
-	showLyrics = $state(false);
+	/** Lyrics over the video: on unless this browser was told otherwise. */
+	showLyrics = $state(lyricsPref());
+	setLyrics(on: boolean) {
+		this.showLyrics = on;
+		try {
+			localStorage.setItem(LYRICS_KEY, on ? '1' : '0');
+		} catch {
+			/* private mode: the choice lasts this visit */
+		}
+	}
 	vocalCut = $state(false);
 	/** The DJ's mic: newest last. */
 	messages = $state<DjMessage[]>([]);

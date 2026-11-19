@@ -107,7 +107,7 @@ def pick_next(recent: list[dict], loved: list[str], vibe: str, request: str, n: 
             'Never pick a song listed in `crowd_dislikes`, and avoid its artists unless the guest request asks for them. '
             '`line` is what you say on the mic before the next song: one short, warm, playful sentence '
             '(max 20 words, no hashtags). `why` is a few words per pick.',
-            f'Pick {n} songs.\n<data>\n{ai._esc(data)}\n</data>', PICKS_SCHEMA, max_tokens=700, role='worker')
+            f'Pick {n} songs.\n<data>\n{ai._esc(data)}\n</data>', PICKS_SCHEMA, max_tokens=700, role='music_dj')
     except Exception as e:  # noqa: BLE001 - a model hiccup falls back to the radio
         log.info('music dj model failed: %s', e)
         return None
@@ -147,7 +147,7 @@ def curate(description: str, curator: str, *, background: bool = False) -> dict:
             'a one-sentence blurb in your voice, 3-6 YouTube Music search queries that find fitting songs '
             '(artist names, genres, eras), and 15-20 concrete real songs (artist + title) that fit.')
         out = ai._call(prompt,
-            f'<data>\n{ai._esc(words[:500])}\n</data>', CURATE_SCHEMA, max_tokens=1600, role='worker')
+            f'<data>\n{ai._esc(words[:500])}\n</data>', CURATE_SCHEMA, max_tokens=1600, role='music_dj')
     except Exception as e:  # noqa: BLE001
         log.info('music curator model failed: %s', e)
         return base

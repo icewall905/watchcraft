@@ -122,7 +122,7 @@ def judge_one(rt: Runtime, cand: Candidate) -> Optional[str]:
         images = [img] if img else None
     kw = dict(json_schema=prompts.JUDGE_SCHEMA, max_tokens=3000, schema_name="verdict", abort=rt.check)
     try:
-        out = rt.llm.chat_json(msgs, images=images, **kw)
+        out = rt.llm.chat_json(msgs, images=images, **kw, role='video_verdict')
     except Interrupt:
         raise
     except Exception as e:  # noqa: BLE001
@@ -131,7 +131,7 @@ def judge_one(rt: Runtime, cand: Candidate) -> Optional[str]:
             return None
         log.info("vision judge failed (%s); retrying without image", e)
         try:
-            out = rt.llm.chat_json(msgs, images=None, **kw)
+            out = rt.llm.chat_json(msgs, images=None, **kw, role='video_verdict')
         except Interrupt:
             raise
         except Exception as e2:  # noqa: BLE001

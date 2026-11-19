@@ -6,9 +6,9 @@ from sqlmodel import select
 
 from test_curation import client  # noqa: F401
 from test_master_api import other_profile
-from bt.commonroom import api as cr_api, assets, curate, discover, harvest, kids, scheduler, store
+from bt.commonroom import api as cr_api, assets, curate, expedition, harvest, kids, scheduler, store
 from bt.commonroom.adapters import Adapter, Page
-from bt.commonroom.models import CRCandidate, CRPick, CRPost, CRSource, CRThread
+from bt.commonroom.models import CRCandidate, CRPick, CRPost, CRSource, CRSourceHunt, CRThread
 from bt.db import session
 from bt.models import Profile
 
@@ -47,7 +47,7 @@ FAKE = Adapter(key='fake', label='Fake', parse=parse, fetch=fetch, sorts=('new',
 @pytest.fixture(autouse=True)
 def fake_platform(monkeypatch):
     CALLS.clear()
-    for mod in (harvest, discover, cr_api, assets):
+    for mod in (harvest, expedition, cr_api, assets):
         monkeypatch.setattr(mod, 'ADAPTERS', {'fake': FAKE})
     monkeypatch.setattr(curate.semantic, 'available', lambda: (False, 'off'))
     scheduler._pruned[0] = time.time()
@@ -71,6 +71,15 @@ def run_all():
         pass
 
 
+def finish_hunts():
+    """Source expeditions run in their own loop; mark the queued ones as just finished."""
+    with session() as s:
+        for h in s.exec(select(CRSourceHunt)).all():
+            h.status, h.finished_at = 'done', time.time()
+            s.add(h)
+        s.commit()
+
+
 def test_thread_harvests_curates_and_feeds_new_then_deep(client):
     t = thread(client)
     assert client.post(f"/api/hub/commonroom/threads/{t['id']}/sources",
@@ -82,8 +91,14 @@ def test_thread_harvests_curates_and_feeds_new_then_deep(client):
     new = client.get('/api/hub/commonroom/feed', params={'section': 'new', 'boundary': b}).json()
     assert {p['title'] for p in new['posts']} >= {'Post new 0', 'Post new 1', 'Post new 2'}
     assert new['posts'][0]['thread_name'] == 'Homelab'
+    with session() as s:
+        hunts = s.exec(select(CRSourceHunt)).all()
+        assert [h.reason for h in hunts] == ['new']  # a new thread sends an expedition for more sources
     deep = client.get('/api/hub/commonroom/feed', params={'section': 'deep', 'boundary': b}).json()
-    # The fake source is walked to its end by now: the thread rests instead of re-running.
+    assert deep['building'] is True  # ... and the dry feed waits for it
+    finish_hunts()
+    deep = client.get('/api/hub/commonroom/feed', params={'section': 'deep', 'boundary': b}).json()
+    # The fake source is walked to its end and an expedition just ran: the thread rests.
     assert deep['has_more'] is False and deep['building'] is False
     with session() as s:
         src = s.exec(select(CRSource)).first()
@@ -236,6 +251,8 @@ def test_judge_threshold_and_rejections_are_remembered(client, monkeypatch):
 
     def judge(system, user, schema, **kw):
         calls.append(user)
+        if len(calls) > 1:
+            return {'scores': []}  # answered, but skips the post again
         return {'scores': [{'n': 1, 'score': 90, 'why': 'Great fit'}, {'n': 2, 'score': 10, 'why': 'meh'}]}
     monkeypatch.setattr(curate.ai, '_call', judge)
     t = thread(client, strictness='balanced')
@@ -249,15 +266,23 @@ def test_judge_threshold_and_rejections_are_remembered(client, monkeypatch):
         picks = s.exec(select(CRPick)).all()
         assert len(picks) == 1 and picks[0].why == 'Great fit'
         statuses = sorted(c.status for c in s.exec(select(CRCandidate)).all())
-        assert statuses.count('kept') == 1 and statuses.count('rejected') >= 2
+        # The post the answered batch skipped stays pending for one more try.
+        assert statuses == ['kept', 'pending', 'rejected']
+
+    def again():
+        with session() as s:
+            thr = s.get(CRThread, t['id'])
+            thr.next_run = 0
+            s.add(thr)
+            s.commit()
+        run_all()
     n = len(calls)
+    again()
+    assert len(calls) == n + 1  # only the skipped post, judged again and skipped again
     with session() as s:
-        thr = s.get(CRThread, t['id'])
-        thr.next_run = 0
-        s.add(thr)
-        s.commit()
-    run_all()
-    assert len(calls) == n  # nothing re-judged
+        assert sorted(c.status for c in s.exec(select(CRCandidate)).all()) == ['kept', 'rejected', 'rejected']
+    again()
+    assert len(calls) == n + 1  # nothing re-judged
 
 
 def test_delete_profile_removes_threads(client):
@@ -285,6 +310,7 @@ def test_failed_run_does_not_spin_and_dry_deep_rests(client, monkeypatch):
         s.add(src)
         s.add(thr)
         s.commit()
+    finish_hunts()
     deep = client.get('/api/hub/commonroom/feed', params={'thread': t['id'], 'section': 'deep', 'boundary': 0}).json()
     assert deep['building'] is False
     with session() as s:
@@ -317,6 +343,7 @@ def test_failing_source_counts_as_done_for_dry_deep(client):
         thr.want_more, thr.last_run = False, time.time()
         s.add(thr)
         s.commit()
+    finish_hunts()
     deep = client.get('/api/hub/commonroom/feed', params={'thread': t['id'], 'section': 'deep', 'boundary': 0}).json()
     assert deep['building'] is False
     with session() as s:

@@ -21,6 +21,22 @@
 	const team = new SettingsDraft('team');
 	const th = new SettingsDraft('throttle');
 
+	// Where each kind of request goes. Unset = the task's default (worker, judge for the hard judgement calls).
+	type Route = 'worker' | 'judge';
+	let tasks = $state<{ key: string; section: string; label: string; default: Route }[]>([]);
+	const routeSections = $derived([...new Set(tasks.map((t) => t.section))]);
+	const ROUTE_OPTIONS: { value: Route; label: string }[] = [{ value: 'worker', label: 'Worker' }, { value: 'judge', label: 'Judge' }];
+	const routeOf = (t: { key: string; default: Route }) => llm.value.routes?.[t.key] ?? t.default;
+	function setRoute(t: { key: string; default: Route }, role: Route) {
+		const next = { ...(llm.value.routes ?? {}) };
+		if (role === t.default) delete next[t.key];
+		else next[t.key] = role;
+		llm.value.routes = next;
+	}
+	async function loadTasks() {
+		try { tasks = (await api.llmRoutes()).tasks; } catch { tasks = []; }
+	}
+
 	const LLM_PROVIDERS = [
 		{ value: 'custom', label: 'Custom / local', url: '', hint: 'Your own OpenAI-compatible server.' },
 		{ value: 'ollama-cloud', label: 'Ollama Cloud', url: 'https://ollama.com/v1', hint: 'Ollama cloud API key.' },
@@ -150,6 +166,7 @@
 	const px = $state({ provider: 'direct', user: '', pass: '', scheme: 'http', host: '', port: '8000', custom: '' });
 
 	onMount(async () => {
+		if (!connectionOnly) void loadTasks();
 		try {
 			const { providers } = await api.proxyProviders();
 			for (const p of providers) catalog[p.id] = p;
@@ -345,6 +362,20 @@
 		<Stepper label="Timeout" hint="How long to wait for one answer." bind:value={llm.value.timeout_s} min={30} max={1800} step={30} format={(v) => mins(v)} />
 	</div>
 	<Slider label="Creativity" hint="Temperature. Low keeps verdicts consistent; higher gives more varied search ideas." bind:value={llm.value.temperature} min={0} max={1.5} step={0.05} format={(v) => v.toFixed(2)} />
+	{#if !connectionOnly && tasks.length}
+		<details class="routes">
+			<summary>Where each request goes</summary>
+			<p class="small muted">Worker by default; the judge keeps the hard judgement calls. Both fall back to the judge's server when no worker is set.</p>
+			{#each routeSections as section (section)}
+				<h4>{section}</h4>
+				<div class="route-grid">
+					{#each tasks.filter((t) => t.section === section) as t (t.key)}
+						<Select label={t.label} hint={t.default === 'judge' ? 'Default: judge' : undefined} value={routeOf(t)} options={ROUTE_OPTIONS} group="llm-routes" onchange={(v) => setRoute(t, v)} />
+					{/each}
+				</div>
+			{/each}
+		</details>
+	{/if}
 	{#if connectionOnly}
 		<p class="small muted">Local AI on this computer? Use an address the Hub server can reach. On Docker Desktop, host.docker.internal points to your computer; localhost points to the container. On Linux, use the AI server's LAN address.</p>
 		<button class="btn primary big" disabled={connecting || testing || llm.busy || !llm.value.base_url || !llm.value.model} use:focusable={{ group: 'llm-connect', onSelect: connectAndContinue }}>{connecting ? 'Connecting…' : 'Test, save and continue'}</button>
@@ -444,6 +475,19 @@
 {/if}
 
 <style>
+	.routes summary {
+		cursor: pointer;
+		font-weight: 600;
+		padding: 0.4rem 0;
+	}
+	.routes h4 {
+		margin: 1rem 0 0.4rem;
+	}
+	.route-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+		gap: 0.6rem;
+	}
 	.conn {
 		display: grid;
 		gap: 1rem;

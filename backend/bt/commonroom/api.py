@@ -8,7 +8,7 @@ from sqlmodel import select
 
 from ..access import hub_worker_allowed, is_child, profile_id
 from ..db import session
-from . import harvest, store
+from . import expedition, harvest, store
 from .adapters import ADAPTERS
 from .models import (CRAsset, CRBlock, CRCandidate, CRComments, CRFeedback, CRPick, CRPost, CRSource, CRThread,
                      CRSourcePost, CRThreadSource, CRVisit)
@@ -148,6 +148,8 @@ def create_thread(data: ThreadIn, pid: int = Depends(require_room)):
                      instructions=data.instructions.strip(), avoid=data.avoid.strip(),
                      strictness='strict' if child else data.strictness, child_friendly=child, want_more=True)
         s.add(t)
+        s.flush()
+        expedition.enqueue(s, t.id, 'new')
         s.commit()
         s.refresh(t)
         return _thread_json(s, t, pid)
@@ -166,7 +168,7 @@ def edit_thread(tid: int, data: ThreadEdit, pid: int = Depends(require_room)):
         for k, v in changes.items():
             setattr(t, k, v.strip() if isinstance(v, str) else v)
         if 'interests' in changes and changes['interests'] != '':
-            t.discovered_at = 0  # rediscover sources for the new interests
+            t.discovered_at = 0  # the next run queues an expedition for the new interests
         if retune:
             t.next_run = 0
         s.add(t)
@@ -218,17 +220,48 @@ class SourceEdit(BaseModel):
 
 def _source_json(link: CRThreadSource, src: CRSource) -> dict:
     return {'id': link.id, 'source_id': src.id, 'platform': src.platform, 'locator': src.locator,
-            'label': src.label or src.locator, 'origin': link.origin, 'enabled': link.enabled, 'error': src.error,
-            'last_ok': src.last_ok or None}
+            'label': src.label or expedition.describe(src.platform, src.locator), 'origin': link.origin,
+            'enabled': link.enabled, 'error': src.error, 'last_ok': src.last_ok or None, 'status': src.status,
+            'fit': link.fit, 'tried': link.tried, 'kept': link.kept, 'hits': src.hits,
+            'url': _source_url(src)}
+
+
+def _source_url(src: CRSource) -> str:
+    if src.platform == 'web':
+        try:
+            r = expedition.web_adapter.recipe_of(src.locator)
+            return r.get('url') or r.get('url_template', '').split('?')[0]
+        except ValueError:
+            return ''
+    if src.platform == 'reddit':
+        return 'https://www.reddit.com/' + src.locator
+    return src.locator if src.locator.startswith('https://') else ''
+
+
+def _sources_json(s, tid: int) -> dict:
+    rows = s.exec(select(CRThreadSource, CRSource).join(CRSource, CRSource.id == CRThreadSource.source_id)
+                  .where(CRThreadSource.thread_id == tid).order_by(CRSource.platform, CRSource.locator)).all()
+    return {'sources': [_source_json(link, src) for link, src in rows],
+            'hunt': expedition.hunt_json(expedition.latest(s, tid))}
 
 
 @router.get('/threads/{tid}/sources')
 def list_sources(tid: int, pid: int = Depends(require_room)):
     with session() as s:
         _owned(s, pid, tid)
-        rows = s.exec(select(CRThreadSource, CRSource).join(CRSource, CRSource.id == CRThreadSource.source_id)
-                      .where(CRThreadSource.thread_id == tid).order_by(CRSource.platform, CRSource.locator)).all()
-        return {'sources': [_source_json(link, src) for link, src in rows]}
+        return _sources_json(s, tid)
+
+
+@router.post('/threads/{tid}/find-sources')
+def find_sources(tid: int, pid: int = Depends(require_room)):
+    with session() as s:
+        s.connection().exec_driver_sql('BEGIN IMMEDIATE')
+        _owned(s, pid, tid)
+        if expedition.active(s, tid):
+            raise HTTPException(409, 'A source expedition is already running for this thread.')
+        expedition.enqueue(s, tid, 'button')
+        s.commit()
+        return _sources_json(s, tid)
 
 
 @router.post('/threads/{tid}/sources')
@@ -376,16 +409,21 @@ def feed(thread: str = 'all', section: str = 'new', boundary: float | None = Non
                 q2 = q2.where(CRThread.id.in_(tids))
             now = time.time()
             arm = []
+            dry = []
             for t in s.exec(q2).all():
-                if t.want_more or t.lease:
+                if t.want_more or t.lease or expedition.active(s, t.id):
                     building = True
                 elif not (harvest.exhausted(t.id) and t.last_run and now - t.last_run < t.interval_minutes * 60):
                     arm.append(t.id)
+                else:
+                    dry.append(t.id)
             if arm:
                 s.connection().exec_driver_sql('BEGIN IMMEDIATE')
                 s.exec(update(CRThread).where(CRThread.id.in_(arm)).values(want_more=True))
                 s.commit()
                 building = True
+            for tid in dry:  # every source walked to its end: send an expedition for new places
+                building = expedition.request(tid, 'dry') or building
         return {'posts': posts, 'next_cursor': str(offset + len(rows)) if more else '', 'has_more': more,
                 'building': building}
 

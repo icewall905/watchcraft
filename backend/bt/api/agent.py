@@ -310,6 +310,13 @@ def _raise_with_detail(r: httpx.Response) -> None:
     r.raise_for_status()
 
 
+@router.get("/agent/llm-routes", dependencies=[Depends(require_admin)])
+def llm_routes():
+    """Every kind of model request, its section, label and default endpoint, for the routing settings."""
+    from ..llm import TASKS
+    return {"tasks": [{"key": k, "section": sec, "label": label, "default": role} for k, (sec, label, role) in TASKS.items()]}
+
+
 @router.post("/agent/llm-test", dependencies=[Depends(require_admin)])
 async def llm_test(body: LlmTest):
     cfg = (await run_in_threadpool(get_settings))["llm"]

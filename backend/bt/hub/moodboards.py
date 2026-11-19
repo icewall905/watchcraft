@@ -8,7 +8,7 @@ import re
 import threading
 import time
 import math
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 import logging
 from io import BytesIO
 from urllib.parse import urlsplit
@@ -310,6 +310,9 @@ def create(data: BoardCreate, pid: int = Depends(require_boards)):
         board = MoodBoard(profile_id=pid, **values)
         board.last_status = 'queued' if board.enabled else ''
         s.add(board)
+        s.flush()
+        from .board_curator import enqueue
+        enqueue(s, board)  # Source research: finds this board's own image sites in the background.
         s.commit()
         s.refresh(board)
         data = board_json(s, board, pid)
@@ -388,6 +391,8 @@ def delete_profile(s, pid):
     s.exec(delete(MoodPinNote).where(MoodPinNote.pin_id.in_(ids)))
     s.exec(delete(MoodPin).where(MoodPin.board_id.in_(own)))
     s.exec(delete(MoodImport).where(MoodImport.profile_id == pid))
+    from .board_curator import delete_board
+    delete_board(s, own)
     s.exec(delete(AgentEvent).where(AgentEvent.kind == activity.KIND, AgentEvent.profile_id == pid,
                                   AgentEvent.payload['board_id'].as_integer() != None))
     s.exec(delete(MoodReference).where(MoodReference.board_id.in_(select(MoodBoard.id).where(MoodBoard.profile_id == pid))))
@@ -408,6 +413,8 @@ def remove(bid: int, pid: int = Depends(require_boards)):
         s.exec(delete(MoodPinNote).where(MoodPinNote.pin_id.in_(ids)))
         s.exec(delete(MoodPin).where(MoodPin.board_id == bid))
         s.exec(delete(MoodImport).where(MoodImport.board_id == bid))
+        from .board_curator import delete_board
+        delete_board(s, [bid])
         s.exec(delete(AgentEvent).where(AgentEvent.kind == activity.KIND, AgentEvent.profile_id == pid,
                                       AgentEvent.payload['board_id'].as_integer() == bid))
         s.exec(delete(MoodReference).where(MoodReference.board_id == bid))
@@ -875,7 +882,7 @@ def select_candidates(candidates, interests, instructions, progress=None, refere
                 'All fits=false is correct when none qualify.' + reference_note,
                 'Interests: ' + ai._esc(interests) + '\nCurator instructions: ' + ai._esc(instructions) +
                 '\n<data>' + ai._esc(json.dumps(rows)) + '</data>', schema,
-                max_tokens=1200, images=images, role='worker', timeout_s=VISION_TIMEOUT_S)
+                max_tokens=1200, images=images, role='board_vision', timeout_s=VISION_TIMEOUT_S)
             verdicts = result.get('verdicts')
             if not isinstance(verdicts, list) or any(
                     not isinstance(v, dict) or type(v.get('index')) is not int or not 0 <= v['index'] < len(batch)
@@ -912,7 +919,7 @@ def discovery_queries(interest, instructions, reference_data=None):
                        'Include specific requested patterns or objects, but never paste full instructions '
                        'or combine every interest into one over-constrained query. Return search phrases only.',
                        '<data>Interest: ' + ai._esc(interest) + '\nInstructions: ' + ai._esc(instructions) + '</data>',
-                       schema, max_tokens=250, role='worker', timeout_s=VISION_TIMEOUT_S, **extra)
+                       schema, max_tokens=250, role='board_queries', timeout_s=VISION_TIMEOUT_S, **extra)
         phrases = out.get('queries')
         if isinstance(phrases, list):
             phrases = list(dict.fromkeys(v.strip()[:150] for v in phrases[:4] if isinstance(v, str) and v.strip()))
@@ -993,6 +1000,32 @@ def capture_candidates(candidates, media, min_width, ai_mode):
     return [o for o in outcomes if isinstance(o, dict)], sum(o == 'failed' for o in outcomes)
 
 
+SOURCES_PER_RUN = 3  # board-specific sources fetched per run (rotating)
+SOURCE_DEADLINE_S = 30
+
+
+def fetch_board_sources(links, queries, page_offset, child=False):
+    """Run board source recipes in parallel within a deadline; yields (link, items). Health is recorded."""
+    from . import board_curator, board_recipes
+    pool = ThreadPoolExecutor(max_workers=len(links), thread_name_prefix='moodboard-site')
+    try:
+        futures = {pool.submit(board_recipes.fetch, link['kind'], link['recipe'],
+                               queries[i % len(queries)] or link['params'].get('query', ''), 30, page_offset, child): link
+                   for i, link in enumerate(links)}
+        done, _late = wait(futures, timeout=SOURCE_DEADLINE_S)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    out = []
+    for future, link in futures.items():
+        ok = future in done and future.exception() is None
+        board_curator.record_fetch(link['site_id'], ok)
+        if ok:
+            out.append((link, future.result()))
+        else:
+            log.info('Mood Board source %s failed: %s', link['name'], future.exception() if future in done else 'timeout')
+    return out
+
+
 def heartbeat(bid, lease):
     with session() as s:
         s.exec(update(MoodBoard).where(MoodBoard.id == bid, MoodBoard.lease == lease).values(build_started=time.time()))
@@ -1021,7 +1054,10 @@ def collect(bid, lease, revision):
         remaining = max(0, min(board.target_images - visible, MAX_PINS - stored(s, bid)))
         reference = s.get(MoodReference, bid)
         reference_data = reference.data if reference else None
+        from . import board_curator
+        links = board_curator.board_sources(s, bid, child)
     results, failures = [], 0
+    link_hits, link_kept = {}, {}
     error = ''
     candidates, captured = [], []
     searched = hits = 0
@@ -1033,6 +1069,23 @@ def collect(bid, lease, revision):
         planned = discovery_queries(context, instructions, reference_data) if reference_data else discovery_queries(context, instructions)
         queries = plan_queries(seeds, planned, offset)
         seen_candidates, seen_images = set(), set()
+        if links:
+            # The board's own sources (recipes its source curator saved) come first, a few per run in rotation.
+            start = (offset // 30) % len(links)
+            picked = (links[start:] + links[:start])[:SOURCES_PER_RUN]
+            milestone('search', f'Checking {len(picked)} of this board\'s own image sources.', sources=len(picked))
+            for link, found in fetch_board_sources(picked, queries or [query], page_offset, child):
+                hits += len(found)
+                for item in found:
+                    source, image = moodboard_sources.valid_candidate(item)
+                    if not source or not image or source in existing or source in seen_candidates \
+                            or moodboard_sources._image_key(image) in seen_images \
+                            or len(candidates) >= CANDIDATES_PER_RUN // 2:
+                        continue
+                    seen_candidates.add(source)
+                    seen_images.add(moodboard_sources._image_key(image))
+                    candidates.append({**item, 'source_url': source, 'image_url': image, '_link': link['link_id']})
+                    link_hits[link['link_id']] = link_hits.get(link['link_id'], 0) + 1
         for search_query in queries:
             if len(candidates) >= CANDIDATES_PER_RUN:
                 break
@@ -1105,6 +1158,8 @@ def collect(bid, lease, revision):
                 s.add(MoodPinNote(pin_id=pin.id, seen=verdict['seen'], why=verdict['why']))
             count += 1
             added += 1
+            if item.get('_link'):
+                link_kept[item['_link']] = link_kept.get(item['_link'], 0) + 1
         if not error:
             board.source_offset = (offset + 30) % (300 * len(interests))
         board.last_status = 'error' if error else 'partial' if failures else 'ok' if added else 'no_matches'
@@ -1123,6 +1178,8 @@ def collect(bid, lease, revision):
         s.commit()
         # Load fields while the session is still open for the activity owner guard.
         s.refresh(board)
+    if link_hits:
+        board_curator.record_use(link_hits, link_kept)
     summary = (error if error else f'Added {added} images after reviewing {len(captured)} previews from {len(candidates)} search candidates.'
                if added else 'No new images matched your instructions. ' +
                (f'Vision reviewed {len(captured)} previews from {len(candidates)} candidates.' if captured else

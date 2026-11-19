@@ -165,3 +165,33 @@ test('Settings: choose Common Room post languages', async ({ page }) => {
 	await expect(page.getByText('Showing: Danish, English.')).toBeVisible();
 	expect(puts).toEqual([{ languages: ['da'] }, { languages: ['da', 'en'] }]);
 });
+
+test('Edit thread: Find sources starts an expedition and shows its log and found sources', async ({ page }) => {
+	const calls = await setup(page);
+	let state = 0;
+	const lemmy = { id: 7, source_id: 70, platform: 'lemmy', locator: 'retro@lemmy.world', label: 'retro@lemmy.world', origin: 'ai', enabled: true, error: '', last_ok: null, status: 'ok', fit: 7, tried: 8, kept: 3, hits: 40, url: '' };
+	const feed = { id: 8, source_id: 80, platform: 'rss', locator: 'https://amiga.example/feed', label: 'Amiga Journal', origin: 'ai', enabled: true, error: 'gone', last_ok: null, status: 'broken', fit: 5, tried: 8, kept: 0, hits: 12, url: 'https://amiga.example/feed' };
+	const hunt = (status: string, log: string[]) => ({ id: 1, status, reason: 'button', found: status === 'done' ? 1 : 0, error: '', created_at: 1, finished_at: 0, log: log.map((message) => ({ at: 1, step: message.startsWith('Following') ? 'saved' : 'searching', message })) });
+	await page.route('**/api/hub/commonroom/threads/1/**', async (route) => {
+		const path = new URL(route.request().url()).pathname;
+		calls.push({ method: route.request().method(), path, query: new URLSearchParams(), body: {} });
+		if (path.endsWith('/find-sources')) { state = 1; return route.fulfill({ json: { sources: [lemmy], hunt: hunt('queued', ['Source expedition queued.']) } }); }
+		if (path.endsWith('/sources')) {
+			if (state === 0) return route.fulfill({ json: { sources: [lemmy], hunt: null } });
+			return route.fulfill({ json: { sources: [lemmy, feed], hunt: hunt('done', ['Source expedition queued.', 'Following Amiga Journal (5/8 sample posts fit).']) } });
+		}
+		if (path.endsWith('/learned')) return route.fulfill({ json: { lessons: [], up: 0, down: 0 } });
+		return route.fulfill({ json: { ok: true } });
+	});
+	await freshPage(page, '/common-room');
+	await page.getByRole('button', { name: 'Retro computing' }).click();
+	await page.getByRole('button', { name: 'Edit thread' }).click();
+	const dialog = page.getByRole('dialog');
+	await expect(dialog.getByText('fit 7/8')).toBeVisible();
+	await dialog.getByRole('button', { name: 'Find sources' }).click();
+	await expect(dialog.getByRole('button', { name: 'Expedition running…' })).toBeDisabled();
+	await expect(dialog.getByRole('list', { name: 'Expedition log' })).toContainText('Following Amiga Journal', { timeout: 10000 });
+	await expect(dialog.getByRole('link', { name: 'Amiga Journal' })).toBeVisible();
+	await expect(dialog.getByText('broken, retried daily')).toBeVisible();
+	await expect(dialog.getByText('Last expedition: 1 new source')).toBeVisible();
+});

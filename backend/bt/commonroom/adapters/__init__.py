@@ -112,7 +112,7 @@ def _load() -> dict[str, Adapter]:
     import importlib
     out: dict[str, Adapter] = {}
     for name in ('reddit', 'lemmy', 'mbin', 'mastodon', 'bluesky', 'hackernews', 'lobsters', 'devto',
-                 'tildes', 'stackexchange', 'discourse'):
+                 'tildes', 'stackexchange', 'discourse', 'rss', 'web'):
         try:
             mod = importlib.import_module(f'{__name__}.{name}')
         except ModuleNotFoundError as e:

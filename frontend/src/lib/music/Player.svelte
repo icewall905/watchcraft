@@ -246,7 +246,7 @@
 	}
 
 	function toggleLyrics() {
-		player.showLyrics = !player.showLyrics;
+		player.setLyrics(!player.showLyrics);
 		if (!player.showLyrics && player.vocalCut) toggleVocals();
 	}
 	function toggleVocals() {
@@ -258,7 +258,7 @@
 		}
 		player.vocalCut = on;
 		if (on) {
-			player.showLyrics = true;
+			player.setLyrics(true);
 			toast.info('🎤 Vocals turned down — your turn to sing!');
 		}
 	}
