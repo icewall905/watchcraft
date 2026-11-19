@@ -17,7 +17,9 @@ test('suggest a recurring check and follow a Front Page update', async ({ page }
 		return route.fulfill({ json: watch ? [watch] : [] });
 	});
 	await page.route(/\/api\/hub\/watcher\/updates(?:\?.*)?$/, (route) => route.fulfill({
-		json: watch && (update.unread || !new URL(route.request().url()).searchParams.has('unread')) ? [update] : []
+		json: watch && (update.unread || new URL(route.request().url()).searchParams.get('unread') !== 'true')
+			&& (new URL(route.request().url()).searchParams.get('kind') === 'all'
+				|| new URL(route.request().url()).searchParams.get('kind') === (update.watch_id === 0 ? 'test' : 'watch')) ? [update] : []
 	}));
 	await page.route('**/api/hub/watcher/updates/1/read', (route) => {
 		update.unread = false;
@@ -48,8 +50,16 @@ test('suggest a recurring check and follow a Front Page update', async ({ page }
 		return route.fulfill({ json: update });
 	});
 	await page.goto('/watcher');
+	await expect(page.getByRole('button', { name: 'Send test notification' })).toHaveCount(0);
+	await page.goto('/settings?tab=watcher-notifications');
 	await page.getByRole('button', { name: 'Send test notification' }).click();
-	await expect(page.getByRole('heading', { name: 'Test notification', exact: true })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Mark test as read' })).toBeVisible();
 	await page.goto('/today');
 	await expect(banner).toContainText('This is a test notification from The Watcher.');
+	await banner.click();
+	await expect(page).toHaveURL(/\/settings\?tab=watcher-notifications$/);
+	await page.getByRole('button', { name: 'Mark test as read' }).click();
+	await expect(page.getByRole('button', { name: 'Mark test as read' })).toHaveCount(0);
+	await page.goto('/watcher');
+	await expect(page.getByText('No updates yet.')).toBeVisible();
 });

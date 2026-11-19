@@ -134,6 +134,8 @@ def test_notification_is_profile_scoped_and_uses_the_push_queue(client, monkeypa
     event = result.json()
     assert event['watch_id'] == 0 and event['unread']
     assert client.get(f'{PATH}/updates?unread=true').json() == [event]
+    assert client.get(f'{PATH}/updates?kind=test').json() == [event]
+    assert client.get(f'{PATH}/updates?kind=watch').json() == []
     assert client.get(f'{PATH}/updates?unread=true', headers=other).json() == []
     assert client.post(f'{PATH}/updates/test').status_code == 429
     sent = []

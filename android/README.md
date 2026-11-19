@@ -61,7 +61,7 @@ publish authentication, set `BT_WATCHER_NTFY_TOKEN` on the Hub. The Android app 
 to its private topic URL, and the topic should be treated as a secret. The app stores it encrypted
 using Android Keystore and keeps it out of backups.
 
-Connect to your Hub over HTTPS. In **The Watcher**, choose **Set up background notifications**,
+Connect to your Hub over HTTPS. In **Settings → Watcher notifications**, choose **Set up background notifications**,
 then **Open connection in Android app** and allow notifications. Use **Send test notification**
 and check the Android notification shade. The notification contains a generic message. The Hub
 supplies the details after sign-in. On devices that restrict background delivery, allow unrestricted

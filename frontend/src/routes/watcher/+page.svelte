@@ -15,17 +15,13 @@
 	let showPlan = $state(false);
 	let watches = $state<Watch[]>([]);
 	let updates = $state<WatchUpdate[]>([]);
-	let androidConfigured = $state(false);
-	let androidMessage = $state('');
 	let pendingRemoval = $state<number | null>(null);
-	const supportsAndroidPush = () => typeof navigator !== 'undefined' && navigator.userAgent.includes('WatcherNtfy/1');
-	let pairingLink = $state('');
 	const active = () => session.ready && !session.needsLogin && !session.choosing && !!session.profileId && !session.profile?.pin_locked;
 	const identity = () => active() ? `${session.profileId}:${session.version}` : '';
 
 	async function load(key: string) {
 		try {
-			const [list, events] = await Promise.all([watcher.list(), watcher.updates()]);
+			const [list, events] = await Promise.all([watcher.list(), watcher.updates(false, undefined, 'watch')]);
 			if (key === identity()) { watches = list; updates = events; }
 		} catch (e) {
 			if (key === identity()) error = (e as Error).message;
@@ -35,14 +31,9 @@
 	$effect(() => {
 		const key = identity();
 		watches = []; updates = []; goal = ''; terms = ''; question = ''; error = ''; busy = false;
-		showPlan = false; pendingRemoval = null; pairingLink = ''; androidMessage = ''; androidConfigured = false;
+		showPlan = false; pendingRemoval = null;
 		plan = { mode: 'page_watch', source: '', selector: '', terms: [] };
-		if (key) {
-			void load(key);
-			if (supportsAndroidPush()) void watcher.androidStatus().then((status) => {
-				if (key === identity()) androidConfigured = status.configured;
-			}).catch(() => {});
-		}
+		if (key) void load(key);
 	});
 
 	onMount(() => {
@@ -92,28 +83,6 @@
 			goal = ''; terms = ''; question = ''; showPlan = false;
 			plan = { mode: 'page_watch', source: '', selector: '', terms: [] };
 			await load(key);
-		});
-	}
-
-	function preparePairing() {
-		const key = identity();
-		void action(async () => {
-			const config = await watcher.pairAndroid();
-			if (key !== identity()) return;
-			const query = new URLSearchParams({ endpoint: config.endpoint, since: String(config.since) });
-			pairingLink = `watchcraft-watcher://enable?${query}`;
-			androidMessage = '';
-		});
-	}
-
-	function revokePairing() {
-		const key = identity();
-		void action(async () => {
-			await watcher.revokeAndroid();
-			if (key === identity()) {
-				pairingLink = '';
-				androidMessage = 'This profile’s background connection was revoked. Disable the listener on each device to remove its status notification.';
-			}
 		});
 	}
 
@@ -171,33 +140,12 @@
 	</form>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 
-	{#if supportsAndroidPush()}
-		<section class="panel">
-			<h2>Android notifications</h2>
-			{#if androidConfigured && typeof location !== 'undefined' && location.protocol === 'https:'}
-				<div class="actions">
-					{#if pairingLink}
-						<a class="btn primary" href={pairingLink} data-sveltekit-reload use:focusable>Open connection in Android app</a>
-					{:else}
-						<button class="btn" disabled={busy} onclick={preparePairing} use:focusable>Set up background notifications</button>
-					{/if}
-					<a class="btn" href="watchcraft-watcher://disable" data-sveltekit-reload use:focusable>Disable on this device</a>
-					<button class="btn" disabled={busy} onclick={revokePairing} use:focusable>Disconnect all Android devices</button>
-				</div>
-			{:else}<p>Android notifications need an ntfy-enabled Hub over HTTPS.</p>{/if}
-			{#if androidMessage}<p role="status">{androidMessage}</p>{/if}
-		</section>
-	{:else if typeof navigator !== 'undefined' && navigator.userAgent.includes('WatcherPush/1')}
-		<p>Update the Android app to set up Watcher background notifications.</p>
-	{/if}
-
 	<section aria-labelledby="watch-updates">
 		<h2 id="watch-updates">Updates</h2>
-		<button class="btn" disabled={busy} onclick={() => change(watcher.testNotification)} use:focusable>Send test notification</button>
 		{#if !updates.length}<p>No updates yet.</p>{/if}
 		{#each updates as update (update.id)}
 			<article class="panel update" id={`update-${update.id}`}>
-				<h3>{update.watch_id === 0 ? 'Test notification' : watches.find((watch) => watch.id === update.watch_id)?.goal ?? 'Watch update'}</h3>
+				<h3>{watches.find((watch) => watch.id === update.watch_id)?.goal ?? 'Watch update'}</h3>
 				<p>{update.text}</p>
 				<small>{formatTime(update.created_at)}</small>
 				<div class="actions">

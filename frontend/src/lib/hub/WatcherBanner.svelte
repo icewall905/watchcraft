@@ -34,7 +34,7 @@
 
 {#if updates.length}
 	<div class="watch-banner" role="status">
-		<a href="/watcher#watch-updates" use:focusable>
+		<a href={updates[0].watch_id === 0 ? "/settings?tab=watcher-notifications" : "/watcher#watch-updates"} use:focusable>
 			<strong>The Watcher · {updates.length === 50 ? '50+' : updates.length} new {updates.length === 1 ? 'update' : 'updates'}</strong>
 			<span>{updates[0].text}</span>
 		</a>

@@ -172,9 +172,13 @@ def create(body: WatchRequest, pid: int = Depends(require_grown_up)):
 
 
 @router.get('/updates')
-def events(unread: bool = False, pid: int = Depends(require_grown_up)):
+def events(unread: bool = False, kind: Literal['all', 'watch', 'test'] = 'all', pid: int = Depends(require_grown_up)):
     with session() as s:
         stmt = select(WatchEvent).where(WatchEvent.profile_id == pid)
+        if kind == 'watch':
+            stmt = stmt.where(WatchEvent.watch_id != 0)
+        elif kind == 'test':
+            stmt = stmt.where(WatchEvent.watch_id == 0)
         if unread:
             stmt = stmt.where(WatchEvent.unread == True)  # noqa: E712
         return s.exec(stmt.order_by(WatchEvent.id.desc()).limit(50)).all()

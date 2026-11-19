@@ -238,7 +238,7 @@ public final class MainActivity extends ComponentActivity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setMediaPlaybackRequiresUserGesture(true); settings.setSupportMultipleWindows(true);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " WatchCraftAndroid/" + BuildConfig.VERSION_NAME + " WatcherNtfy/1");
+        settings.setUserAgentString(settings.getUserAgentString() + " WatchCraftAndroid/" + BuildConfig.VERSION_NAME + " WatcherNtfy/2");
         settings.setBuiltInZoomControls(false); settings.setLoadWithOverviewMode(true); settings.setUseWideViewPort(true);
         CookieManager.getInstance().setAcceptCookie(true); CookieManager.getInstance().setAcceptThirdPartyCookies(web, false);
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
@@ -443,6 +443,12 @@ public final class MainActivity extends ComponentActivity {
         }
     }
 
+    private boolean isWatcherNotificationSettings(String url) {
+        Uri page = Uri.parse(url);
+        return "/settings".equals(page.getPath())
+                && "watcher-notifications".equals(page.getQueryParameter("tab"));
+    }
+
     private final class ServiceClient extends WebViewClient {
         @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
             String url = request.getUrl().toString();
@@ -450,7 +456,7 @@ public final class MainActivity extends ComponentActivity {
             if ("watchcraft-watcher".equals(request.getUrl().getScheme())) {
                 if (request.hasGesture() && server.startsWith("https://")
                         && ServerAddress.sameOrigin(server, view.getUrl())
-                        && "/watcher".equals(Uri.parse(view.getUrl()).getPath())) {
+                        && isWatcherNotificationSettings(view.getUrl())) {
                     String action = request.getUrl().getHost();
                     if ("enable".equals(action)) pairWatcher(request.getUrl());
                     else if ("disable".equals(action)) {

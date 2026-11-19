@@ -19,6 +19,7 @@
 	import SearchTab from '$lib/settings/SearchTab.svelte';
 	import CommonRoomTab from '$lib/settings/CommonRoomTab.svelte';
 	import MoodSourcesTab from '$lib/settings/MoodSourcesTab.svelte';
+	import WatcherNotificationsTab from '$lib/settings/WatcherNotificationsTab.svelte';
 	import NotificationsTab from '$lib/settings/NotificationsTab.svelte';
 	import CuratorTab from '$lib/settings/CuratorTab.svelte';
 	import MemeLanguagesTab from '$lib/settings/MemeLanguagesTab.svelte';
@@ -56,6 +57,7 @@
 		{ label: 'Home and devices', tabs: [
 			{ key: 'appearance', label: 'Appearance', icon: '🎨', hint: 'Device mode, themes and colours' },
 			{ key: 'screens', label: 'Screens', icon: '📺', hint: 'Play on receivers and pairing' },
+			{ key: 'watcher-notifications', label: 'Watcher notifications', icon: '🔔', hint: 'Android pairing and delivery test' },
 			{ key: 'notify', label: 'Notifications', icon: '🔔', hint: 'Webhook, Home Assistant, email' },
 			{ key: 'keys', label: 'Remote test', icon: '🎮', hint: 'See what buttons send' }
 		] },
@@ -69,12 +71,12 @@
 	const OPEN_TABS = ['categories', 'feeds', 'profiles', 'keys', 'appearance'];
 	const OWN_TABS = ['player', 'sponsorblock', 'extras', 'devices'];
 	const allowed = (key: string) =>
-		session.isAdmin ||
+		key === 'watcher-notifications' ? session.grownUp : session.isAdmin ||
 		(key !== 'accounts' && (key === 'curator' ? session.grownUp : OPEN_TABS.includes(key) || (session.mode === 'accounts' && OWN_TABS.includes(key))));
 	const GROUPS = $derived(
 		ALL_GROUPS.map((g) => ({
 			...g,
-			tabs: g.tabs.filter((t) => (t.key === 'accounts' ? session.mode === 'accounts' && session.account?.role === 'admin' : t.key === 'devices' ? session.mode === 'accounts' : session.mode !== 'accounts' || allowed(t.key)))
+			tabs: g.tabs.filter((t) => (t.key === 'watcher-notifications' ? session.grownUp : t.key === 'accounts' ? session.mode === 'accounts' && session.account?.role === 'admin' : t.key === 'devices' ? session.mode === 'accounts' : session.mode !== 'accounts' || allowed(t.key)))
 		})).filter((g) => g.tabs.length)
 	);
 	const TABS = $derived(GROUPS.flatMap((g) => g.tabs));
@@ -124,6 +126,7 @@
 					{:else if tab === 'commonroom'}<CommonRoomTab />
 					{:else if tab === 'moodsources'}<MoodSourcesTab />
 					{:else if tab === 'memes'}<MemeLanguagesTab />
+					{:else if tab === 'watcher-notifications'}<WatcherNotificationsTab />
 					{:else if tab === 'notify'}<NotificationsTab />
 					{:else if tab === 'player'}<PlayerTab />
 					{:else if tab === 'appearance'}<AppearanceTab />
