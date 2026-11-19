@@ -33,7 +33,7 @@
 		<div class="body">{@render children()}</div>
 		{#if footer}<footer>{@render footer()}</footer>{/if}
 		<!-- Last in DOM order so a remote's first focus lands on the content, not on Close. -->
-		<button type="button" class="x" aria-label="Close" onclick={onClose}><Icon name="x" /></button>
+		<button type="button" class="x" aria-label="Close dialog" onclick={onClose}><Icon name="x" /></button>
 	</div>
 </div>
 

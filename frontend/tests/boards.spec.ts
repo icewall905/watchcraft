@@ -280,7 +280,7 @@ test('back from a board returns to the same spot in the board list',async({page}
 test('image viewer has a small close button',async({page})=>{
  await setup(page);await freshPage(page,'/boards?board=1');
  await page.getByRole('button',{name:'View Quiet courtyard',exact:true}).click();
- await page.getByRole('dialog').getByRole('button',{name:'Close',exact:true}).click();
+ await page.getByRole('dialog').getByRole('button',{name:'Close dialog'}).click();
  await expect(page.getByRole('dialog')).toHaveCount(0);
  await expect(page).toHaveURL(/board=1/);
 });

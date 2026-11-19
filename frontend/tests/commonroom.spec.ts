@@ -72,7 +72,7 @@ test('app back closes an open post and keeps the list in place', async ({ page }
 	await expect(page.getByRole('link', { name: 'Fresh Amiga find' })).toBeVisible();
 	expect(await back()).toBe(false);
 	await page.getByRole('link', { name: 'Fresh Amiga find' }).click();
-	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await page.getByRole('dialog').getByRole('button', { name: 'Close dialog' }).click();
 	await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
