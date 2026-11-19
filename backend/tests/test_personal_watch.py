@@ -162,3 +162,64 @@ def test_ntfy_payload_contains_only_generic_alert_data(monkeypatch):
 
     monkeypatch.setattr(push.httpx, 'post', publish)
     assert push.send(device, 42)
+
+
+def test_search_failure_retries_early_then_resumes_schedule(client, monkeypatch):
+    import time
+    import httpx
+
+    monkeypatch.setattr(watch.ai, 'enabled', lambda: True)
+    now = time.time()
+
+    class Clock:
+        @staticmethod
+        def time():
+            return now
+
+    monkeypatch.setattr(watch, 'time', Clock)
+    response = client.post(PATH, json={
+        'goal': 'Watch for a release', 'interval': 60,
+        'plan': {'mode': 'bing_news', 'source': 'release', 'terms': ['Release is public']},
+    })
+    assert response.status_code == 200, response.text
+    failures = iter([httpx.ReadTimeout('private URL'), None, None])
+
+    def search(*_):
+        if failure := next(failures):
+            raise failure
+        return [{'title': 'A release result', 'url': 'https://example.org/release'}]
+
+    reviews = iter([ValueError('private model response'), {'matches': []}])
+
+    def review(*_, **_kwargs):
+        result = next(reviews)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    monkeypatch.setattr(watch.providers.PROVIDERS['bing_news'], 'run', search)
+    monkeypatch.setattr(watch.ai, '_call', review)
+    assert watch.check_one()
+    first, = client.get(PATH).json()
+    assert first['error'] == 'The search provider did not return results.'
+    assert first['next_check'] == now + 120
+    assert not watch.check_one()
+    now += 120
+    assert watch.check_one()
+    second, = client.get(PATH).json()
+    assert second['error'] == 'The AI could not review the search results.'
+    assert second['next_check'] == now + 3600
+    now += 3600
+    assert watch.check_one()
+    recovered, = client.get(PATH).json()
+    assert not recovered['error'] and recovered['next_check'] == now + 3600
+    assert client.get(f'{PATH}/updates').json() == []
+
+
+def test_retry_respects_upstream_rate_limit():
+    from bt.curation import FetchError
+
+    assert watch.retry_delay(FetchError(429, '900'), 0) == 900
+    assert watch.retry_delay(FetchError(503, 'Thu, 01 Jan 1970 00:05:00 GMT'), 0) == 300
+    assert watch.retry_delay(watch.providers.RateLimited(retry_in=450), 0) == 450
+    assert watch.retry_delay(ValueError('invalid source'), 0) == 0

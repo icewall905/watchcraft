@@ -3,7 +3,9 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import time
+from email.utils import parsedate_to_datetime
 from typing import Literal
 from uuid import uuid4
 
@@ -283,6 +285,24 @@ def search_matches(plan, rows, seen):
     return matches
 
 
+class CheckFailure(Exception):
+    """A known check stage whose upstream error may contain private source details."""
+
+
+def retry_delay(error, now):
+    """Honor the upstream backoff, including HTTP Retry-After dates."""
+    if isinstance(error, providers.RateLimited):
+        return error.retry_in if math.isfinite(error.retry_in) else 0
+    response = getattr(error, 'response', None)
+    hint = getattr(error, 'retry_after', '') or (response.headers.get('Retry-After', '') if response is not None else '')
+    if hint.isascii() and hint.isdigit() and len(hint) <= 10:
+        return int(hint)
+    try:
+        return max(0, parsedate_to_datetime(hint).timestamp() - now)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return 0
+
+
 def observe(watch):
     plan = Plan.model_validate_json(watch.plan_json)
     if plan.mode == 'page_watch':
@@ -302,8 +322,14 @@ def observe(watch):
     if search:
         if len(seen) == len(plan.terms):
             return watch.checkpoint, []
-        rows = providers.PROVIDERS[plan.mode].run('', plan.source)[:20]
-        matches = search_matches(plan, rows, seen)
+        try:
+            rows = providers.PROVIDERS[plan.mode].run('', plan.source)[:20]
+        except Exception as exc:
+            raise CheckFailure('The search provider did not return results.') from exc
+        try:
+            matches = search_matches(plan, rows, seen)
+        except Exception as exc:
+            raise CheckFailure('The AI could not review the search results.') from exc
     else:
         rows = providers.PROVIDERS[plan.mode].run(plan.source)
         matches = [(digest(url), row['title'][:500], url) for row in rows if (url := evidence_url(row))
@@ -337,16 +363,24 @@ def check_one():
         s.refresh(watch)
 
     error = ''
+    delay = watch.interval * 60
     try:
         checkpoint, updates = observe(watch)
     except Exception as exc:
-        log.info('Watcher %s check failed (%s)', watch.id, type(exc).__name__)
+        cause = exc.__cause__ if isinstance(exc, CheckFailure) else exc
+        response = getattr(cause, 'response', None)
+        status = getattr(response, 'status_code', getattr(cause, 'status', None))
+        log.warning('Watcher %s check failed (%s, HTTP %s)', watch.id, type(cause).__name__, status)
         checkpoint, updates = watch.checkpoint, []
-        error = 'The check failed. Verify that the source and any configured services are reachable.'
+        error = str(exc) if isinstance(exc, CheckFailure) else 'The source check could not finish.'
+        # Allow one early retry per failure streak. Repeated failures return to the chosen interval.
+        if not watch.error and status not in (401, 403, 404):
+            delay = min(delay, 120)
+        delay = max(delay, retry_delay(cause, time.time()))
     finished = time.time()
     with session() as s:
         result = s.execute(update(PersonalWatch).where(PersonalWatch.id == watch.id, PersonalWatch.claim == claim)
-                           .values(claim='', lease_until=0, last_check=finished, next_check=finished + watch.interval * 60,
+                           .values(claim='', lease_until=0, last_check=finished, next_check=finished + delay,
                                    checkpoint=checkpoint, error=error, enabled=not completed(
                                        Plan.model_validate_json(watch.plan_json), checkpoint)))
         if result.rowcount:
