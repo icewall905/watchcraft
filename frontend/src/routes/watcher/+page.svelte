@@ -179,10 +179,11 @@
 
 	<section aria-labelledby="watch-updates">
 		<h2 id="watch-updates">Updates</h2>
+		<button class="btn" disabled={busy} onclick={() => change(watcher.testNotification)} use:focusable>Send test notification</button>
 		{#if !updates.length}<p>No updates yet.</p>{/if}
 		{#each updates as update (update.id)}
 			<article class="panel update" id={`update-${update.id}`}>
-				<h3>{watches.find((watch) => watch.id === update.watch_id)?.goal ?? 'Watch update'}</h3>
+				<h3>{update.watch_id === 0 ? 'Test notification' : watches.find((watch) => watch.id === update.watch_id)?.goal ?? 'Watch update'}</h3>
 				<p>{update.text}</p>
 				<small>{formatTime(update.created_at)}</small>
 				<div class="actions">

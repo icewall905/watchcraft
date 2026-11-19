@@ -18,6 +18,7 @@ export const watcher = {
 	enable: (id: number, enabled: boolean) => call(`/watches/${id}`, { method: 'PATCH', body: { enabled } }),
 	remove: (id: number) => call(`/watches/${id}`, { method: 'DELETE' }),
 	updates: (unread = false, signal?: AbortSignal) => call<WatchUpdate[]>(unread ? '/updates?unread=true' : '/updates', { signal }),
+	testNotification: () => call<WatchUpdate>('/updates/test', { method: 'POST' }),
 	read: (id: number) => call(`/updates/${id}/read`, { method: 'POST' }),
 	androidStatus: () => call<{ configured: boolean }>('/android'),
 	android: (token: string, enabled: boolean) => call('/android', { method: enabled ? 'PUT' : 'DELETE', body: { token } })

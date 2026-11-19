@@ -42,4 +42,14 @@ test('suggest a recurring check and follow a Front Page update', async ({ page }
 	await expect(page.getByRole('button', { name: 'Mark as read' })).toHaveCount(0);
 	await page.goto('/today');
 	await expect(banner).toHaveCount(0);
+
+	await page.route('**/api/hub/watcher/updates/test', (route) => {
+		Object.assign(update, { watch_id: 0, text: 'This is a test notification from The Watcher.', url: '', unread: true });
+		return route.fulfill({ json: update });
+	});
+	await page.goto('/watcher');
+	await page.getByRole('button', { name: 'Send test notification' }).click();
+	await expect(page.getByRole('heading', { name: 'Test notification', exact: true })).toBeVisible();
+	await page.goto('/today');
+	await expect(banner).toContainText('This is a test notification from The Watcher.');
 });

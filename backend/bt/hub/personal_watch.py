@@ -180,6 +180,25 @@ def events(unread: bool = False, pid: int = Depends(require_grown_up)):
         return s.exec(stmt.order_by(WatchEvent.id.desc()).limit(50)).all()
 
 
+@router.post('/updates/test')
+def test_notification(pid: int = Depends(require_grown_up)):
+    now = time.time()
+    with session() as s:
+        s.connection().exec_driver_sql('BEGIN IMMEDIATE')
+        recent = s.exec(select(WatchEvent.id).where(
+            WatchEvent.profile_id == pid, WatchEvent.watch_id == 0, WatchEvent.created_at > now - 30
+        ).limit(1)).first()
+        if recent is not None:
+            raise HTTPException(429, 'Wait 30 seconds between test notifications.')
+        # Zero is reserved for updates created without a scheduled watch.
+        event = WatchEvent(watch_id=0, profile_id=pid, text='This is a test notification from The Watcher.',
+                           url='', created_at=now)
+        s.add(event)
+        s.commit()
+        s.refresh(event)
+        return event
+
+
 @router.post('/updates/{event_id}/read')
 def read_event(event_id: int, pid: int = Depends(require_grown_up)):
     with session() as s:

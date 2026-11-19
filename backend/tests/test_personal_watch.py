@@ -115,3 +115,23 @@ def test_push_retries_and_does_not_replay_or_skip_after_deletion(client, monkeyp
     assert client.request('DELETE', android, json={'token': token}).status_code == 200
     update()
     assert not push.dispatch_one()
+
+
+def test_notification_is_profile_scoped_and_uses_the_push_queue(client, monkeypatch):
+    monkeypatch.setenv('BT_WATCHER_FCM_PROJECT', 'test-project')
+    token = 'example-fcm-registration-token'
+    assert client.put(f'{PATH}/android', json={'token': token}).status_code == 200
+    other = headers(client.post('/api/profiles', json={'name': 'Other'}).json())
+    result = client.post(f'{PATH}/updates/test')
+    assert result.status_code == 200, result.text
+    event = result.json()
+    assert event['watch_id'] == 0 and event['unread']
+    assert client.get(f'{PATH}/updates?unread=true').json() == [event]
+    assert client.get(f'{PATH}/updates?unread=true', headers=other).json() == []
+    assert client.post(f'{PATH}/updates/test').status_code == 429
+    sent = []
+    monkeypatch.setattr(push, 'send', lambda device, event_id: sent.append((device.token, event_id)) or True)
+    assert push.dispatch_one()
+    assert sent == [(token, event['id'])]
+    assert client.post(f"{PATH}/updates/{event['id']}/read").status_code == 200
+    assert client.get(f'{PATH}/updates?unread=true').json() == []
