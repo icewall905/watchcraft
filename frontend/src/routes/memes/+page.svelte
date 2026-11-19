@@ -3,7 +3,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
-	import { focusable } from '$lib/nav';
+	import { focusable, navScope } from '$lib/nav';
 	import CommonsSwitch from '$lib/commonroom/CommonsSwitch.svelte';
 	import { hub, ago } from '$lib/hub/api';
 	import { sinceTs, errMsg } from '$lib/hub/util';
@@ -453,7 +453,7 @@
 </div>
 
 {#if open}
-	<div class="scrim" role="dialog" aria-modal="true" aria-label="Meme detail" tabindex="-1" onclick={(e) => e.target === e.currentTarget && closeDrawer()} onkeydown={(e) => e.key === 'Escape' && closeDrawer()}>
+	<div class="scrim" role="dialog" aria-modal="true" aria-label="Meme detail" tabindex="-1" onclick={(e) => e.target === e.currentTarget && closeDrawer()} onkeydown={(e) => e.key === 'Escape' && closeDrawer()} use:navScope={{ onBack: closeDrawer }}>
 		<div class="drawer">
 			<button class="btn ghost close" use:focusable onclick={closeDrawer} aria-label="Close"><Icon name="x" /></button>
 			<div class="shot">

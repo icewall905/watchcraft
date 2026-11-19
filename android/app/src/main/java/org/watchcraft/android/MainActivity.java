@@ -679,6 +679,13 @@ public final class MainActivity extends ComponentActivity {
         if (customView != null) { exitFullscreen(); return; }
         if (menu != null && menu.isShowing()) { menu.dismiss(); return; }
         if (shell == null || shell.getParent() == null) { if (hasConnected) showService(null); else finish(); return; }
+        if (web != null && pageReady && !loadingFailed && ServerAddress.sameOrigin(server, web.getUrl())) {
+            // An open article or dialog closes first, leaving the list underneath where it was.
+            web.evaluateJavascript("(()=>typeof window.watchcraftBack==='function'&&window.watchcraftBack()===true)()",
+                    handled -> { if (!"true".equals(handled)) historyBack(); });
+        } else historyBack();
+    }
+    private void historyBack() {
         if (web != null && web.canGoBack()) { clearError(); web.goBack(); }
         else if (!currentPath.equals(landing())) navigate(landing()); else finish();
     }

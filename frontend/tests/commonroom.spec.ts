@@ -60,6 +60,19 @@ test('opening a post loads its comments', async ({ page }) => {
 	await expect(page.getByText('Agreed')).toBeVisible();
 });
 
+test('app back closes an open post and keeps the list in place', async ({ page }) => {
+	await setup(page);
+	await freshPage(page, '/common-room');
+	await page.getByRole('link', { name: 'Fresh Amiga find' }).click();
+	await expect(page.getByText('Full body text')).toBeVisible();
+	const back = () => page.evaluate(() => (window as Window & { watchcraftBack?: () => boolean }).watchcraftBack?.());
+	expect(await back()).toBe(true);
+	await expect(page.getByRole('dialog')).toHaveCount(0);
+	await expect(page).toHaveURL(/\/common-room$/);
+	await expect(page.getByRole('link', { name: 'Fresh Amiga find' })).toBeVisible();
+	expect(await back()).toBe(false);
+});
+
 test('nav entry is present', async ({ page }) => {
 	await setup(page);
 	await freshPage(page, '/common-room');

@@ -135,6 +135,8 @@ class NavEngine {
 		const root = document.documentElement;
 		root.dataset.modality = matchMedia('(hover: none)').matches ? 'pointer' : 'keys';
 		window.addEventListener('keydown', (e) => this.onKeyDown(e), true);
+		// Android app back gesture: close the top dialog first so the page underneath keeps its place.
+		(window as Window & { watchcraftBack?: () => boolean }).watchcraftBack = () => this.closeTop();
 		window.addEventListener(
 			'keyup',
 			(e) => {
@@ -526,6 +528,14 @@ class NavEngine {
 	}
 
 	private inBack = false;
+
+	/** Closes the top dialog scope; false when none is open (caller does router back). */
+	closeTop(): boolean {
+		const top = this.scopes[this.scopes.length - 1];
+		if (!top?.onBack) return false;
+		top.onBack();
+		return true;
+	}
 
 	back() {
 		// Re-entrant call (an onBack handler that calls nav.back()): go to the router instead of looping.
