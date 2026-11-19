@@ -19,6 +19,17 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Marquee trailers and title details (`aa719dd`, 2026-11-19)
+
+- Movie details show **Play Trailer** when Jellyfin exposes a playable local trailer or a supported YouTube
+  trailer. Movie and episode details include available cast, crew, age ratings, dates, studios, and media
+  information. The episode list retains Play and has a separate Details link.
+- 12 Jellyfin backend tests and the Marquee browser test passed. The live linked Jellyfin smoke test
+  returned a playable trailer link, 19 people on a sample movie, and an episode detail response. Production
+  health passed. End-user playback acceptance is V-087.
+- Code and image rollback are at `/root/compose/watchcraft-backups/20261119-marquee-details-aa719dd`.
+  No schema change.
+
 ## Deployment record — Watcher check details and manual retry (`de7d6ce`, 2026-11-19)
 
 - Active watches can queue an immediate check, subject to the existing run lease, provider backoff, and a short
