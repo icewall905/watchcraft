@@ -19,6 +19,15 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Watcher notification settings (`7990aa7`, 2026-11-19)
+
+- Moved Android pairing, disconnect controls, and the test notification into **Settings → Watcher notifications**.
+  Test alerts remain available for the Front Page banner and route back to Settings. The Watcher update list
+  shows updates from watches. Android 0.1.21 supports pairing and device controls from the new Settings tab.
+- Backend and browser tests passed. The candidate verified test-event filtering and the live rollout confirmed
+  the Settings asset, shared ntfy configuration, and service health. No schema change.
+- Code and image rollback are at `/root/compose/watchcraft-backups/20261119-watcher-settings-7990aa7`.
+
 ## Deployment record — Watcher Android ntfy transport (`58366c6`, 2026-11-19)
 
 - The production Hub now publishes generic Watcher notifications to `https://ntfy.tdgs.org`, the same
