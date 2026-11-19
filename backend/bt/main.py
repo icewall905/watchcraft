@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from . import auth, parental
 from .hub import api as hub_api, engine as hub_engine, master_api as hub_master_api, sharing as hub_sharing, moodboards, moodboard_imports, board_curator, pinterest_live, extension as hub_extension, moodboard_share
+from .hub import personal_watch, watcher_push
 from .knowledge import api as knowledge_api
 from .commonroom import api as commonroom_api, expedition as commonroom_expedition, scheduler as commonroom_scheduler
 from .api import agent as agent_api
@@ -31,6 +32,8 @@ from .db import init_db
 async def lifespan(_app):
     init_db()
     task = asyncio.create_task(hub_engine.scheduler())
+    watches = asyncio.create_task(personal_watch.scheduler())
+    watch_push = asyncio.create_task(watcher_push.scheduler())
     boards = asyncio.create_task(moodboards.scheduler())
     moods = asyncio.create_task(music_service.mood_scheduler())
     imports = asyncio.create_task(moodboard_imports.scheduler())
@@ -43,6 +46,8 @@ async def lifespan(_app):
         yield
     finally:
         task.cancel()
+        watches.cancel()
+        watch_push.cancel()
         boards.cancel()
         moods.cancel()
         imports.cancel()
@@ -51,7 +56,7 @@ async def lifespan(_app):
         room_hunts.cancel()
         if subs:
             subs.cancel()
-        for running in (task, boards, moods, imports, hunts, room, room_hunts, subs):
+        for running in (task, watches, watch_push, boards, moods, imports, hunts, room, room_hunts, subs):
             if running is None:
                 continue
             with suppress(asyncio.CancelledError):
@@ -65,6 +70,7 @@ app.include_router(auth.router, prefix="/api")
 app.include_router(core.router, prefix="/api")
 app.include_router(accounts_api.router, prefix="/api")
 app.include_router(hub_api.router, prefix="/api")
+app.include_router(personal_watch.router, prefix="/api")
 app.include_router(moodboards.router, prefix="/api")
 app.include_router(commonroom_api.router, prefix="/api")
 app.include_router(hub_extension.router, prefix="/api")

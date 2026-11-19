@@ -12,3 +12,4 @@ socksio==1.0.0
 bgutil-ytdlp-pot-provider==2.0.2
 Pillow==11.3.0
 pytest==8.4.2
+google-auth[requests]>=2.40,<3

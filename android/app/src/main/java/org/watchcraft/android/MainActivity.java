@@ -53,6 +53,8 @@ import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+import com.google.firebase.FirebaseApp;
+import com.google.firebase.messaging.FirebaseMessaging;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 import java.io.InputStream;
@@ -67,6 +69,8 @@ public final class MainActivity extends ComponentActivity {
     private static final int BG = 0xff110e26, PANEL = 0xff1b1740, TEXT = 0xfff0edff,
             MUTED = 0xffaaa4d2, AMBER = 0xffffb547, LINE = 0xff383252, INK = 0xff211706;
     private static final int PICK_FILE = 41, RECORD_AUDIO = 42, EXPORT_FILE = 43, DOWNLOAD_FILE = 44;
+    private static final int WATCHER_PERMISSION = 45;
+    private static final String WATCHER_UPDATES = "/watcher#watch-updates";
     private static final int MAX_EXPORT_BYTES = 16 * 1024 * 1024;
     // No JavaScript interface is exposed. This CSS only removes duplicated web navigation.
     private static final String SHELL_CSS = ".sidebar,.bar[aria-label=Primary],.menu-toggle{display:none!important}"
@@ -110,7 +114,7 @@ public final class MainActivity extends ComponentActivity {
         });
         String saved = prefs.getString("server", "");
         if (!saved.isEmpty()) {
-            if (savedInstanceState == null) currentPath = landing();
+            if (savedInstanceState == null) currentPath = WatcherMessaging.OPEN.equals(getIntent().getAction()) ? WATCHER_UPDATES : landing();
             try {
                 server = ServerAddress.migrate(ServerAddress.normalize(saved, prefs.getBoolean("http", false)));
                 if (!server.equals(saved)) prefs.edit().putString("server", server).apply();
@@ -234,7 +238,7 @@ public final class MainActivity extends ComponentActivity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setMediaPlaybackRequiresUserGesture(true); settings.setSupportMultipleWindows(true);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " WatchCraftAndroid/" + BuildConfig.VERSION_NAME);
+        settings.setUserAgentString(settings.getUserAgentString() + " WatchCraftAndroid/" + BuildConfig.VERSION_NAME + " WatcherPush/1");
         settings.setBuiltInZoomControls(false); settings.setLoadWithOverviewMode(true); settings.setUseWideViewPort(true);
         CookieManager.getInstance().setAcceptCookie(true); CookieManager.getInstance().setAcceptThirdPartyCookies(web, false);
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
@@ -394,11 +398,57 @@ public final class MainActivity extends ComponentActivity {
         }
     }
 
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        if (WatcherMessaging.OPEN.equals(intent.getAction()) && web != null) navigate(WATCHER_UPDATES);
+    }
+
+    private void requestWatcherNotifications(boolean enabled) {
+        if (FirebaseApp.getApps(this).isEmpty()) {
+            watcherResult(web, server, enabled, null, "This Android build has no Firebase configuration.");
+            return;
+        }
+        if (enabled && Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, WATCHER_PERMISSION);
+            return;
+        }
+        fetchWatcherToken(enabled);
+    }
+
+    private void fetchWatcherToken(boolean enabled) {
+        WebView target = web;
+        String origin = server;
+        FirebaseMessaging.getInstance().getToken().addOnCompleteListener(this, task -> {
+            String token = task.isSuccessful() ? task.getResult() : null;
+            watcherResult(target, origin, enabled, token, token == null ? "Could not connect to Firebase." : "");
+        });
+    }
+
+    private void watcherResult(WebView target, String origin, boolean enabled, String token, String message) {
+        if (web == null || web != target || !server.equals(origin) || !ServerAddress.sameOrigin(origin, web.getUrl())
+                || !"/watcher".equals(Uri.parse(web.getUrl()).getPath())) return;
+        web.evaluateJavascript("if(location.origin===" + JSONObject.quote(origin)
+                + "&&location.pathname==='/watcher')window.dispatchEvent(new CustomEvent('watchcraft-watcher-android',"
+                + "{detail:{enabled:" + enabled + ",token:" + JSONObject.quote(token == null ? "" : token)
+                + ",message:" + JSONObject.quote(message) + "}}))", null);
+    }
+
     private final class ServiceClient extends WebViewClient {
         @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
             String url = request.getUrl().toString();
             if (!request.isForMainFrame()) return false;
-            if (ServerAddress.sameOrigin(server, url)) return false;
+            if (ServerAddress.sameOrigin(server, url)) {
+                String path = request.getUrl().getPath();
+                if ("https".equals(request.getUrl().getScheme())
+                        && request.hasGesture() && "https".equals(Uri.parse(server).getScheme())
+                        && view.getUrl() != null && "/watcher".equals(Uri.parse(view.getUrl()).getPath())
+                        && ("/watcher/android-enable".equals(path) || "/watcher/android-disable".equals(path))) {
+                    requestWatcherNotifications(path.endsWith("enable"));
+                    return true;
+                }
+                return false;
+            }
             denyMicrophone(); openExternal(url); return true;
         }
         @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
@@ -494,6 +544,11 @@ public final class MainActivity extends ComponentActivity {
     private void denyMicrophone() { if (microphoneRequest != null) { microphoneRequest.deny(); microphoneRequest = null; } }
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
+        if (requestCode == WATCHER_PERMISSION) {
+            if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) fetchWatcherToken(true);
+            else watcherResult(web, server, true, null, "Android notification permission is off.");
+            return;
+        }
         if (requestCode == RECORD_AUDIO) {
             requestingMicrophone = false;
             if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) grantMicrophone();

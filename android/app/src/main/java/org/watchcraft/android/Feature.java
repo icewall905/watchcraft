@@ -24,6 +24,7 @@ final class Feature {
         new Feature("The Stacks", "/library", "library", "Explore"),
         new Feature("The Almanac", "/knowledge", "book", "Explore"),
         new Feature("The Dispatch", "/briefings", "list", "Explore"),
+        new Feature("The Watcher", "/watcher", "bell", "Explore"),
         new Feature("Alerts", "/alerts", "bell", "Explore"),
         new Feature("The Study", "/research", "search", "Research"),
         new Feature("The Scout", "/scout-report", "compass", "Research"),

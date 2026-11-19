@@ -1,4 +1,5 @@
 <script lang="ts">
+	import WatcherBanner from './WatcherBanner.svelte';
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { hub } from '$lib/hub/api';
 	import type { EditionEntry, TodayEdition } from '$lib/hub/types';
@@ -145,6 +146,7 @@
 
 
 <div class="today page" data-area="hub">
+	<WatcherBanner />
 	<div class="top" class:has-lead={!!lead}>
 		<header class="masthead">
 			<p class="date">Today · {today}</p>

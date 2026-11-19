@@ -20,7 +20,7 @@ export const SETTINGS = entry('/settings', 'Settings', 'settings');
 
 export const SECTIONS: NavSection[] = [
 	{ key: 'watch', title: 'Watch', items: [TV, SHORTS, MUSIC, MARQUEE, entry('/subscriptions', 'Subscriptions', 'subs')] },
-	{ key: 'explore', title: 'Explore', items: [entry('/today', 'The Front Page', 'news'), DISCOVER, entry('/news', 'The Wire', 'news'), entry('/boards', 'The Boards', 'library', 'boards_shared_new'), entry('/common-room', 'The Commons', 'team', 'commonroom', (p) => prefix('/common-room')(p) || prefix('/memes')(p)), LIBRARY, entry('/knowledge', 'The Almanac', 'book'), entry('/briefings', 'The Dispatch', 'briefing'), ALERTS] },
+	{ key: 'explore', title: 'Explore', items: [entry('/today', 'The Front Page', 'news'), DISCOVER, entry('/news', 'The Wire', 'news'), entry('/boards', 'The Boards', 'library', 'boards_shared_new'), entry('/common-room', 'The Commons', 'team', 'commonroom', (p) => prefix('/common-room')(p) || prefix('/memes')(p)), LIBRARY, entry('/knowledge', 'The Almanac', 'book'), entry('/briefings', 'The Dispatch', 'briefing'), ALERTS, entry('/watcher', 'The Watcher', 'alert')] },
 	{ key: 'research', title: 'Research', items: [entry('/research', 'The Study', 'research'), entry('/scout-report', 'The Scout', 'briefing')] },
 	{ key: 'workshop', title: 'Workshop', quiet: true, items: [entry('/team', 'Agent Activity', 'team'), entry('/curators', 'Curators', 'curator'), entry('/sources', 'Sources', 'source'), entry('/agent', 'Video AI', 'agent'), entry('/stats', 'Statistics', 'chart')] }
 ];
@@ -67,6 +67,6 @@ export function featureFor(path: string): string | null {
 }
 
 export function isHubPath(path: string): boolean {
-	return ['/today', '/discover', '/news', '/knowledge', '/library', '/memes', '/boards', '/common-room', '/music', '/briefings', '/alerts', '/research', '/scout-report', '/team', '/curators', '/sources', '/find', '/item']
+	return ['/today', '/discover', '/news', '/knowledge', '/library', '/memes', '/boards', '/common-room', '/music', '/briefings', '/alerts', '/watcher', '/research', '/scout-report', '/team', '/curators', '/sources', '/find', '/item']
 		.some((p) => path === p || path.startsWith(p + '/'));
 }

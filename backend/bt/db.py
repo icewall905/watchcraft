@@ -95,6 +95,7 @@ def init_db() -> None:
         connection.exec_driver_sql("BEGIN IMMEDIATE")
         from . import curation  # noqa: F401  (registers v1 + hub tables)
         from .hub import migrate, models as _hub_models  # noqa: F401
+        from .hub import personal_watch, watcher_push  # noqa: F401
         from .music import models as _music_models  # noqa: F401
         from .jellyfin import models as _jellyfin_models  # noqa: F401
         from .knowledge import models as _knowledge_models  # noqa: F401

@@ -48,3 +48,23 @@ git push origin android-v0.1.1
 ```
 
 The APK and checksum are attached to that GitHub Release for Obtainium to discover.
+
+## The Watcher notifications
+
+Register the Android app in a Firebase project for Cloud Messaging. The release application ID is
+`org.watchcraft.android` and the debug application ID is `org.watchcraft.android.debug`. Supply
+`WATCHCRAFT_FIREBASE_APP_ID`, `WATCHCRAFT_FIREBASE_API_KEY`, `WATCHCRAFT_FIREBASE_SENDER_ID` and
+`WATCHCRAFT_FIREBASE_PROJECT_ID` as environment variables when building, or as GitHub Actions
+repository variables for a release. These values come from the Firebase Android app registration.
+Builds with empty Firebase settings can still open The Watcher and read its updates.
+
+Set `BT_WATCHER_FCM_PROJECT` to the Firebase project ID on the Hub API. Give the API access to
+Firebase Cloud Messaging HTTP v1 through Application Default Credentials. For a self-hosted
+Docker installation, mount the service-account JSON read-only in the API container and set
+`GOOGLE_APPLICATION_CREDENTIALS` to its path inside the container. Keep that credential on the
+server. [FCM HTTP v1 setup](https://firebase.google.com/docs/cloud-messaging/send/v1-api)
+
+Connect the app to the Hub over HTTPS, open **The Watcher**, and choose **Enable on this device**
+from the profile that should receive updates. A device registration follows the most recently
+enabled profile on that Hub. Android notifications open The Watcher and show a generic message
+on the device. Watch details are available after opening the Hub with the appropriate profile.

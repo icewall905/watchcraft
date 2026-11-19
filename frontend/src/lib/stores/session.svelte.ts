@@ -5,7 +5,7 @@ import type { Account, AuthStatus, Category, Profile, Settings } from '../types'
 import { featureFor, isHubPath } from '../navigation';
 
 /** Hub areas a child profile cannot open. */
-const KID_LOCKED_PATHS = ['/music', '/sources'];
+const KID_LOCKED_PATHS = ['/music', '/sources', '/watcher'];
 
 class Session {
 	ready = $state(false);

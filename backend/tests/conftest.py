@@ -30,10 +30,12 @@ def _isolated_background_work(monkeypatch):
 
     from bt.music import service as music_service
     monkeypatch.setattr(music_service, 'mood_scheduler', idle_scheduler)
-    from bt.hub import moodboards, moodboard_imports
+    from bt.hub import moodboards, moodboard_imports, personal_watch, watcher_push
     monkeypatch.setattr(moodboard_imports, 'scheduler', idle_scheduler)
     monkeypatch.setattr(moodboards, 'scheduler', idle_scheduler)
     monkeypatch.setattr(engine, 'scheduler', idle_scheduler)
+    monkeypatch.setattr(personal_watch, 'scheduler', idle_scheduler)
+    monkeypatch.setattr(watcher_push, 'scheduler', idle_scheduler)
     monkeypatch.setattr(subtitle_jobs, 'worker', idle_scheduler)
     from bt.commonroom import scheduler as commonroom_scheduler
     monkeypatch.setattr(commonroom_scheduler, 'scheduler', idle_scheduler)
