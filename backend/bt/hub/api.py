@@ -1972,6 +1972,55 @@ def delete_curator(cid: int, pid: int = Depends(profile_id)):
         return {'ok': True}
 
 
+@router.post('/curators/{cid}/find-sources')
+def curator_find_sources(cid: int, pid: int = Depends(profile_id)):
+    """Meme Tracker: AI proposes meme communities; the ones that return memes are added to the curator."""
+    from . import meme_sources
+    from .memes import is_meme_curator
+    with session() as s:
+        c = owned(s, Curator, cid, pid)
+        if is_child(s, pid):
+            raise HTTPException(403, KID_LOCKED)
+        if not is_meme_curator(c):
+            raise HTTPException(422, 'Finding sources is for Meme Tracker curators.')
+        rows = s.exec(select(Source).join(CuratorSource, CuratorSource.source_id == Source.id)
+                      .where(CuratorSource.curator_id == cid)).all()
+        have = {r.url for r in rows if r.url}
+        snapshot = c.model_copy()
+    try:
+        candidates = meme_sources.propose(snapshot, have)
+    except ValueError as e:
+        raise HTTPException(422, str(e)) from None
+    except Exception as e:  # noqa: BLE001 — AI provider failure
+        raise HTTPException(502, f'The AI could not suggest sources: {e}') from None
+    added, skipped = [], []
+    for provider, locator, name in candidates[:meme_sources.MAX_CANDIDATES]:
+        if len(added) >= meme_sources.MAX_ADOPT:
+            break
+        try:
+            url = _norm_source(provider, locator)
+            if url in have:
+                continue
+            count = meme_sources.validate(provider, url)
+        except Exception as e:  # noqa: BLE001 — hallucinated, dead or blocked community
+            skipped.append({'provider': provider, 'url': locator, 'reason': str(getattr(e, 'detail', e))[:200]})
+            continue
+        with session() as s:
+            src = get_or_create_source(s, pid, provider, url, name)
+            if provider == 'lemmy':
+                if (src.config or {}).get('item_type', 'meme') != 'meme':
+                    s.rollback()  # the community is already read as news elsewhere; leave it alone
+                    continue
+                src.config = {**(src.config or {}), 'item_type': 'meme'}
+                s.add(src)
+            if not s.exec(select(CuratorSource).where(CuratorSource.curator_id == cid, CuratorSource.source_id == src.id)).first():
+                s.add(CuratorSource(curator_id=cid, source_id=src.id))
+            s.commit()
+            added.append({'id': src.id, 'provider': provider, 'url': url, 'name': src.name, 'memes': count})
+        have.add(url)
+    return {'added': added, 'skipped': skipped}
+
+
 @router.post('/curators/{cid}/{action}')
 def curator_action(cid: int, action: str, pid: int = Depends(profile_id)):
     with session() as s:
@@ -2001,6 +2050,8 @@ def curator_action(cid: int, action: str, pid: int = Depends(profile_id)):
                 s.add(CuratorSource(curator_id=d.id, source_id=sid))
             s.commit(); s.refresh(d)
             return curator_dict(s, d)
+        elif action == 'clear-error':
+            c.error = ''
         elif action == 'report':
             pass
         else:

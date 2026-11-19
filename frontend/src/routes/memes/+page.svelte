@@ -316,6 +316,24 @@
 		} catch (e) { sweepNote = errMsg(e); }
 		finally { sweeping = false; }
 	}
+	let finding = $state(false);
+	async function findSources() {
+		if (finding || sweeping) return;
+		finding = true; sweepNote = 'Asking the AI for meme communities and checking each one…';
+		try {
+			const mine = (await hub.curators('watch')).filter((c) => c.content_types?.includes('meme'));
+			if (!mine.length) { sweepNote = 'Create a Meme Tracker curator first, then find sources for it.'; return; }
+			const added: string[] = []; let skipped = 0;
+			for (const c of mine) {
+				const r = await hub.findMemeSources(c.id);
+				added.push(...r.added.map((a) => a.name || a.url)); skipped += r.skipped.length;
+			}
+			sweepNote = added.length
+				? `Added ${added.length} source${added.length === 1 ? '' : 's'}: ${added.join(', ')}. Press Refresh memes to collect from them now.`
+				: `No new working meme sources found${skipped ? ` (${skipped} suggestion${skipped === 1 ? '' : 's'} did not answer)` : ''}.`;
+		} catch (e) { sweepNote = errMsg(e); }
+		finally { finding = false; }
+	}
 	const spark = (t: MemeTrend) => t.observations.map((o) => o.count);
 </script>
 
@@ -332,6 +350,7 @@
 		</div>
 		<div class="head-acts">
 			<button class="btn" disabled={sweeping} use:focusable onclick={refreshRadar}>{sweeping ? 'Refreshing…' : 'Refresh memes'}</button>
+			{#if !session.isChild}<button class="btn" disabled={finding || sweeping} use:focusable onclick={findSources}>{finding ? 'Finding sources…' : 'Find sources'}</button>{/if}
 			<a class="btn ghost" href="/curators" use:focusable>Manage curators</a>
 		</div>
 	</header>

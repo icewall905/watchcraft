@@ -362,6 +362,36 @@ def _reddit_get(feed: str) -> bytes:
         raise
 
 
+REDDIT_BLOCKED = ('Reddit refused the public feed (HTTP {status}). Reddit now blocks most anonymous reads: '
+                  'add Reddit API keys in Settings, Common Room, and subreddit sources read through them.')
+
+
+def _reddit_rss(feed: str):
+    """The public feed parsed, with Reddit's anonymous-read block (403/404 for every subreddit) explained."""
+    try:
+        return _xml(_reddit_get(feed))
+    except curation.FetchError as e:
+        if e.status in (403, 404):
+            raise ValueError(REDDIT_BLOCKED.format(status=e.status)) from e
+        raise
+
+
+def _reddit_oauth_posts(feed: str) -> list[dict] | None:
+    """Listing children through the Common Room Reddit app keys, or None when no keys are set."""
+    from ..commonroom import reddit_oauth
+    if not reddit_oauth.configured():
+        return None
+    from ..commonroom.adapters import reddit as cr_reddit
+    parts = urlsplit(feed)
+    path = [p for p in parts.path.split('/') if p]
+    sort = path[2] if len(path) > 3 else 'hot'
+    window = re.search(r'(?:^|&)t=(hour|day|week)(?:&|$)', parts.query or '')
+    params = {'limit': 50, 'raw_json': 1, **({'t': window.group(1) if window else 'day'} if sort == 'top' else {})}
+    data = cr_reddit._call(f'{cr_reddit.API}/r/{path[1]}/{sort}?{urlencode(params)}')
+    children = ((data or {}).get('data') or {}).get('children') or [] if isinstance(data, dict) else []
+    return [c['data'] for c in children if isinstance(c, dict) and isinstance(c.get('data'), dict)]
+
+
 def reddit_feed(source: str) -> str:
     """r/news, news, or a reddit.com/r/<sub>[/hot|new|rising|top][?t=day] URL -> its public RSS feed."""
     raw = source.strip()
@@ -387,7 +417,23 @@ def reddit(url: str, _q: str = '') -> list[dict]:
     as the discussion link. Votes are popularity, never verification."""
     feed = reddit_feed(url)
     sub = feed.split('/r/', 1)[1].split('/', 1)[0]
-    root = _xml(_reddit_get(feed))
+    posts = _reddit_oauth_posts(feed)
+    if posts is not None:
+        out = []
+        for d in posts:
+            title, link = clean(str(d.get('title') or ''), 500), str(d.get('url') or '')
+            host = (urlsplit(link).hostname or '').lower()
+            if (d.get('is_self') or d.get('over_18') or not title or not link.startswith('https://')
+                    or any(host == h or host.endswith('.' + h) for h in REDDIT_HOSTS)):
+                continue
+            thread = 'https://www.reddit.com' + str(d.get('permalink') or '')
+            out.append({'url': link, 'title': title, 'type': 'news', 'provider': 'subreddit',
+                        'publisher': host.removeprefix('www.'), 'published_at': float(d.get('created_utc') or 0) or None,
+                        'image': safe_image(str(d.get('thumbnail') or '')), 'summary': '', 'external_id': link,
+                        'meta': {'platform': 'reddit', 'community': f'r/{sub}', 'discussion': thread,
+                                 'discussion_url': thread, 'observed_at': time.time()}})
+        return out[:50]
+    root = _reddit_rss(feed)
     out = []
     for entry in root.iter():
         if _local(entry.tag) != 'entry':
@@ -429,7 +475,22 @@ def reddit_memes(url: str, _q: str = '') -> list[dict]:
     skipped. The thread is the item; votes are popularity only."""
     feed = reddit_feed(url)
     sub = feed.split('/r/', 1)[1].split('/', 1)[0]
-    root = _xml(_reddit_get(feed))
+    posts = _reddit_oauth_posts(feed)
+    if posts is not None:
+        out = []
+        for d in posts:
+            title, link = clean(str(d.get('title') or ''), 500), str(d.get('url') or '')
+            parts = urlsplit(link)
+            if (d.get('over_18') or d.get('spoiler') or not title or parts.scheme != 'https'
+                    or (parts.hostname or '').lower() not in REDDIT_IMAGE_HOSTS or not _IMAGE_PATH.search(parts.path)):
+                continue
+            image = safe_image(link)
+            if not image or re.search(r'\b(nsfw|nsfl|spoiler)\b', title, re.I):
+                continue
+            thread = 'https://www.reddit.com' + str(d.get('permalink') or '')
+            out.append(_reddit_meme(thread, title, sub, str(d.get('author') or ''), float(d.get('created_utc') or 0) or None, image))
+        return out[:50]
+    root = _reddit_rss(feed)
     out = []
     for entry in root.iter():
         if _local(entry.tag) != 'entry':
@@ -453,15 +514,19 @@ def reddit_memes(url: str, _q: str = '') -> list[dict]:
         # Reddit's feed carries no over_18 flag: posts that call themselves NSFW or spoilers are skipped.
         if not image or re.search(r'\b(nsfw|nsfl|spoiler)\b', title, re.I):
             continue
-        out.append({'url': thread, 'title': title, 'type': 'meme', 'provider': 'reddit_memes',
-                    'publisher': f'r/{sub}', 'author': author.removeprefix('/u/'), 'published_at': published,
-                    'image': image, 'summary': '', 'external_id': f'reddit:{thread}',
-                    'meta': {'platform': 'reddit', 'social_post': True, 'community': f'r/{sub}',
-                             'discussion_url': thread, 'observed_at': time.time(),
-                             'media': {'type': 'image', 'url': image, 'preview_url': image, 'alt': title}}})
+        out.append(_reddit_meme(thread, title, sub, author, published, image))
         if len(out) >= 50:
             break
     return out
+
+
+def _reddit_meme(thread: str, title: str, sub: str, author: str, published, image: str) -> dict:
+    return {'url': thread, 'title': title, 'type': 'meme', 'provider': 'reddit_memes',
+            'publisher': f'r/{sub}', 'author': author.removeprefix('/u/'), 'published_at': published,
+            'image': image, 'summary': '', 'external_id': f'reddit:{thread}',
+            'meta': {'platform': 'reddit', 'social_post': True, 'community': f'r/{sub}',
+                     'discussion_url': thread, 'observed_at': time.time(),
+                     'media': {'type': 'image', 'url': image, 'preview_url': image, 'alt': title}}}
 
 
 def bing_news(_url: str, q: str = '', safe: bool = False) -> list[dict]:
