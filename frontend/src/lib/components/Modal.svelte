@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { navScope } from '$lib/nav';
+	import Icon from '$lib/components/Icon.svelte';
 
 	interface Props {
 		title?: string;
@@ -31,6 +32,8 @@
 		{/if}
 		<div class="body">{@render children()}</div>
 		{#if footer}<footer>{@render footer()}</footer>{/if}
+		<!-- Last in DOM order so a remote's first focus lands on the content, not on Close. -->
+		<button type="button" class="x" aria-label="Close" onclick={onClose}><Icon name="x" /></button>
 	</div>
 </div>
 
@@ -53,6 +56,30 @@
 	}
 	header h2 {
 		overflow-wrap: anywhere;
+	}
+	header {
+		padding-right: 3.25rem !important;
+	}
+	.x {
+		position: absolute;
+		top: 0.6rem;
+		right: 0.6rem;
+		z-index: 2;
+		display: grid;
+		place-items: center;
+		width: 2.25rem;
+		height: 2.25rem;
+		padding: 0;
+		border: 1px solid var(--line);
+		border-radius: 999px;
+		background: rgba(5, 4, 14, 0.55);
+		color: var(--text);
+		cursor: pointer;
+	}
+	.x:hover,
+	.x:focus-visible {
+		border-color: var(--line-strong);
+		background: rgba(5, 4, 14, 0.8);
 	}
 	.modal {
 		min-width: 0;

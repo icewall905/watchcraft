@@ -71,6 +71,9 @@ test('app back closes an open post and keeps the list in place', async ({ page }
 	await expect(page).toHaveURL(/\/common-room$/);
 	await expect(page.getByRole('link', { name: 'Fresh Amiga find' })).toBeVisible();
 	expect(await back()).toBe(false);
+	await page.getByRole('link', { name: 'Fresh Amiga find' }).click();
+	await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+	await expect(page.getByRole('dialog')).toHaveCount(0);
 });
 
 test('nav entry is present', async ({ page }) => {

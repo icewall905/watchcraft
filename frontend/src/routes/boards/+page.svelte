@@ -138,8 +138,9 @@
  }
  const urlBoard = () => Number(page.url.searchParams.get('board')) || null;
  // The open board lives in the URL (?board=7): browser Back returns to the overview, links can be shared.
- function choose(id: number | null) { void goto(id ? `/boards?board=${id}` : '/boards', {keepFocus: true, noScroll: false}); }
- function open(id: number | null) { importOpen = false; sourcesOpen = false; importing = false; selected = id; importJob = null; pins = []; preview = null; notice = ''; waiting = []; savedOnly = false; reviewOnly = false; void load(); if (!id) window.scrollTo({top: 0}); }
+ let overviewY = 0;  // Back from a board returns to the same spot in the board list.
+ function choose(id: number | null) { if (id && !selected) overviewY = window.scrollY; void goto(id ? `/boards?board=${id}` : '/boards', {keepFocus: true, noScroll: false}); }
+ function open(id: number | null) { importOpen = false; sourcesOpen = false; importing = false; selected = id; importJob = null; pins = []; preview = null; notice = ''; waiting = []; savedOnly = false; reviewOnly = false; const y = id ? 0 : overviewY; void load().then(() => requestAnimationFrame(() => window.scrollTo({top: y}))); }
  $effect(() => { const id = urlBoard(); untrack(() => { if (id !== selected && identity) open(id); }); });
  let boardFilter = $state(''), boardSort = $state<'recent' | 'name' | 'size'>('recent');
  try { const saved = localStorage.getItem('wc-boards-sort'); if (saved === 'name' || saved === 'size' || saved === 'recent') boardSort = saved; } catch { /* storage unavailable */ }

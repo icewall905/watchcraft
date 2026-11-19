@@ -263,6 +263,28 @@ test('image viewer: why it was picked, zoom, keyboard browsing, download',async(
  expect((await download).suggestedFilename()).toBe('Quiet-courtyard.svg'.replace('.svg','.jpg'));
 });
 
+test('back from a board returns to the same spot in the board list',async({page})=>{
+ await setup(page);
+ await page.route('**/api/hub/boards',async route=>{if(route.request().method()!=='GET')return route.fallback();const many=['Garden inspiration','Pottery ideas','Star dresses','Kitchen','Bonsai','Wedding'].map((name,i)=>({id:i+1,name,interests:'x',instructions:'',enabled:i!==4,interval_hours:12,target_images:100,reference_url:null,reference_name:'',pin_count:10-i,saved_count:i===0?2:0,last_status:i===1?'collecting':i===3?'error':'ok',error:'',retry_after:0,last_result:'',preview_urls:i===0?['/api/hub/boards/1/pins/3/media','/api/hub/boards/1/pins/2/media','/api/hub/boards/1/pins/1/media']:[],last_added:1000+i,created_at:1}));return route.fulfill({json:{boards:many}});});
+ await page.setViewportSize({width:390,height:700});
+ await freshPage(page,'/boards');
+ const overview=page.getByRole('region',{name:'All boards'});
+ const last=overview.getByRole('button',{name:/^Open /}).last();
+ await last.scrollIntoViewIfNeeded();
+ const y=await page.evaluate(()=>scrollY);expect(y).toBeGreaterThan(200);
+ await last.click();await expect(page).toHaveURL(/board=/);
+ await page.goBack();await expect(overview).toBeVisible();
+ await expect.poll(()=>page.evaluate(()=>scrollY)).toBeGreaterThan(y-60);
+});
+
+test('image viewer has a small close button',async({page})=>{
+ await setup(page);await freshPage(page,'/boards?board=1');
+ await page.getByRole('button',{name:'View Quiet courtyard',exact:true}).click();
+ await page.getByRole('dialog').getByRole('button',{name:'Close',exact:true}).click();
+ await expect(page.getByRole('dialog')).toHaveCount(0);
+ await expect(page).toHaveURL(/board=1/);
+});
+
 test('boards overview: collage cards, filter, sort and back navigation',async({page})=>{
  await setup(page,false,rows=>{rows.forEach(r=>r.saved=r.id===3);});
  await page.route('**/api/hub/boards',async route=>{if(route.request().method()!=='GET')return route.fallback();const many=['Garden inspiration','Pottery ideas','Star dresses','Kitchen','Bonsai','Wedding'].map((name,i)=>({id:i+1,name,interests:'x',instructions:'',enabled:i!==4,interval_hours:12,target_images:100,reference_url:null,reference_name:'',pin_count:10-i,saved_count:i===0?2:0,last_status:i===1?'collecting':i===3?'error':'ok',error:'',retry_after:0,last_result:'',preview_urls:i===0?['/api/hub/boards/1/pins/3/media','/api/hub/boards/1/pins/2/media','/api/hub/boards/1/pins/1/media']:[],last_added:1000+i,created_at:1}));return route.fulfill({json:{boards:many}});});
