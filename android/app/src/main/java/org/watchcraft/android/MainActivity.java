@@ -53,8 +53,6 @@ import android.widget.ProgressBar;
 import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
-import com.google.firebase.FirebaseApp;
-import com.google.firebase.messaging.FirebaseMessaging;
 import org.json.JSONObject;
 import org.json.JSONTokener;
 import java.io.InputStream;
@@ -92,6 +90,7 @@ public final class MainActivity extends ComponentActivity {
     private Dialog menu;
     private boolean loadingFailed, destroyed, hasConnected, requestingMicrophone, pageReady;
     private int connectionAttempt;
+    private WatcherConnection pendingWatcher;
     private byte[] exportBytes;
     private String exportOrigin, pendingDownload, downloadOrigin, downloadCookie, downloadAgent;
 
@@ -114,10 +113,11 @@ public final class MainActivity extends ComponentActivity {
         });
         String saved = prefs.getString("server", "");
         if (!saved.isEmpty()) {
-            if (savedInstanceState == null) currentPath = WatcherMessaging.OPEN.equals(getIntent().getAction()) ? WATCHER_UPDATES : landing();
+            if (savedInstanceState == null) currentPath = landing();
             try {
                 server = ServerAddress.migrate(ServerAddress.normalize(saved, prefs.getBoolean("http", false)));
                 if (!server.equals(saved)) prefs.edit().putString("server", server).apply();
+                if (savedInstanceState == null && opensWatcher(getIntent())) currentPath = WATCHER_UPDATES;
                 hasConnected = true; showService(savedInstanceState);
             }
             catch (IllegalArgumentException ignored) { showSetup(); }
@@ -238,7 +238,7 @@ public final class MainActivity extends ComponentActivity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setMediaPlaybackRequiresUserGesture(true); settings.setSupportMultipleWindows(true);
         settings.setJavaScriptCanOpenWindowsAutomatically(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " WatchCraftAndroid/" + BuildConfig.VERSION_NAME + " WatcherPush/1");
+        settings.setUserAgentString(settings.getUserAgentString() + " WatchCraftAndroid/" + BuildConfig.VERSION_NAME + " WatcherNtfy/1");
         settings.setBuiltInZoomControls(false); settings.setLoadWithOverviewMode(true); settings.setUseWideViewPort(true);
         CookieManager.getInstance().setAcceptCookie(true); CookieManager.getInstance().setAcceptThirdPartyCookies(web, false);
         WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
@@ -398,57 +398,69 @@ public final class MainActivity extends ComponentActivity {
         }
     }
 
+    private boolean opensWatcher(Intent intent) {
+        return WatcherMessaging.OPEN.equals(intent.getAction())
+                && ServerAddress.sameOrigin(server, intent.getStringExtra("notification_server"));
+    }
+
     @Override protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
-        if (WatcherMessaging.OPEN.equals(intent.getAction()) && web != null) navigate(WATCHER_UPDATES);
+        if (opensWatcher(intent) && web != null) navigate(WATCHER_UPDATES);
     }
 
-    private void requestWatcherNotifications(boolean enabled) {
-        if (FirebaseApp.getApps(this).isEmpty()) {
-            watcherResult(web, server, enabled, null, "This Android build has no Firebase configuration.");
+    private void pairWatcher(Uri link) {
+        try {
+            WatcherConnection candidate = new WatcherConnection(server, link.getQueryParameter("endpoint"),
+                    Long.parseLong(link.getQueryParameter("since")));
+            new AlertDialog.Builder(this).setTitle("Enable Watcher notifications?")
+                    .setMessage("Listen for Watcher updates from " + Uri.parse(candidate.endpoint()).getHost() + " in the background.")
+                    .setNegativeButton("Cancel", null).setPositiveButton("Enable", (dialog, which) -> {
+                        pendingWatcher = candidate;
+                        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)
+                                != PackageManager.PERMISSION_GRANTED) {
+                            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, WATCHER_PERMISSION);
+                        } else saveWatcher();
+                    }).show();
+        } catch (IllegalArgumentException | NullPointerException ignored) {
+            toast("The Watcher pairing link is invalid.");
+        }
+    }
+
+    private void saveWatcher() {
+        WatcherConnection candidate = pendingWatcher;
+        pendingWatcher = null;
+        if (candidate == null || !candidate.server().equals(server)) return;
+        if (!WatcherMessaging.permitted(this)) {
+            toast("Enable Watcher notifications in Android settings.");
             return;
         }
-        if (enabled && Build.VERSION.SDK_INT >= 33
-                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, WATCHER_PERMISSION);
-            return;
+        try {
+            WatcherStore.save(this, candidate);
+            WatcherMessaging.start(this);
+            toast("Watcher background connection saved.");
+        } catch (Exception ignored) {
+            toast("Could not save the Watcher background connection.");
         }
-        fetchWatcherToken(enabled);
-    }
-
-    private void fetchWatcherToken(boolean enabled) {
-        WebView target = web;
-        String origin = server;
-        FirebaseMessaging.getInstance().getToken().addOnCompleteListener(this, task -> {
-            String token = task.isSuccessful() ? task.getResult() : null;
-            watcherResult(target, origin, enabled, token, token == null ? "Could not connect to Firebase." : "");
-        });
-    }
-
-    private void watcherResult(WebView target, String origin, boolean enabled, String token, String message) {
-        if (web == null || web != target || !server.equals(origin) || !ServerAddress.sameOrigin(origin, web.getUrl())
-                || !"/watcher".equals(Uri.parse(web.getUrl()).getPath())) return;
-        web.evaluateJavascript("if(location.origin===" + JSONObject.quote(origin)
-                + "&&location.pathname==='/watcher')window.dispatchEvent(new CustomEvent('watchcraft-watcher-android',"
-                + "{detail:{enabled:" + enabled + ",token:" + JSONObject.quote(token == null ? "" : token)
-                + ",message:" + JSONObject.quote(message) + "}}))", null);
     }
 
     private final class ServiceClient extends WebViewClient {
         @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
             String url = request.getUrl().toString();
             if (!request.isForMainFrame()) return false;
-            if (ServerAddress.sameOrigin(server, url)) {
-                String path = request.getUrl().getPath();
-                if ("https".equals(request.getUrl().getScheme())
-                        && request.hasGesture() && "https".equals(Uri.parse(server).getScheme())
-                        && view.getUrl() != null && "/watcher".equals(Uri.parse(view.getUrl()).getPath())
-                        && ("/watcher/android-enable".equals(path) || "/watcher/android-disable".equals(path))) {
-                    requestWatcherNotifications(path.endsWith("enable"));
-                    return true;
+            if ("watchcraft-watcher".equals(request.getUrl().getScheme())) {
+                if (request.hasGesture() && server.startsWith("https://")
+                        && ServerAddress.sameOrigin(server, view.getUrl())
+                        && "/watcher".equals(Uri.parse(view.getUrl()).getPath())) {
+                    String action = request.getUrl().getHost();
+                    if ("enable".equals(action)) pairWatcher(request.getUrl());
+                    else if ("disable".equals(action)) {
+                        WatcherStore.disable(MainActivity.this);
+                        toast("Watcher notifications disabled on this device.");
+                    }
                 }
-                return false;
+                return true;
             }
+            if (ServerAddress.sameOrigin(server, url)) return false;
             denyMicrophone(); openExternal(url); return true;
         }
         @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) {
@@ -545,8 +557,11 @@ public final class MainActivity extends ComponentActivity {
     @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {
         super.onRequestPermissionsResult(requestCode, permissions, results);
         if (requestCode == WATCHER_PERMISSION) {
-            if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) fetchWatcherToken(true);
-            else watcherResult(web, server, true, null, "Android notification permission is off.");
+            if (results.length > 0 && results[0] == PackageManager.PERMISSION_GRANTED) saveWatcher();
+            else {
+                pendingWatcher = null;
+                toast("Android notification permission is off.");
+            }
             return;
         }
         if (requestCode == RECORD_AUDIO) {
@@ -750,7 +765,7 @@ public final class MainActivity extends ComponentActivity {
         if (web != null && ServerAddress.sameOrigin(server, web.getUrl())) { web.saveState(state); state.putString("webServer", server); }
     }
     @Override protected void onPause() { if (web != null) { web.onPause(); CookieManager.getInstance().flush(); } if (!requestingMicrophone) denyMicrophone(); super.onPause(); }
-    @Override protected void onResume() { super.onResume(); if (web != null) web.onResume(); }
+    @Override protected void onResume() { super.onResume(); if (web != null) web.onResume(); WatcherMessaging.start(this); }
     @Override protected void onDestroy() {
         destroyed = true; connectionAttempt++; denyMicrophone();
         if (fileCallback != null) { fileCallback.onReceiveValue(null); fileCallback = null; }

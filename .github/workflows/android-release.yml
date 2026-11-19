@@ -73,10 +73,6 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          WATCHCRAFT_FIREBASE_APP_ID: ${{ vars.WATCHCRAFT_FIREBASE_APP_ID }}
-          WATCHCRAFT_FIREBASE_API_KEY: ${{ vars.WATCHCRAFT_FIREBASE_API_KEY }}
-          WATCHCRAFT_FIREBASE_SENDER_ID: ${{ vars.WATCHCRAFT_FIREBASE_SENDER_ID }}
-          WATCHCRAFT_FIREBASE_PROJECT_ID: ${{ vars.WATCHCRAFT_FIREBASE_PROJECT_ID }}
         working-directory: android
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintRelease :app:assembleRelease
 

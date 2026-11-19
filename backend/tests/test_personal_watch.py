@@ -70,8 +70,7 @@ def test_search_watches_complete_each_condition_once(client, monkeypatch):
 
 
 def test_push_retries_and_does_not_replay_or_skip_after_deletion(client, monkeypatch):
-    monkeypatch.setenv('BT_WATCHER_FCM_PROJECT', 'test-project')
-    token = 'example-fcm-registration-token'
+    monkeypatch.setenv('BT_WATCHER_NTFY_URL', 'https://ntfy.example')
     android = f'{PATH}/android'
     sent = []
     clock = 1000
@@ -97,7 +96,11 @@ def test_push_retries_and_does_not_replay_or_skip_after_deletion(client, monkeyp
     monkeypatch.setattr(push, 'time', Clock)
     monkeypatch.setattr(push, 'send', send)
     previous = update()
-    assert client.put(android, json={'token': token}).status_code == 200
+    paired = client.post(android)
+    assert paired.status_code == 200
+    token = paired.json()['endpoint'].rsplit('/', 1)[1]
+    assert token.startswith('wc_') and len(token) == 63
+    assert client.post(android).json()['endpoint'] == paired.json()['endpoint']
     assert not push.dispatch_one()
     latest = update()
     assert latest > previous and push.dispatch_one()
@@ -112,16 +115,20 @@ def test_push_retries_and_does_not_replay_or_skip_after_deletion(client, monkeyp
     newest = update()
     assert newest > latest and push.dispatch_one()
     assert sent[-1] == (token, newest)
-    assert client.request('DELETE', android, json={'token': token}).status_code == 200
+    assert client.delete(android).status_code == 200
     update()
     assert not push.dispatch_one()
 
 
 def test_notification_is_profile_scoped_and_uses_the_push_queue(client, monkeypatch):
-    monkeypatch.setenv('BT_WATCHER_FCM_PROJECT', 'test-project')
-    token = 'example-fcm-registration-token'
-    assert client.put(f'{PATH}/android', json={'token': token}).status_code == 200
+    monkeypatch.setenv('BT_WATCHER_NTFY_URL', 'https://ntfy.example')
+    android = f'{PATH}/android'
+    paired = client.post(android)
+    assert paired.status_code == 200
+    token = paired.json()['endpoint'].rsplit('/', 1)[1]
     other = headers(client.post('/api/profiles', json={'name': 'Other'}).json())
+    assert client.post(android, headers=other).json()['endpoint'] != paired.json()['endpoint']
+    assert client.delete(android, headers=other).status_code == 200
     result = client.post(f'{PATH}/updates/test')
     assert result.status_code == 200, result.text
     event = result.json()
@@ -135,3 +142,21 @@ def test_notification_is_profile_scoped_and_uses_the_push_queue(client, monkeypa
     assert sent == [(token, event['id'])]
     assert client.post(f"{PATH}/updates/{event['id']}/read").status_code == 200
     assert client.get(f'{PATH}/updates?unread=true').json() == []
+
+
+
+def test_ntfy_payload_contains_only_generic_alert_data(monkeypatch):
+    monkeypatch.setenv('BT_WATCHER_NTFY_URL', 'https://ntfy.example')
+    monkeypatch.delenv('BT_WATCHER_NTFY_TOKEN', raising=False)
+    device = push.WatchDevice(token='wc_' + 'a' * 60, profile_id=7, cursor=0)
+
+    def publish(url, **kwargs):
+        assert url == 'https://ntfy.example'
+        assert not kwargs['follow_redirects']
+        assert kwargs['headers'] == {}
+        assert kwargs['json'] == {'topic': device.token, 'title': 'The Watcher',
+                                  'message': 'You have a new Watcher update.', 'priority': 4, 'tags': ['watcher-42']}
+        return push.httpx.Response(200, request=push.httpx.Request('POST', url))
+
+    monkeypatch.setattr(push.httpx, 'post', publish)
+    assert push.send(device, 42)

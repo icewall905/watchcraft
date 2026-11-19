@@ -18,8 +18,8 @@
 	let androidConfigured = $state(false);
 	let androidMessage = $state('');
 	let pendingRemoval = $state<number | null>(null);
-	const supportsAndroidPush = () => typeof navigator !== 'undefined' && navigator.userAgent.includes('WatcherPush/1');
-	let androidRequest: { key: string; enabled: boolean } | null = null;
+	const supportsAndroidPush = () => typeof navigator !== 'undefined' && navigator.userAgent.includes('WatcherNtfy/1');
+	let pairingLink = $state('');
 	const active = () => session.ready && !session.needsLogin && !session.choosing && !!session.profileId && !session.profile?.pin_locked;
 	const identity = () => active() ? `${session.profileId}:${session.version}` : '';
 
@@ -35,7 +35,7 @@
 	$effect(() => {
 		const key = identity();
 		watches = []; updates = []; goal = ''; terms = ''; question = ''; error = ''; busy = false;
-		showPlan = false; pendingRemoval = null; androidRequest = null; androidMessage = ''; androidConfigured = false;
+		showPlan = false; pendingRemoval = null; pairingLink = ''; androidMessage = ''; androidConfigured = false;
 		plan = { mode: 'page_watch', source: '', selector: '', terms: [] };
 		if (key) {
 			void load(key);
@@ -50,22 +50,7 @@
 			const key = identity();
 			if (key && document.visibilityState === 'visible') void load(key);
 		}, 5000);
-		const receiveToken = (event: Event) => {
-			const key = identity();
-			if (!key || key !== androidRequest?.key || !supportsAndroidPush()) return;
-			const { token, enabled, message } = (event as CustomEvent<{ token?: string; enabled: boolean; message?: string }>).detail;
-			if (androidRequest.enabled !== enabled) return;
-			androidRequest = null;
-			if (!token) { androidMessage = message || 'Android registration failed.'; return; }
-			void watcher.android(token, enabled).then(() => {
-				if (key === identity()) androidMessage = enabled ? 'Android notifications enabled for this profile.' : 'Android notifications disabled for this profile.';
-			}).catch((e: Error) => { if (key === identity()) androidMessage = e.message; });
-		};
-		window.addEventListener('watchcraft-watcher-android', receiveToken);
-		return () => {
-			window.clearInterval(timer);
-			window.removeEventListener('watchcraft-watcher-android', receiveToken);
-		};
+		return () => window.clearInterval(timer);
 	});
 
 	async function action(fn: () => Promise<void>) {
@@ -107,6 +92,28 @@
 			goal = ''; terms = ''; question = ''; showPlan = false;
 			plan = { mode: 'page_watch', source: '', selector: '', terms: [] };
 			await load(key);
+		});
+	}
+
+	function preparePairing() {
+		const key = identity();
+		void action(async () => {
+			const config = await watcher.pairAndroid();
+			if (key !== identity()) return;
+			const query = new URLSearchParams({ endpoint: config.endpoint, since: String(config.since) });
+			pairingLink = `watchcraft-watcher://enable?${query}`;
+			androidMessage = '';
+		});
+	}
+
+	function revokePairing() {
+		const key = identity();
+		void action(async () => {
+			await watcher.revokeAndroid();
+			if (key === identity()) {
+				pairingLink = '';
+				androidMessage = 'This profile’s background connection was revoked. Disable the listener on each device to remove its status notification.';
+			}
 		});
 	}
 
@@ -169,12 +176,19 @@
 			<h2>Android notifications</h2>
 			{#if androidConfigured && typeof location !== 'undefined' && location.protocol === 'https:'}
 				<div class="actions">
-					<a class="btn" href="/watcher/android-enable" data-sveltekit-reload onclick={() => (androidRequest = { key: identity(), enabled: true })} use:focusable>Enable on this device</a>
-					<a class="btn" href="/watcher/android-disable" data-sveltekit-reload onclick={() => (androidRequest = { key: identity(), enabled: false })} use:focusable>Disable on this device</a>
+					{#if pairingLink}
+						<a class="btn primary" href={pairingLink} data-sveltekit-reload use:focusable>Open connection in Android app</a>
+					{:else}
+						<button class="btn" disabled={busy} onclick={preparePairing} use:focusable>Set up background notifications</button>
+					{/if}
+					<a class="btn" href="watchcraft-watcher://disable" data-sveltekit-reload use:focusable>Disable on this device</a>
+					<button class="btn" disabled={busy} onclick={revokePairing} use:focusable>Disconnect all Android devices</button>
 				</div>
-			{:else}<p>Android notifications need a Firebase-enabled Hub over HTTPS.</p>{/if}
+			{:else}<p>Android notifications need an ntfy-enabled Hub over HTTPS.</p>{/if}
 			{#if androidMessage}<p role="status">{androidMessage}</p>{/if}
 		</section>
+	{:else if typeof navigator !== 'undefined' && navigator.userAgent.includes('WatcherPush/1')}
+		<p>Update the Android app to set up Watcher background notifications.</p>
 	{/if}
 
 	<section aria-labelledby="watch-updates">

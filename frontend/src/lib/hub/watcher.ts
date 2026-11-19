@@ -21,7 +21,8 @@ export const watcher = {
 	testNotification: () => call<WatchUpdate>('/updates/test', { method: 'POST' }),
 	read: (id: number) => call(`/updates/${id}/read`, { method: 'POST' }),
 	androidStatus: () => call<{ configured: boolean }>('/android'),
-	android: (token: string, enabled: boolean) => call('/android', { method: enabled ? 'PUT' : 'DELETE', body: { token } })
+	pairAndroid: () => call<{ endpoint: string; since: number }>('/android', { method: 'POST' }),
+	revokeAndroid: () => call('/android', { method: 'DELETE' })
 };
 
 export const intervals = { 10: '10 minutes', 60: '1 hour', 1440: 'Daily' } as Record<number, string>;

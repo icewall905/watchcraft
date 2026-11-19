@@ -51,20 +51,21 @@ The APK and checksum are attached to that GitHub Release for Obtainium to discov
 
 ## The Watcher notifications
 
-Register the Android app in a Firebase project for Cloud Messaging. The release application ID is
-`org.watchcraft.android` and the debug application ID is `org.watchcraft.android.debug`. Supply
-`WATCHCRAFT_FIREBASE_APP_ID`, `WATCHCRAFT_FIREBASE_API_KEY`, `WATCHCRAFT_FIREBASE_SENDER_ID` and
-`WATCHCRAFT_FIREBASE_PROJECT_ID` as environment variables when building, or as GitHub Actions
-repository variables for a release. These values come from the Firebase Android app registration.
-Builds with empty Firebase settings can still open The Watcher and read its updates.
+The Android app listens to ntfy in a native foreground service. The hosted Hub uses
+`https://ntfy.tdgs.org`, the same server used by Couples Game. Each WatchCraft profile gets
+a separate random topic. A persistent status notification shows whether the app is listening
+or reconnecting.
 
-Set `BT_WATCHER_FCM_PROJECT` to the Firebase project ID on the Hub API. Give the API access to
-Firebase Cloud Messaging HTTP v1 through Application Default Credentials. For a self-hosted
-Docker installation, mount the service-account JSON read-only in the API container and set
-`GOOGLE_APPLICATION_CREDENTIALS` to its path inside the container. Keep that credential on the
-server. [FCM HTTP v1 setup](https://firebase.google.com/docs/cloud-messaging/send/v1-api)
+For self-hosted Hubs, set `BT_WATCHER_NTFY_URL` to an HTTPS ntfy origin. If the server requires
+publish authentication, set `BT_WATCHER_NTFY_TOKEN` on the Hub. The Android app needs read access
+to its private topic URL, and the topic should be treated as a secret. The app stores it encrypted
+using Android Keystore and keeps it out of backups.
 
-Connect the app to the Hub over HTTPS, open **The Watcher**, and choose **Enable on this device**
-from the profile that should receive updates. A device registration follows the most recently
-enabled profile on that Hub. Android notifications open The Watcher and show a generic message
-on the device. Watch details are available after opening the Hub with the appropriate profile.
+Connect to your Hub over HTTPS. In **The Watcher**, choose **Set up background notifications**,
+then **Open connection in Android app** and allow notifications. Use **Send test notification**
+and check the Android notification shade. The notification contains a generic message. The Hub
+supplies the details after sign-in. On devices that restrict background delivery, allow unrestricted
+battery use for The Hub. After a force-stop, reopen the app to resume listening.
+
+**Disable on this device** removes the local connection. **Disconnect all Android devices**
+revokes the profile topic on the Hub. Pair again to create a new topic.
