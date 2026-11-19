@@ -162,6 +162,7 @@ TASKS: dict[str, tuple[str, str, str]] = {
     "hub_reports": ("Hub", "Research reports, briefings and Front Page write-ups", "worker"),
     "curator_setup": ("Hub", "Set up a curator from your request", "worker"),
     "meme_explain": ("Hub", "Explain a meme", "worker"),
+    "meme_sources": ("Hub", "Suggest meme communities (Find sources)", "worker"),
     "page_rescue": ("Hub", "Rescue pages that will not load", "worker"),
     "article_cleanup": ("Hub", "Clean up article text", "worker"),
     "frontpage_screen": ("Hub", "Front Page first pass over new items", "worker"),

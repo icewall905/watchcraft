@@ -39,7 +39,7 @@ def propose(c, have: set[str]) -> list[tuple[str, str, str]]:
         f'Keywords: {", ".join(c.keywords or [])}\nLiked: {", ".join(c.tuned_up or [])}\n'
         f'Disliked: {", ".join(c.tuned_down or [])}\nAlready in use: {", ".join(sorted(have)) or "none"}')
         + '\n</data>')
-    res = ai._call(system, user, SCHEMA, max_tokens=1200, role='worker')
+    res = ai._call(system, user, SCHEMA, max_tokens=1200, role='meme_sources')
     allowed = platforms()
     out = []
     for row in res.get('sources', []) if isinstance(res, dict) else []:
