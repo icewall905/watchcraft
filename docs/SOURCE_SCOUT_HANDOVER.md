@@ -19,6 +19,15 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Watcher test notification (`9d354f8`, 2026-11-19)
+
+- Added **Send test notification** under The Watcher updates. It creates a profile-owned update and goes through
+  the same Front Page banner and Android push queue as regular matches. Android push requires Firebase setup.
+- The backend and browser tests passed, and the production candidate created, listed, and marked a test update
+  read in a disposable database. The live endpoint, UI asset, and service health passed after rollout.
+- Code and image rollback is available at `/root/compose/watchcraft-backups/20261119-watcher-test-9d354f8`.
+  The feature uses the existing Watcher tables.
+
 ## Deployment record — The Watcher (`b3376c2`, 2026-11-19)
 
 - Deployed `2de0a7d..b3376c2` from `codex/android-app`. The Watcher saves profile-owned page, feed, release, and
