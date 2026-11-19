@@ -19,6 +19,14 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Mobile Settings navigation (`896aa06`, 2026-11-19)
+
+- Replaced the phone-width and Android Settings strip with a grouped section picker. **Notifications**
+  includes Watcher app pairing and test controls plus server alert channels for admins. The existing
+  Android app and legacy Settings links work with the consolidated page.
+- Phone-width and Watcher browser tests, frontend build, and production health checks passed.
+  Code and image rollback are at `/root/compose/watchcraft-backups/20261119-mobile-settings-896aa06`.
+
 ## Deployment record — Watcher notification settings (`7990aa7`, 2026-11-19)
 
 - Moved Android pairing, disconnect controls, and the test notification into **Settings → Watcher notifications**.
