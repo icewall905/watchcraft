@@ -19,6 +19,20 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — The Watcher (`b3376c2`, 2026-11-19)
+
+- Deployed `2de0a7d..b3376c2` from `codex/android-app`. The Watcher saves profile-owned page, feed, release, and
+  search checks on a recurring schedule, with unread updates in the Front Page banner.
+- Backup at `/root/compose/watchcraft-backups/20261119-watcher-b3376c2` includes a verified online SQLite snapshot,
+  previous source, config hashes, and `rollback.sh` with the previous service images. Deployment kept the production
+  configuration and sidecars in place. The schema change adds the three Watcher tables.
+- Tested the built image against the live GitHub CLI release source with a disposable database on the production host.
+  Verified the custom schedule, first-check baseline, later findings, read action, and deletion. Production health,
+  authenticated-route protection, Watcher routes, schema, and compiled UI passed. All four application services ran
+  `sha256:e273d50093ca…` with zero restarts.
+- Android CI passed signed APK assembly, unit tests, and release lint. The production API has no Firebase project
+  configured. Background push acceptance is tracked in the vault as V-086.
+
 ## Deployment record — Front Page best-of mosaic, jump bar, Commons always on (`e248cc1`, 2026-11-19)
 
 - "The best of everything" mosaic (top pick of each page, lead excluded), sticky jump bar, page-coloured shelves with a
