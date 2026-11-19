@@ -58,6 +58,14 @@ class PersonalWatch(SQLModel, table=True):
     lease_until: float = 0
 
 
+class WatchObservation(SQLModel, table=True):
+    watch_id: int = Field(primary_key=True)
+    profile_id: int = Field(index=True)
+    checked_at: float | None = None
+    report_json: str = ''
+    backoff_until: float = 0
+
+
 class WatchEvent(SQLModel, table=True):
     # Notification cursors must stay monotonic after users delete their newest updates.
     __table_args__ = {'sqlite_autoincrement': True}
@@ -138,17 +146,24 @@ def completed(plan, checkpoint):
     return plan.mode in LOOKUP_MODES and bool(checkpoint) and len(json.loads(checkpoint)) == len(plan.terms)
 
 
-def view(watch):
+def view(watch, observation=None):
     plan = Plan.model_validate_json(watch.plan_json)
     return {**watch.model_dump(exclude={'plan_json', 'checkpoint', 'claim', 'lease_until'}),
-            'plan': plan, 'completed': completed(plan, watch.checkpoint)}
+            'plan': plan, 'completed': completed(plan, watch.checkpoint),
+            'running': watch.lease_until > time.time(),
+            'retry_at': max((watch.last_check or 0) + 30, observation.backoff_until if observation else 0),
+            'report': ({'checked_at': observation.checked_at, **json.loads(observation.report_json)}
+                       if observation and observation.report_json else None)}
 
 
 @router.get('')
 def listing(pid: int = Depends(require_grown_up)):
     with session() as s:
-        return [view(w) for w in s.exec(select(PersonalWatch).where(PersonalWatch.profile_id == pid)
-                                        .order_by(PersonalWatch.id.desc())).all()]
+        pairs = s.exec(select(PersonalWatch, WatchObservation).outerjoin(
+            WatchObservation, (WatchObservation.watch_id == PersonalWatch.id)
+            & (WatchObservation.profile_id == PersonalWatch.profile_id)
+        ).where(PersonalWatch.profile_id == pid).order_by(PersonalWatch.id.desc())).all()
+        return [view(watch, observation) for watch, observation in pairs]
 
 
 @router.post('')
@@ -216,19 +231,47 @@ def read_event(event_id: int, pid: int = Depends(require_grown_up)):
     return {'ok': True}
 
 
+@router.post('/watches/{watch_id}/retry')
+def retry(watch_id: int, pid: int = Depends(require_grown_up)):
+    now = time.time()
+    with session() as s:
+        s.connection().exec_driver_sql('BEGIN IMMEDIATE')
+        watch = s.get(PersonalWatch, watch_id)
+        if not watch or watch.profile_id != pid:
+            raise HTTPException(404, 'Watch not found.')
+        if not watch.enabled:
+            raise HTTPException(409, 'Only active watches can be retried.')
+        if watch.lease_until > now:
+            raise HTTPException(409, 'This watch is already checking.')
+        observation = s.get(WatchObservation, watch_id)
+        if observation and observation.backoff_until > now:
+            raise HTTPException(429, 'The provider requested a wait. Try again after the retry time.')
+        if watch.next_check <= now:
+            return {'ok': True}
+        if watch.last_check is not None and watch.last_check + 30 > now:
+            raise HTTPException(429, 'Wait 30 seconds between checks.')
+        watch.next_check = now
+        s.add(watch)
+        s.commit()
+    return {'ok': True}
+
+
 @router.patch('/watches/{watch_id}')
 def patch(watch_id: int, body: WatchPatch, pid: int = Depends(require_grown_up)):
     with session() as s:
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
         watch = s.get(PersonalWatch, watch_id)
-        if watch and watch.profile_id == pid and body.enabled and completed(
-            Plan.model_validate_json(watch.plan_json), watch.checkpoint
-        ):
-            raise HTTPException(409, 'All conditions for this watch have been met.')
-        result = s.execute(update(PersonalWatch).where(PersonalWatch.id == watch_id, PersonalWatch.profile_id == pid)
-                           .values(enabled=body.enabled, next_check=time.time(), claim='', lease_until=0))
-        if not result.rowcount:
+        if not watch or watch.profile_id != pid:
             raise HTTPException(404, 'Watch not found.')
+        if body.enabled and completed(Plan.model_validate_json(watch.plan_json), watch.checkpoint):
+            raise HTTPException(409, 'All conditions for this watch have been met.')
+        if body.enabled and watch.enabled and watch.lease_until > time.time():
+            return {'ok': True}
+        observation = s.get(WatchObservation, watch_id)
+        watch.enabled = body.enabled
+        watch.next_check = max(time.time(), observation.backoff_until if observation else 0)
+        watch.claim, watch.lease_until = '', 0
+        s.add(watch)
         s.commit()
     return {'ok': True}
 
@@ -240,6 +283,7 @@ def remove(watch_id: int, pid: int = Depends(require_grown_up)):
         if not result.rowcount:
             raise HTTPException(404, 'Watch not found.')
         s.execute(delete(WatchEvent).where(WatchEvent.watch_id == watch_id, WatchEvent.profile_id == pid))
+        s.execute(delete(WatchObservation).where(WatchObservation.watch_id == watch_id, WatchObservation.profile_id == pid))
         s.commit()
     return {'ok': True}
 
@@ -255,24 +299,40 @@ def evidence_url(item):
         return ''
 
 
-def search_matches(plan, rows, seen):
+def samples(rows):
+    return [{'title': str(row.get('title') or 'Untitled result')[:300], 'url': evidence_url(row),
+             'snippet': str(row.get('summary') or '')[:350]} for row in rows[:5]]
+
+
+def search_matches(plan, rows, seen, decisions):
     pending = [{'condition': i + 1, 'requirement': term} for i, term in enumerate(plan.terms) if str(i + 1) not in seen]
     if not pending or not rows:
         return []
-    schema = {'type': 'object', 'properties': {'matches': {'type': 'array', 'maxItems': 8, 'items': {
-        'type': 'object', 'properties': {'condition': {'type': 'integer'}, 'item': {'type': 'integer'}},
-        'required': ['condition', 'item']}}}, 'required': ['matches']}
+    schema = {'type': 'object', 'properties': {
+        'matches': {'type': 'array', 'maxItems': 8, 'items': {
+            'type': 'object', 'properties': {'condition': {'type': 'integer'}, 'item': {'type': 'integer'}},
+            'required': ['condition', 'item']}},
+        'reasons': {'type': 'array', 'maxItems': 8, 'items': {
+            'type': 'object', 'properties': {'condition': {'type': 'integer'}, 'reason': {'type': 'string'}},
+            'required': ['condition', 'reason']}},
+    }, 'required': ['matches', 'reasons']}
     result = ai._call(
         'Select a search result only when its title or snippet explicitly confirms that the condition already '
         'happened. Reject rumors, predictions, announcements of future events, mismatched versions and ambiguous '
-        'results. Return the condition number and result number. Return an empty array when there is no evidence.',
+        'results. Return the condition number and result number. Return an empty matches array when there is no evidence. '
+        'For each condition give a short reason grounded in the supplied results, including why any apparent match '
+        'was rejected. If no result is relevant, say so. Do not infer hidden facts.',
         f'Requirements: <data>{ai._esc(json.dumps(pending))}</data>\nResults: {ai._data(rows)}',
         schema, timeout_s=25, role='watcher_check')
-    allowed = {entry['condition'] for entry in pending}
-    matches = []
     entries = result.get('matches')
     if not isinstance(entries, list):
         raise ValueError('Watcher returned an invalid result.')
+    reasons = result.get('reasons')
+    reasons = {entry['condition']: entry['reason'].strip()[:400] for entry in reasons[:8]
+               if isinstance(entry, dict) and type(entry.get('condition')) is int
+               and isinstance(entry.get('reason'), str)} if isinstance(reasons, list) else {}
+    allowed = {entry['condition'] for entry in pending}
+    found = {}
     for entry in entries[:8]:
         if not isinstance(entry, dict):
             continue
@@ -280,9 +340,14 @@ def search_matches(plan, rows, seen):
         if type(condition) is int and condition in allowed and type(item) is int and 1 <= item <= len(rows):
             row = rows[item - 1]
             if url := evidence_url(row):
-                matches.append((str(condition), row['title'][:500], url))
+                found[condition] = (row['title'][:500], url)
                 allowed.remove(condition)
-    return matches
+    for entry in pending:
+        condition = entry['condition']
+        title, url = found.get(condition, ('', ''))
+        decisions.append({'condition': entry['requirement'], 'matched': condition in found,
+                          'reason': reasons.get(condition, ''), 'title': title, 'url': url})
+    return [(str(condition), title, url) for condition, (title, url) in found.items()]
 
 
 class CheckFailure(Exception):
@@ -303,18 +368,21 @@ def retry_delay(error, now):
         return 0
 
 
-def observe(watch):
+def observe(watch, report):
     plan = Plan.model_validate_json(watch.plan_json)
     if plan.mode == 'page_watch':
         item = providers.page_watch(plan.source, config={'content_selector': plan.selector} if plan.selector else {})[0]
         text = '\n'.join(line for raw in item['body'][:20_000].splitlines() if (line := ' '.join(raw.split())))
         if not text:
             raise ValueError('Watch source was empty.')
+        report.update(summary='Recorded the initial page text.' if not watch.checkpoint else 'The page text was unchanged.',
+                      result_count=1, samples=samples([item]))
         if not watch.checkpoint or text == watch.checkpoint:
             return text, []
         diff = watchers.diff(watch.checkpoint, text, limit=50)
         added = ' '.join(op['text'] for op in diff['ops'] if op['op'] == 'added')
         summary = added or 'Text was removed from the watched page.'
+        report['summary'] = summary[:500]
         return text, [(summary[:500], evidence_url(item))]
 
     seen = set(json.loads(watch.checkpoint or '[]'))
@@ -326,10 +394,15 @@ def observe(watch):
             rows = providers.PROVIDERS[plan.mode].run('', plan.source)[:20]
         except Exception as exc:
             raise CheckFailure('The search provider did not return results.') from exc
+        report.update(summary='The AI review did not finish.' if rows else 'The search returned no results.',
+                      result_count=len(rows), samples=samples(rows), decisions=[])
         try:
-            matches = search_matches(plan, rows, seen)
+            matches = search_matches(plan, rows, seen, report['decisions'])
         except Exception as exc:
             raise CheckFailure('The AI could not review the search results.') from exc
+        if rows:
+            report['summary'] = ('The AI found evidence for at least one condition.' if matches
+                                 else 'The AI found no confirmed match in the search results.')
     else:
         rows = providers.PROVIDERS[plan.mode].run(plan.source)
         matches = [(digest(url), row['title'][:500], url) for row in rows if (url := evidence_url(row))
@@ -339,6 +412,10 @@ def observe(watch):
         if key not in seen and (search or watch.checkpoint):
             updates.append((title, url))
         seen.add(key)
+    if not search:
+        report.update(summary=f'{len(updates)} new matching entries.' if watch.checkpoint
+                      else 'Recorded the initial entries from this source.',
+                      result_count=len(rows), samples=samples(rows))
     return json.dumps(sorted(seen)), updates
 
 
@@ -363,9 +440,11 @@ def check_one():
         s.refresh(watch)
 
     error = ''
+    report = {}
+    backoff_until = 0
     delay = watch.interval * 60
     try:
-        checkpoint, updates = observe(watch)
+        checkpoint, updates = observe(watch, report)
     except Exception as exc:
         cause = exc.__cause__ if isinstance(exc, CheckFailure) else exc
         response = getattr(cause, 'response', None)
@@ -376,7 +455,11 @@ def check_one():
         # Allow one early retry per failure streak. Repeated failures return to the chosen interval.
         if not watch.error and status not in (401, 403, 404):
             delay = min(delay, 120)
-        delay = max(delay, retry_delay(cause, time.time()))
+        observed_at = time.time()
+        backoff = retry_delay(cause, observed_at)
+        delay = max(delay, backoff)
+        if backoff > 0:
+            backoff_until = observed_at + backoff
     finished = time.time()
     with session() as s:
         result = s.execute(update(PersonalWatch).where(PersonalWatch.id == watch.id, PersonalWatch.claim == claim)
@@ -384,6 +467,12 @@ def check_one():
                                    checkpoint=checkpoint, error=error, enabled=not completed(
                                        Plan.model_validate_json(watch.plan_json), checkpoint)))
         if result.rowcount:
+            observation = s.get(WatchObservation, watch.id) or WatchObservation(watch_id=watch.id, profile_id=watch.profile_id)
+            observation.backoff_until = backoff_until
+            if report:
+                observation.checked_at = finished
+                observation.report_json = json.dumps(report)
+            s.add(observation)
             for text, url in updates:
                 s.add(WatchEvent(watch_id=watch.id, profile_id=watch.profile_id, text=text, url=url, created_at=finished))
         s.commit()

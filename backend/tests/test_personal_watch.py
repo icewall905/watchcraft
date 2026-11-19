@@ -60,8 +60,14 @@ def test_search_watches_complete_each_condition_once(client, monkeypatch):
     monkeypatch.setattr(watch.providers.PROVIDERS['bing_news'], 'run', lambda *_: rows)
     matches = iter([[{'condition': 1, 'item': 1}],
                     [{'condition': 1, 'item': 1}, {'condition': 2, 'item': 9}, {'condition': 2, 'item': 2}]])
-    monkeypatch.setattr(watch.ai, '_call', lambda *_args, **_kwargs: {'matches': next(matches)})
+    monkeypatch.setattr(watch.ai, '_call', lambda *_args, **_kwargs: {
+        'matches': next(matches), 'reasons': [{'condition': 2, 'reason': 'No explicit public release found.'}]})
     assert watch.check_one()
+    first = client.get(PATH).json()[0]['report']
+    assert first['result_count'] == 2 and len(first['samples']) == 2
+    assert first['decisions'][0]['matched'] and first['decisions'][0]['url'] == rows[0]['url']
+    assert not first['decisions'][1]['matched']
+    assert first['decisions'][1]['reason'] == 'No explicit public release found.'
     assert client.patch(operation, json={'enabled': True}).status_code == 200
     assert watch.check_one()
     assert [event['text'] for event in client.get(f'{PATH}/updates').json()] == ['Flash release', '27B release']
@@ -223,3 +229,52 @@ def test_retry_respects_upstream_rate_limit():
     assert watch.retry_delay(FetchError(503, 'Thu, 01 Jan 1970 00:05:00 GMT'), 0) == 300
     assert watch.retry_delay(watch.providers.RateLimited(retry_in=450), 0) == 450
     assert watch.retry_delay(ValueError('invalid source'), 0) == 0
+
+
+
+def test_retry_is_owned_and_respects_running_checks_and_provider_backoff(client, monkeypatch):
+    import time
+    from bt.curation import FetchError
+
+    now = time.time()
+
+    class Clock:
+        @staticmethod
+        def time():
+            return now
+
+    monkeypatch.setattr(watch, 'time', Clock)
+    response = client.post(PATH, json={'goal': 'Track my package', 'interval': 60, 'plan': {'source': URL}})
+    assert response.status_code == 200
+    watch_id = response.json()['id']
+    operation = f'{PATH}/watches/{watch_id}'
+    retry = operation + '/retry'
+    other = headers(client.post('/api/profiles', json={'name': 'Other'}).json())
+    assert client.post(retry, headers=other).status_code == 404
+
+    def unavailable(*_, **__):
+        assert client.post(retry).status_code == 409
+        raise FetchError(429, '600')
+
+    monkeypatch.setattr(watch.providers, 'page_watch', unavailable)
+    assert watch.check_one()
+    item, = client.get(PATH).json()
+    assert item['retry_at'] == now + 600
+    assert client.post(retry).status_code == 429
+    assert client.patch(operation, json={'enabled': False}).status_code == 200
+    assert client.post(retry).status_code == 409
+    assert client.patch(operation, json={'enabled': True}).status_code == 200
+    assert not watch.check_one()
+    now += 600
+    assert client.post(retry).status_code == 200
+    assert client.get(PATH).json()[0]['next_check'] == now
+    monkeypatch.setattr(watch.providers, 'page_watch', lambda *_args, **_kwargs: [{'body': 'In transit', 'url': URL}])
+    assert watch.check_one()
+    assert client.post(retry).status_code == 429
+    now += 31
+    assert client.post(retry).status_code == 200
+    assert client.get(PATH).json()[0]['next_check'] == now
+    assert client.get(PATH).json()[0]['report']['samples'][0]['url'] == URL
+    assert client.delete(operation).status_code == 200
+    with watch.session() as s:
+        assert s.get(watch.WatchObservation, watch_id) is None

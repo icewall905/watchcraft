@@ -2915,9 +2915,9 @@ def delete_profile_data(s: Session, pid: int) -> None:
     from ..commonroom import api as commonroom_api
     commonroom_api.delete_profile(s, pid)
     from .models import ArticleShare
-    from .personal_watch import PersonalWatch, WatchEvent
+    from .personal_watch import PersonalWatch, WatchEvent, WatchObservation
     from .watcher_push import WatchDevice
-    for model in (PersonalWatch, WatchEvent, WatchDevice):
+    for model in (PersonalWatch, WatchEvent, WatchObservation, WatchDevice):
         s.exec(delete(model).where(model.profile_id == pid))
     s.exec(delete(ArticleShare).where(ArticleShare.profile_id == pid))
     cids = list(s.exec(select(Curator.id).where(Curator.profile_id == pid)).all())

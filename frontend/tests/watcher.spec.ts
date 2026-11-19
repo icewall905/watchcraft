@@ -35,6 +35,21 @@ test('suggest a recurring check and follow a Front Page update', async ({ page }
 	await page.getByRole('button', { name: 'Start watching' }).click();
 	await expect(page.getByText('News search · 37 minutes · Active')).toBeVisible();
 
+	await page.route('**/api/hub/watcher/watches/1/retry', (route) => {
+		expect(route.request().method()).toBe('POST');
+		watch = { ...watch, report: {
+			checked_at: Date.now() / 1000, summary: 'The AI found no confirmed match in the search results.',
+			result_count: 1, samples: [{ title: 'A release preview', url: 'https://example.test/preview', snippet: 'A preview only.' }],
+			decisions: [{ condition: plan.terms[0], matched: false, reason: 'The source announces a future release.', title: '', url: '' }]
+		} };
+		return route.fulfill({ json: { ok: true } });
+	});
+	await page.getByRole('button', { name: 'Retry now' }).click();
+	await expect(page.getByRole('status').filter({ hasText: 'Check queued.' })).toBeVisible();
+	await page.getByText('Last check details', { exact: true }).click();
+	await expect(page.getByText('The source announces a future release.')).toBeVisible();
+	await expect(page.getByRole('link', { name: 'A release preview' })).toHaveAttribute('href', 'https://example.test/preview');
+
 	await page.goto('/today');
 	const banner = page.getByRole('link', { name: /The Watcher · 1 new update/ });
 	await expect(banner).toBeVisible();

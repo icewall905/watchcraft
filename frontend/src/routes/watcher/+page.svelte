@@ -11,6 +11,7 @@
 	let customInterval = $state<number | undefined>(30);
 	let question = $state('');
 	let error = $state('');
+	let notice = $state('');
 	let busy = $state(false);
 	let showPlan = $state(false);
 	let watches = $state<Watch[]>([]);
@@ -30,7 +31,7 @@
 
 	$effect(() => {
 		const key = identity();
-		watches = []; updates = []; goal = ''; terms = ''; question = ''; error = ''; busy = false;
+		watches = []; updates = []; goal = ''; terms = ''; question = ''; error = ''; notice = ''; busy = false;
 		showPlan = false; pendingRemoval = null;
 		plan = { mode: 'page_watch', source: '', selector: '', terms: [] };
 		if (key) void load(key);
@@ -47,7 +48,7 @@
 	async function action(fn: () => Promise<void>) {
 		const key = identity();
 		if (busy || !key) return;
-		busy = true; error = '';
+		busy = true; error = ''; notice = '';
 		try { await fn(); }
 		catch (e) { if (key === identity()) error = (e as Error).message; }
 		finally { if (key === identity()) busy = false; }
@@ -89,6 +90,16 @@
 	function change(fn: () => Promise<unknown>) {
 		const key = identity();
 		void action(async () => { await fn(); if (key === identity()) { pendingRemoval = null; await load(key); } });
+	}
+
+	function retryWatch(id: number) {
+		const key = identity();
+		void action(async () => {
+			await watcher.retry(id);
+			if (key !== identity()) return;
+			notice = 'Check queued. Results will appear here when it finishes.';
+			await load(key);
+		});
 	}
 
 	const formatTime = (value: number) => new Date(value * 1000).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
@@ -139,6 +150,7 @@
 		{/if}
 	</form>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
+	{#if notice}<p role="status">{notice}</p>{/if}
 
 	<section aria-labelledby="watch-updates">
 		<h2 id="watch-updates">Updates</h2>
@@ -162,15 +174,51 @@
 		{#each watches as watch (watch.id)}
 			<article class="panel">
 				<h3>{watch.goal}</h3>
-				<p>{modes[watch.plan.mode]} · {intervals[watch.interval] ?? `${watch.interval} ${watch.interval === 1 ? 'minute' : 'minutes'}`} · {watch.completed ? 'Completed' : watch.enabled ? 'Active' : 'Paused'}</p>
+				<p>{modes[watch.plan.mode]} · {intervals[watch.interval] ?? `${watch.interval} ${watch.interval === 1 ? 'minute' : 'minutes'}`} · {watch.running ? 'Checking…' : watch.completed ? 'Completed' : watch.enabled ? 'Active' : 'Paused'}</p>
 				<small>{watch.last_check === null ? 'Waiting for first check' : `Last checked ${formatTime(watch.last_check)}`}</small>
-				{#if watch.enabled && watch.last_check !== null}<small>Next check around {formatTime(watch.next_check)}</small>{/if}
+				{#if watch.enabled && !watch.running && watch.last_check !== null}<small>Next check around {formatTime(watch.next_check)}</small>{/if}
 				{#if watch.error}<p class="error">{watch.error}</p>{/if}
+				<details class="check-report">
+					<summary use:focusable>Last check details</summary>
+					<p class="watch-source"><strong>{isSearch(watch.plan.mode) ? 'Search query' : 'Source'}</strong> {watch.plan.source}</p>
+					{#if watch.report}
+						<p><small>{formatTime(watch.report.checked_at)} · {watch.report.result_count} {watch.report.result_count === 1 ? 'result' : 'results'}</small></p>
+						<p>{watch.report.summary}</p>
+						{#if watch.report.decisions?.length}
+							<ul>
+								{#each watch.report.decisions as decision}
+									<li>
+										<strong>{decision.matched ? 'Matched' : 'Unconfirmed'}</strong> · {decision.condition}
+										{#if decision.reason}<p>{decision.reason}</p>{/if}
+										{#if decision.url}<a href={decision.url} target="_blank" rel="noreferrer" use:focusable>{decision.title}</a>{/if}
+									</li>
+								{/each}
+							</ul>
+						{/if}
+						{#if watch.report.samples.length}
+							<h4>Source samples</h4>
+							<ul>
+								{#each watch.report.samples as sample}
+									<li>
+										{#if sample.url}<a href={sample.url} target="_blank" rel="noreferrer" use:focusable>{sample.title}</a>{:else}{sample.title}{/if}
+										{#if sample.snippet}<p>{sample.snippet}</p>{/if}
+									</li>
+								{/each}
+							</ul>
+						{/if}
+					{:else}
+						<p>Details will appear after the next check that reaches the source.</p>
+					{/if}
+				</details>
 				<div class="actions">
 					{#if pendingRemoval === watch.id}
 						<button class="btn" disabled={busy} onclick={() => change(() => watcher.remove(watch.id))} use:focusable>Delete watch and updates</button>
 						<button class="btn" onclick={() => (pendingRemoval = null)} use:focusable>Cancel</button>
 					{:else}
+						{#if watch.enabled}
+							<button class="btn" disabled={busy || watch.running || watch.retry_at > Date.now() / 1000} onclick={() => retryWatch(watch.id)} use:focusable>Retry now</button>
+							{#if !watch.running && watch.retry_at > Date.now() / 1000}<small>Retry available at {formatTime(watch.retry_at)}</small>{/if}
+						{/if}
 						{#if !watch.completed}<button class="btn" disabled={busy} onclick={() => change(() => watcher.enable(watch.id, !watch.enabled))} use:focusable>{watch.enabled ? 'Pause' : 'Resume'}</button>{/if}
 						<button class="btn" disabled={busy} onclick={() => (pendingRemoval = watch.id)} use:focusable>Delete</button>
 					{/if}
@@ -188,5 +236,11 @@
 	.actions { display: flex; flex-wrap: wrap; gap: .5rem; }
 	.btn { justify-self: start; }
 	.error { color: var(--danger, #ff9f9f); }
-	.update { overflow-wrap: anywhere; }
+	.update, .check-report { overflow-wrap: anywhere; }
+	.check-report summary { cursor: pointer; padding-block: .45rem; }
+	.check-report > p { margin-block: .5rem; }
+	.check-report ul { padding-inline-start: 1.25rem; }
+	.check-report li + li { margin-top: .5rem; }
+	.check-report h4 { margin-bottom: .25rem; }
+	.watch-source strong { margin-inline-end: .25rem; }
 </style>

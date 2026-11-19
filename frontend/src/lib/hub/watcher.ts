@@ -4,7 +4,11 @@ export type Mode = 'page_watch' | 'rss' | 'github_releases' | 'web_search' | 'bi
 export type Plan = { mode: Mode; source: string; selector: string; terms: string[] };
 export type Watch = {
 	id: number; goal: string; plan: Plan; interval: number; enabled: boolean; completed: boolean;
-	next_check: number; last_check: number | null; error: string;
+	next_check: number; last_check: number | null; error: string; running: boolean; retry_at: number;
+	report: { checked_at: number; summary: string; result_count: number;
+		samples: { title: string; url: string; snippet: string }[];
+		decisions?: { condition: string; matched: boolean; reason: string; title: string; url: string }[];
+	} | null;
 };
 export type WatchUpdate = { id: number; watch_id: number; text: string; url: string; created_at: number; unread: boolean };
 
@@ -16,6 +20,7 @@ export const watcher = {
 	draft: (goal: string) => call<{ plan?: Plan; question?: string }>('/draft', { body: { goal } }),
 	create: (goal: string, plan: Plan, interval: number) => call<Watch>('', { body: { goal, plan, interval } }),
 	enable: (id: number, enabled: boolean) => call(`/watches/${id}`, { method: 'PATCH', body: { enabled } }),
+	retry: (id: number) => call(`/watches/${id}/retry`, { method: 'POST' }),
 	remove: (id: number) => call(`/watches/${id}`, { method: 'DELETE' }),
 	updates: (unread = false, signal?: AbortSignal, kind: 'all' | 'watch' | 'test' = 'all') =>
 		call<WatchUpdate[]>(`/updates?unread=${unread}&kind=${kind}`, { signal }),
