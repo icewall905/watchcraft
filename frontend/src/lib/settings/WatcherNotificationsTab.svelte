@@ -68,7 +68,7 @@
 </script>
 
 <section aria-labelledby="watcher-notifications-heading">
-	<h2 id="watcher-notifications-heading">Watcher notifications</h2>
+	<h3 id="watcher-notifications-heading">Watcher notifications</h3>
 	{#if nativeSupport()}
 		{#if configured && location.protocol === 'https:'}
 			<div class="actions">

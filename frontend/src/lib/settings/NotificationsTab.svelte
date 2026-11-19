@@ -32,7 +32,7 @@
 </script>
 
 <Section
-	title="Notifications"
+	title="Server alert channels"
 	intro="Alerts stay in The Hub. These channels also push them out: a JSON webhook, a Home Assistant webhook, or email. An empty field turns that channel off. Only alerts at or above the minimum severity are sent."
 >
 	{#snippet actions()}

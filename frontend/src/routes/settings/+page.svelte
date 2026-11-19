@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/stores/session.svelte';
 	import { focusable } from '$lib/nav';
+	import { inAndroidApp } from '$lib/navigation';
 	import CategoriesTab from '$lib/settings/CategoriesTab.svelte';
 	import FeedsTab from '$lib/settings/FeedsTab.svelte';
 	import MemoryTab from '$lib/settings/MemoryTab.svelte';
@@ -57,8 +58,7 @@
 		{ label: 'Home and devices', tabs: [
 			{ key: 'appearance', label: 'Appearance', icon: '🎨', hint: 'Device mode, themes and colours' },
 			{ key: 'screens', label: 'Screens', icon: '📺', hint: 'Play on receivers and pairing' },
-			{ key: 'watcher-notifications', label: 'Watcher notifications', icon: '🔔', hint: 'Android pairing and delivery test' },
-			{ key: 'notify', label: 'Notifications', icon: '🔔', hint: 'Webhook, Home Assistant, email' },
+			{ key: 'watcher-notifications', label: 'Notifications', icon: '🔔', hint: 'App notifications and alert channels' },
 			{ key: 'keys', label: 'Remote test', icon: '🎮', hint: 'See what buttons send' }
 		] },
 		{ label: 'Household', tabs: [
@@ -81,7 +81,15 @@
 	);
 	const TABS = $derived(GROUPS.flatMap((g) => g.tabs));
 	type TabKey = string;
-	const tab = $derived((TABS.find((t) => t.key === (page.url.searchParams.get('tab') === 'playlists' ? 'categories' : page.url.searchParams.get('tab')))?.key ?? 'categories') as TabKey);
+	const requestedTab = $derived(page.url.searchParams.get('tab'));
+	const tab = $derived((TABS.find((t) => t.key === (requestedTab === 'playlists' ? 'categories' : requestedTab === 'notify' ? 'watcher-notifications' : requestedTab))?.key ?? 'categories') as TabKey);
+
+	// The native app already accepts Watcher pairing links from this Settings URL.
+	$effect(() => {
+		if (requestedTab === 'notify' && tab === 'watcher-notifications') {
+			void goto('/settings?tab=watcher-notifications', { replaceState: true, keepFocus: true, noScroll: true });
+		}
+	});
 
 	function go(k: TabKey) {
 		if (k !== tab) goto(`/settings?tab=${k}`, { replaceState: true, keepFocus: true, noScroll: true });
@@ -89,7 +97,19 @@
 </script>
 
 
-<div class="page settings workshop-page">
+<div class="page settings workshop-page" class:android-settings={inAndroidApp()}>
+	<nav class="compact-menu" aria-label="Settings sections">
+		<h1>Settings</h1>
+		<label for="settings-section">Settings section</label>
+		<select id="settings-section" class="input" value={tab} onchange={(event) => go(event.currentTarget.value)} use:focusable>
+			{#each GROUPS as group}
+				<optgroup label={group.label}>
+					{#each group.tabs as item}<option value={item.key}>{item.label}</option>{/each}
+				</optgroup>
+			{/each}
+		</select>
+		<a href="/welcome" use:focusable>Setup guide</a>
+	</nav>
 	<nav class="side" aria-label="Settings sections" data-nav-zone="side">
 		<h1>Settings</h1>
 		{#each GROUPS as g}
@@ -126,8 +146,10 @@
 					{:else if tab === 'commonroom'}<CommonRoomTab />
 					{:else if tab === 'moodsources'}<MoodSourcesTab />
 					{:else if tab === 'memes'}<MemeLanguagesTab />
-					{:else if tab === 'watcher-notifications'}<WatcherNotificationsTab />
-					{:else if tab === 'notify'}<NotificationsTab />
+					{:else if tab === 'watcher-notifications'}
+						<h2>Notifications</h2>
+						<WatcherNotificationsTab />
+						{#if session.isAdmin}<NotificationsTab />{/if}
 					{:else if tab === 'player'}<PlayerTab />
 					{:else if tab === 'appearance'}<AppearanceTab />
 					{:else if tab === 'storage'}<StorageTab />
@@ -226,31 +248,16 @@
 	.pane {
 		animation: rise 0.25s var(--ease);
 	}
+	.compact-menu { display: none; }
+	.compact-menu h1 { margin: 0; }
+	.compact-menu select { width: 100%; min-width: 0; min-height: 2.75rem; }
+	.compact-menu a { justify-self: start; }
+	.settings.android-settings { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+	.android-settings .side { display: none; }
+	.android-settings .compact-menu { display: grid; gap: 0.5rem; min-width: 0; }
 	@media (max-width: 900px) {
-		.settings {
-			grid-template-columns: 1fr;
-		}
-		.side {
-			position: static;
-			display: flex;
-			overflow-x: auto;
-			gap: 0.4rem;
-			padding-bottom: 0.4rem;
-			scrollbar-width: none;
-		}
-		.side h1 {
-			display: none;
-		}
-		.tab {
-			flex: none;
-		}
-		.h {
-			display: none;
-		}
-		.group {
-			flex: none;
-			align-self: center;
-			margin: 0 0 0 0.6rem;
-		}
+		.settings { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+		.side { display: none; }
+		.compact-menu { display: grid; gap: 0.5rem; min-width: 0; }
 	}
 </style>

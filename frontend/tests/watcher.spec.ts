@@ -63,3 +63,22 @@ test('suggest a recurring check and follow a Front Page update', async ({ page }
 	await page.goto('/watcher');
 	await expect(page.getByText('No updates yet.')).toBeVisible();
 });
+
+test('mobile Settings opens Android controls through the Notifications section picker', async ({ page }) => {
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.addInitScript(() => {
+		Object.defineProperty(navigator, 'userAgent', { value: 'WatchCraftAndroid/0.1.21 WatcherNtfy/2' });
+	});
+	await page.route('**/api/hub/watcher/android', (route) => route.fulfill({ json: { configured: true } }));
+	await freshPage(page, '/settings');
+	const picker = page.getByLabel('Settings section', { exact: true });
+	await expect(picker).toBeVisible();
+	await picker.selectOption({ label: 'Notifications' });
+	await expect(page.getByRole('heading', { name: 'Notifications', exact: true })).toBeVisible();
+	await expect(page.getByRole('heading', { name: 'Watcher notifications' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Send test notification' })).toBeVisible();
+	await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBe(0);
+	await page.goto('/settings?tab=notify');
+	await expect(page).toHaveURL(/\/settings\?tab=watcher-notifications$/);
+	await expect(picker).toHaveValue('watcher-notifications');
+});
