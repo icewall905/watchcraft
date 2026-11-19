@@ -19,6 +19,15 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Watcher retry behavior (`545845c`, 2026-11-19)
+
+- A watch gets one early retry after a transient failure, then returns to its configured cadence if the
+  failure persists. Upstream backoff is honored. A failed run preserves its observation checkpoint and
+  reports whether search or AI review failed without exposing upstream error text.
+- 38 focused tests passed. The production candidate simulated an upstream timeout and verified a short
+  retry, recovery, and unchanged notification history. Production service health and ntfy configuration passed.
+- Code and image rollback are at `/root/compose/watchcraft-backups/20261119-watcher-retry-545845c`.
+
 ## Deployment record — Mobile Settings navigation (`896aa06`, 2026-11-19)
 
 - Replaced the phone-width and Android Settings strip with a grouped section picker. **Notifications**
