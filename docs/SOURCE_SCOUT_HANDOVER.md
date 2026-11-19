@@ -19,6 +19,23 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Front Page best-of mosaic, jump bar, Commons always on (`e248cc1`, 2026-11-19)
+
+- "The best of everything" mosaic (top pick of each page, lead excluded), sticky jump bar, page-coloured shelves with a
+  featured first card, video lengths, square mix covers; The Commons always shows its best posts (new first, then the
+  deep pool) and cards open `/common-room?post=<post id>` (new deep link on the Commons page); The Dispatch shows the
+  latest issue's opening text. Fixed: the global `[data-area='hub'] .reading` style capped reading shelves. Frontend
+  only; no schema or `android/` change.
+- Before deploying: prod ran unpushed `b015e30`; its 12 files were imported as `da758fb` (see repair note above) and
+  checksums of the 6 changed files matched prod before rsync.
+- Code-only backup `/root/compose/watchcraft-backups/20261119-bestof-e248cc1` (previous source, config hashes,
+  `rollback.sh` → `watchcraft:rollback-20261119-bestof-*`; DB backup is `20261119-mood-b015e30`). rsync (checksum) of
+  the 7 files of `da758fb..e248cc1` (one new).
+- Pruned to the newest two deploy backups (`bestof-e248cc1`, `mood-b015e30`): removed `20261118-jukebox-b7a3b7b`,
+  `20261119-back-ead9e53` and their rollback images (~13 GB).
+- All four `wc-*` on `sha256:919f7f7f…`, zero restarts, no tracebacks, health 200; sidecars untouched; served bundle has
+  the mosaic.
+
 ## Repo repair — Mood Board deploy `b015e30` (2026-11-19)
 
 - Prod ran `b015e30` (backup `20261119-mood-b015e30`), never pushed and without a record here. Its 12 changed
