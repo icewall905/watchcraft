@@ -164,6 +164,8 @@ TASKS: dict[str, tuple[str, str, str]] = {
     "meme_explain": ("Hub", "Explain a meme", "worker"),
     "meme_sources": ("Hub", "Suggest meme communities (Find sources)", "worker"),
     "page_rescue": ("Hub", "Rescue pages that will not load", "worker"),
+    "watcher_setup": ("Hub", "Plan recurring Watcher checks", "judge"),
+    "watcher_check": ("Hub", "Verify Watcher search findings", "judge"),
     "article_cleanup": ("Hub", "Clean up article text", "worker"),
     "frontpage_screen": ("Hub", "Front Page first pass over new items", "worker"),
     "frontpage_review": ("Hub", "Front Page re-check of uncertain picks", "judge"),
