@@ -1,5 +1,7 @@
 <script lang="ts">
  import { onMount, untrack } from 'svelte';
+ import { page } from '$app/state';
+ import { goto } from '$app/navigation';
  import { session } from '$lib/stores/session.svelte';
  import CommonsSwitch from '$lib/commonroom/CommonsSwitch.svelte';
  import { crApi, type Thread, type PlatformInfo, type Post } from '$lib/hub/commonroom';
@@ -62,6 +64,16 @@
   const key = `${session.profileId}:${session.version}:${session.profile?.pin_locked}:${session.needsLogin}:${session.choosing}:${session.ready}`;
   if (key !== identity) { identity = key; untrack(() => { if (!allowed()) return; error = ''; void loadThreads().then(() => start('all'), (e) => { error = msg(e); loaded = true; }); }); }
  });
+ // A Front Page card opens one post directly (?post=<post id>).
+ $effect(() => {
+  const id = Number(page.url.searchParams.get('post')) || 0;
+  if (!id || !session.ready || !allowed()) return;
+  untrack(() => { void crApi.post(id).then((p) => { open = p; }, () => {}); });
+ });
+ function closePost() {
+  open = null;
+  if (page.url.searchParams.has('post')) { const u = new URL(page.url); u.searchParams.delete('post'); void goto(u, {replaceState: true, keepFocus: true, noScroll: true}); }
+ }
  $effect(() => {
   const node = sentinel;
   if (!node || !hasMore || loading) return;
@@ -181,7 +193,7 @@
   {/if}
  {/if}
 </div>
-{#if open}<PostView post={open} onClose={() => { open = null; }} onGone={gone} />{/if}
+{#if open}<PostView post={open} onClose={closePost} onGone={gone} />{/if}
 {#if editing}<ThreadEditor thread={editing === 'new' ? null : editing} {platforms} {child} onSaved={saved} onDeleted={deleted} onClose={() => { editing = null; }} />{/if}
 
 <style>

@@ -7,9 +7,13 @@
 	import type { HomeRow } from '$lib/types';
 	import type { TodayOverview } from '$lib/hub/types';
 	import PagePanel from './PagePanel.svelte';
+	import BestOf, { type Tile } from './BestOf.svelte';
+	import Icon from '$lib/components/Icon.svelte';
+	import { focusable } from '$lib/nav';
 	import { LOADERS, pictured, rank, type Panel, type Shared } from './loaders';
 
-	let { refresh = 0 }: { refresh?: number } = $props();
+	// `exclude`: the lead story's link, already shown big above, so the mosaic does not repeat it.
+	let { refresh = 0, exclude = '' }: { refresh?: number; exclude?: string } = $props();
 	const EXTRA: Record<string, { label: string; icon: string }> = {
 		'/memes': { label: 'Meme Radar', icon: 'team' }, '/subscriptions': { label: 'Subscriptions', icon: 'subs' },
 		'/alerts': { label: 'Alerts', icon: 'alert' }, '/tv': { label: 'The Screen', icon: 'tv' }
@@ -29,7 +33,23 @@
 	// Pages with a few things to show get a shelf of readable cards; mostly-text pages a small card.
 	const shelves = $derived(ranked.filter((p) => !p.urgent && (pictured(p) >= 1 ? p.pics.length >= 2 : p.pics.length >= 4)));
 	const rail = $derived(ranked.filter((p) => !p.urgent && !shelves.includes(p)));
-	const SQUARE = new Set(['memes', 'boards']);
+	const SQUARE = new Set(['memes', 'boards', 'jukebox']);
+	const hasPic = (p: { img?: string; itemId?: number; boardUrl?: string }) => !!(p.img || p.itemId || p.boardUrl);
+	// The best of everything: each page's top pick in rank order, then second picks, a pictured one leading.
+	const tiles = $derived.by(() => {
+		const pages = ranked.filter((p) => !p.urgent);
+		const pool: Tile[] = [];
+		for (let round = 0; round < 2; round++)
+			for (const p of pages) {
+				const own = [...p.pics, ...(p.lines ?? [])].sort((a, b) => Number(hasPic(b)) - Number(hasPic(a)));
+				const pick = own[round];
+				if (pick && pick.href !== exclude && !pool.some((t) => t.href === pick.href)) pool.push({ ...pick, page: p.key, label: meta(p.href).label, icon: meta(p.href).icon });
+			}
+		const lead = pool.findIndex(hasPic);
+		if (lead > 0) pool.unshift(...pool.splice(lead, 1));
+		// A hero plus a full grid: 8 small tiles (3 rows) when there are enough, else 4 (2 rows).
+		return pool.slice(0, pool.length >= 9 ? 9 : 5);
+	});
 	// The last overview is kept per profile so Today opens with it at once, then refreshes.
 	const cacheKey = (pid: number | null) => `wc-frontpage:${pid}`;
 	function readCache(pid: number | null, version: number): { panels: Panel[]; quiet: string[] } | null {
@@ -80,23 +100,33 @@
 </script>
 
 <section class="overview" aria-labelledby="where-next">
-	<header class="head">
-		<h2 id="where-next">Where to next</h2>
-		<p>What is waiting on each page, busiest first.</p>
-	</header>
 	{#if urgent.length}
 		<div class="urgent-row" data-nav-row>
 			{#each urgent as p (p.key)}<PagePanel panel={p} size="compact" {...meta(p.href)} />{/each}
 		</div>
 	{/if}
-	{#each shelves as p (p.key)}<PagePanel panel={p} square={SQUARE.has(p.key)} {...meta(p.href)} />{/each}
+	<BestOf {tiles} />
+	<header class="head">
+		<h2 id="where-next">Where to next</h2>
+		<p>What is waiting on each page, busiest first.</p>
+	</header>
+	{#if shelves.length + rail.length > 1}
+		<nav class="jump" aria-label="Jump to a page" data-nav-row>
+			{#each [...shelves, ...rail] as p (p.key)}
+				<a href={`#page-${p.key}`} class="tone-{p.key}" use:focusable><Icon name={meta(p.href).icon} size="1em" /> {meta(p.href).label} <span>{p.waiting}</span></a>
+			{/each}
+		</nav>
+	{/if}
+	<div class="shelves">
+		{#each shelves as p (p.key)}<PagePanel panel={p} id={`page-${p.key}`} square={SQUARE.has(p.key)} {...meta(p.href)} />{/each}
+	</div>
 	{#if pending && !panels.length}
 		{#each [0, 1] as i (i)}<div class="skeleton" aria-hidden="true"></div>{/each}
 	{/if}
 	{#if rail.length}
 		<h3 class="rail-head">Also waiting</h3>
 		<div class="rail" data-nav-row>
-			{#each rail as p (p.key)}<PagePanel panel={p} size="compact" {...meta(p.href)} />{/each}
+			{#each rail as p (p.key)}<PagePanel panel={p} size="compact" id={`page-${p.key}`} {...meta(p.href)} />{/each}
 		</div>
 	{/if}
 	{#if !pending && !panels.length}
@@ -112,6 +142,16 @@
 	.head { display: flex; align-items: baseline; gap: .8rem; flex-wrap: wrap; margin-bottom: 1rem; }
 	.head h2 { margin: 0; font: 520 clamp(1.5rem, 3vw, 2.1rem) / 1.15 var(--font-display); letter-spacing: -.015em; }
 	.head p { margin: 0; color: var(--faint); font-size: var(--fs-sm); }
+	.shelves { display: grid; gap: clamp(1rem, 2.2vw, 1.6rem); }
+	.jump { position: sticky; top: 0; z-index: 5; display: flex; gap: .4rem; overflow-x: auto; margin: 0 calc(-1 * var(--gutter, 0px)) 1rem; padding: .6rem var(--gutter, 0px); background: color-mix(in srgb, var(--bg, var(--paper)) 88%, transparent); backdrop-filter: blur(8px); scrollbar-width: none; }
+	.jump a { --tone: var(--accent); flex: none; display: inline-flex; align-items: center; gap: .4rem; padding: .35rem .75rem; border: 1px solid var(--rule); border-radius: 999px; background: var(--surface); color: var(--ink); font-size: .82rem; font-weight: 600; text-decoration: none; }
+	.jump a :global(svg) { color: var(--tone); }
+	.jump a span { color: var(--muted); font-weight: 500; font-variant-numeric: tabular-nums; }
+	.jump a:hover, .jump a:focus-visible { border-color: var(--tone); }
+	.tone-wire { --tone: oklch(68% 0.13 250); } .tone-finds { --tone: oklch(72% 0.12 185); } .tone-commons { --tone: oklch(72% 0.15 55); }
+	.tone-memes { --tone: oklch(70% 0.16 350); } .tone-screen, .tone-subscriptions { --tone: oklch(66% 0.17 25); } .tone-scroll { --tone: oklch(68% 0.15 305); }
+	.tone-boards { --tone: oklch(78% 0.13 85); } .tone-jukebox { --tone: oklch(72% 0.15 150); } .tone-stacks { --tone: oklch(70% 0.06 230); }
+	.tone-almanac { --tone: oklch(74% 0.11 115); } .tone-dispatch { --tone: oklch(72% 0.09 210); } .tone-study, .tone-scout { --tone: oklch(70% 0.12 280); }
 	.urgent-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr)); gap: .9rem; margin-bottom: .9rem; }
 	.skeleton { min-height: 14rem; margin-top: 1rem; border-radius: var(--r-lg); background: linear-gradient(100deg, var(--bg-2) 30%, var(--surface-2) 50%, var(--bg-2) 70%) 0 0 / 300% 100%; animation: shimmer 1.4s linear infinite; }
 	@keyframes shimmer { to { background-position: -150% 0; } }

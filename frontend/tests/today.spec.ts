@@ -103,6 +103,30 @@ test('Where to next opens from the last overview at once, then refreshes', async
 	await expect(page.getByRole('article', { name: 'The Wire' }).getByText('12 stories waiting')).toBeVisible();
 });
 
+test('Commons always shows its best posts and the mosaic gathers the best of every page', async ({ page }) => {
+	const post = (id: number, title: string, media = false) => ({ pick_id: id, post_id: 500 + id, thread_id: 1, thread_name: 'Homelab', platform: 'discourse', community: 'community.home-assistant.io', author: 'a',
+		title, excerpt: `Why ${title} matters.`, url: 'https://example.test', link_url: '', domain: '', media: media ? [{ kind: 'image', url: '/api/hub/commonroom/posts/1/media/0', thumb: '/api/hub/commonroom/posts/1/media/0?size=thumb' }] : [],
+		score: 12, comments: 4, published_at: Date.now() / 1000 - 3600, why: '', relevance: 1, saved: false, verdict: '', nsfw: false, spoiler: false });
+	await page.route(/\/api\/hub\/today(?:\?.*)?$/, route => route.fulfill({ json: edition() }));
+	await mockOverview(page);
+	await page.route('**/api/hub/commonroom/threads', route => route.fulfill({ json: { threads: [{ id: 1, name: 'Homelab', enabled: true, new_count: 0, pick_count: 40 }], platforms: [], child: false } }));
+	await page.route('**/api/hub/commonroom/feed?*', route => route.fulfill({ json: { posts: route.request().url().includes('section=new') ? [] : [post(1, 'Wall tablet dashboard', true), post(2, 'Proxmox migration notes'), post(3, 'ESP32 print server'), post(4, 'Syncthing races')], next_cursor: '', has_more: false, building: false } }));
+	await page.route('**/api/hub/commonroom/posts/*/media/*', route => route.fulfill({ body: PNG, contentType: 'image/png' }));
+	await freshPage(page, '/today');
+	const commons = page.getByRole('article', { name: 'The Commons' });
+	await expect(commons.getByText('4 posts worth reading')).toBeVisible();
+	await expect(commons.getByRole('link', { name: /Proxmox migration notes/ })).toHaveAttribute('href', '/common-room?post=502');
+	await expect(commons.getByText('Why Proxmox migration notes matters.')).toBeVisible();
+	const best = page.getByRole('region', { name: 'The best of everything' });
+	await expect(best.getByRole('link', { name: /^The Commons: / })).toBeVisible();
+	await expect(best.getByRole('link', { name: /^The Wire: / }).first()).toBeVisible();
+	await expect(page.getByRole('navigation', { name: 'Jump to a page' }).getByRole('link', { name: /The Commons/ })).toHaveAttribute('href', '#page-commons');
+	for (const width of [390, 1440]) {
+		await page.setViewportSize({ width, height: 900 });
+		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+	}
+});
+
 test('Where to next reads video, music and board pages from their own APIs', async ({ page }) => {
 	const now = Date.now() / 1000;
 	const video = (id: string, title: string, published: number) => ({ video: { id, title, channel_id: 'c', channel_name: 'A Channel', duration_s: 300, published_at: new Date(published * 1000).toISOString(), view_count: 1, like_count: 0, thumbnail: '', is_short: false, is_live: false } });

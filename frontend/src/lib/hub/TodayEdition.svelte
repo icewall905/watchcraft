@@ -173,7 +173,7 @@
 		{/if}
 	</div>
 
-	<Overview refresh={revision} />
+	<Overview refresh={revision} exclude={lead ? itemHref(lead) : ''} />
 
 	<footer class="edition-end">
 		{#if edition && !session.isChild}<SetAsideLink count={edition.set_aside} href="/today/set-aside" />{/if}
@@ -196,6 +196,10 @@
 	.lead-section { min-width: 0; margin-top: 1.4rem; }
 	@media (min-width: 1000px) { .lead-section { margin-top: 0; } }
 	.lead-section :global(.story-card) { border: 0; padding-top: 0; }
+	/* The lead gets a real picture: full width above the headline. */
+	.lead-section :global(.story-card.has-media) { grid-template-columns: minmax(0, 1fr); }
+	.lead-section :global(.story-card .media) { order: 0; aspect-ratio: 16 / 9; border-radius: var(--r-lg); }
+	.lead-section :global(.story-card .summary) { -webkit-line-clamp: 4; line-clamp: 4; }
 	.lead-section :global(.story-card .title) { font-size: clamp(1.5rem, 3vw, 2.3rem); }
 	.edition-end { display: grid; gap: 1.2rem; justify-items: center; margin-top: 2.5rem; padding-top: 1.5rem; border-top: 1px solid var(--rule); }
 	.shelf { width: min(100%, 26rem); }
