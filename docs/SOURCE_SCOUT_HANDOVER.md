@@ -19,6 +19,15 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Watcher check details and manual retry (`de7d6ce`, 2026-11-19)
+
+- Active watches can queue an immediate check, subject to the existing run lease, provider backoff, and a short
+  manual cooldown. The expandable report shows saved source samples and model evidence decisions when available.
+- Added the `watchobservation` table. The verified online SQLite snapshot and code/image rollback are at
+  `/root/compose/watchcraft-backups/20261119-watcher-details-de7d6ce`. The previous release ignores the added table.
+- 39 focused backend tests and both Watcher browser tests passed. A disposable production candidate verified
+  manual retry, stored evidence, and reasons. The production table, API, compiled UI, and service health passed.
+
 ## Deployment record — Watcher retry behavior (`545845c`, 2026-11-19)
 
 - A watch gets one early retry after a transient failure, then returns to its configured cadence if the
