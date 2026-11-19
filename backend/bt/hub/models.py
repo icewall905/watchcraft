@@ -632,6 +632,31 @@ class MoodPinNote(SQLModel, table=True):
     created_at: float = Field(default_factory=time.time)
 
 
+class MoodVerdict(SQLModel, table=True):
+    """Every vision verdict on a board candidate, kept or not: the curator's audit trail and lesson material.
+
+    Rows without a pin are pruned after VERDICT_DAYS; a kept pin's row stays as that pin's full description."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    board_id: int = Field(index=True)
+    pin_id: int | None = Field(default=None, index=True)
+    source_url: str = ''
+    host: str = ''
+    dhash: int = 0  # 64-bit perceptual hash, stored signed; 0 = unknown
+    description: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    fits: bool = False
+    confidence: int = 0
+    violations: list = J()
+    why: str = ''
+    created_at: float = Field(default_factory=time.time, index=True)
+
+
+class MoodHash(SQLModel, table=True):
+    """Perceptual hash of a stored pin, so near-identical pictures (same shoot, re-crops) are not found again."""
+    pin_id: int = Field(primary_key=True)
+    board_id: int = Field(index=True)
+    dhash: int = 0
+
+
 class MoodFeedback(SQLModel, table=True):
     """Owner's review of one pin, taught to that board's curator. 'bad' pins are hidden from the board."""
     pin_id: int = Field(primary_key=True)

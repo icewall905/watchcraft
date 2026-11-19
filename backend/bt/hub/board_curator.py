@@ -573,7 +573,14 @@ def sources_json(s, bid):
                          'url': (site.recipe.get('url') or site.recipe.get('url_template', '').split('?')[0]
                                  or ('https://www.reddit.com/r/' + site.recipe.get('name', '') if site.kind == 'subreddit' else ''))}
                         for link, site in rows],
-            'hunt': hunt_json(hunt)}
+            'hunt': hunt_json(hunt), 'held_back': held_back(s, bid)}
+
+
+def held_back(s, bid):
+    """Hosts this board's runs skip: named in the avoid list, or the owner rejects most of their pictures."""
+    from .board_quality import HostRules
+    board = s.get(MoodBoard, bid)
+    return HostRules.for_board(s, board).report() if board else []
 
 
 @router.get('/{bid}/sources')
@@ -628,3 +635,6 @@ def delete_board(s, bids):
     """Inside the board deletion transaction. Shared site recipes stay in the library."""
     s.exec(delete(MoodBoardSource).where(MoodBoardSource.board_id.in_(bids)))
     s.exec(delete(MoodSourceHunt).where(MoodSourceHunt.board_id.in_(bids)))
+    from .models import MoodHash, MoodVerdict
+    s.exec(delete(MoodVerdict).where(MoodVerdict.board_id.in_(bids)))
+    s.exec(delete(MoodHash).where(MoodHash.board_id.in_(bids)))

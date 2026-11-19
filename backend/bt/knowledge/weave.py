@@ -179,9 +179,15 @@ def apply_ops(sections: list[dict], key: str, ops: list[dict], batch: dict[int, 
     return sections
 
 
-def _section_chars(sections: list[dict], key: str) -> int:
+_ALL = object()
+
+
+def _section_chars(sections: list[dict], key: str, board_id=_ALL) -> int:
+    """Characters in a section. The moodboards section is budgeted per board (board_id given: only that board's
+    own statements; None: only the shared ones), every other section as a whole."""
     sec = next((x for x in sections if x['key'] == key), {'statements': []})
-    return sum(len(st['text']) for st in sec['statements'])
+    return sum(len(st['text']) for st in sec['statements']
+               if board_id is _ALL or key != 'moodboards' or st.get('board_id') == board_id)
 
 
 def _teaching_row(t: Teaching) -> dict:
@@ -205,11 +211,16 @@ def _call(system: str, payload: dict, schema: dict, max_tokens: int) -> dict:
                         max_tokens=max_tokens, role='knowledge_merge', timeout_s=TIMEOUT)
 
 
-def merge_batch(sections: list[dict], key: str, batch: list[Teaching], refused: list[Teaching], now: float):
-    """One model proposal for one section, checked by code and audited. Returns (sections, dispositions)."""
+def merge_batch(sections: list[dict], key: str, batch: list[Teaching], refused: list[Teaching], now: float,
+                board_id=_ALL):
+    """One model proposal for one section, checked by code and audited. Returns (sections, dispositions).
+    For moodboards pass the board: the model sees only that board's statements plus the shared ones."""
     by_id = {t.id: t for t in batch}
+    per_board = key == 'moodboards' and board_id is not _ALL
     sec = next(x for x in _normalized(sections) if x['key'] == key)
-    payload = {'section': SECTIONS[key], 'statements': [_statement_row(st) for st in sec['statements']],
+    visible = [st for st in sec['statements'] if not per_board or st.get('board_id') in (None, board_id)]
+    visible_sids = {st['sid'] for st in visible}
+    payload = {'section': SECTIONS[key], 'statements': [_statement_row(st) for st in visible],
                'teachings': [_teaching_row(t) for t in batch],
                'rejected': [{'text': t.text, 'polarity': t.polarity} for t in refused[:40]]}
     out = _call(SYSTEM, payload, OPS_SCHEMA, 6000)
@@ -218,8 +229,10 @@ def merge_batch(sections: list[dict], key: str, batch: list[Teaching], refused: 
     if not isinstance(ops, list) or not isinstance(dispositions, list):
         raise Invalid('malformed proposal')
     seen = [d.get('teaching_id') for d in dispositions if isinstance(d, dict)]
-    if sorted(x for x in seen if type(x) is int) != sorted(by_id) or len(seen) != len(by_id):
+    if len(seen) != len(dispositions) or any(type(x) is not int or x not in by_id for x in seen) or len(set(seen)) != len(seen):
         raise Invalid('every teaching needs exactly one disposition')
+    # A teaching the model left out stays pending for tomorrow; the rest of the proposal is still usable.
+    dispositions = dispositions + [{'teaching_id': i, 'outcome': 'keep_pending', 'note': ''} for i in by_id if i not in seen]
     outcomes = {d['teaching_id']: d for d in dispositions}
     if any(d.get('outcome') not in ('merged', 'keep_pending', 'discard') for d in dispositions):
         raise Invalid('unknown disposition')
@@ -231,14 +244,18 @@ def merge_batch(sections: list[dict], key: str, batch: list[Teaching], refused: 
         if isinstance(op, dict) and op.get('op') in ('add', 'refine', 'conflict') and teachings.blocked(
                 refused, str(op.get('text') or ''), set(), op.get('polarity')):
             raise Invalid('proposal re-introduces a rejected conclusion')
-    before = _section_chars(sections, key)
+    if per_board and any(isinstance(op, dict) and op.get('op') != 'add' and op.get('sid') not in visible_sids for op in ops):
+        raise Invalid('operation targets an unknown statement')
+    scope = board_id if per_board else _ALL
+    before = _section_chars(sections, key, scope)
     proposed = apply_ops(sections, key, ops, by_id, now=now)
-    after = _section_chars(proposed, key)
+    after = _section_chars(proposed, key, scope)
     if after > max(SECTION_BUDGET, before):
         raise Invalid('section would exceed its budget')
     if ops:
         new_sec = next(x for x in proposed if x['key'] == key)
-        audit = _call(AUDIT, {'previous': payload['statements'], 'proposed': [_statement_row(st) for st in new_sec['statements']],
+        proposed_rows = [st for st in new_sec['statements'] if not per_board or st.get('board_id') in (None, board_id)]
+        audit = _call(AUDIT, {'previous': payload['statements'], 'proposed': [_statement_row(st) for st in proposed_rows],
                               'teachings': payload['teachings'], 'rejected': payload['rejected']}, AUDIT_SCHEMA, 1500)
         if not isinstance(audit, dict) or audit.get('ok') is not True:
             raise Invalid('audit failed: ' + '; '.join(str(x)[:120] for x in (audit or {}).get('issues', [])[:3]))
@@ -339,22 +356,26 @@ def weave(pid: int, collect: bool = True, abort=None) -> dict:
     if not pending:
         return {'status': 'unchanged', 'version': base_version}
     now = time.time()
-    groups: dict[str, list[Teaching]] = defaultdict(list)
+    groups: dict[tuple, list[Teaching]] = defaultdict(list)
     for t in pending:
-        groups[t.section if t.section in SECTIONS else 'overall'].append(t)
+        key = t.section if t.section in SECTIONS else 'overall'
+        groups[(key, t.board_id if key == 'moodboards' else _ALL)].append(t)
     decided: dict[int, dict] = {}
     failures: dict[str, str] = {}
-    for key, rows in groups.items():
+    for (key, board), rows in groups.items():
+        label = key if board is _ALL else f'{key}:{board}'
         for start in range(0, len(rows), BATCH):
             if abort:
                 abort()  # the video agent can pause or stop between model calls
             batch = rows[start:start + BATCH]
             try:
-                sections, outcomes = merge_batch(sections, key, batch, [t for t in refused if t.section == key], now)
+                sections, outcomes = merge_batch(
+                    sections, key, batch,
+                    [t for t in refused if t.section == key and (board is _ALL or t.board_id == board)], now, board)
                 decided.update(outcomes)
             except Exception as e:  # noqa: BLE001 — this batch stays pending; others proceed
-                failures[key] = str(e)[:300]
-                log.warning('knowledge weave for profile %s section %s kept teachings pending: %s', pid, key, e)
+                failures[label] = str(e)[:300]
+                log.warning('knowledge weave for profile %s section %s kept teachings pending: %s', pid, label, e)
     if not decided:
         return {'status': 'failed', 'failures': failures, 'pending': len(pending)}
     with session() as s:

@@ -255,7 +255,10 @@
  }
  async function copy(text: string, what: string) { try { await navigator.clipboard.writeText(text); extCopied = what; } catch { extCopied = ''; } }
  let reviewing = $state<BoardPin | null>(null), reviewNote = $state('');
- const REASONS = ['Off-topic for this board', 'Text, quote or poster image', 'Advert or stock photo', 'Low quality or blurry', 'AI generated'];
+ const REASONS = ['Costume / party look', 'Wrong era', 'Too young / teen', 'Advert or stock photo', 'Messy collage', 'Boring', 'Too revealing', 'Wrong fit or cut', 'High heels', 'AI generated', 'Low quality or blurry', 'Text, quote or poster image', 'Off-topic for this board'];
+ const noteParts = (n: string) => n.split(' + ').map(x => x.trim()).filter(Boolean);
+ const reasonOn = (n: string, r: string) => noteParts(n).includes(r);
+ function toggleReason(r: string) { const parts = noteParts(reviewNote); reviewNote = (parts.includes(r) ? parts.filter(x => x !== r) : [...parts, r]).join(' + ').slice(0, 300); }
  async function review(p: BoardPin, verdict: '' | 'good' | 'bad', note = '') {
   if (!allowed() || busy !== null) return; busy = p.id; const owner = stamp();
   try {
@@ -545,9 +548,10 @@
 {#if sourcesOpen && board}<BoardSources boardId={board.id} boardName={board.name} onClose={() => { sourcesOpen = false; }} />{/if}
 {#if importOpen}<Modal portal title="Import a Pinterest board" onClose={() => { if (!importing) importOpen = false; }}><form class="board-form" onsubmit={importPinterest}><p class="muted">Import every pin of a public board into this board. Pinterest is asked gently, so a large board takes a while: the import continues in the background, pauses when Pinterest asks it to slow down and picks up where it stopped. Images are saved locally with their original Pinterest links. Existing pins are skipped.</p><label>Public board link<input type="url" required maxlength="1000" bind:value={pinterestUrl} placeholder="https://www.pinterest.com/username/board-name/" /></label><small>Private boards and short links are not supported.</small>{#if error}<p class="error" role="alert">{error}</p>{/if}<div class="form-actions"><button type="button" class="btn" onclick={() => { importOpen = false; }}>Cancel</button><button class="btn primary" disabled={importing}>{importing ? 'Starting…' : 'Import board'}</button></div></form></Modal>{/if}
 {#if reviewing}<Modal title="Why doesn't this fit?" portal onClose={() => { if (busy === null) reviewing = null; }}>
- <form class="board-form" onsubmit={(e) => { e.preventDefault(); if (reviewing) void review(reviewing, 'bad', reviewNote.trim()); }}>
-  <p class="muted">The image is removed from the board and your curator learns to skip images like it.</p>
-  <div class="reason-chips" role="group" aria-label="Common reasons">{#each REASONS as reason}<button type="button" class="chip" class:on={reviewNote === reason} aria-pressed={reviewNote === reason} onclick={() => { reviewNote = reviewNote === reason ? '' : reason; }}>{reason}</button>{/each}</div>
+ <form class="board-form" onsubmit={(e) => { e.preventDefault(); if (reviewing) void review(reviewing, 'bad', reviewNote.trim().slice(0, 300)); }}>
+  <p class="muted">The image is removed from the board and your curator learns to skip images like it. Pick every reason that applies.</p>
+  {#if reviewing.vision_seen || reviewing.vision_why}<div class="curator-belief">{#if reviewing.vision_seen}<p>Curator saw: {reviewing.vision_seen}</p>{/if}{#if reviewing.vision_why}<p>Why kept: {reviewing.vision_why}</p>{/if}</div>{/if}
+  <div class="reason-chips" role="group" aria-label="Common reasons">{#each REASONS as reason}<button type="button" class="chip" class:on={reasonOn(reviewNote, reason)} aria-pressed={reasonOn(reviewNote, reason)} onclick={() => toggleReason(reason)}>{reason}</button>{/each}</div>
   <label>Tell the curator (optional)<input maxlength="300" bind:value={reviewNote} placeholder="e.g. Motivational quote, not homelab hardware" /></label>
   <div class="form-actions"><button type="button" class="btn" onclick={() => { reviewing = null; }}>Cancel</button><button class="btn primary" disabled={busy !== null}>Remove and teach curator</button></div>
  </form>
@@ -650,6 +654,9 @@
  .pill.on{border-color:rgba(61,220,151,.5);color:#3ddc97}
  .reason-chips{display:flex;flex-wrap:wrap;gap:.4rem}
  .chip{padding:.35rem .8rem;border-radius:var(--r-pill);border:1px solid var(--line);background:var(--mb-card);color:var(--text);font:inherit;font-size:.85rem;cursor:pointer}
+ .curator-belief{display:grid;gap:.2rem;font-size:.8rem;color:var(--muted);line-height:1.35;overflow-wrap:anywhere}
+ .curator-belief p{margin:0}
+ .chip:focus-visible{outline:2px solid var(--mb-rose);outline-offset:2px}
  .chip.on{border-color:var(--mb-rose);background:rgba(255,143,171,.15)}
  .new-pill{position:sticky;top:.8rem;z-index:5;display:block;margin:0 auto .8rem;padding:.55rem 1.1rem;border-radius:var(--r-pill);border:1px solid var(--mb-rose);background:rgba(20,16,30,.9);color:var(--text);font:inherit;cursor:pointer;box-shadow:0 8px 24px -10px rgba(0,0,0,.6);animation:pop .25s var(--ease)}
  @keyframes pop{from{transform:translateY(-6px);opacity:0}}

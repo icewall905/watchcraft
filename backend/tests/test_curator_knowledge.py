@@ -503,6 +503,91 @@ def test_mood_statements_cannot_span_boards(model):
     assert weave.weave(p)['status'] == 'failed'
 
 
+def _mood(p, board, n, prefix):
+    with session() as s:
+        rows = [Teaching(profile_id=p, section='moodboards', surface='moodboard', text=f'{prefix}{i}', board_id=board,
+                         origin='mood', origin_id=f'{prefix}{i}') for i in range(n)]
+        s.add_all(rows)
+        s.commit()
+        return [r.id for r in rows]
+
+
+def test_moodboards_are_woven_per_board_with_a_budget_per_board(model):
+    p, *_ = seeded(model)
+    long_text = 'x' * 290
+    ids = {b: _mood(p, b, 5, f'b{b}-') for b in (1, 2)}
+    seen_payloads = []
+
+    def ops(user):
+        import json as _json
+        body = _json.loads(user.split('<data>')[1].split('</data>')[0])
+        seen_payloads.append(body)
+        tid = [x['id'] for x in body['teachings']]
+        return {'ops': [{'op': 'add', 'sid': None, 'text': long_text, 'polarity': 1, 'confidence': 'tentative',
+                         'teaching_ids': [i]} for i in tid],
+                'dispositions': [{'teaching_id': i, 'outcome': 'merged', 'note': ''} for i in tid]}
+    model.ops = ops
+    out = weave.weave(p)
+    # 5 x 290 = 1450 chars per board: fits per board though 2900 together exceeds the old shared 2500 budget
+    assert out['status'] == 'woven' and out['merged'] == 10 and not out['failures']
+    assert len(seen_payloads) == 2 and all(len(b['teachings']) == 5 for b in seen_payloads)
+    with session() as s:
+        sec = next(x for x in render.current(s, p).sections if x['key'] == 'moodboards')
+        assert sum(len(st['text']) for st in sec['statements']) > weave.SECTION_BUDGET
+        assert {t.status for t in s.exec(select(Teaching).where(Teaching.origin == 'mood')).all()} == {'merged'}
+
+
+def test_one_board_cannot_exceed_its_own_budget_and_others_still_merge(model):
+    p, *_ = seeded(model)
+    big = _mood(p, 1, 9, 'big')   # 9 x 290 > 2500
+    small = _mood(p, 2, 1, 'small')
+
+    def ops(user):
+        import json as _json
+        body = _json.loads(user.split('<data>')[1].split('</data>')[0])
+        tid = [x['id'] for x in body['teachings']]
+        return {'ops': [{'op': 'add', 'sid': None, 'text': 'y' * 290, 'polarity': 1, 'confidence': 'tentative',
+                         'teaching_ids': [i]} for i in tid],
+                'dispositions': [{'teaching_id': i, 'outcome': 'merged', 'note': ''} for i in tid]}
+    model.ops = ops
+    out = weave.weave(p)
+    assert out['status'] == 'woven' and out['merged'] == 1 and list(out['failures']) == ['moodboards:1']
+    with session() as s:
+        assert s.get(Teaching, small[0]).status == 'merged'
+        assert {s.get(Teaching, i).status for i in big} == {'pending'}
+
+
+def test_board_batch_cannot_touch_another_boards_statement(model):
+    p, *_ = seeded(model)
+    a = _mood(p, 1, 1, 'a')
+    with session() as s:
+        cur = render.current(s, p)
+        sections = weave.apply_ops(weave._normalized(cur.sections), 'moodboards', [
+            {'op': 'add', 'sid': None, 'text': 'Board two likes velvet', 'polarity': 1, 'confidence': 'tentative',
+             'teaching_ids': []}], {}, now=time.time(), user_edit=True)
+        for st in next(x for x in sections if x['key'] == 'moodboards')['statements']:
+            st['board_id'] = 2
+            other = st['sid']
+        weave.write_version(s, p, sections, 'edit', cur)
+        s.commit()
+    model.ops = {'ops': [{'op': 'reinforce', 'sid': other, 'text': None, 'polarity': 1, 'confidence': 'tentative',
+                          'teaching_ids': a}],
+                 'dispositions': [{'teaching_id': a[0], 'outcome': 'merged', 'note': ''}]}
+    assert weave.weave(p)['status'] == 'failed'
+
+
+def test_missing_disposition_keeps_that_teaching_pending_not_the_batch(model):
+    p, *_ = seeded(model)
+    ids = _mood(p, 1, 2, 'm')
+    model.ops = {'ops': [{'op': 'add', 'sid': None, 'text': 'Prefer velvet', 'polarity': 1, 'confidence': 'tentative',
+                          'teaching_ids': [ids[0]]}],
+                 'dispositions': [{'teaching_id': ids[0], 'outcome': 'merged', 'note': ''}]}
+    out = weave.weave(p)
+    assert out['status'] == 'woven' and out['merged'] == 1
+    with session() as s:
+        assert s.get(Teaching, ids[0]).status == 'merged' and s.get(Teaching, ids[1]).status == 'pending'
+
+
 def test_deleting_a_profile_removes_its_knowledge(model, client):  # noqa: F811
     p, *_ = seeded(model)
     other = client.post('/api/profiles', json={'name': 'Other'}).json()['id']
