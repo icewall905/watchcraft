@@ -19,6 +19,18 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Watcher Android ntfy transport (`58366c6`, 2026-11-19)
+
+- The production Hub now publishes generic Watcher notifications to `https://ntfy.tdgs.org`, the same
+  origin used by Couples Game. WatchCraft provisions separate profile-owned topics. Android 0.1.20 uses
+  a native foreground listener; connection capabilities are encrypted at rest on the phone.
+- The production candidate paired a disposable profile, sent a test update through the shared ntfy
+  endpoint, read it back, and revoked the pairing. The live endpoint, pairing UI, and all four
+  WatchCraft services passed post-deploy checks. The existing Watcher schema is unchanged.
+- Code, image, and environment rollback are at
+  `/root/compose/watchcraft-backups/20261119-watcher-ntfy-58366c6`. Physical-device sleep and restart
+  delivery are tracked in V-086.
+
 ## Deployment record — Watcher test notification (`9d354f8`, 2026-11-19)
 
 - Added **Send test notification** under The Watcher updates. It creates a profile-owned update and goes through
