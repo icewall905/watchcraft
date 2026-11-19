@@ -33,6 +33,11 @@
 - Android CI passed signed APK assembly, unit tests, and release lint. The production API has no Firebase project
   configured. Background push acceptance is tracked in the vault as V-086.
 
+- Follow-up `ce9d0d0` registered both Watcher AI tasks in model routing. The rollout reused the original DB snapshot
+  and has a code/image rollback at `/root/compose/watchcraft-backups/20261119-watcher-ce9d0d0`. Production
+  returned a two-condition release plan from the routed model. All four services ran `sha256:0246fa0883fc…`
+  with zero restarts. The focused backend rerun passed all 36 cases after this change.
+
 ## Deployment record — Front Page best-of mosaic, jump bar, Commons always on (`e248cc1`, 2026-11-19)
 
 - "The best of everything" mosaic (top pick of each page, lead excluded), sticky jump bar, page-coloured shelves with a
