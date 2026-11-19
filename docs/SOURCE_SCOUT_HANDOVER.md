@@ -19,6 +19,24 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Android back keeps list position, dialog X, meme Find sources (`ead9e53`, 2026-11-19)
+
+- Repo repair: prod ran `b7a3b7b`, but `b9bda0c`, `35bcc52`, `9fe5567`, `d68e6eb`, `21fb933` and `b7a3b7b` were never pushed
+  from the clone that deployed them. `d6b9fa6` imports that prod tree (non-`android/`, minus ops-only
+  `compose.host.yaml` and `scripts/backup_*.sh`) on top of `584003a`; merged into `codex/android-app` as `20c8886`.
+  The original hashes no longer exist in git; `d6b9fa6` matches what prod ran.
+- `7c15b84`/`f13a1e3`/`ead9e53`: Android app back (0.1.18, `android-v0.1.18`) first calls `window.watchcraftBack()`,
+  which closes the top dialog (Commons post, Boards image viewer, meme detail, any `Modal`) and keeps the list in
+  place; back from an open board restores the board overview scroll. Every `Modal` has a small X ("Close dialog").
+  `358952f`/`72afa15`: Meme Tracker "Find sources" (new LLM task `meme_sources`), Reddit reads through API keys when set.
+  No schema change.
+- Backup `/root/compose/watchcraft-backups/20261119-back-ead9e53` (online DB quick_check ok, config hashes, previous
+  source, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261119-back-*`). rsync (checksum) of the 13
+  non-`android/` files of `d6b9fa6..ead9e53` (2 new). Pruned `daily-20261117T023043Z`, `daily-20261118T023111Z`
+  (`PRUNE-MANIFEST-20261119T085042Z.txt`).
+- All four `wc-*` run `sha256:3503431e…`, zero restarts, no tracebacks; health 200; served bundle has
+  `watchcraftBack` and the dialog X. Sidecars untouched.
+
 ## Deployment record — model routing, tenacious source curator, browser sidecar (`35bcc52`, `9fe5567`, 2026-11-18)
 
 - `35bcc52`: every LLM call names a task (`llm.TASKS`); Settings → AI → "Where each request goes" sets worker or
