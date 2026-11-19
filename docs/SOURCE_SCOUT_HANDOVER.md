@@ -19,6 +19,12 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Repo repair — Mood Board deploy `b015e30` (2026-11-19)
+
+- Prod ran `b015e30` (backup `20261119-mood-b015e30`), never pushed and without a record here. Its 12 changed
+  source files (board curator/quality, mood boards, knowledge cleanup/collect/weave, Boards page, `board_audit.py`,
+  tests) were imported from prod as-is. The Jukebox and Commons records lost in the `d6b9fa6` import are restored below.
+
 ## Deployment record — Android back keeps list position, dialog X, meme Find sources (`ead9e53`, 2026-11-19)
 
 - Repo repair: prod ran `b7a3b7b`, but `b9bda0c`, `35bcc52`, `9fe5567`, `d68e6eb`, `21fb933` and `b7a3b7b` were never pushed
@@ -36,6 +42,41 @@
   (`PRUNE-MANIFEST-20261119T085042Z.txt`).
 - All four `wc-*` run `sha256:3503431e…`, zero restarts, no tracebacks; health 200; served bundle has
   `watchcraftBack` and the dialog X. Sidecars untouched.
+
+## Deployment record — Jukebox fresh-URL skips, lyrics on by default (`b7a3b7b`, 2026-11-18)
+
+- Cause of Jukebox skips: googlevideo answers 403 for ~5-8 s after a stream URL is minted (TVHTML5; measured on
+  prod 403 at 0-4 s, 206 from 8 s). The manifest's per-format checks ran at once, cached the refusals and
+  re-extracted into a new fresh window -> "no DASH formats" 404 -> progressive fallback or skip; the next-track
+  prefetch poisoned the check cache for the real play. Now failed checks are not cached and a refused
+  manifest/fallback waits out `streams.URL_SETTLE_S` (10 s) before retrying. Lyrics overlay on by default,
+  choice remembered per browser.
+- Backup `/root/compose/watchcraft-backups/20261118-jukebox-b7a3b7b` (DB via `VACUUM INTO`, 38 s, quick_check ok;
+  `.backup` on the live DB kept restarting for an hour), previous source, `rollback.sh` ->
+  `watchcraft:rollback-20261118-jukebox-*`. rsync (checksum) of the 6 files of `ecfdbe0..b7a3b7b`.
+- Pruned to the newest two deploy backups (`jukebox-b7a3b7b`, `commons-d68e6eb`): removed `browser-9fe5567` and its
+  rollback images.
+- All four `wc-*` on `sha256:76b7d9e4…`, zero restarts, health 200. Cold manifests for three tracks that had failed
+  now return 200 in ~13 s (prefetched next tracks are already settled).
+
+## Deployment record — Commons source expedition (`d68e6eb`, `21fb933`, 2026-11-18)
+
+- `d68e6eb`: Common Room threads send a source expedition (library → model-named platform communities and RSS
+  feeds → up to 3 web rounds; Discourse/feeds/scraped listings, browser fallback); new `rss`/`web` adapters;
+  keyless Reddit hot/top rungs, exhausted ladders re-arm after 3 days, failing sources retried daily, host pauses
+  not failures, skipped posts judged once more, cross-thread borrowing. New table `crsourcehunt`, additive columns on
+  `crthread`/`crsource`/`crthreadsource`/`crcandidate`. `21fb933`: one refusal skips that platform for the hunt;
+  mixed-case Lemmy links.
+- Backup `/root/compose/watchcraft-backups/20261118-commons-d68e6eb` (online DB quick_check ok, config hashes,
+  previous source incl. `discover.py`, `new-files.txt`, `rollback.sh` → `watchcraft:rollback-20261118-commons-*`;
+  covers both commits, old code ignores the new table/columns). rsync (checksum) of the 33 non-`android/` files of
+  `9fe5567..d68e6eb`, `discover.py` removed; then `expedition.py` + its test for `21fb933`.
+- Pruned deploy backups to the newest two (`20261118-browser-9fe5567`, `20261118-commons-d68e6eb`) and their
+  rollback images; manifest `PRUNE-MANIFEST-20261118T125035Z.txt`, ~33 GB freed on `/mnt/nvme_data`.
+- All four `wc-*` on `sha256:0815e0a7…`, zero restarts, no tracebacks, health 200, DB quick_check ok. Both threads'
+  expeditions ran: Local AI 0 → 10 sources (5 rss, 4 web, 1 lemmy), Homelab +10 (lemmy, mastodon, devto, web);
+  183 picks and 1,754 posts fetched in the 2 h after deploy. Reddit refuses every anonymous read from this host
+  (404/429) — B-062.
 
 ## Deployment record — model routing, tenacious source curator, browser sidecar (`35bcc52`, `9fe5567`, 2026-11-18)
 
