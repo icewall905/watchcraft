@@ -183,15 +183,23 @@ def item(raw: dict, image_url) -> dict:
         'image': primary,
         'thumb': thumb,
         'backdrop': backdrop,
-        'playable': raw.get('Type') in ('Movie', 'Episode', 'Video', 'MusicVideo'),
+        'playable': raw.get('Type') in ('Movie', 'Episode', 'Video', 'MusicVideo', 'Trailer'),
     }
     if raw.get('People'):
-        out['people'] = [{'name': p.get('Name', ''), 'role': p.get('Role') or p.get('Type', '')}
-                         for p in raw['People'][:12]]
+        out['people'] = [
+            {'name': person['Name'], 'role': person.get('Role') or '', 'type': person.get('Type') or '',
+             'image': image_url(person['Id'], 'Primary', person['PrimaryImageTag'])
+             if person.get('Id') and person.get('PrimaryImageTag') else None}
+            for person in raw['People'] if person.get('Name')
+        ][:40]
     if raw.get('MediaStreams') is not None or raw.get('MediaSources'):
         streams = raw.get('MediaStreams') or ((raw.get('MediaSources') or [{}])[0].get('MediaStreams') or [])
         out['audio'] = audio_tracks(streams)
         out['subtitles'] = subtitle_tracks(streams)
+        video = next((stream for stream in streams if stream.get('Type') == 'Video' and not stream.get('IsExternal')), None)
+        if video:
+            out['video'] = {'width': video.get('Width'), 'height': video.get('Height'),
+                            'codec': video.get('Codec'), 'range': video.get('VideoRangeType') or video.get('VideoRange')}
     return out
 
 

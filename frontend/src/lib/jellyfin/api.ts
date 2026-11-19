@@ -9,7 +9,12 @@ export type Item = {
 	series_id: string | null; series_name: string | null; season_id: string | null; season: number | null; episode: number | null;
 	premiere: string | null; is_folder: boolean; child_count: number | null; unplayed: number | null; played: boolean; favorite: boolean;
 	position_s: number; progress: number; image: string | null; thumb: string | null; backdrop: string | null; playable: boolean;
-	people?: { name: string; role: string }[]; audio?: Track[]; subtitles?: Track[];
+	people?: { name: string; role: string; type: string; image: string | null }[];
+	audio?: Track[]; subtitles?: Track[];
+	rating_from_series?: boolean; studios?: string[]; countries?: string[];
+	tagline?: string; original_title?: string | null; critic_rating?: number | null;
+	video?: { width: number | null; height: number | null; codec: string | null; range: string | null };
+	trailer?: { item_id: string } | { url: string } | null;
 	seasons?: Item[]; episodes?: Item[]; next_up?: Item | null;
 };
 export type Status = { configured: boolean; allowed: boolean; linked: boolean; user_name: string; is_admin: boolean; server_name: string; version: string };

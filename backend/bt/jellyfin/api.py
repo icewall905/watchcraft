@@ -17,7 +17,7 @@ from itsdangerous import BadSignature, URLSafeSerializer
 from pydantic import BaseModel, Field
 from sqlmodel import select
 
-from ..access import grown_up_access, profile_id, require_admin
+from ..access import grown_up_access, is_child, profile_id, require_admin
 from ..config import SECRET
 from ..db import session
 from ..models import Profile
@@ -30,7 +30,7 @@ _sig = URLSafeSerializer(SECRET, salt='jellyfin-media')
 
 ID = r'^[0-9a-fA-F-]{32,36}$'
 LIST_FIELDS = 'Overview,Genres,PrimaryImageAspectRatio,ChildCount,ProductionYear,OfficialRating,PremiereDate'
-DETAIL_FIELDS = LIST_FIELDS + ',People,MediaStreams,MediaSources,Taglines'
+DETAIL_FIELDS = LIST_FIELDS + ',People,MediaStreams,MediaSources,Taglines,Studios,ProductionLocations,OriginalTitle,RemoteTrailers,LocalTrailerCount'
 ITEM_TYPES = {'Movie', 'Series', 'Season', 'Episode', 'BoxSet', 'Video', 'MusicVideo', 'Folder', 'CollectionFolder'}
 SORTS = {'SortName', 'DateCreated', 'PremiereDate', 'CommunityRating', 'Random', 'DatePlayed', 'Runtime'}
 _KEY_PARAMS = {'api_key', 'apikey'}
@@ -307,6 +307,68 @@ def search(q: str, pid: int = Depends(require_jellyfin)):
     return {'items': _items(pid, r.get('Items'))}
 
 
+def _youtube_trailer(value):
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = up.urlsplit(value)
+        if parsed.scheme not in ('https', 'http') or parsed.username or parsed.password or parsed.port is not None:
+            return None
+        if parsed.hostname == 'youtu.be':
+            code = parsed.path.removeprefix('/')
+        elif parsed.hostname in ('youtube.com', 'www.youtube.com', 'm.youtube.com'):
+            if parsed.path == '/watch':
+                code = up.parse_qs(parsed.query).get('v', [''])[0]
+            else:
+                match = re.fullmatch(r'/(?:embed|shorts)/([A-Za-z0-9_-]{11})', parsed.path)
+                code = match[1] if match else ''
+        else:
+            return None
+    except ValueError:
+        return None
+    return f'https://www.youtube.com/watch?v={code}' if re.fullmatch(r'[A-Za-z0-9_-]{11}', code) else None
+
+
+def _movie_trailer(link, pid, item_id, raw):
+    if raw.get('LocalTrailerCount') != 0:
+        try:
+            trailers = _get(link, f'/Items/{item_id}/LocalTrailers') or []
+        except HTTPException:
+            # Trailer discovery is optional. A full item should still render on older servers.
+            trailers = []
+        for trailer in trailers if isinstance(trailers, list) else []:
+            trailer_id = trailer.get('Id') or ''
+            if re.fullmatch(ID, trailer_id) and trailer_id != item_id and trailer.get('PlayAccess') != 'None':
+                return {'item_id': trailer_id}
+    if raw.get('RemoteTrailers'):
+        with session() as s:
+            if is_child(s, pid):
+                return None
+        for candidate in raw['RemoteTrailers']:
+            if url := _youtube_trailer(candidate.get('Url')):
+                return {'url': url}
+    return None
+
+
+def _enrich_detail(link, raw, out):
+    studios = [studio['Name'] for studio in (raw.get('Studios') or []) if studio.get('Name')]
+    series_id = raw.get('SeriesId') or ''
+    if raw.get('Type') == 'Episode' and re.fullmatch(ID, series_id) and (not out['official_rating'] or not out['genres'] or not studios):
+        try:
+            series = _get(link, f'/Items/{series_id}', fields='Genres,Studios') or {}
+        except HTTPException:
+            series = {}
+        if not out['official_rating'] and series.get('OfficialRating'):
+            out.update(official_rating=series['OfficialRating'], rating_from_series=True)
+        if not out['genres']:
+            out['genres'] = series.get('Genres') or []
+        if not studios:
+            studios = [studio['Name'] for studio in (series.get('Studios') or []) if studio.get('Name')]
+    out.update(studios=studios, countries=raw.get('ProductionLocations') or [],
+               tagline=next((line for line in (raw.get('Taglines') or []) if line), ''),
+               original_title=raw.get('OriginalTitle'), critic_rating=raw.get('CriticRating'))
+
+
 @router.get('/items/{item_id}')
 def detail(item_id: str, pid: int = Depends(require_jellyfin)):
     if not re.match(ID, item_id):
@@ -314,7 +376,11 @@ def detail(item_id: str, pid: int = Depends(require_jellyfin)):
     link = _link(pid)
     raw = _get(link, f'/Items/{item_id}', fields=DETAIL_FIELDS)
     out = jf.item(raw, _image_url(pid))
-    if raw.get('Type') == 'Series':
+    if raw.get('Type') in ('Movie', 'Series', 'Episode'):
+        _enrich_detail(link, raw, out)
+    if raw.get('Type') == 'Movie':
+        out['trailer'] = _movie_trailer(link, pid, item_id, raw)
+    elif raw.get('Type') == 'Series':
         out['seasons'] = _items(pid, (_get(link, f'/Shows/{item_id}/Seasons', fields=LIST_FIELDS) or {}).get('Items'))
         nu = (_get(link, '/Shows/NextUp', seriesId=item_id, limit=1, fields=LIST_FIELDS) or {}).get('Items')
         out['next_up'] = (_items(pid, nu) or [None])[0]

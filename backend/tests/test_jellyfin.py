@@ -18,6 +18,8 @@ from bt.main import app
 
 BASE = 'http://jf.lan:8096'
 MOVIE = 'a' * 32
+TRAILER = '1' * 32
+PERSON = '2' * 32
 SERIES = 'b' * 32
 EP1, EP2 = 'c' * 32, 'd' * 32
 TOKEN = 'secret-jellyfin-token'
@@ -27,6 +29,7 @@ class FakeJellyfin:
     def __init__(self):
         self.calls: list[httpx.Request] = []
         self.direct = True
+        self.local_trailer = True
 
     def __call__(self, req: httpx.Request) -> httpx.Response:
         self.calls.append(req)
@@ -50,6 +53,13 @@ class FakeJellyfin:
             return httpx.Response(200, json={'Items': [self.movie(position=600)] if p.endswith('Resume') else []})
         if p == f'/Items/{MOVIE}':
             return httpx.Response(200, json=self.movie(detail=True))
+        if p == f'/Items/{MOVIE}/LocalTrailers':
+            assert q['userId'] == 'u1'
+            return httpx.Response(200, json=[{'Id': TRAILER, 'Type': 'Trailer'}] if self.local_trailer else [])
+        if p == f'/Items/{TRAILER}':
+            return httpx.Response(200, json={'Id': TRAILER, 'Name': 'Official Trailer', 'Type': 'Trailer'})
+        if p == f'/Items/{SERIES}':
+            return httpx.Response(200, json={'Id': SERIES, 'Type': 'Series', 'OfficialRating': 'TV-14', 'Genres': ['Drama']})
         if p == f'/Items/{EP1}':
             return httpx.Response(200, json={'Id': EP1, 'Name': 'Pilot', 'Type': 'Episode', 'SeriesId': SERIES,
                                              'RunTimeTicks': 1800 * jf.TICKS, 'MediaSources': [{'Id': EP1}]})
@@ -111,6 +121,12 @@ class FakeJellyfin:
              'ImageTags': {'Primary': 'tag1'}, 'BackdropImageTags': ['bd1'],
              'UserData': {'PlaybackPositionTicks': position * jf.TICKS, 'Played': False}}
         if detail:
+            m.update(OfficialRating='PG-13', CriticRating=82, Studios=[{'Name': 'Studio One'}],
+                     ProductionLocations=['Denmark'], OriginalTitle='Filmen', Taglines=['A quiet mystery'],
+                     People=[{'Id': PERSON, 'Name': 'A Performer', 'Role': 'Lead', 'Type': 'Actor', 'PrimaryImageTag': 'headshot'},
+                             {'Name': 'A Director', 'Type': 'Director'}],
+                     RemoteTrailers=[{'Url': 'https://youtube.com.evil.test/watch?v=abcdefghijk'},
+                                     {'Url': 'https://youtu.be/abcdefghijk?si=tracking'}])
             m['MediaStreams'] = FakeJellyfin.streams()
             m['MediaSources'] = [{'Id': MOVIE, 'DefaultAudioStreamIndex': 1}]
         return m
@@ -348,3 +364,27 @@ def test_cast_grant_plays_as_sender(fake):
         assert c.get('/api/jellyfin/home', headers=h).status_code == 200
         h['X-Cast-Grant'] = 'forged'
         assert c.get('/api/jellyfin/home', headers=h).status_code == 409
+
+
+
+def test_marquee_detail_trailers_credits_and_series_rating(fake):
+    with TestClient(app) as c:
+        _setup(c)
+        movie_path = f'/api/jellyfin/items/{MOVIE}'
+        movie = c.get(movie_path).json()
+        assert movie['trailer'] == {'item_id': TRAILER}
+        assert movie['official_rating'] == 'PG-13'
+        assert movie['critic_rating'] == 82 and movie['studios'] == ['Studio One']
+        assert movie['countries'] == ['Denmark'] and movie['original_title'] == 'Filmen'
+        actor, director = movie['people']
+        assert actor['role'] == 'Lead' and actor['type'] == 'Actor' and actor['image'].startswith('/api/jellyfin/img/')
+        assert director['type'] == 'Director' and not director['image']
+        played = c.post(f'/api/jellyfin/items/{TRAILER}/play', json={'start_s': 0})
+        assert played.status_code == 200 and played.json()['item']['type'] == 'Trailer'
+        assert played.json()['url'].startswith('/api/jellyfin/media/') and TOKEN not in played.text
+
+        fake.local_trailer = False
+        assert c.get(movie_path).json()['trailer'] == {'url': 'https://www.youtube.com/watch?v=abcdefghijk'}
+        episode = c.get(f'/api/jellyfin/items/{EP1}').json()
+        assert episode['official_rating'] == 'TV-14' and episode['rating_from_series']
+        assert episode['genres'] == ['Drama'] and 'trailer' not in episode
