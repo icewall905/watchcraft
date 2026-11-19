@@ -9,7 +9,7 @@ from sqlmodel import select
 
 from ..access import hub_worker_allowed, is_child
 from ..db import session
-from . import curate, discover, harvest
+from . import curate, expedition, harvest
 from .models import (CRAsset, CRCandidate, CRComments, CRPick, CRPost, CRPostVector, CRSourcePost, CRThread)
 
 log = logging.getLogger(__name__)
@@ -63,8 +63,8 @@ def finish(tid: int, lease: str, status: str, error: str = '', want_more: bool |
 def run_thread(thread: CRThread, lease: str) -> dict:
     want_more = thread.want_more
     try:
-        if thread.discovered_at < time.time() - discover.EVERY_S:
-            discover.run(thread, lease)
+        if thread.discovered_at < time.time() - expedition.WEEKLY_S:
+            expedition.request(thread.id, 'weekly' if thread.discovered_at else 'new', min_gap=0)
         stats = harvest.run(thread, want_more)
         stats.update(curate.run(thread, lease))
     except Exception as e:  # noqa: BLE001 — the thread retries in a few minutes
@@ -74,7 +74,11 @@ def run_thread(thread: CRThread, lease: str) -> dict:
     status = (f'Kept {stats["kept"]} of {stats["judged"]} posts judged from {stats["sources"]} sources'
               f' ({stats["fresh"] + stats["backfill"] + stats["search"]} fetched).')
     # Keep backfilling while a backfill run still finds keepers and older pages remain.
-    more = want_more and stats['kept'] < 5 and not harvest.exhausted(thread.id) and stats['backfill'] > 0
+    dry = harvest.exhausted(thread.id)
+    more = want_more and stats['kept'] < 5 and not dry and stats['backfill'] > 0
+    if want_more and stats['kept'] < 5 and (dry or not stats['sources']):
+        expedition.request(thread.id, 'dry')  # the sources ran out: go find more places
+    expedition.prune_links(thread.id)
     finish(thread.id, lease, status, want_more=more)
     return stats
 

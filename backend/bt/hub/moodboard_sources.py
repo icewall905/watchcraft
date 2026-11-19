@@ -331,7 +331,12 @@ def reddit_search(query, limit=30, offset=0):
     sort, period = REDDIT_SORTS[(offset // 30) % len(REDDIT_SORTS)]
     params = {'q': query.strip(), 'type': 'link', 'sort': sort, 't': period, 'limit': '100',
               'include_over_18': 'off', 'raw_json': '1'}
-    data = _json('https://www.reddit.com/search.json?' + urlencode(params)).get('data')
+    return reddit_listing('https://www.reddit.com/search.json?' + urlencode(params), limit)
+
+
+def reddit_listing(url, limit=30):
+    """Image posts from one public Reddit JSON listing (search or a subreddit's top/hot)."""
+    data = _json(url).get('data')
     children = data.get('children') if isinstance(data, dict) else None
     if not isinstance(children, list):
         raise ValueError('Reddit returned an unexpected response.')
@@ -498,6 +503,70 @@ def flickr_search(query, limit=30, offset=0, api_key=''):
                           str(photo.get('ownername') or photo['owner']) + ' (Flickr)',
                           FLICKR_LICENSES.get(str(photo.get('license')), RIGHTS),
                           photo.get('width_' + size), photo.get('height_' + size))
+        if item:
+            results.append(item)
+        if len(results) >= limit:
+            break
+    return results
+
+
+def giphy_search(query, limit=30, offset=0, api_key='', rating='pg-13'):
+    """Giphy GIF search (free API key). Child-friendly boards ask for rating g."""
+    limit = _validate_search(query, limit, offset)
+    if not api_key:
+        return []
+    params = {'api_key': api_key, 'q': query.strip(), 'limit': str(min(limit, 50)), 'offset': str(min(offset, 4999)),
+              'rating': rating if rating in ('g', 'pg', 'pg-13') else 'g', 'lang': 'en'}
+    payload = _json('https://api.giphy.com/v1/gifs/search?' + urlencode(params))
+    rows = payload.get('data')
+    if not isinstance(rows, list):
+        raise ValueError('Giphy could not complete the search.')
+    results = []
+    for row in rows[:50]:
+        if not isinstance(row, dict):
+            continue
+        images = row.get('images') if isinstance(row.get('images'), dict) else {}
+        best = images.get('downsized_large') or images.get('original') or {}
+        page = row.get('url')
+        if not isinstance(best, dict) or not isinstance(page, str) or not page.startswith('https://giphy.com/'):
+            continue
+        user = row.get('username') if isinstance(row.get('username'), str) else ''
+        item = _candidate('giphy', row.get('title') or row.get('alt_text'), row.get('alt_text'), page, best.get('url'),
+                          (user + ' (Giphy)') if user else 'Giphy', 'Giphy terms', best.get('width'), best.get('height'))
+        if item:
+            results.append(item)
+        if len(results) >= limit:
+            break
+    return results
+
+
+def tenor_search(query, limit=30, offset=0, api_key='', contentfilter='medium'):
+    """Tenor GIF search (free Google API key). Child-friendly boards use the strictest content filter."""
+    limit = _validate_search(query, limit, offset)
+    if not api_key:
+        return []
+    params = {'q': query.strip(), 'key': api_key, 'client_key': 'thehub', 'limit': str(min(limit, 50)),
+              'media_filter': 'gif,mediumgif',
+              'contentfilter': contentfilter if contentfilter in ('off', 'low', 'medium', 'high') else 'high',
+              **({'pos': str(offset)} if offset else {})}
+    payload = _json('https://tenor.googleapis.com/v2/search?' + urlencode(params))
+    rows = payload.get('results')
+    if not isinstance(rows, list):
+        raise ValueError('Tenor could not complete the search.')
+    results = []
+    for row in rows[:50]:
+        if not isinstance(row, dict):
+            continue
+        formats = row.get('media_formats') if isinstance(row.get('media_formats'), dict) else {}
+        gif = formats.get('mediumgif') or formats.get('gif') or {}
+        if not isinstance(gif, dict):
+            continue
+        dims = gif.get('dims') if isinstance(gif.get('dims'), list) and len(gif['dims']) == 2 else (0, 0)
+        page = row.get('itemurl')
+        if not isinstance(page, str) or not page.startswith('https://tenor.com/'):
+            continue
+        item = _candidate('tenor', row.get('content_description') or row.get('title'), '', page,
+                          gif.get('url'), 'Tenor', 'Tenor terms', dims[0], dims[1])
         if item:
             results.append(item)
         if len(results) >= limit:
@@ -682,6 +751,10 @@ def enabled_sources(cfg=None):
         sources.append(('flickr', lambda q, l, o: flickr_search(q, l, o, cfg['flickr_api_key'])))
     if cfg.get('tumblr_api_key'):
         sources.append(('tumblr', lambda q, l, o: tumblr_search(q, l, o, cfg['tumblr_api_key'])))
+    if cfg.get('giphy_api_key'):
+        sources.append(('giphy', lambda q, l, o: giphy_search(q, l, o, cfg['giphy_api_key'])))
+    if cfg.get('tenor_api_key'):
+        sources.append(('tenor', lambda q, l, o: tenor_search(q, l, o, cfg['tenor_api_key'])))
     if cfg.get('pinterest') and not pinterest_guard.blocked():
         sources.append(('pinterest', pinterest_search))
     return sources

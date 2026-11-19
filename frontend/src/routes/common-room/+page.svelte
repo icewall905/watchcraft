@@ -142,7 +142,7 @@
  </header>
  <CommonsSwitch />
  {#if session.isAdmin && session.settings && !session.settings.commonroom?.reddit_client_id}
-  <p class="keys small">Reddit runs in limited mode (newest posts only, no comments). <a href="/settings?tab=commonroom">Add Reddit keys in Settings</a></p>
+  <p class="keys small">Reddit runs in limited mode (public hot and top lists, no comments or search). <a href="/settings?tab=commonroom">Add Reddit keys in Settings</a></p>
  {/if}
  {#if loaded || threads.length}
  <nav class="chips" aria-label="Threads">
@@ -173,7 +173,7 @@
   {#if gathering}
    <section class="empty"><h2>Your curator is gathering posts…</h2><p class="muted">{statusText ? `Status: ${statusText}` : 'This can take a few minutes.'}{#if current?.error} · {current.error}{/if}</p></section>
   {:else if loading}<p class="muted center">Loading…</p>
-  {:else if section === 'deep' && !hasMore && building}<p class="muted center">Finding more posts…</p>
+  {:else if section === 'deep' && !hasMore && building}<p class="muted center">Finding more posts, and new places to find them…</p>
   {:else if section === 'deep' && !hasMore && shown}<p class="muted center">That's everything for now.</p>{/if}
   {#if hasMore && !loading}
    <div bind:this={sentinel} class="sentinel"></div>

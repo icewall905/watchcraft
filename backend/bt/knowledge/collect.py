@@ -42,7 +42,7 @@ def _propose(system: str, rows: list[dict]) -> list[dict]:
     from ..hub import ai as hub_ai
     import json
     out = hub_ai._call(system, '<data>\n' + hub_ai._esc(json.dumps(rows, ensure_ascii=False)) + '\n</data>', SCHEMA,
-                       max_tokens=1200, role='worker', timeout_s=300)
+                       max_tokens=1200, role='knowledge_collect', timeout_s=300)
     return [x for x in (out.get('teachings') or []) if isinstance(x, dict)][:3]
 
 

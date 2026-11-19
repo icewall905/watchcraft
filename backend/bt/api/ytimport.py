@@ -104,7 +104,7 @@ def _playlist_brief(entries: list[dict]) -> PlaylistBrief:
                 "Do not infer sensitive personal traits. Return brief and seed_queries.")},
             {"role": "user", "content": json.dumps(examples, ensure_ascii=False)}
         ], json_schema=PlaylistBrief.model_json_schema(), max_tokens=32768, schema_name="playlist_brief",
-           timeout_s=600, reasoning_effort="medium")
+           timeout_s=600, reasoning_effort="medium", role='playlist_brief')
         return PlaylistBrief.model_validate(result)
     except (llm.LlmError, ValidationError) as e:
         log.warning("Playlist prompt generation failed for %d videos: %s", len(entries), e)

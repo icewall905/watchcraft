@@ -1,7 +1,8 @@
 export const PLATFORMS: Record<string, {label: string; icon: string}> = {
  reddit: {label: 'Reddit', icon: '👽'}, lemmy: {label: 'Lemmy', icon: '🐭'}, mbin: {label: 'Mbin', icon: '🧵'}, mastodon: {label: 'Mastodon', icon: '🐘'},
  bluesky: {label: 'Bluesky', icon: '🦋'}, hackernews: {label: 'Hacker News', icon: '🟧'}, hn: {label: 'Hacker News', icon: '🟧'}, lobsters: {label: 'Lobsters', icon: '🦞'},
- devto: {label: 'dev.to', icon: '👩‍💻'}, tildes: {label: 'Tildes', icon: '🌲'}, stackexchange: {label: 'Stack Exchange', icon: '📚'}, discourse: {label: 'Discourse', icon: '💬'}
+ devto: {label: 'dev.to', icon: '👩‍💻'}, tildes: {label: 'Tildes', icon: '🌲'}, stackexchange: {label: 'Stack Exchange', icon: '📚'}, discourse: {label: 'Discourse', icon: '💬'},
+ rss: {label: 'Blog / feed', icon: '📰'}, web: {label: 'Website', icon: '🌐'}
 };
 export const platformOf = (k: string) => PLATFORMS[k] ?? {label: k, icon: '🌐'};
 export function ago(ts: number | null | undefined, now = Date.now()): string {

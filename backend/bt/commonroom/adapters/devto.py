@@ -90,4 +90,4 @@ def comments(post: dict) -> list[dict]:
 
 ADAPTER = Adapter(key='devto', label='DEV Community', parse=parse, fetch=fetch,
                   sorts=('new', 'hot', 'top_week', 'top_month', 'top_year', 'top_all'),
-                  comments=comments, example='python', discoverable=False)
+                  comments=comments, example='python')

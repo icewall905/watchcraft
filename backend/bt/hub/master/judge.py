@@ -197,7 +197,7 @@ def judge(s: Session, pid: int, now: float | None = None, limit: int = LIGHT_LIM
         system = MEME_SYSTEM if group == 'meme' else SYSTEM
         try:
             res = ai._call(system, f'Reader interests:\n{ai._esc(interests)}\n\n{ai._data([_row(i) for _, i in batch])}',
-                           SCHEMA, max_tokens=1800, role='worker')
+                           SCHEMA, max_tokens=1800, role='frontpage_screen')
         except Exception as e:  # noqa: BLE001 — the rules verdict stands
             log.info('master judge failed: %s', e)
             out['stopped'] = 'model error'
@@ -228,7 +228,7 @@ def judge(s: Session, pid: int, now: float | None = None, limit: int = LIGHT_LIM
             try:
                 review = ai._call(system + ' Resolve these uncertain worker decisions from the supplied source evidence.',
                                   f'Reader interests:\n{ai._esc(interests)}\n\n' + ai._data([_row(batch[n - 1][1]) for n in doubtful]),
-                                  SCHEMA, max_tokens=1000, role='judge')
+                                  SCHEMA, max_tokens=1000, role='frontpage_review')
                 for reviewed in review.get('verdicts', []):
                     number = reviewed.get('n') if isinstance(reviewed, dict) else None
                     if isinstance(number, int) and 1 <= number <= len(doubtful):

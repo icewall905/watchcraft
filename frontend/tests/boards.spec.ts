@@ -473,3 +473,31 @@ test('live Pinterest search is hidden when off and explains a self-pause',async(
  await expect(page.getByRole('region',{name:'Search Pinterest'})).toContainText('Pinterest paused itself: HTTP 403 from Pinterest');
  await expect(page.getByRole('region',{name:'Search Pinterest'}).getByRole('button',{name:'Search Pinterest live'})).toHaveCount(0);
 });
+
+test('find sources researches sites and lists them with controls',async({page})=>{
+ await setup(page);
+ const src={id:4,name:'Fern Archive',host:'ferns.example.org',kind:'search_template',status:'ok',enabled:true,added_by:'curator',fit:4,tried:5,hits:12,kept:7,last_run:0,created_at:0,url:'https://ferns.example.org/search'};
+ let state:any={sources:[],hunt:{id:1,status:'complete',found:0,error:'',log:[{at:1,step:'done',message:'Source research finished: 0 new sources for this board.'}],created_at:1,finished_at:1}};
+ const writes:string[]=[];
+ await page.route(/\/api\/hub\/boards\/1\/(sources|find-sources)/,async route=>{
+  const req=route.request(),path=new URL(req.url()).pathname;
+  if(req.method()!=='GET')writes.push(req.method()+' '+path);
+  if(path.endsWith('/find-sources'))state={sources:[src],hunt:{...state.hunt,id:2,status:'running',log:[{at:2,step:'searching',message:'Searching the web: fern photo archive'},{at:3,step:'saved',message:'Saved site search ferns.example.org (4/5 sample images fit).'}]}};
+  else if(req.method()==='PATCH')state.sources[0]={...state.sources[0],enabled:req.postDataJSON().enabled};
+  else if(req.method()==='DELETE')state={...state,sources:[]};
+  return route.fulfill({json:state});
+ });
+ await freshPage(page,'/boards?board=1');
+ await page.getByRole('button',{name:'Find sources'}).click();
+ const dialog=page.getByRole('dialog');
+ await expect(dialog.getByText(/No sources yet/)).toBeVisible();
+ await dialog.getByRole('button',{name:'Find sources'}).click();
+ await expect(dialog.getByRole('button',{name:'Researching sources…'})).toBeDisabled();
+ await expect(dialog.getByText('Searching the web: fern photo archive')).toBeVisible();
+ await expect(dialog.getByText('Fern Archive')).toBeVisible();
+ await expect(dialog.getByText('7 of 12 found images kept',{exact:false})).toBeVisible();
+ await dialog.getByLabel('Use').uncheck();
+ await dialog.getByRole('button',{name:'Remove Fern Archive'}).click();
+ await expect(dialog.getByText('Fern Archive')).toHaveCount(0);
+ expect(writes).toEqual(['POST /api/hub/boards/1/find-sources','PATCH /api/hub/boards/1/sources/4','DELETE /api/hub/boards/1/sources/4']);
+});

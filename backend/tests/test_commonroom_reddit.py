@@ -192,11 +192,21 @@ def test_rate_limit_stops_callers(monkeypatch):
         rd.fetch('foo', 'new', '')
 
 
-def test_rss_fallback_reads_only_the_fresh_page(monkeypatch, oauth):
+def test_rss_fallback_reads_one_page_per_sort_rung(monkeypatch, oauth):
     oauth[0]['commonroom']['reddit_secret'] = ''
-    monkeypatch.setattr(rd, '_rss_get', lambda f: pytest.fail('backfill must not spend the shared Reddit RSS pace'))
-    for sort in ('hot', 'top_day', 'top_week', 'top_month', 'top_year', 'top_all'):
+    feeds = []
+
+    def get(feed):
+        feeds.append(feed)
+        return b'<feed xmlns="http://www.w3.org/2005/Atom"></feed>'
+    monkeypatch.setattr(rd, '_rss_get', get)
+    for sort in ('hot', 'top_week', 'top_month', 'top_year', 'top_all'):
         assert rd.fetch('r/foo', sort, '') == Page()
+    assert feeds[0] == 'https://www.reddit.com/r/foo/.rss?limit=50'
+    assert [f.split('?t=', 1)[1] for f in feeds[1:]] == ['week&limit=50', 'month&limit=50', 'year&limit=50',
+                                                        'all&limit=50']
+    monkeypatch.setattr(rd, '_rss_get', lambda f: pytest.fail('keyless reads never walk deeper pages'))
+    assert rd.fetch('r/foo', 'top_week', 'cursor') == Page()
 
 
 def test_401_drops_token_not_cooldown(monkeypatch, oauth):

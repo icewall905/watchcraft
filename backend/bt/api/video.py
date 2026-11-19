@@ -151,18 +151,29 @@ async def manifest(video_id: str, max_height: Optional[int] = None, codec: Optio
     prefs = await _db(_player_prefs, pid)
     mh = int(max_height or prefs.get("max_height") or 1080)
     pc = codec if codec in streams.CODEC_ORDER else prefs.get("prefer_codec") or "avc1"
-    for attempt in (0, 1):
+    for attempt in (0, 1, 2):
         try:
             mpd = await run_in_threadpool(streams.build_mpd, info, mh, pc, streams.proxy_url,
                                           streams.probe_ranges, streams.check_stream)
             break
         except ValueError as e:
-            if attempt:
+            if attempt == 2:
                 raise HTTPException(404, f"no DASH streams: {e}") from e
-            # cached stream URLs may have gone bad (googlevideo 403): re-extract once
-            ytdl.cache_drop(video_id)
-            info = await _yt(ytdl.video_info, video_id, "user")
+            info = await _fresh_streams(video_id, info)
     return Response(mpd, media_type="application/dash+xml", headers={"Cache-Control": "no-store"})
+
+
+async def _fresh_streams(video_id: str, info: dict) -> dict:
+    """After googlevideo refused `info`'s streams: just-minted URLs only need a few seconds before they are
+    served, so wait those out; older ones have gone bad, so re-extract and let the new URLs settle."""
+    wait = streams.settle_wait(info)
+    if wait > 0:
+        await asyncio.sleep(wait)
+        return info
+    ytdl.cache_drop(video_id)
+    info = await _yt(ytdl.video_info, video_id, "user")
+    await asyncio.sleep(streams.settle_wait(info))
+    return info
 
 
 @router.get("/video/{video_id}/fallback")
@@ -170,9 +181,10 @@ async def fallback(video_id: str):
     _vid(video_id)
     info = await _yt(ytdl.video_info, video_id, "user")
     f = streams.best_progressive(info)
-    if f and not await run_in_threadpool(streams.check_stream, f):
-        ytdl.cache_drop(video_id)  # stale/refused URL: re-extract once
-        info = await _yt(ytdl.video_info, video_id, "user")
+    for _ in range(2):
+        if not f or await run_in_threadpool(streams.check_stream, f):
+            break
+        info = await _fresh_streams(video_id, info)  # just minted (wait) or stale (re-extract)
         f = streams.best_progressive(info)
     if not f:
         raise HTTPException(404, "no progressive format")

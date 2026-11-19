@@ -148,7 +148,7 @@ def _process_profile(rt: Runtime, pid: int, batch: list[Feedback], content_type:
                                       content_type=content_type, rejected=teachings.rejected_block(tombstones))
         try:
             out = rt.llm.chat_json(msgs, json_schema=prompts.LEARN_SCHEMA, max_tokens=2500, schema_name="lessons",
-                                   abort=rt.check)
+                                   abort=rt.check, role='video_lessons')
         except Interrupt:
             raise
         except Exception as e:  # noqa: BLE001

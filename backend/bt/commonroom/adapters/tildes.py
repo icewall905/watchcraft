@@ -120,4 +120,4 @@ def _tree(ol) -> list[dict]:
 
 
 ADAPTER = Adapter(key='tildes', label='Tildes', parse=parse, fetch=fetch, sorts=('new',),
-                  comments=comments, example='~comp', discoverable=False)
+                  comments=comments, example='~comp')

@@ -202,7 +202,7 @@ def _call(system: str, payload: dict, schema: dict, max_tokens: int) -> dict:
     from ..hub import ai as hub_ai
     body = json.dumps(payload, ensure_ascii=False)
     return hub_ai._call(system, '<data>\n' + hub_ai._esc(body) + '\n</data>', schema,
-                        max_tokens=max_tokens, role='worker', timeout_s=TIMEOUT)
+                        max_tokens=max_tokens, role='knowledge_merge', timeout_s=TIMEOUT)
 
 
 def merge_batch(sections: list[dict], key: str, batch: list[Teaching], refused: list[Teaching], now: float):

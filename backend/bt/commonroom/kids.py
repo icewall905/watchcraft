@@ -29,7 +29,7 @@ def _judge(items: list[dict], images: list[str] | None = None) -> set[int] | Non
         rails = kidsafe.household_rails(s)  # one verdict serves every child: it must suit each one's rails
     system = kidsafe.SYSTEM + (' ' + kidsafe.IMAGE_RULE if images else '') + rails
     try:
-        res = ai._call(system, ai._data(items), kidsafe.SCHEMA, max_tokens=900, images=images, role='worker')
+        res = ai._call(system, ai._data(items), kidsafe.SCHEMA, max_tokens=900, images=images, role='kid_checks')
     except Exception as e:  # noqa: BLE001 — unchecked means unsafe
         log.info('Common Room kid check failed: %s', e)
         return None

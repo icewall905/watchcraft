@@ -116,7 +116,7 @@ def send(pid: int, text: str, correction_teaching_id: int | None = None, generat
             out = hub_ai._call(SYSTEM, '<data>\n' + hub_ai._esc(json.dumps(context, ensure_ascii=False)) + '\n</data>\n\n'
                                + ('REQUEST (written by the app after the person rejected a teaching):\n' if generated
                                 else 'MESSAGE (the person\'s own words):\n') + hub_ai._esc(text), SCHEMA,
-                               max_tokens=1500, role='judge', timeout_s=120)
+                               max_tokens=1500, role='knowledge_chat', timeout_s=120)
             reply = ' '.join(str(out.get('reply') or '').split())[:1200] or 'Understood.'
             ops = clean_ops(sections, out.get('ops'))
             failed = False

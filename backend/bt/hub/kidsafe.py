@@ -279,7 +279,7 @@ def _judge_group(s: Session, limit: int, pids: list[int], rules: str, rails: str
         system = SYSTEM + (' ' + IMAGE_RULE if images else '') + rails_block(rails)
         try:
             res = ai._call(system, ai._data([_row(i) for i, _ in batch]), SCHEMA, max_tokens=900,
-                           images=images or None, role='worker')
+                           images=images or None, role='kid_checks')
         except Exception as e:  # noqa: BLE001 — fail closed: nothing stored, items stay hidden
             log.info('kid-safe judge failed: %s', e)
             out['stopped'] = 'model error'

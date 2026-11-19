@@ -1,4 +1,7 @@
-"""Reddit adapter: OAuth JSON API when credentials are set, public RSS (new/hot only) otherwise."""
+"""Reddit adapter: OAuth JSON API when credentials are set, public RSS otherwise.
+
+Without keys every sort rung is one RSS page (hot, top of week/month/year/all): no cursors, but the
+ladder still reaches older, well-voted posts."""
 from __future__ import annotations
 
 import html
@@ -137,12 +140,15 @@ def _page(data) -> Page:
 _ENTRY_ID = re.compile(r'(t3_[a-z0-9]+)')
 
 
+RSS_MAX_WAIT_S = 90  # Common Room waits less than News for a paced slot; RateLimited backs the source off
+
+
 def _rss_get(feed: str) -> bytes:
-    return providers._reddit_get(feed)
+    return providers._reddit_get(feed, max_wait=RSS_MAX_WAIT_S)
 
 
 def _rss_page(name: str, sort: str) -> Page:
-    window = {'top_week': 'week'}.get(sort, 'day')
+    window = sort[4:] if sort.startswith('top_') else 'day'
     if sort in ('new', 'hot'):
         feed = providers.reddit_feed(f'https://www.reddit.com/r/{name}/{"new" if sort == "new" else "hot"}')
     else:
@@ -219,9 +225,9 @@ def fetch(locator: str, sort: str = 'new', cursor: str = '') -> Page:
     name = _sub(locator)
     if reddit_oauth.configured():
         return _page(_call(_listing_url(name, sort, cursor)))
-    # Without keys Reddit is read through the public RSS pace that News shares; a Reddit block there stalls
-    # News too, so Common Room takes only the fresh page and never walks older ones.
-    if cursor or sort != 'new':
+    # Without keys Reddit is read through the public RSS pace that News shares: one page per sort rung,
+    # never deeper pages, and harvest walks at most one keyless Reddit rung per run.
+    if cursor:
         return Page()
     return _rss_page(name, sort)
 

@@ -28,7 +28,7 @@
 	const keyed = $derived.by(() => { const s = JSON.parse(cr.saved || '{}'); return !!s.reddit_client_id && !!s.reddit_secret; });
 </script>
 
-<Section title="Common Room" intro="Keys for the Common Room social wall. Without Reddit keys, Reddit is read slowly through public RSS: newest posts only, no scores, comments or older pages. Every other platform works without keys.">
+<Section title="Common Room" intro="Keys for the Common Room social wall. Without Reddit keys, Reddit is read slowly through public RSS: the newest, hot and top-of-week/month/year/all lists, without scores, comments or search. Every other platform works without keys.">
 	<p class="small" class:warn={!keyed} role="status">{keyed ? 'Reddit keys are set: full Reddit access with scores, comments and older posts.' : 'Reddit is in limited mode until you add keys.'}</p>
 	<p class="muted small">Create a Reddit "script" app at <a href="https://www.reddit.com/prefs/apps" target="_blank" rel="noopener noreferrer">reddit.com/prefs/apps</a>, then paste its client id and secret.</p>
 	<TextField label="Reddit client id" bind:value={cr.value.reddit_client_id} />

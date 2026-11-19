@@ -146,7 +146,7 @@ def _compact_batch(rt, rules, budget_chars=None, content_type="video"):
          "Retain useful nuance when space allows; compress more tightly when necessary. Do not pad to fill the budget." if budget_chars else "")},
         {"role": "user", "content": json.dumps(rules, ensure_ascii=False)}],
         json_schema=SCHEMA, schema_name="memory_compaction", max_tokens=8000, timeout_s=600,
-        temperature=0.1, abort=rt.check)
+        temperature=0.1, abort=rt.check, role='memory_compact')
     out = result.get("rules")
     if not isinstance(out, list) or not out:
         raise ValueError("The model returned no core rules; originals retained")
@@ -173,7 +173,7 @@ def _compact_batch(rt, rules, budget_chars=None, content_type="video"):
         json_schema={"type": "object", "properties": {"ok": {"type": "boolean"},
             "issues": {"type": "array", "items": {"type": "string"}}},
             "required": ["ok", "issues"], "additionalProperties": False}, schema_name="memory_audit",
-        max_tokens=2500, timeout_s=600, temperature=0.1, abort=rt.check)
+        max_tokens=2500, timeout_s=600, temperature=0.1, abort=rt.check, role='memory_audit')
     if audit.get("ok") is not True:
         raise ValueError("The model's preservation audit failed; originals retained")
     return cleaned
@@ -275,7 +275,7 @@ def compact_profile(rt, pid, budget, content_type="video"):
             json_schema={"type": "object", "properties": {"ok": {"type": "boolean"},
                 "issues": {"type": "array", "items": {"type": "string"}}},
                 "required": ["ok", "issues"], "additionalProperties": False},
-            schema_name="memory_continuity_audit", max_tokens=2500, timeout_s=600, temperature=0.1, abort=rt.check)
+            schema_name="memory_continuity_audit", max_tokens=2500, timeout_s=600, temperature=0.1, abort=rt.check, role='memory_audit')
         if audit.get("ok") is not True:
             raise ValueError("Core identity continuity review failed; previous core and corrections retained")
     rt.check()

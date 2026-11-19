@@ -10,6 +10,7 @@ import asyncio
 import logging
 import re
 import struct
+import time
 import urllib.parse as up
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, wait
@@ -266,11 +267,20 @@ def probe_ranges(f: dict, timeout: float = PROBE_TIMEOUT_S, origin: str = "user"
 
 
 _check_cache: dict[str, bool] = {}
+# googlevideo answers 403 for the first seconds after a stream URL is minted (seen on prod 2026-11-18: TVHTML5
+# URLs 403 at 0-4 s, 206 from ~8 s). A check that fails inside this window says nothing about the stream.
+URL_SETTLE_S = 10.0
+
+
+def settle_wait(info: dict) -> float:
+    """Seconds until `info`'s stream URLs are old enough to be served (0 when they already are)."""
+    return max(0.0, URL_SETTLE_S - (time.time() - float(info.get("epoch") or 0)))
 
 
 def check_stream(f: dict, timeout: float = PROBE_TIMEOUT_S, origin: str = "user") -> bool:
     """Blocking. 1-byte ranged GET to verify googlevideo actually serves this format (some clients'
-    formats 403 without a PO token, e.g. 144p on TVHTML5). Cached per stream URL."""
+    formats 403 without a PO token, e.g. 144p on TVHTML5). Successes are cached per stream URL; failures
+    are not, since a freshly minted URL is refused for a few seconds (URL_SETTLE_S)."""
     key = f.get("url") or ""
     if key in _check_cache:
         return _check_cache[key]
@@ -283,7 +293,8 @@ def check_stream(f: dict, timeout: float = PROBE_TIMEOUT_S, origin: str = "user"
     log_yt_request("probe", origin, ok, f"check itag {f.get('format_id')}")
     if len(_check_cache) > 5000:
         _check_cache.clear()
-    _check_cache[key] = ok
+    if ok:
+        _check_cache[key] = ok
     return ok
 
 

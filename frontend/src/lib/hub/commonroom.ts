@@ -6,7 +6,9 @@ export interface Thread {
  last_run: number | null; last_status: string; error: string; new_count: number; pick_count: number; source_count: number;
 }
 export interface PlatformInfo { key: string; label: string; example: string; sorts: string[] }
-export interface ThreadSource { id: number; source_id: number; platform: string; locator: string; label: string; origin: 'user' | 'ai'; enabled: boolean; error: string; last_ok: number | null }
+export interface ThreadSource { id: number; source_id: number; platform: string; locator: string; label: string; origin: 'user' | 'ai'; enabled: boolean; error: string; last_ok: number | null; status?: 'ok' | 'broken' | 'disabled'; fit?: number; tried?: number; kept?: number; hits?: number; url?: string }
+export interface SourceHunt { id: number; status: 'queued' | 'running' | 'done' | 'failed'; reason: string; found: number; error: string; log: {at: number; step: string; message: string}[]; created_at: number; finished_at: number }
+export interface ThreadSources { sources: ThreadSource[]; hunt: SourceHunt | null }
 export interface Media { kind: 'image' | 'video'; url: string; thumb?: string; poster?: string }
 export type Verdict = 'up' | 'down' | '';
 export interface Post {
@@ -28,7 +30,8 @@ export const crApi = {
  update: (id: number, body: Partial<Thread>) => request<Thread>(`${base}/threads/${id}`, {method: 'PATCH', body, toast: false}),
  remove: (id: number) => request<unknown>(`${base}/threads/${id}`, {method: 'DELETE', toast: false}),
  run: (id: number) => request<{queued: boolean}>(`${base}/threads/${id}/run`, {method: 'POST', body: {}, toast: false}),
- sources: (id: number) => request<{sources: ThreadSource[]}>(`${base}/threads/${id}/sources`, {toast: false}),
+ sources: (id: number) => request<ThreadSources>(`${base}/threads/${id}/sources`, {toast: false}),
+ findSources: (id: number) => request<ThreadSources>(`${base}/threads/${id}/find-sources`, {method: 'POST', toast: false}),
  addSource: (id: number, body: {platform: string; locator: string}) => request<ThreadSource>(`${base}/threads/${id}/sources`, {method: 'POST', body, toast: false}),
  setSource: (id: number, link: number, enabled: boolean) => request<ThreadSource>(`${base}/threads/${id}/sources/${link}`, {method: 'PATCH', body: {enabled}, toast: false}),
  removeSource: (id: number, link: number) => request<unknown>(`${base}/threads/${id}/sources/${link}`, {method: 'DELETE', toast: false}),

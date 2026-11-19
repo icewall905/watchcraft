@@ -104,6 +104,18 @@ def init_db() -> None:
         if 'language' not in {c['name'] for c in inspect(connection).get_columns('crpost')}:
             connection.exec_driver_sql("ALTER TABLE crpost ADD COLUMN language VARCHAR NOT NULL DEFAULT ''")
             connection.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_crpost_language ON crpost (language)')
+        for table, columns in (
+                ('crthread', (('search_terms', "JSON NOT NULL DEFAULT '[]'"),)),
+                ('crsource', (('exhausted_at', 'FLOAT NOT NULL DEFAULT 0'), ('status', "VARCHAR NOT NULL DEFAULT 'ok'"),
+                              ('notes', "VARCHAR NOT NULL DEFAULT ''"), ('created_by_thread', 'INTEGER NOT NULL DEFAULT 0'),
+                              ('hits', 'INTEGER NOT NULL DEFAULT 0'), ('kept', 'INTEGER NOT NULL DEFAULT 0'))),
+                ('crthreadsource', (('fit', 'INTEGER NOT NULL DEFAULT 0'), ('tried', 'INTEGER NOT NULL DEFAULT 0'),
+                                    ('kept', 'INTEGER NOT NULL DEFAULT 0'))),
+                ('crcandidate', (('misses', 'INTEGER NOT NULL DEFAULT 0'),))):
+            have = {c['name'] for c in inspect(connection).get_columns(table)}
+            for name, definition in columns:
+                if name not in have:
+                    connection.exec_driver_sql(f'ALTER TABLE {table} ADD COLUMN "{name}" {definition}')
         board_columns = {c['name'] for c in inspect(connection).get_columns('moodboard')}
         for name, definition in (('target_images', 'INTEGER NOT NULL DEFAULT 100'),
                                  ('avoid', "VARCHAR NOT NULL DEFAULT ''"),

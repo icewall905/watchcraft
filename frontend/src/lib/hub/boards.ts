@@ -27,6 +27,9 @@ export interface BoardSearch { available: boolean; reason: string; indexed: numb
 export interface ExtensionKey { id: number; name: string; hint: string; created_at: number; last_used: number | null }
 export interface PinterestResult { token: string; title: string; pin_url: string; attribution: string; width: number; height: number; preview_url: string; on_board: boolean }
 export interface PinterestStatus { enabled: boolean; blocked: boolean; blocked_until: number; reason: string; last_block_at: number; last_reason: string; hour_left: number; day_left: number; images_left: number }
+export interface BoardSource { id: number; name: string; host: string; kind: 'search_template' | 'gallery' | 'feed' | 'subreddit' | 'network_search' | 'commons_category'; status: 'ok' | 'broken' | 'disabled'; enabled: boolean; added_by: string; fit: number; tried: number; hits: number; kept: number; last_run: number; created_at: number; url: string }
+export interface SourceHunt { id: number; status: 'queued' | 'running' | 'complete' | 'failed'; found: number; error: string; log: {at: number; step: string; message: string}[]; created_at: number; finished_at: number }
+export interface BoardSources { sources: BoardSource[]; hunt: SourceHunt | null }
 const base = '/hub/boards';
 export const boardsApi = {
  pinterest: (id: number, url: string) => request<{import: PinterestImport}>(`${base}/${id}/pinterest`, {method: 'POST', body: {url}, toast: false}),
@@ -50,5 +53,9 @@ export const boardsApi = {
  extKeys: () => request<{keys: ExtensionKey[]}>('/ext/keys', {toast: false}),
  createExtKey: (name: string) => request<{key: string; info: ExtensionKey}>('/ext/keys', {method: 'POST', body: {name}, toast: false}),
  revokeExtKey: (id: number) => request<unknown>(`/ext/keys/${id}`, {method: 'DELETE', toast: false}),
+ sources: (id: number, signal?: AbortSignal) => request<BoardSources>(`${base}/${id}/sources`, {signal, toast: false}),
+ findSources: (id: number) => request<BoardSources>(`${base}/${id}/find-sources`, {method: 'POST', body: {}, toast: false}),
+ setSource: (id: number, source: number, enabled: boolean) => request<BoardSources>(`${base}/${id}/sources/${source}`, {method: 'PATCH', body: {enabled}, toast: false}),
+ removeSource: (id: number, source: number) => request<BoardSources>(`${base}/${id}/sources/${source}`, {method: 'DELETE', toast: false}),
  remove: (id: number) => request<unknown>(`${base}/${id}`, {method: 'DELETE', toast: false})
 };

@@ -129,7 +129,7 @@ def _kid_check(pictures: list[tuple[int, bytes]], unchecked: set[int] | None = N
             images = [vision_image(data) for _, data in batch]
             res = ai._call(kidsafe.SYSTEM + ' ' + kidsafe.IMAGE_RULE + rails,
                            ai._data([{'type': 'image', 'title': 'Mood Board image'} for _ in batch]), kidsafe.SCHEMA,
-                           max_tokens=600, images=images, role='worker')
+                           max_tokens=600, images=images, role='kid_checks')
         except Exception as e:  # noqa: BLE001 — unchecked pictures are not shared
             log.info('kid-safe share check failed: %s', e)
             if unchecked is not None:

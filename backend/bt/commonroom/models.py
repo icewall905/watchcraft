@@ -28,6 +28,7 @@ class CRThread(SQLModel, table=True):
     source_offset: int = 0            # rotates interests/searches across runs
     discovered_at: float = 0          # last AI source discovery
     want_more: bool = False           # the feed ran low; backfill next run
+    search_terms: list = Field(default_factory=list, sa_column=Column(JSON))  # model-expanded subtopics
     created_at: float = Field(default_factory=time.time)
 
 
@@ -42,10 +43,17 @@ class CRSource(SQLModel, table=True):
     ladder: int = 0                   # index into the adapter's sort ladder for backfill
     backfill_cursor: str = ''         # page token within the current ladder step
     exhausted: bool = False           # walked every ladder step to the end
+    exhausted_at: float = 0           # when; the ladder re-arms after harvest.REARM_S
     next_poll: float = 0
     last_ok: float = 0
     failures: int = 0
     error: str = ''
+    # Shared library health, filled by harvest and the source expedition.
+    status: str = 'ok'                # ok | broken | disabled
+    notes: str = ''
+    created_by_thread: int = 0
+    hits: int = 0                     # posts fetched
+    kept: int = 0                     # posts some thread kept
 
 
 class CRThreadSource(SQLModel, table=True):
@@ -55,7 +63,26 @@ class CRThreadSource(SQLModel, table=True):
     source_id: int = Field(index=True)
     origin: str = 'user'              # user | ai
     enabled: bool = True
+    fit: int = 0                      # expedition sample: posts that fit ...
+    tried: int = 0                    # ... of posts judged
+    kept: int = 0                     # posts this thread kept from the source
     created_at: float = Field(default_factory=time.time)
+
+
+class CRSourceHunt(SQLModel, table=True):
+    """One source expedition for a thread: a durable job with a lease and a short log."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    thread_id: int = Field(index=True)
+    status: str = 'queued'            # queued | running | done | failed
+    reason: str = ''                  # new | button | dry | weekly
+    lease: str = ''
+    lease_until: float = 0
+    found: int = 0
+    error: str = ''
+    log: list = Field(default_factory=list, sa_column=Column(JSON))
+    created_at: float = Field(default_factory=time.time)
+    started_at: float = 0
+    finished_at: float = 0
 
 
 class CRPost(SQLModel, table=True):
@@ -96,6 +123,7 @@ class CRCandidate(SQLModel, table=True):
     thread_id: int = Field(index=True)
     post_id: int = Field(index=True)
     status: str = 'pending'           # pending | kept | rejected
+    misses: int = 0                   # answered judge batches that skipped this post
     created_at: float = Field(default_factory=time.time)
 
 
