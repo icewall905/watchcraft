@@ -19,6 +19,18 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — The Scroll playback controls (`3f529ff`, 2026-11-20)
+
+- Tap reveals the description and playback controls together. Four seconds of inactivity hides them.
+  Playback controls include seek, previous and next clip, and a CC toggle that carries across clips.
+  Settings → Player has a dedicated autoplay-next switch, enabled by default.
+- All 34 focused browser tests and the backend autoplay settings test passed. Public health, Scroll,
+  and Player Settings returned 200. The live settings resolver returned the Scroll autoplay default.
+- All four application containers run the release image with zero restarts. SQLite snapshot passed
+  `quick_check`, and Compose and environment file hashes matched before and after rollout.
+- Backup and source/image rollback are at
+  `/root/compose/watchcraft-backups/20261120-scroll-3f529ff`. No schema change.
+
 ## Deployment record — Background-prepared Front Page (`8594dbb`, 2026-11-20)
 
 - A dedicated background loop refreshes editions and overviews every five minutes and schedules preparation on a
