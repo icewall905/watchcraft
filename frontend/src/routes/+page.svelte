@@ -10,6 +10,7 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import { warmVideo } from '$lib/prefetch';
 	import { preview } from '$lib/preview';
+	import { fromBackCache, toBackCache } from '$lib/backCache';
 	import type { HomeRow, Video } from '$lib/types';
 	import Row from '$lib/components/Row.svelte';
 	import VideoCard from '$lib/components/VideoCard.svelte';
@@ -19,7 +20,10 @@
 	import LookingPlaceholder from '$lib/components/LookingPlaceholder.svelte';
 	import AgentGlyph from '$lib/components/AgentGlyph.svelte';
 
-	let rows = $state<HomeRow[] | null>(null);
+	// Back from a video shows the rows the user left (see backCache), so the scroll position restores in place.
+	const cacheKey = `home|${session.profile?.id ?? ''}`;
+	const back = fromBackCache<HomeRow[]>(cacheKey);
+	let rows = $state<HomeRow[] | null>(back?.value ?? null);
 	let failed = $state(false);
 	let heroEl = $state<HTMLElement | null>(null);
 	// The hero buttons sit low in the hero, so a plain scroll-into-view would leave the top pick itself hidden.
@@ -37,6 +41,7 @@
 			if (version !== feedVersion || sequence !== loadSequence) return;
 			rows = result;
 			failed = false;
+			toBackCache(cacheKey, result);
 			warmLikely();
 		} catch {
 			if (version !== feedVersion || sequence !== loadSequence) return;
@@ -73,6 +78,7 @@
 		feedVersion++;
 		rows = (rows ?? []).map((r) =>
 			({ ...r, items: r.items.filter((it) => !it.video || !pred(it.video)) }));
+		toBackCache(cacheKey, rows);
 	}
 
 	async function markSeen(v: Video) {
@@ -104,7 +110,7 @@
 	}
 
 	onMount(() => {
-		load();
+		if (!back?.reuse) load();
 		let t: ReturnType<typeof setTimeout> | null = null;
 		const off = agent.onEvent((e) => {
 			if (e.kind !== 'accept') return;

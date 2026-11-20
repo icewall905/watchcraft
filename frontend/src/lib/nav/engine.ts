@@ -144,8 +144,11 @@ class NavEngine {
 			},
 			true
 		);
-		window.addEventListener('pointerdown', () => (root.dataset.modality = 'pointer'), true);
-		window.addEventListener('wheel', () => (root.dataset.modality = 'pointer'), { capture: true, passive: true });
+		// Mouse, touch or wheel: the user is browsing by hand, so a pending focus restore must not move the page later.
+		const byHand = () => { root.dataset.modality = 'pointer'; this.pendingRestore = null; };
+		window.addEventListener('pointerdown', byHand, true);
+		window.addEventListener('wheel', byHand, { capture: true, passive: true });
+		window.addEventListener('touchmove', byHand, { capture: true, passive: true });
 		document.addEventListener('focusin', (e) => {
 			const el = e.target as HTMLElement;
 			const entry = this.entries.get(el);
@@ -383,7 +386,11 @@ class NavEngine {
 				const el = this.findById(this.pendingRestore.id, cands);
 				if (el) {
 					this.pendingRestore = null;
-					if (current?.el !== el) this.focus(el);
+					// The browser already restored the scroll position: only scroll when the card is off screen and the
+					// user drives by remote/keys, so a mouse or touch return never moves the page.
+					const r = el.getBoundingClientRect();
+					const onScreen = r.bottom > 0 && r.top < window.innerHeight;
+					if (current?.el !== el) this.focus(el, { scroll: this.modality === 'keys' && !onScreen });
 					return;
 				}
 			}

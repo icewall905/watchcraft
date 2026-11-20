@@ -10,6 +10,7 @@
 	import { focusable } from '$lib/nav';
 	import { isVideo, timeAgo } from '$lib/util';
 	import { warmVideo } from '$lib/prefetch';
+	import { fromBackCache, toBackCache } from '$lib/backCache';
 	import type { Candidate, Category } from '$lib/types';
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import AgentGlyph from '$lib/components/AgentGlyph.svelte';
@@ -28,12 +29,23 @@
 	function clearWarmTimers() {
 		for (const timer of warmTimers.splice(0)) clearTimeout(timer);
 	}
+	const backKey = () => `category|${session.profile?.id ?? ''}|${id}|${tab}`;
+	/** Drop cards locally (seen, blocked, disliked) and keep the Back cache in step. */
+	function dropItems(keep: (c: Candidate) => boolean) {
+		items = (items ?? []).filter(keep);
+		if (cat) toBackCache(backKey(), { cat, items });
+	}
 	async function loadItems() {
 		const seq = ++loadSeq, cid = id, profile = session.version;
 		const current = () => alive && seq === loadSeq && cid === id && profile === session.version;
 		clearWarmTimers();
-		items = null;
 		notFound = false;
+		// Back from a video: show what was there, so the scroll position restores in place (see backCache).
+		const key = backKey();
+		const back = fromBackCache<{ cat: Category; items: Candidate[] }>(key);
+		if (back) ({ cat, items } = back.value);
+		else items = null;
+		if (back?.reuse) return;
 		try {
 			const category = await api.category(cid);
 			if (!current()) return;
@@ -50,6 +62,7 @@
 			const result = await api.categoryFeed(cid, tab, { limit: 80 });
 			if (!current()) return;
 			items = result;
+			toBackCache(key, { cat, items: result });
 		} catch {
 			if (current()) items = [];
 			return;
@@ -81,7 +94,7 @@
 	async function markSeen(c: Candidate) {
 		try {
 			await api.markSeen(c.video.id);
-			items = (items ?? []).filter((x) => x.id !== c.id);
+			dropItems((x) => x.id !== c.id);
 			toast.success("Marked as seen. The AI won't suggest it again.");
 		} catch {
 			toast.error("Could not mark it as seen.");
@@ -95,7 +108,7 @@
 		if (!chId) return;
 		try {
 			await api.blockChannel(chId, name);
-			items = (items ?? []).filter((x) => !isVideo(x.video) || x.video.channel_id !== chId);
+			dropItems((x) => !isVideo(x.video) || x.video.channel_id !== chId);
 			toast.success(`No more from ${name}. The AI will skip that channel.`);
 		} catch {
 			toast.error(`Could not block ${name}.`);
@@ -105,7 +118,7 @@
 	function rateVideo(c: Candidate) {
 		dialogs.openFeedback({
 			videoId: c.video.id, categoryId: id, title: isVideo(c.video) ? c.video.title : undefined,
-			onDone: (rating) => { if (rating < 0) items = (items ?? []).filter((x) => x.video.id !== c.video.id); }
+			onDone: (rating) => { if (rating < 0) dropItems((x) => x.video.id !== c.video.id); }
 		});
 	}
 

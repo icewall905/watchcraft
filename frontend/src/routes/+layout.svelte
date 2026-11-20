@@ -29,6 +29,7 @@
 	import PlaybackPicker from '$lib/components/PlaybackPicker.svelte';
 	import { playback } from '$lib/stores/playback.svelte';
 	import { inAndroidApp, isHubPath, landingPath } from '$lib/navigation';
+	import { markNavigation } from '$lib/backCache';
 
 	let { children }: { children: Snippet } = $props();
 	// SvelteKit keeps a history index in history.state; back only pops entries this app created.
@@ -54,33 +55,9 @@
 		else goto('/', { replaceState: true });
 	};
 
-	// Back/forward scroll memory per history entry. SvelteKit restores scroll right after the page mounts, but feeds
-	// such as The Screen load their rows afterwards, so the page is still short and the position clamps to the top.
-	// Keep re-applying it while the content grows, until reached, the user scrolls, or a few seconds pass.
-	// Keyed by the entry being left; on popstate history.state already names the target, so track it ourselves.
-	const scrollMemory = new Map<number, number>();
-	let scrollEntry = histIndex();
-	let stopScrollRestore: (() => void) | null = null;
-	function restoreScroll(target: number) {
-		stopScrollRestore?.();
-		if (target <= 0) return;
-		const until = Date.now() + 10000;
-		let frame = 0;
-		const stop = () => { cancelAnimationFrame(frame); for (const e of ['wheel', 'touchstart', 'keydown', 'mousedown']) removeEventListener(e, stop, true); stopScrollRestore = null; };
-		for (const e of ['wheel', 'touchstart', 'keydown', 'mousedown']) addEventListener(e, stop, { capture: true, passive: true });
-		const step = () => {
-			if (Math.abs(window.scrollY - target) < 2 || Date.now() > until) return stop();
-			if (document.documentElement.scrollHeight - window.innerHeight >= target) window.scrollTo({ top: target, behavior: 'instant' });
-			frame = requestAnimationFrame(step);
-		};
-		stopScrollRestore = stop;
-		frame = requestAnimationFrame(step);
-	}
-
 	beforeNavigate((n) => {
 		navigationStartIndex = histIndex();
-		scrollMemory.set(scrollEntry, window.scrollY);
-		stopScrollRestore?.();
+		markNavigation(n.type);
 		if (!n.willUnload) nav.beginNavigation();
 	});
 
@@ -91,8 +68,6 @@
 		if (toPath?.startsWith('/watch/') && !fromPath?.startsWith('/watch/')) {
 			watchReturnIndex = n.from && histIndex() > navigationStartIndex ? navigationStartIndex : null;
 		} else if (!toPath?.startsWith('/watch/')) watchReturnIndex = null;
-		scrollEntry = histIndex();
-		if (n.type === 'popstate') restoreScroll(scrollMemory.get(scrollEntry) ?? 0);
 		const key = page.url.pathname + page.url.search;
 		if (n.type === 'goto' && fromPath === toPath) nav.setRouteKey(key);
 		else nav.setRoute(key);
