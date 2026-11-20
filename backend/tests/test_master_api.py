@@ -470,3 +470,50 @@ def test_overview_is_served_from_the_prebuilt_snapshot_and_previews_are_small(cl
     assert r.status_code == 200 and r.headers['content-type'] == 'image/webp' and 'max-age' in r.headers['cache-control']
     assert Image.open(io.BytesIO(r.content)).width == 480 and len(r.content) < len(buf.getvalue())
     assert client.get(f'/api/hub/items/{a}/assets/image').headers['content-type'] == 'image/png'  # original unchanged
+
+
+def test_prepared_frontpage_reads_only_visible_sections_and_queues_cold_start(client, monkeypatch):
+    from bt.hub import frontpage
+    from bt.hub.master import edition
+
+    lead = add(story=new_story(), final=95)
+    other = add(story=new_story(), final=80)
+    params = {'preview': 'true', 'prepared': 'true', 'stories': 0, 'reads': 0, 'memes': 0}
+    requests = []
+    monkeypatch.setattr(frontpage, 'request_refresh', requests.append)
+    cold = client.get('/api/hub/today', params=params).json()
+    assert cold['preparing'] and cold['sections'] == [] and requests == [1]
+    prepared = frontpage.build(1)
+    assert prepared['pages']
+
+    def must_not_build(*_):
+        raise AssertionError('the prepared request should not build an edition')
+
+    monkeypatch.setattr(edition, 'patch', must_not_build)
+    live = client.get('/api/hub/today', params=params).json()
+    assert not live['preparing']
+    assert entries(live, 'lead') == [lead]
+    assert entries(live, 'stories') == []
+    with session() as s:
+        assert s.exec(select(Edition)).one().shown_item_ids == [lead]
+    assert client.post(f'/api/hub/items/{lead}/state', json={'dismissed': True}).status_code == 200
+    stale = client.get('/api/hub/today', params=params).json()
+    assert stale['preparing'] and entries(stale, 'lead') == []
+    assert other not in entries(stale, 'stories')
+
+
+def test_prepared_overview_serves_stale_snapshot_and_requests_refresh(client, monkeypatch):
+    from bt.db import save_setting
+    from bt.hub import frontpage, master_api
+
+    snap = {'generated_at': 1, 'pages': {'wire': {'waiting': 2}}}
+    save_setting('frontpage_overview:1', snap)
+    requests = []
+    monkeypatch.setattr(frontpage, 'request_refresh', requests.append)
+
+    def must_not_build(*_):
+        raise AssertionError('the prepared request should not build an overview')
+
+    monkeypatch.setattr(master_api, 'build_overview', must_not_build)
+    assert client.get('/api/hub/today/overview?prepared=true').json() == snap
+    assert requests == [1]

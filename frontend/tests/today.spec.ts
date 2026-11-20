@@ -34,7 +34,7 @@ const overview = (): { generated_at: number; pages: Record<string, unknown> } =>
 	alerts: { waiting: 2, new_today: 1, previews: [preview(41, 'Price drop spotted', false)], groups: [] }
 } });
 const mockOverview = async (page: import('@playwright/test').Page, data: ReturnType<typeof overview> = overview()) => {
-	await page.route('**/api/hub/today/overview', route => route.fulfill({ json: data }));
+	await page.route(/\/api\/hub\/today\/overview(?:\?.*)?$/, route => route.fulfill({ json: data }));
 	await page.route('**/api/hub/items/*/assets/image*', route => route.fulfill({ body: PNG, contentType: 'image/png' }));
 };
 
@@ -97,8 +97,8 @@ test('Where to next opens from the last overview at once, then refreshes', async
 	await expect(page.getByRole('article', { name: 'The Wire' }).getByText('12 stories waiting')).toBeVisible();
 	expect(thumbs.every((u) => /\?w=(480|240|800)$/.test(u))).toBe(true);  // small previews, never full captures
 	await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some((k) => k.startsWith('wc-frontpage:')))).toBe(true);
-	await page.unroute('**/api/hub/today/overview');
-	await page.route('**/api/hub/today/overview', () => { /* never answers */ });
+	await page.unroute(/\/api\/hub\/today\/overview(?:\?.*)?$/);
+	await page.route(/\/api\/hub\/today\/overview(?:\?.*)?$/, () => { /* never answers */ });
 	await page.reload();
 	await expect(page.getByRole('article', { name: 'The Wire' }).getByText('12 stories waiting')).toBeVisible();
 });

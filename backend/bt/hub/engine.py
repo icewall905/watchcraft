@@ -762,11 +762,6 @@ def dispatch_due() -> None:
         log.exception('local capture dispatch failed')
     from . import shelf_maintenance
     shelf_maintenance.tick()
-    try:
-        from . import frontpage
-        frontpage.tick()
-    except Exception:  # noqa: BLE001 — Front Page pre-building never stops the scheduler
-        log.exception('front page snapshot failed')
     free = slots.free()
     if free <= 0:
         return

@@ -107,7 +107,7 @@
 		};
 		const timer = window.setInterval(() => {
 			clock = Date.now();
-			if (clock - lastRefresh >= (edition?.rerun && edition.rerun.requested_at > edition.rerun.completed_at ? 10_000 : 5 * 60_000)) void load(true);
+			if (clock - lastRefresh >= (edition?.preparing || curating ? 10_000 : lead && !edition?.intro ? 30_000 : 5 * 60_000)) void load(true);
 		}, 10_000);
 		window.addEventListener('focus', refresh);
 		document.addEventListener('visibilitychange', refresh);
@@ -160,8 +160,8 @@
 			{#if notice}<p class="notice" role="status">{notice}</p>{/if}
 			{#if error}
 				<div class="load-error" role="alert"><p>Today could not be loaded. {error}</p><button class="btn" use:focusable onclick={() => (revision++)}>Try again</button></div>
-			{:else if loading && !edition}
-				<p class="status" role="status">Gathering today's edition…</p>
+			{:else if (loading && !edition) || edition?.preparing}
+				<p class="status" role="status">{edition?.previous ? 'Showing the previous edition while today’s is prepared.' : "Gathering today's edition…"}</p>
 			{/if}
 		</header>
 		{#if lead}
@@ -175,7 +175,7 @@
 		{/if}
 	</div>
 
-	<Overview refresh={revision} exclude={lead ? itemHref(lead) : ''} />
+	<Overview refresh={revision + (edition?.updated_at ?? 0)} exclude={lead ? itemHref(lead) : ''} />
 
 	<footer class="edition-end">
 		{#if edition && !session.isChild}<SetAsideLink count={edition.set_aside} href="/today/set-aside" />{/if}

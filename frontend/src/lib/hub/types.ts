@@ -26,6 +26,7 @@ export type EditionSection =
 	| { key: 'briefings'; title: string; issue_ids: number[]; issues: { id: number; briefing_id: number; name: string; created_at: number; ai: boolean; excerpt: string }[] }
 	| { key: 'alerts'; title: string; count: number };
 export type TodayEdition = {
+	preparing?: boolean; previous?: boolean;
 	rerun?: { requested_at: number; completed_at: number };
 	day: string; built_at: number; updated_at: number; intro: string; intro_refs: CitationRef[];
 	sections: EditionSection[]; set_aside: number; curated: boolean;
