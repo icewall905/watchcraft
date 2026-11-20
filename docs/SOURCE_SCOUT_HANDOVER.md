@@ -19,6 +19,21 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — The Screen keeps scroll position on Back (`04fd5b6`, 2026-11-20)
+
+- Deployed `3f529ff..04fd5b6` (frontend only). Home and category pages keep the rows they last showed; a Back
+  visit (browser or player Back, also after autoplay) renders them at once, so the scroll position restores in
+  place. Mouse, touch and wheel cancel the nav engine's late focus restore. `d51d2bc`'s retry loop is gone.
+- `screen-scroll-restore.spec.ts` (desktop via player Back, phone, category page) fails on the old code and passes.
+  Full e2e: the remaining failures also fail on clean `d51d2bc` (27) or pass when rerun alone (5).
+- All four application services run `watchcraft:release-04fd5b6` (`sha256:eea79e5df909…`) with zero restarts;
+  public health 200, served UI contains the new chunk, Compose and environment hashes unchanged.
+- Backup at `/root/compose/watchcraft-backups/20261120-screen-scroll-04fd5b6`: online SQLite snapshot
+  (`quick_check` ok), previous source, `rollback.sh` with the previous service images. No schema change.
+- Pruned to the newest two deploy backups (`screen-scroll-04fd5b6`, `scroll-3f529ff`): removed the eleven
+  `20261119-*` dirs and `20261120-prepared-front-page-8594dbb` plus 32 older `watchcraft:rollback-*` tags
+  (`PRUNE-MANIFEST-20261120T165049Z.txt`).
+
 ## Deployment record — The Scroll playback controls (`3f529ff`, 2026-11-20)
 
 - Tap reveals the description and playback controls together. Four seconds of inactivity hides them.
