@@ -1344,7 +1344,7 @@ def write_settings(key: str, value: dict, request: Request, s: Session = Depends
             n = value.get(k, cur[k])
             if type(n) is not int or not lo <= n <= hi:
                 raise HTTPException(400, msg)
-        for k in ("autoplay_next", "preview_autoplay"):
+        for k in ("autoplay_next", "scroll_autoplay_next", "preview_autoplay"):
             if type(value.get(k, cur[k])) is not bool:
                 raise HTTPException(400, "Autoplay settings must be on or off")
     if key == "throttle" and value.get("proxy") == "********":

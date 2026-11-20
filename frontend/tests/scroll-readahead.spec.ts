@@ -96,6 +96,7 @@ test.describe('phone', () => {
 		await expect(page.getByLabel('Subtitles')).toBeVisible();
 		await page.waitForTimeout(600);
 		await page.screenshot({ path: `${shots}/scroll-player-phone.png` });
+		await page.locator('video').tap();
 		const box = await page.getByRole('button', { name: 'Next clip' }).boundingBox();
 		expect(box!.x + box!.width).toBeLessThanOrEqual(390);
 	});

@@ -635,9 +635,13 @@ def test_player_autoplay_and_preview_settings():
     c = client()
     pl = c.get('/api/settings').json()['player']
     assert (pl['autoplay_next'], pl['autoplay_delay_s'], pl['preview_autoplay'], pl['preview_limit_s']) == (True, 10, True, 0)
-    for bad in ({'autoplay_delay_s': -1}, {'autoplay_delay_s': 61}, {'autoplay_delay_s': 2.5},
+    assert pl['scroll_autoplay_next'] is True
+    for bad in ({'scroll_autoplay_next': 'off'}, {'autoplay_delay_s': -1}, {'autoplay_delay_s': 61}, {'autoplay_delay_s': 2.5},
                 {'preview_limit_s': 301}, {'preview_limit_s': '5'}, {'preview_autoplay': 'no'}, {'autoplay_next': 1}):
         assert c.put('/api/settings/player', json={**pl, **bad}).status_code == 400, bad
-    saved = c.put('/api/settings/player', json={**pl, 'autoplay_delay_s': 0, 'preview_autoplay': False, 'preview_limit_s': 15}).json()
+    saved = c.put('/api/settings/player', json={**pl, 'autoplay_delay_s': 0, 'scroll_autoplay_next': False, 'preview_autoplay': False, 'preview_limit_s': 15}).json()
     assert (saved['autoplay_delay_s'], saved['preview_autoplay'], saved['preview_limit_s']) == (0, False, 15)
-    assert c.get('/api/settings').json()['player']['preview_limit_s'] == 15
+    player = c.get('/api/settings').json()['player']
+    assert player['preview_limit_s'] == 15
+    assert player['scroll_autoplay_next'] is False
+    assert player['autoplay_next'] is True

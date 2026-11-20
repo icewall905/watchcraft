@@ -52,6 +52,7 @@
 	{#if d.value.autoplay_next}
 		<Stepper label="Autoplay next suggestion after" hint="Countdown before the next video starts. 0 plays it at once." min={0} max={60} step={1} bind:value={d.value.autoplay_delay_s} format={(v) => (v === 0 ? 'At once' : `${v} s`)} />
 	{/if}
+	<Toggle label="Autoplay next in The Scroll" hint="Play the next clip when the current one ends." bind:checked={d.value.scroll_autoplay_next} />
 	<Toggle label="Preview autoplay" hint="Play a silent preview when a thumbnail is hovered or focused." bind:checked={d.value.preview_autoplay} />
 	{#if d.value.preview_autoplay}
 		<Stepper label="Limit preview autoplay to" hint="Pause the preview after this long. 0 keeps it looping." min={0} max={300} step={5} bind:value={d.value.preview_limit_s} format={(v) => (v === 0 ? 'No limit' : `${v} s`)} />

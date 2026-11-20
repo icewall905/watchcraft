@@ -23,7 +23,10 @@
 	let switchingProfile = $state(false);
 	let items = $state<Short[]>([]), index = $state(0), loading = $state(true), error = $state(''), playbackError = $state('');
 	let nextOffset = $state<number | null>(null), videoEl = $state<HTMLVideoElement>(), needsTap = $state(false), progress = $state(0), busy = $state(false);
-	let showMeta = $state(false), muted = $state(true);
+	let showControls = $state(false), muted = $state(true), paused = $state(true);
+	let duration = $state(0), captionsVisible = $state(true);
+	let controlsTimer: ReturnType<typeof setTimeout> | undefined;
+	const CONTROLS_IDLE_MS = 4000;
  let captionState = $state<'waiting' | 'ready' | 'failed'>('waiting'), captionMessage = $state('Preparing subtitles…');
  let captionText = $state(''), cues: ReelCue[] = [], captionAbort: AbortController | null = null;
  let captionTimer: ReturnType<typeof setTimeout> | null = null;
@@ -59,6 +62,7 @@
 		}
 	});
 	function stop() {
+		hideControls();
   captionAbort?.abort(); captionAbort = null;
   if (captionTimer) clearTimeout(captionTimer);
   captionTimer = null; cues = []; captionText = ''; captionState = 'waiting';
@@ -84,7 +88,6 @@
 		pendingLoad = null;
 		cueCache = new Map();
 		if (preloader) { preloader.removeAttribute('src'); preloader.load(); }
-		showMeta = false;
 		error = '';
 		playbackError = '';
 	}
@@ -233,7 +236,7 @@
   stop();
   const request = generation, item = items[i], profile = session.version, profileId = session.profileId, epoch = selectionEpoch;
   const valid = () => alive && request === generation && profile === session.version && profileId === session.profileId && epoch === selectionEpoch && current?.video.id === item?.video.id;
-  needsTap = false; showMeta = false; playbackError = ''; progress = 0; muted = true;
+  needsTap = false; playbackError = ''; progress = 0; duration = 0; muted = true; paused = true;
   captionMessage = 'Preparing subtitles…';
   await tick();
   if (!valid() || !item || !videoEl) return;
@@ -299,7 +302,7 @@
 		void api.saveHistory({ video_id: item.video.id, category_id: item.category_id, position_s: position, duration_s: duration, finished: duration > 0 && position >= duration - 1 }).catch(() => {
 		});
 	}
-	async function go(delta: number) {
+	async function go(delta: number, savePosition = true) {
 		if (!selected)
 			return;
 		const action = ++navigation, origin = current?.video.id, next = index + delta;
@@ -312,7 +315,7 @@
 			if (!alive || action !== navigation || origin !== current?.video.id || next >= items.length)
 				return;
 		}
-		record();
+		if (savePosition) record();
 		index = next;
 		void play(index);
 	}
@@ -374,14 +377,51 @@
 				busy = false;
 		}
 	}
+	function hideControls() {
+		clearTimeout(controlsTimer);
+		showControls = false;
+	}
+	function keepControlsVisible() {
+		clearTimeout(controlsTimer);
+		showControls = true;
+		controlsTimer = setTimeout(hideControls, CONTROLS_IDLE_MS);
+	}
 	function onStageClick() {
-		showMeta = !showMeta;
-		if (captionState === 'ready' && activeId === current?.video.id && videoEl?.paused)
-			videoEl.play().catch(() => {
-			});
+		if (showControls) hideControls();
+		else keepControlsVisible();
+	}
+	async function togglePlayback() {
+		const el = videoEl;
+		if (!el || !current || activeId !== current.video.id) return;
+		keepControlsVisible();
+		if (!el.paused && !el.ended) {
+			el.pause();
+			return;
+		}
+		const request = generation;
+		try {
+			await el.play();
+			if (request === generation) needsTap = false;
+		} catch {
+			if (request === generation) needsTap = true;
+		}
+	}
+	function onDurationChange() {
+		const value = videoEl?.duration ?? 0;
+		duration = Number.isFinite(value) && value > 0 ? value : 0;
+		onTime();
+	}
+	function seek(position: number) {
+		if (!videoEl || !current || activeId !== current.video.id || !duration) return;
+		videoEl.currentTime = Math.max(0, Math.min(duration, position));
+		onTime();
+		keepControlsVisible();
 	}
 	function onKey(e: KeyboardEvent) {
 		if (!selected)
+			return;
+		if (showControls) keepControlsVisible();
+		if ((e.target as HTMLElement)?.matches('input[type="range"]') && e.key.startsWith('Arrow'))
 			return;
 		if (e.key === 'ArrowDown' || e.key === 'j') {
 			e.preventDefault();
@@ -395,7 +435,7 @@
 			if ((e.target as HTMLElement)?.closest('button,a,input,select,textarea'))
 				return;
 			e.preventDefault();
-			showMeta = !showMeta;
+			if (current) onStageClick();
 		}
 		else if (e.key === 'Escape') {
 			e.preventDefault();
@@ -421,14 +461,14 @@
 	function onTime() {
 		if (videoEl && activeId === current?.video.id) {
    updateCaption(videoEl.currentTime);
-			progress = videoEl.duration > 0 ? Math.min(1, videoEl.currentTime / videoEl.duration) : 0;
+			progress = duration ? Math.min(1, videoEl.currentTime / duration) : 0;
   }
 	}
 	function onEnded() {
-		if (activeId === current?.video.id) {
-			record();
-			void go(1);
-		}
+		if (!current || activeId !== current.video.id) return;
+		paused = true;
+		record();
+		if (session.settings?.player.scroll_autoplay_next !== false) void go(1, false);
 	}
 	let offRaw: (() => void) | null = null;
 	onMount(() => {
@@ -453,13 +493,15 @@
 	});
 </script>
 <svelte:head><title>The Scroll · The Hub</title></svelte:head>
-<div class="feed" class:playing={!!selected} role="region" aria-label="Video feed" ontouchstart={onTouchStart} ontouchend={onTouchEnd} ontouchcancel={()=>touchStart=null}>
+<div class="feed" class:playing={!!selected} role="region" aria-label="Video feed" ontouchstart={onTouchStart} ontouchend={onTouchEnd} ontouchcancel={()=>touchStart=null} onpointerdown={()=>{if(showControls) keepControlsVisible();}}>
+	{#if !current || captionState !== 'ready' || needsTap || playbackError || showControls}
 	<nav class="shorts-navigation" aria-label="Feeds navigation">
 		<a class="btn" href="/" use:focusable>← Back to The Hub</a>
 		{#if selected}<button class="btn" use:focusable onclick={picker}>← Feeds</button>
 			<span class="now-feed" aria-hidden="true">{selected.emoji} {selected.name}{#if items.length}<span class="count">{index + 1} / {items.length}{nextOffset !== null ? '+' : ''}</span>{/if}</span>{/if}
 		{#if current}<button class="btn" disabled={captionState !== 'ready'} use:focusable onclick={()=>{if(videoEl){muted=!muted;videoEl.muted=muted;}}}>{muted ? 'Unmute' : 'Mute'}</button>{/if}
 	</nav>
+	{/if}
 	{#if !selected}
 		<div class="picker">
 			<header class="picker-head">
@@ -513,21 +555,31 @@
 		{:else if !current}<div class="state"><span class="state-emoji" aria-hidden="true">{selected.emoji}</span><h1>{selected.name}</h1>{#if error}<p role="alert" class="err">{error}</p>{:else}<p>No local clips ready yet.</p>{#if !session.settings?.cache.enabled}<p class="muted">Enable Storage → Offline cache in Settings so accepted clips can download.</p>{/if}{#if !session.settings?.agent.enabled}<p class="muted">Enable the AI agent in Settings to collect new clips.</p>{/if}<p class="muted">{#if selectedProvisional}Refresh once local downloads finish.{:else}{selected.pending_count} waiting for local files{selected.error_count ? `; ${selected.error_count} download errors` : ''}. Refresh once downloads finish.{/if}</p>{/if}<div class="row"><button class="btn primary" use:focusable onclick={retry}>Refresh availability</button><a class="btn" href={`/settings?tab=feeds&edit=${selected.id}`} use:focusable>Edit feed</a></div></div>
 		{:else}
 		{#key current.video.id}<div class="backdrop" aria-hidden="true" style:background-image={`url(${api.thumb(current.video.id)})`}></div>{/key}
-		<video bind:this={videoEl} class="stage" muted playsinline preload="auto" poster={api.thumb(current.video.id)} ontimeupdate={onTime} onended={onEnded} onerror={()=>{if(activeId===current?.video.id)playbackError='This local file is unavailable or cannot be played. Refresh availability to check stored clips.';}} onclick={onStageClick}></video>
+		<video bind:this={videoEl} class="stage" muted playsinline preload="auto" poster={api.thumb(current.video.id)} ontimeupdate={onTime} ondurationchange={onDurationChange} onplay={()=>paused=false} onpause={()=>paused=true} onended={onEnded} onerror={()=>{if(activeId===current?.video.id)playbackError='This local file is unavailable or cannot be played. Refresh availability to check stored clips.';}} onclick={onStageClick}></video>
 		{#if captionState !== 'ready'}<div class="caption-status" role={captionState === 'failed' ? 'alert' : 'status'}>{#if captionState === 'waiting'}<span class="spinner" aria-hidden="true"></span>{/if}<p>{captionMessage}</p><div class="row">{#if captionState === 'failed'}<button class="btn primary" use:focusable onclick={()=>play(index, true)}>Retry captions</button><a class="btn" href="/settings?tab=player" use:focusable>Caption settings</a>{/if}<button class="btn" use:focusable onclick={()=>go(1)}>Skip to next clip</button></div></div>{/if}
-		{#if captionState === 'ready'}<div class="captions" class:details={showMeta} aria-label="Subtitles"><span>{captionText}</span></div>{/if}
+		{#if captionState === 'ready' && captionsVisible}<div class="captions" class:details={showControls} aria-label="Subtitles"><span>{captionText}</span></div>{/if}
 		{#if playbackError}<div class="playback-error" role="alert"><p>{playbackError}</p><button class="btn primary" use:focusable onclick={retry}>Refresh availability</button></div>
 		{:else if error}<div class="playback-error" role="alert"><p>{error}</p><button class="btn" use:focusable onclick={()=>go(1)}>Retry next short</button></div>
-		{:else if needsTap}<button class="tap" use:focusable onclick={()=>videoEl?.play().then(()=>needsTap=false).catch(()=>{})}><span class="tap-icon">▶ Tap to play</span></button>{/if}
-		<div class="bar" aria-hidden="true"><span style:width={`${progress*100}%`}></span></div>
+		{:else if needsTap}<button class="tap" use:focusable onclick={togglePlayback}><span class="tap-icon">▶ Tap to play</span></button>{/if}
+		{#if showControls}
 		<div class="scrim" aria-hidden="true"></div>
-		<div class="meta" class:show={showMeta}><p class="small muted">{selected.name} · Stored locally</p><h1>{current.video.title}</h1><p class="small muted">{current.video.channel_name||current.video.channel_id}{current.score!==null ? ` · ${current.score}% match` : ''}</p>{#if current.summary}<p class="small why">{current.summary}</p>{/if}</div>
+		<div class="meta"><p class="small muted">{selected.name} · Stored locally</p><h1>{current.video.title}</h1><p class="small muted">{current.video.channel_name||current.video.channel_id}{current.score!==null ? ` · ${current.score}% match` : ''}</p>{#if current.summary}<p class="small why">{current.summary}</p>{/if}</div>
 		<div class="acts">
 			<button class="btn round" aria-label="More like this" disabled={busy} use:focusable={{group:'shorts',onSelect:()=>rate(1)}}>👍</button>
 			<button class="btn round" aria-label="Not for me" disabled={busy} use:focusable={{group:'shorts',onSelect:()=>rate(-1)}}>👎</button>
 			<button class="btn round" aria-label="Next clip" disabled={nextOffset === null && index >= items.length - 1} use:focusable={{group:'shorts',onSelect:()=>go(1)}}>⌄</button>
 		</div>
-		<p class="hint small faint">Swipe up or press ↓ for the next clip · Tap for details</p>
+		<div class="transport" role="group" aria-label="Playback controls">
+			<button class="btn" aria-label="Previous clip" disabled={index === 0} use:focusable={{group:'shorts',onSelect:()=>go(-1)}}>↑</button>
+			<button class="btn" disabled={captionState !== 'ready' || !!playbackError} use:focusable onclick={togglePlayback}>{paused ? 'Play' : 'Pause'}</button>
+			<input aria-label="Seek" type="range" min="0" max={duration} step="0.1" value={progress * duration} disabled={!duration || !!playbackError} oninput={(event) => seek(event.currentTarget.valueAsNumber)} use:focusable={{ onKey: (key) => {
+				if (key !== 'left' && key !== 'right') return false;
+				seek((videoEl?.currentTime ?? 0) + (key === 'left' ? -1 : 1));
+				return true;
+			} }} />
+			<button class="btn" aria-label="Closed captions" aria-pressed={captionsVisible} use:focusable onclick={()=>captionsVisible=!captionsVisible}>CC</button>
+		</div>
+		{/if}
 		{/if}
 	{/if}
 </div>
@@ -591,7 +643,7 @@
 	/* player */
 	.backdrop { position:absolute; inset:-8%; background-size:cover; background-position:center; filter: blur(40px) brightness(.45) saturate(1.3); transform: scale(1.1); animation: fade .35s ease both; }
 	@keyframes fade { from { opacity: 0; } }
-	.stage { position:relative; width: 100%; height: 100%; object-fit: contain; background: transparent; }
+	.stage { position:absolute; inset:0; width: 100%; height: 100%; object-fit: contain; background: transparent; }
 	.scrim { position:absolute; left:0; right:0; bottom:0; height:45%; z-index:1; pointer-events:none; background:linear-gradient(transparent, rgba(0,0,0,.7)); }
 	.caption-status { position:absolute; z-index:3; display:grid; justify-items:center; gap:.75rem; padding:1.5rem; max-width: min(90%, 36rem); text-align:center; background:var(--overlay-surface); border:1px solid var(--line); color:#fff; border-radius:var(--r-lg); box-shadow:var(--shadow-lg); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
 	.caption-status p { margin:0; }
@@ -603,18 +655,16 @@
 	.tap { position: absolute; inset: 0; z-index: 1; display: grid; place-content: center; justify-items:center; gap: .75rem; background: rgba(5, 4, 12, .5); color: #fff; border: 0; font: inherit; font-size: 1.1rem; font-weight:600; cursor: pointer; }
 	.tap-icon { padding:.85rem 1.6rem; border-radius:var(--r-pill); background:var(--accent); color:var(--accent-ink); font-size:1.15rem; font-weight:700; box-shadow:0 0 40px var(--accent-glow); }
 	:global(html[data-modality='keys']) .tap:focus { position: absolute; z-index: 1; }
-	.meta, .acts, .hint, .bar { z-index: 2; }
-	.bar { position: absolute; top: 0; left: 0; right: 0; height: 3px; background: rgba(255, 255, 255, .15); z-index:6; }
-	.bar span { display: block; height: 100%; background: var(--accent); transition: width .2s linear; box-shadow:0 0 8px var(--accent-glow); }
-	.meta { position: absolute; left: 0; right: 5rem; bottom: 5.5rem; padding: 0 1.2rem; display: grid; gap: .3rem; text-shadow: 0 1px 6px rgba(0, 0, 0, .9); opacity: 0; visibility: hidden; transform: translateY(.5rem); transition: opacity .18s ease, transform .18s ease; }
-	.meta.show { opacity: 1; visibility: visible; transform:none; max-height:35vh; overflow-y:auto; }
+	.meta, .acts, .transport { z-index: 2; }
+	.meta { position: absolute; left: 0; right: 5rem; bottom: 5.5rem; padding: 0 1.2rem; display: grid; gap: .3rem; text-shadow: 0 1px 6px rgba(0, 0, 0, .9); max-height:35vh; overflow-y:auto; }
 	.meta h1 { margin: 0; font-size: clamp(1.1rem, 1vw + .8rem, 1.6rem); line-height: 1.3; color: #fff; }
 	.meta p { margin:0; }
 	.meta .muted { color: rgba(255, 255, 255, .75); }
 	.why { color: rgba(255, 255, 255, .85); max-height: 4.5rem; overflow: hidden; }
 	.acts { position: absolute; right: max(1rem, env(safe-area-inset-right, 0px)); bottom: 5.5rem; display: grid; gap: .75rem; }
 	.btn.round { width: 3.25rem; height: 3.25rem; padding:0; border-radius: 50%; display: grid; place-items: center; font-size: 1.25rem; background: rgba(20, 16, 40, .62); border: 1px solid var(--line-strong); color: #fff; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
-	.hint { position: absolute; left: 0; right: 0; bottom: calc(1rem + env(safe-area-inset-bottom, 0px)); margin:0; text-align: center; color: rgba(255, 255, 255, .55); }
+	.transport { position:absolute; left:max(1rem, env(safe-area-inset-left, 0px)); right:max(1rem, env(safe-area-inset-right, 0px)); bottom:calc(1rem + env(safe-area-inset-bottom, 0px)); display:flex; align-items:center; gap:.5rem; }
+	.transport input { flex:1; min-width:0; accent-color:var(--accent); }
+	.transport [aria-pressed="true"] { background:var(--accent); color:var(--accent-ink); }
 	@media (max-width: 760px) { .meta { bottom: 6.5rem; } .acts { bottom: 6.5rem; } }
-	@media (min-aspect-ratio: 4/3) { .stage { width: auto; max-width:100%; aspect-ratio: 9 / 16; } }
 </style>
