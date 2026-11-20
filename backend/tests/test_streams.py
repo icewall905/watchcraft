@@ -361,3 +361,50 @@ def test_live_search_mpd_proxy():
     assert len(body) == 1024
     assert body[4:8] == b"ftyp"
     assert resp.headers["content-range"].startswith("bytes 0-1023/")
+
+
+# ---------------------------------------------------------------- freshly minted stream URLs
+
+def test_failed_check_is_not_cached_and_fresh_info_waits(monkeypatch):
+    """googlevideo refuses a just-minted URL for a few seconds: a failed check must be retried later."""
+    answers = iter([None, b"x"])
+    monkeypatch.setattr(streams, "_get_head", lambda *a: next(answers))
+    monkeypatch.setattr("bt.db.log_yt_request", lambda *a, **k: None)
+    f = {"url": "https://rr1.googlevideo.com/videoplayback?itag=137&fresh=1", "format_id": "137"}
+    assert streams.check_stream(f) is False
+    assert streams.check_stream(f) is True  # asked again, not answered from a cached failure
+    assert streams.check_stream(f) is True
+    import time
+    assert 9 < streams.settle_wait({"epoch": time.time()}) <= streams.URL_SETTLE_S
+    assert streams.settle_wait({"epoch": time.time() - 60}) == 0
+
+
+def test_manifest_waits_out_fresh_urls_before_giving_up(monkeypatch):
+    from bt.api import video
+    import time
+    calls, slept, dropped = [], [], []
+    fresh = {"id": "dQw4w9WgXcQ", "epoch": time.time()}
+
+    def build(info, *a):
+        calls.append(info)
+        if len(calls) == 1:
+            raise ValueError("no DASH formats with byte ranges")
+        return "<?xml?>\n<MPD/>"
+
+    async def nap(s):
+        slept.append(s)
+
+    async def yt(fn, *a):
+        return fresh
+    monkeypatch.setattr(video.streams, "build_mpd", build)
+    monkeypatch.setattr(video.asyncio, "sleep", nap)
+    monkeypatch.setattr(video, "_yt", yt)
+    monkeypatch.setattr(video.ytdl, "cache_drop", dropped.append)
+    monkeypatch.setattr(video.ytdl, "_is_live", lambda i: False)
+
+    async def prefs(*a):
+        return {}
+    monkeypatch.setattr(video, "_db", prefs)
+    r = asyncio.run(video.manifest("dQw4w9WgXcQ", None, None, pid=1))
+    assert r.status_code == 200 and len(calls) == 2 and calls[1] is fresh
+    assert dropped == [] and slept and slept[0] > 9  # same URLs, after they settled

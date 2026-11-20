@@ -32,7 +32,7 @@
 		<button class="btn" disabled={!!busy} use:focusable={{ group: 'scr-top', onSelect: () => run('refresh', () => playback.refresh()) }}>Refresh</button>
 	{/snippet}
 	{#if !playback.targets.length}
-		<p class="muted">No screens are registered yet. Open WatchCraft on a TV or media center, choose Play on and register it there.</p>
+		<p class="muted">No screens are registered yet. Open The Hub on a TV or media center, choose Play on and register it there.</p>
 	{:else}
 		<div class="list">
 			{#each playback.targets as t (t.id)}

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import KidSafeBadge from '$lib/hub/KidSafeBadge.svelte';
 	import '@fontsource-variable/inter';
 	import '@fontsource-variable/newsreader';
 	import '../app.css';
@@ -27,7 +28,7 @@
 	import { applyTheme } from '$lib/themes';
 	import PlaybackPicker from '$lib/components/PlaybackPicker.svelte';
 	import { playback } from '$lib/stores/playback.svelte';
-	import { isHubPath } from '$lib/navigation';
+	import { inAndroidApp, isHubPath, landingPath } from '$lib/navigation';
 
 	let { children }: { children: Snippet } = $props();
 	// SvelteKit keeps a history index in history.state; back only pops entries this app created.
@@ -37,6 +38,8 @@
 	let navigationStartIndex = baseIndex;
 
 	nav.install();
+	// Remote-style keys (arrows move focus, Backspace = Back) only in TV mode unless changed under Appearance.
+	$effect(() => nav.setRemote(deviceMode.remote));
 	nav.backFallback = () => {
 		if (page.url.pathname === '/') return;
 		if (page.url.pathname.startsWith('/watch/')) {
@@ -68,7 +71,11 @@
 		else nav.setRoute(key);
 	});
 
+	// Public share links (/s/<token>) and invite links (/join/<token>) render alone: no sign-in, profile, agents or app chrome.
+	const publicShare = page.url.pathname.startsWith('/s/') || page.url.pathname.startsWith('/join/');
+
 	onMount(() => {
+		if (publicShare) return;
 		deviceMode.init();
 		session.init();
 		agent.start();
@@ -86,13 +93,26 @@
 			goto('/welcome', { replaceState: true });
 		}
 	});
+	// Landing page: only when this browser opens at plain `/`; later visits to The Screen stay put.
+	let landingPending = !publicShare && page.url.pathname === '/' && !page.url.search;
+	$effect(() => {
+		if (!landingPending || !session.ready) return;
+		if (session.needsLogin || session.choosing) return;
+		landingPending = false;
+		const target = landingPath(deviceMode.landing);
+		if (target === '/' || inAndroidApp() || page.url.pathname !== '/' || session.settings?.setup?.completed === false) return;
+		if (!session.canOpen(target)) return;
+		goto(target, { replaceState: true });
+	});
 
 	// Calm editorial styling (tokens.css [data-area='hub']) applies only to non-video routes.
 	const hubArea = $derived(isHubPath(page.url.pathname) || ['/settings', '/stats', '/agent', '/welcome'].some((p) => page.url.pathname === p || page.url.pathname.startsWith(p + '/')));
-	const fullscreen = $derived(page.url.pathname.startsWith('/watch/') || page.url.pathname === '/shorts');
+	const fullscreen = $derived(page.url.pathname.startsWith('/watch/') || page.url.pathname.startsWith('/jellyfin/play/') || page.url.pathname === '/shorts');
 </script>
 
-{#if !session.ready}
+{#if publicShare}
+	{@render children()}
+{:else if !session.ready}
 	<div class="splash"><img src="/logo.png" alt="" width="96" height="96" /></div>
 {:else if session.needsLogin}
 	<Login />
@@ -100,11 +120,18 @@
 	{#if !session.profile?.pin_locked}
 		{#if !fullscreen}<Sidebar /><MobileNav />{/if}
 		<div class:desktop={!fullscreen && deviceMode.mode === 'desktop'}>
-		{#if !fullscreen}<TopBar />{:else if page.url.pathname.startsWith('/watch/')}<PlaybackPicker floating />{/if}
+		{#if !fullscreen}<TopBar />{:else if page.url.pathname.startsWith('/watch/')}<PlaybackPicker floating />{:else if page.url.pathname.startsWith('/jellyfin/play/')}<PlaybackPicker trigger={false} />{/if}
 		<main class:fullscreen data-area={hubArea ? 'hub' : undefined}>
-			{#if !session.hubAllowed && isHubPath(page.url.pathname)}
-				<div class="page"><h1>Hub is unavailable for this profile</h1><p>Discovery, external sources and research are disabled. Switch to an adult profile to use the Hub.</p><a class="btn primary" href="/tv" use:focusable>Back to TV</a></div>
+			{#if !session.canOpen(page.url.pathname)}
+				{#if session.isChild && !isHubPath(page.url.pathname)}
+				<div class="page"><h1>Switched off</h1><p>A grown-up has switched this off for your profile. Ask them if you would like to use it.</p><a class="btn primary" href="/tv" use:focusable>Back to The Screen</a></div>
+				{:else if session.isChild}
+				<div class="page"><h1>Not available on kid profiles</h1><p>This part of The Hub is for grown-ups. Ask a grown-up if you need it.</p><a class="btn primary" href="/today" use:focusable>Back to Today</a></div>
+				{:else}
+				<div class="page"><h1>Discovery is unavailable for this profile</h1><p>Discovery, external sources and research are disabled. Switch to an adult profile to use the Hub.</p><a class="btn primary" href="/tv" use:focusable>Back to TV</a></div>
+				{/if}
 			{:else}{#key session.version}
+				{#if session.isChild && isHubPath(page.url.pathname)}<div class="kid-safe-bar"><KidSafeBadge /></div>{/if}
 				{@render children()}
 			{/key}{/if}
 		</main>

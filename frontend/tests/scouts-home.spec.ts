@@ -50,3 +50,12 @@ test('Today preview respects the profile video-row position', async ({ page, req
   }
  } finally { await request.patch(`/api/profiles/${profile.id}`, { data: { prefs: profile.prefs } }); }
 });
+
+
+test('a Mood Board curator links to its image boards', async ({page,request}) => {
+ const profile=(await(await request.get('/api/profiles')).json())[0];
+ await request.patch(`/api/profiles/${profile.id}`,{data:{prefs:{...profile.prefs,scouts_home:true}}});
+ await page.route('**/api/hub/team',r=>r.fulfill({json:{limit:1,running:0,waiting:0,journal:[],agents:[{key:'moodboard-9',kind:'moodboard',id:9,name:'Homelab setups',icon:'🖼️',color:'#fff',mission:'Server racks',status:'waiting',enabled:true,next_run:0}]}}));
+ try {await freshPage(page,'/');const card=page.getByRole('link',{name:/Homelab setups/});await expect(card).toHaveAttribute('href','/boards');await expect(card).toContainText('Visual curation queued');}
+ finally {await request.patch(`/api/profiles/${profile.id}`,{data:{prefs:profile.prefs}});}
+});

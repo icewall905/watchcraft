@@ -162,9 +162,10 @@ def _meme_story(s: Session, pid: int, since: float, curator_id: int | None) -> l
     return out[:1]
 
 
-def generate(s: Session, pid: int, since: float, curator_id: int | None = None) -> list[dict]:
-    """Real notable sequences from persisted data, newest first, bounded to five."""
-    all_stories = [*_alert_story(s, pid, since, curator_id), *_research_story(s, pid, since, curator_id),
+def generate(s: Session, pid: int, since: float, curator_id: int | None = None, kid: bool = False) -> list[dict]:
+    """Real notable sequences from persisted data, newest first, bounded to five. A child's report
+    leaves out meme stories (their names and examples are not kid-checked)."""
+    all_stories = [*([] if kid else _alert_story(s, pid, since, curator_id)), *_research_story(s, pid, since, curator_id),
                    *_scout_story(s, pid, since, curator_id), *_run_stories(s, pid, since, curator_id),
-                   *_meme_story(s, pid, since, curator_id)]
+                   *([] if kid else _meme_story(s, pid, since, curator_id))]
     return sorted(all_stories, key=lambda x: x.get('at') or since, reverse=True)[:5]

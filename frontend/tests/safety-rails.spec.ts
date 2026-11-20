@@ -1,0 +1,50 @@
+import { test, expect } from '@playwright/test';
+
+test('parental controls: a grown-up switches features and writes safety rails per child', async ({ page, request }) => {
+	await request.put('/api/settings/setup', { data: { completed: true } });
+	const admin = (await (await request.get('/api/profiles')).json())[0];
+	const h = { 'X-Profile-Id': String(admin.id) };
+	const hadPin = admin.pin_required;
+	if (!hadPin) await request.patch(`/api/profiles/${admin.id}`, { headers: h, data: { pin: '4826' } });
+	const older = await (await request.post('/api/profiles', { headers: h, data: { name: 'Rails eleven', role: 'child' } })).json();
+	const younger = await (await request.post('/api/profiles', { headers: h, data: { name: 'Rails eight', role: 'child' } })).json();
+	expect(younger.controls.screen).toBe(true);
+	expect(younger.controls.boards).toBe(false); // locked down by default
+	await page.context().request.post(`/api/profiles/${admin.id}/unlock`, { data: { pin: '4826' } });
+	await page.addInitScript(id => localStorage.setItem('bt.profile', String(id)), admin.id);
+	await page.goto('/settings?tab=profiles');
+	await page.locator('.item').filter({ hasText: 'Rails eight' }).getByRole('button', { name: 'Edit', exact: true }).click();
+	await page.getByRole('button', { name: 'Parental controls and safety rails' }).click();
+	await expect(page.getByRole('dialog', { name: /Parental controls: Rails eight/ })).toBeVisible();
+	await page.getByRole('switch', { name: /^Create and edit playlists/ }).click();
+	await page.getByRole('switch', { name: /^The Boards/ }).click();
+	await page.getByLabel('Safety rails (optional)').fill('He is 8. No battles or monsters.');
+	await page.screenshot({ path: 'screenshots/parental-controls.png' });
+	await page.getByRole('button', { name: 'Save', exact: true }).last().click();
+	await expect(page.getByRole('dialog', { name: /Parental controls/ })).toHaveCount(0);
+	const after = await (await request.get('/api/profiles', { headers: h })).json();
+	const y = after.find((p: { id: number }) => p.id === younger.id);
+	expect(y.safety_rails).toBe('He is 8. No battles or monsters.');
+	expect(y.controls).toMatchObject({ playlists_edit: true, boards: true, yt_search: false, commons: false });
+	expect(after.find((p: { id: number }) => p.id === older.id).controls.boards).toBe(false);
+	// The child: The Boards in the menu, The Commons and live search gone and blocked.
+	const kid = { 'X-Profile-Id': String(younger.id) };
+	expect((await request.get('/api/search?q=cats', { headers: kid })).status()).toBe(403);
+	expect((await request.put(`/api/profiles/${younger.id}/parental`, { headers: kid, data: { controls: { yt_search: true } } })).status()).toBe(403);
+	const child = await page.context().newPage();
+	await child.addInitScript(id => localStorage.setItem('bt.profile', String(id)), younger.id);
+	await child.goto('/tv');
+	const nav = child.getByRole('navigation', { name: 'Main', exact: true });
+	await expect(nav.locator('a[href="/boards"]')).toHaveCount(1);
+	await expect(nav.locator('a[href="/common-room"]')).toHaveCount(0);
+	await expect(nav.locator('a[href="/shorts"]')).toHaveCount(0);
+	await child.waitForTimeout(1500);
+	await expect(child.getByText('A grown-up has switched this off')).toHaveCount(0);
+	await child.screenshot({ path: 'screenshots/parental-child-nav.png' });
+	await child.goto('/search?q=cats');
+	await expect(child.getByRole('heading', { name: 'Switched off' })).toBeVisible();
+	await child.close();
+	await request.delete(`/api/profiles/${older.id}`, { headers: h });
+	await request.delete(`/api/profiles/${younger.id}`, { headers: h });
+	if (!hadPin) await request.patch(`/api/profiles/${admin.id}`, { headers: h, data: { pin: '' } });
+});

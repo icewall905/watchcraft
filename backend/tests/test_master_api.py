@@ -1,6 +1,7 @@
 """Master curator P5: the edition, set-aside review, overrules, stories, explanations and curated feeds."""
 import time
 
+import pytest
 from sqlmodel import select
 
 from test_curation import client  # noqa: F401  (isolated DB/API fixture)
@@ -19,7 +20,9 @@ def add(type='news', tier='feature', final=70.0, pid=1, story=None, title=None, 
         s.add(it); s.flush()
         s.add(CuratorDiscovery(curator_id=1, item_id=it.id, profile_id=pid, score=60))
         if type == 'meme':
-            s.add(MemeExample(item_id=it.id))
+            it.meta = {'community': 'r/memes'}
+            s.add(it)
+            s.add(MemeExample(item_id=it.id, has_media=True))
         if story:
             s.add(StoryItem(item_id=it.id, story_id=story))
         if verdict:
@@ -63,6 +66,18 @@ def test_today_renders_the_edition_and_remembers_what_was_shown(client):
         edition.patch(s, 1)
     again = client.get('/api/hub/today').json()
     assert entries(again, 'lead') == [lead] and entries(again, 'stories') == [better]
+
+
+def test_reading_or_dismissing_an_entry_removes_it_from_today(client):
+    keep = add(title='Still here')
+    read = add(title='Already read')
+    gone = add(title='Not interested')
+    shown = {e['item_id'] for sec in client.get('/api/hub/today').json()['sections'] for e in sec.get('entries', [])}
+    assert {keep, read, gone} <= shown
+    client.post(f'/api/hub/items/{read}/state', json={'read': True})
+    client.post(f'/api/hub/items/{gone}/state', json={'dismissed': True})
+    shown = {e['item_id'] for sec in client.get('/api/hub/today').json()['sections'] for e in sec.get('entries', [])}
+    assert keep in shown and read not in shown and gone not in shown
 
 
 def test_citations_resolve_only_to_items_the_profile_can_see(client):
@@ -309,23 +324,196 @@ def test_today_expands_existing_edition_from_kept_articles_without_losing_delive
     lead = add(story=new_story(), final=90)
     first = client.get('/api/hub/today').json()
     assert entries(first, 'lead') == [lead]
-    kept = {add(story=new_story(), tier='keep', title=f'Kept report {n}') for n in range(35)}
+    kept = {add(story=new_story(), tier='keep', title=f'Kept report {n}') for n in range(90)}
     expanded = client.get('/api/hub/today').json()
     assert entries(expanded, 'lead') == [lead]
-    assert len(entries(expanded, 'stories')) == 29
+    assert len(entries(expanded, 'stories')) == 90
     assert set(entries(expanded, 'stories')).issubset(kept)
     again = client.get('/api/hub/today').json()
     assert entries(again, 'stories') == entries(expanded, 'stories')
 
 
 def test_today_preview_does_not_consume_hidden_entries_until_expanded(client):
-    for n in range(35):
+    for n in range(90):
         add(story=new_story(), tier='keep', title=f'Preview story {n}')
     result = client.get('/api/hub/today?preview=true').json()
-    assert len(entries(result, 'stories')) == 29
+    assert len(entries(result, 'stories')) == 89
     initial = set(entries(result, 'lead') + entries(result, 'stories')[:8])
     with session() as s:
         assert set(s.exec(select(Edition)).one().shown_item_ids) == initial
-    expanded = client.get('/api/hub/today?preview=true&stories=29').json()
+    expanded = client.get('/api/hub/today?preview=true&stories=36').json()
     with session() as s:
-        assert set(s.exec(select(Edition)).one().shown_item_ids) == set(entries(expanded, 'lead') + entries(expanded, 'stories'))
+        assert set(s.exec(select(Edition)).one().shown_item_ids) == set(entries(expanded, 'lead') + entries(expanded, 'stories')[:36])
+
+
+# ---------- today: best of the other pages, regenerate
+
+def test_widely_covered_story_outranks_a_slightly_better_single_source_one(client):
+    single = add(story=new_story(), final=80, title='One outlet')
+    big = new_story()
+    covered = add(story=big, final=76, title='Everyone reports it')
+    add(story=big, tier='keep', final=60)
+    add(story=big, tier='keep', final=60)
+    today = client.get('/api/hub/today').json()
+    assert entries(today, 'lead') == [covered]
+    assert single in entries(today, 'stories')
+    assert today['sections'][0]['entries'][0]['sources'] == 3
+
+
+def test_today_highlights_recent_briefing_issues_and_research_teasers(client):
+    from bt.hub.models import Briefing, BriefingIssue, Curator
+    add(final=80)
+    with session() as s:
+        b = Briefing(profile_id=1, name='Morning AI'); s.add(b); s.flush()
+        s.add(BriefingIssue(briefing_id=b.id, content='old', created_at=time.time() - 3 * 86400))
+        s.add(BriefingIssue(briefing_id=b.id, content='## Today\n**Models** shipped [1].', ai=True))
+        s.add(Curator(profile_id=1, name='R', kind='research', subject='Batteries', report='Solid-state cells improve [1].',
+                      report_at=time.time()))
+        s.commit()
+    today = client.get('/api/hub/today').json()
+    briefs = next(sec for sec in today['sections'] if sec['key'] == 'briefings')
+    assert [(i['name'], i['excerpt'], i['ai']) for i in briefs['issues']] == [('Morning AI', 'Today Models shipped.', True)]
+    research = next(sec for sec in today['sections'] if sec['key'] == 'research')
+    assert research['curators'][0]['excerpt'] == 'Solid-state cells improve.'
+    _, headers = other_profile(client)
+    assert not any(sec['key'] == 'briefings' for sec in client.get('/api/hub/today', headers=headers).json()['sections'])
+
+
+def test_regenerate_rebuilds_now_and_queues_the_curator(client):
+    lead = add(story=new_story(), final=90)
+    assert entries(client.get('/api/hub/today').json(), 'lead') == [lead]
+    better = add(story=new_story(), final=99)
+    with session() as s:
+        ed = s.exec(select(Edition)).one()
+        ed.intro, ed.intro_refs = 'Old intro [1].', [lead]
+        s.add(ed); s.commit()
+    out = client.post('/api/hub/today/regenerate').json()
+    assert out['rebuilt'] is True and out['rerun']['requested_at'] > out['rerun']['completed_at']
+    today = client.get('/api/hub/today').json()
+    assert entries(today, 'lead') == [better] and lead in entries(today, 'stories') and today['intro'] == ''
+    with session() as s:
+        assert lead in s.exec(select(Edition)).one().shown_item_ids
+
+
+def test_regenerate_still_rebuilds_with_master_disabled(client):
+    from bt.db import get_settings, save_setting
+    add(final=80)
+    save_setting('hub_master', {**get_settings()['hub_master'], 'enabled': False})
+    out = client.post('/api/hub/today/regenerate')
+    assert out.status_code == 200 and out.json() == {'rebuilt': True, 'rerun': None}
+
+
+# ---------- Front Page overview
+
+def test_overview_counts_what_waits_per_page_with_subcategories(client):
+    from bt.hub.models import CapturedAsset, Curator, TopicItem
+    with session() as s:
+        s.add(Curator(id=1, profile_id=1, name='Tech desk', subject='tech'))
+        t = Topic(profile_id=1, name='Space', kind='news'); s.add(t); s.commit(); topic = t.id
+    a, b, c = add('news'), add('news'), add('news')
+    hidden = add('news', tier='set_aside')
+    find = add('web')
+    meme = add('meme')
+    old = time.time() - 3 * 86400
+    with session() as s:
+        s.add(TopicItem(topic_id=topic, item_id=a)); s.add(TopicItem(topic_id=topic, item_id=b))
+        s.add(ItemState(profile_id=1, item_id=c, read_at=time.time()))
+        s.add(CapturedAsset(item_id=b, kind='image', mime='image/png', data=b'x'))
+        ex = s.get(MemeExample, meme); ex.community = 'r/memes'; s.add(ex)
+        d = s.exec(select(CuratorDiscovery).where(CuratorDiscovery.item_id == find)).first(); d.found_at = old; s.add(d)
+        s.commit()
+    pages = client.get('/api/hub/today/overview').json()['pages']
+    wire = pages['wire']
+    assert wire['waiting'] == 2 and wire['new_today'] == 2  # read and set-aside items are not waiting
+    assert hidden not in [p['item_id'] for p in wire['previews']]
+    assert wire['previews'][0] == {**wire['previews'][0], 'item_id': b, 'has_image': True}  # pictured first
+    space = next(g for g in wire['groups'] if g['key'] == f'topic:{topic}')
+    assert space == {'key': f'topic:{topic}', 'label': 'Space', 'href': f'/news?topic={topic}', 'count': 2, 'image_item_id': b}
+    assert pages['finds']['waiting'] == 1 and pages['finds']['new_today'] == 0
+    assert pages['finds']['groups'][0]['label'] == 'Tech desk' and pages['finds']['groups'][0]['href'] == '/discover?curator=1&tab=unread'
+    assert pages['memes']['waiting'] == 1 and pages['memes']['groups'][0]['href'] == '/memes?community=r/memes'
+    assert pages['alerts']['waiting'] == 0 and pages['stacks']['waiting'] == 0
+
+
+@pytest.mark.parental_defaults
+def test_overview_leaves_out_pages_a_child_is_switched_off_from(client):
+    from bt.models import Profile
+    admin = client.get('/api/profiles').json()[0]
+    assert client.patch(f"/api/profiles/{admin['id']}", json={'pin': '4826'}).status_code == 200
+    kid = client.post('/api/profiles', json={'name': 'Kid', 'role': 'child'}).json()
+    hk = {'X-Profile-Id': str(kid['id'])}
+    with session() as s:
+        p = s.get(Profile, kid['id']); p.parental = {'front_page': True, 'finds': True}; s.add(p); s.commit()
+    add('web', pid=kid['id'])  # not kid-checked yet, so not waiting
+    r = client.get('/api/hub/today/overview', headers=hk)
+    assert r.status_code == 200
+    assert set(r.json()['pages']) == {'finds'} and r.json()['pages']['finds']['waiting'] == 0
+    with session() as s:
+        p = s.get(Profile, kid['id']); p.parental = {'finds': True}; s.add(p); s.commit()
+    assert client.get('/api/hub/today/overview', headers=hk).status_code == 403
+
+
+def test_overview_is_served_from_the_prebuilt_snapshot_and_previews_are_small(client):
+    import io
+    from PIL import Image
+    from bt.hub import frontpage, thumbs
+    from bt.hub.models import CapturedAsset
+    a = add('news')
+    buf = io.BytesIO(); Image.new('RGB', (1600, 900), 'navy').save(buf, 'PNG')
+    with session() as s:
+        s.add(CapturedAsset(item_id=a, kind='image', mime='image/png', data=buf.getvalue())); s.commit()
+    frontpage.build(1)
+    assert thumbs.path(a, 480, len(buf.getvalue())).exists()  # made ahead of time
+    add('news')  # arrives after the snapshot
+    assert client.get('/api/hub/today/overview').json()['pages']['wire']['waiting'] == 1
+    r = client.get(f'/api/hub/items/{a}/assets/image?w=400')
+    assert r.status_code == 200 and r.headers['content-type'] == 'image/webp' and 'max-age' in r.headers['cache-control']
+    assert Image.open(io.BytesIO(r.content)).width == 480 and len(r.content) < len(buf.getvalue())
+    assert client.get(f'/api/hub/items/{a}/assets/image').headers['content-type'] == 'image/png'  # original unchanged
+
+
+def test_prepared_frontpage_reads_only_visible_sections_and_queues_cold_start(client, monkeypatch):
+    from bt.hub import frontpage
+    from bt.hub.master import edition
+
+    lead = add(story=new_story(), final=95)
+    other = add(story=new_story(), final=80)
+    params = {'preview': 'true', 'prepared': 'true', 'stories': 0, 'reads': 0, 'memes': 0}
+    requests = []
+    monkeypatch.setattr(frontpage, 'request_refresh', requests.append)
+    cold = client.get('/api/hub/today', params=params).json()
+    assert cold['preparing'] and cold['sections'] == [] and requests == [1]
+    prepared = frontpage.build(1)
+    assert prepared['pages']
+
+    def must_not_build(*_):
+        raise AssertionError('the prepared request should not build an edition')
+
+    monkeypatch.setattr(edition, 'patch', must_not_build)
+    live = client.get('/api/hub/today', params=params).json()
+    assert not live['preparing']
+    assert entries(live, 'lead') == [lead]
+    assert entries(live, 'stories') == []
+    with session() as s:
+        assert s.exec(select(Edition)).one().shown_item_ids == [lead]
+    assert client.post(f'/api/hub/items/{lead}/state', json={'dismissed': True}).status_code == 200
+    stale = client.get('/api/hub/today', params=params).json()
+    assert stale['preparing'] and entries(stale, 'lead') == []
+    assert other not in entries(stale, 'stories')
+
+
+def test_prepared_overview_serves_stale_snapshot_and_requests_refresh(client, monkeypatch):
+    from bt.db import save_setting
+    from bt.hub import frontpage, master_api
+
+    snap = {'generated_at': 1, 'pages': {'wire': {'waiting': 2}}}
+    save_setting('frontpage_overview:1', snap)
+    requests = []
+    monkeypatch.setattr(frontpage, 'request_refresh', requests.append)
+
+    def must_not_build(*_):
+        raise AssertionError('the prepared request should not build an overview')
+
+    monkeypatch.setattr(master_api, 'build_overview', must_not_build)
+    assert client.get('/api/hub/today/overview?prepared=true').json() == snap
+    assert requests == [1]

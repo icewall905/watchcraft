@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onDestroy } from 'svelte';
-	import { currentProfileId } from '$lib/api';
+	import { profileHeaders } from '$lib/api';
 	let { id }: { id: number } = $props();
 	let src = $state('');
 	let loading = $state(false);
@@ -10,9 +10,7 @@
 	async function load() {
 		loading = true; error = '';
 		try {
-			const headers: Record<string, string> = {};
-			const profile = currentProfileId();
-			if (profile) headers['X-Profile-Id'] = profile;
+			const headers = profileHeaders();
 			const response = await fetch(`/api/hub/items/${id}/assets/video`, { credentials: 'same-origin', headers, signal: controller.signal });
 			if (!response.ok) throw new Error('This video is unavailable. Try again or open the original post.');
 			const blob = await response.blob();

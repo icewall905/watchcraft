@@ -10,6 +10,7 @@
 	import ColorPicker from './ColorPicker.svelte';
 	import Avatar from './Avatar.svelte';
 	import Select from './form/Select.svelte';
+	import ParentalControls from './ParentalControls.svelte';
 
 	let { profile = null, onClose }: { profile?: Profile | null; onClose: () => void } = $props();
 	// svelte-ignore state_referenced_locally
@@ -25,19 +26,22 @@
 	let pin = $state('');
 	let repeatPin = $state('');
 	let removePin = $state(false);
+	let parental = $state(false);
+	// Only a grown-up profile manages a child's parental controls (the server checks this too).
+	const canControl = $derived(!!profile && profile.role === 'child' && !session.isChild && (session.isAdmin || session.mode === 'accounts'));
 
 	async function save() {
 		if (!name.trim()) return toast.warn('Give the profile a name first.');
 		if (pin && !/^[0-9]{4,8}$/.test(pin)) return toast.warn('Use a PIN with 4 to 8 digits.');
 		if (pin && pin !== repeatPin) return toast.warn('The PINs do not match.');
 		const pinChange = removePin ? { pin: '' } : pin ? { pin } : {};
-		const accessChange = session.isAdmin ? { role } : {};
+		const accessChange = session.isAdmin || session.mode === 'accounts' ? { role: role === 'admin' && session.mode === 'accounts' ? 'adult' as const : role } : {};
 		busy = true;
 		try {
 			if (profile) await api.updateProfile(profile.id, { name: name.trim(), emoji, color, ...pinChange, ...accessChange });
 			else {
 				const p = await api.createProfile({ name: name.trim(), emoji, color, ...pinChange, ...accessChange });
-				toast.success(`Added ${p.name}`);
+				toast.success(role === 'child' ? `Added ${p.name}. Open Edit → Parental controls to choose what they can use.` : `Added ${p.name}`);
 			}
 			await session.loadProfiles();
 			session.version++;
@@ -67,13 +71,22 @@
 			<div class="pname">{name || 'Name'}</div>
 		</div>
 		<TextField label="Name" bind:value={name} placeholder="e.g. Maja" autofocus id="profile-name" />
-		{#if session.isAdmin}
-			<Select label="Profile access" bind:value={role} options={[
-				{ value: 'admin', label: 'Administrator', hint: 'Manage shared settings and profile access.' },
+		{#if session.mode === 'accounts'}
+			<Select label="Profile type" bind:value={role} options={[
 				{ value: 'adult', label: 'Adult', hint: 'Use Hub content and manage personal playlists and curators.' },
 				{ value: 'child', label: 'Child', hint: 'Hub discovery, external sources and research are disabled.' }
 			]} />
+			{#if role === 'child'}<p class="small muted">Child profiles are kid-safe. PINs are optional: a grown-up profile without one is open to anyone signed in on this device, children included.</p>{/if}
+		{:else if session.isAdmin}
+			<Select label="Profile access" bind:value={role} options={[
+				{ value: 'admin', label: 'Administrator', hint: 'Manage shared settings and profile access.' },
+				{ value: 'adult', label: 'Adult', hint: 'Use discovery and manage personal playlists and curators.' },
+				{ value: 'child', label: 'Child', hint: 'Discovery, external sources and research are disabled.' }
+			]} />
 			{#if role === 'child'}<p class="small muted">Every administrator profile needs a PIN first. Adult profiles without a PIN stay open to anyone on this device, children included. Video playlists keep their existing kid-safe checks; this setting does not filter all video playback.</p>{/if}
+		{/if}
+		{#if canControl && profile}
+			<button class="btn" use:focusable={{ id: 'profile-parental', onSelect: () => (parental = true) }}>Parental controls and safety rails</button>
 		{/if}
 		<div class="field"><span class="label">Emoji</span><EmojiPicker bind:value={emoji} /></div>
 		<div class="field"><span class="label">Colour</span><ColorPicker bind:value={color} /></div>
@@ -87,7 +100,7 @@
 		{/if}
 	</div>
 	{#snippet footer()}
-		{#if profile && session.profiles.length > 1 && session.isAdmin}
+		{#if profile && session.profiles.length > 1 && (session.isAdmin || session.mode === 'accounts')}
 			<button class="btn danger" use:focusable={{ onSelect: remove, scroll: 'nearest' }}>{confirmDelete ? 'Press again to delete everything' : 'Delete profile'}</button>
 		{/if}
 		<span class="spacer"></span>
@@ -95,6 +108,7 @@
 		<button class="btn primary" disabled={busy} use:focusable={{ id: 'profile-save', onSelect: save, scroll: 'nearest' }}>{profile ? 'Save' : 'Add profile'}</button>
 	{/snippet}
 </Modal>
+{#if parental && profile}<ParentalControls child={profile} onClose={() => (parental = false)} onSaved={() => session.loadProfiles()} />{/if}
 
 <style>
 	.preview {

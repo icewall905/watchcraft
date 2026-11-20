@@ -63,7 +63,7 @@
 		const token = ++generation;
 		profile = session.profileId;
 		phase = 'permission'; error = ''; seconds = 0; onactive?.(true);
-		if (!window.isSecureContext) return fail('Microphone access needs HTTPS. Open WatchCraft at its HTTPS address.');
+		if (!window.isSecureContext) return fail('Microphone access needs HTTPS. Open The Hub at its HTTPS address.');
 		if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === 'undefined')
 			return fail('This browser cannot record a microphone. Use a browser with microphone recording support.');
 		try {

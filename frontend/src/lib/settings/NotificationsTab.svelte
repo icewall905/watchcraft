@@ -32,8 +32,8 @@
 </script>
 
 <Section
-	title="Notifications"
-	intro="Alerts stay in WatchCraft. These channels also push them out: a JSON webhook, a Home Assistant webhook, or email. An empty field turns that channel off. Only alerts at or above the minimum severity are sent."
+	title="Server alert channels"
+	intro="Alerts stay in The Hub. These channels also push them out: a JSON webhook, a Home Assistant webhook, or email. An empty field turns that channel off. Only alerts at or above the minimum severity are sent."
 >
 	{#snippet actions()}
 		<button class="btn" disabled={testing} use:focusable onclick={sendTest}>{testing ? 'Sending…' : 'Send test'}</button>
@@ -55,12 +55,12 @@
 		<TextField label="Send to" placeholder="you@example.org" bind:value={d.value.email_to} />
 	{/if}
 	<h3>This browser</h3>
-	<p class="muted small">Desktop notifications appear while WatchCraft is open in a tab. They need permission from this browser and are per device.</p>
+	<p class="muted small">Desktop notifications appear while The Hub is open in a tab. They need permission from this browser and are per device.</p>
 	{#if browserNotify.supported}
 		{#if browserNotify.permission === 'granted'}
 			<Toggle label="Show desktop notifications" hint="New alerts pop up even when another tab is in front." bind:checked={browserNotify.enabled} />
 		{:else if browserNotify.permission === 'denied'}
-			<p class="small">This browser blocked notifications for WatchCraft. Allow them in the site settings, then reload.</p>
+			<p class="small">This browser blocked notifications for The Hub. Allow them in the site settings, then reload.</p>
 		{:else}
 			<button class="btn" use:focusable onclick={() => browserNotify.request()}>Allow desktop notifications</button>
 		{/if}

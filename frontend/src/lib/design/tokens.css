@@ -1,4 +1,4 @@
-/* WatchCraft design tokens — editorial layer for the non-video hub.
+/* The Hub design tokens — editorial layer for the non-video hub.
    Loaded after app.css. Video routes keep reading the original app.css tokens:
    everything here is either a new token name, a light-scheme fix, or scoped to [data-area='hub']. */
 

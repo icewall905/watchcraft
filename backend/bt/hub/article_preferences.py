@@ -14,14 +14,14 @@ log = logging.getLogger(__name__)
 ARTICLE_TYPES = ('news', 'article', 'web')
 
 
-def context(s, pid: int) -> str:
+def context(s, pid: int, include_core: bool = True) -> str:
     """Use the same scoped core and evidence-labelled corrections as video consumers."""
     lessons = memory.active(s, pid, content_type='article')
     core, corrections = memory.select_memory(s, pid, lessons, content_type='article')
     parts = ['ARTICLE PREFERENCES: apply only to news, articles and web articles. '
              'Explicit instructions are authoritative; inferred rules retain their evidence strength. '
              'A rating concerns this article and does not endorse every subject or claim it contains.']
-    if core:
+    if core and include_core:
         parts.append('SHARED CORE MEMORY\n' + core)
     if corrections:
         parts.append(prompts.lessons_block(corrections))

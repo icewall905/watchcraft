@@ -3,6 +3,7 @@
 	import { goto } from '$app/navigation';
 	import { session } from '$lib/stores/session.svelte';
 	import { focusable } from '$lib/nav';
+	import { inAndroidApp } from '$lib/navigation';
 	import CategoriesTab from '$lib/settings/CategoriesTab.svelte';
 	import FeedsTab from '$lib/settings/FeedsTab.svelte';
 	import MemoryTab from '$lib/settings/MemoryTab.svelte';
@@ -17,31 +18,78 @@
 	import StorageTab from '$lib/settings/StorageTab.svelte';
 	import AppearanceTab from '$lib/settings/AppearanceTab.svelte';
 	import SearchTab from '$lib/settings/SearchTab.svelte';
+	import CommonRoomTab from '$lib/settings/CommonRoomTab.svelte';
+	import MoodSourcesTab from '$lib/settings/MoodSourcesTab.svelte';
+	import WatcherNotificationsTab from '$lib/settings/WatcherNotificationsTab.svelte';
 	import NotificationsTab from '$lib/settings/NotificationsTab.svelte';
 	import CuratorTab from '$lib/settings/CuratorTab.svelte';
 	import MemeLanguagesTab from '$lib/settings/MemeLanguagesTab.svelte';
+	import JellyfinTab from '$lib/settings/JellyfinTab.svelte';
+	import AccountsTab from '$lib/settings/AccountsTab.svelte';
+	import DevicesTab from '$lib/settings/DevicesTab.svelte';
 
-	const TABS = [
-		{ key: 'categories', label: 'Playlists', icon: '🗂️', hint: 'What the AI looks for' },
-		{ key: 'feeds', label: 'Feeds', icon: '▶', hint: 'Local short-video collections' },
-		{ key: 'curator', label: 'Curator', icon: '✧', hint: 'Learned preferences and nightly selection' },
-		{ key: 'memory', label: 'AI memory', icon: '🧠', hint: 'Rules learned from feedback' },
-		{ key: 'ai', label: 'AI and limits', icon: '✦', hint: 'Model, curator, pace' },
-		{ key: 'search', label: 'Search & sources', icon: '🔎', hint: 'Web search provider for curators' },
-		{ key: 'memes', label: 'Meme languages', icon: '🌐', hint: 'Languages you do not want in Meme Radar' },
-		{ key: 'notify', label: 'Notifications', icon: '🔔', hint: 'Webhook, Home Assistant, email' },
-		{ key: 'player', label: 'Player', icon: '▶', hint: 'Quality, speed, captions' },
-		{ key: 'appearance', label: 'Appearance', icon: '🎨', hint: 'Device mode, themes and colours' },
-		{ key: 'storage', label: 'Storage', icon: '💾', hint: 'Videos saved on the server' },
-		{ key: 'sponsorblock', label: 'SponsorBlock', icon: '⏭', hint: 'Skip sponsors and intros' },
-		{ key: 'extras', label: 'Extras', icon: '🧩', hint: 'Short videos, dislikes, titles' },
-		{ key: 'cookies', label: 'YouTube cookies', icon: '🍪', hint: 'Optional sign-in' },
-		{ key: 'profiles', label: 'Profiles', icon: '👪', hint: 'Family members' },
-		{ key: 'screens', label: 'Screens', icon: '📺', hint: 'Play on receivers and pairing' },
-		{ key: 'keys', label: 'Remote test', icon: '🎮', hint: 'See what buttons send' }
-	] as const;
-	type TabKey = (typeof TABS)[number]['key'];
-	const tab = $derived((TABS.find((t) => t.key === (page.url.searchParams.get('tab') === 'playlists' ? 'categories' : page.url.searchParams.get('tab')))?.key ?? 'categories') as TabKey);
+	// Grouped by what you are doing: what gets collected, how the AI learns, where it may look,
+	// how things play, the devices around the house, and who lives here.
+	type Tab = { key: string; label: string; icon: string; hint: string };
+	const ALL_GROUPS: { label: string; tabs: Tab[] }[] = [
+		{ label: 'Collections', tabs: [
+			{ key: 'categories', label: 'Playlists', icon: '🗂️', hint: 'What the AI looks for' },
+			{ key: 'feeds', label: 'Feeds', icon: '▶', hint: 'Local short-video collections' }
+		] },
+		{ label: 'AI and learning', tabs: [
+			{ key: 'ai', label: 'AI model and limits', icon: '✦', hint: 'Model, agent team, pace' },
+			{ key: 'curator', label: 'Curator', icon: '✧', hint: 'Learned preferences and nightly selection' },
+			{ key: 'memory', label: 'AI memory', icon: '🧠', hint: 'Rules learned from feedback' },
+			{ key: 'memes', label: 'Meme Radar', icon: '🌐', hint: 'Languages to show' }
+		] },
+		{ label: 'Sources and keys', tabs: [
+			{ key: 'search', label: 'Web search', icon: '🔎', hint: 'SearXNG or Brave for curators' },
+			{ key: 'commonroom', label: 'Common Room', icon: '💬', hint: 'Reddit and Stack Exchange keys' },
+			{ key: 'moodsources', label: 'Mood Board sources', icon: '🖼️', hint: 'Image sites, Flickr and Tumblr keys' },
+			{ key: 'cookies', label: 'YouTube sign-in', icon: '🍪', hint: 'Optional cookies' }
+		] },
+		{ label: 'Watching', tabs: [
+			{ key: 'player', label: 'Player', icon: '▶', hint: 'Quality, speed, captions' },
+			{ key: 'sponsorblock', label: 'SponsorBlock', icon: '⏭', hint: 'Skip sponsors and intros' },
+			{ key: 'jellyfin', label: 'Jellyfin', icon: '🎬', hint: 'Your media server in The Marquee' },
+			{ key: 'extras', label: 'YouTube extras', icon: '🧩', hint: 'Shorts, dislikes, better titles' },
+			{ key: 'storage', label: 'Storage', icon: '💾', hint: 'Videos saved on the server' }
+		] },
+		{ label: 'Home and devices', tabs: [
+			{ key: 'appearance', label: 'Appearance', icon: '🎨', hint: 'Device mode, themes and colours' },
+			{ key: 'screens', label: 'Screens', icon: '📺', hint: 'Play on receivers and pairing' },
+			{ key: 'watcher-notifications', label: 'Notifications', icon: '🔔', hint: 'App notifications and alert channels' },
+			{ key: 'keys', label: 'Remote test', icon: '🎮', hint: 'See what buttons send' }
+		] },
+		{ label: 'Household', tabs: [
+			{ key: 'profiles', label: 'Profiles', icon: '👪', hint: 'Family members' },
+			{ key: 'accounts', label: 'Accounts', icon: '🔑', hint: 'Invite people, reset passwords' },
+			{ key: 'devices', label: 'Devices and password', icon: '📱', hint: 'Where you are signed in' }
+		] }
+	];
+	// Accounts mode: everyone keeps the personal tabs; server and admin tabs need an administrator.
+	const OPEN_TABS = ['categories', 'feeds', 'profiles', 'keys', 'appearance'];
+	const OWN_TABS = ['player', 'sponsorblock', 'extras', 'devices'];
+	const allowed = (key: string) =>
+		key === 'watcher-notifications' ? session.grownUp : session.isAdmin ||
+		(key !== 'accounts' && (key === 'curator' ? session.grownUp : OPEN_TABS.includes(key) || (session.mode === 'accounts' && OWN_TABS.includes(key))));
+	const GROUPS = $derived(
+		ALL_GROUPS.map((g) => ({
+			...g,
+			tabs: g.tabs.filter((t) => (t.key === 'watcher-notifications' ? session.grownUp : t.key === 'accounts' ? session.mode === 'accounts' && session.account?.role === 'admin' : t.key === 'devices' ? session.mode === 'accounts' : session.mode !== 'accounts' || allowed(t.key)))
+		})).filter((g) => g.tabs.length)
+	);
+	const TABS = $derived(GROUPS.flatMap((g) => g.tabs));
+	type TabKey = string;
+	const requestedTab = $derived(page.url.searchParams.get('tab'));
+	const tab = $derived((TABS.find((t) => t.key === (requestedTab === 'playlists' ? 'categories' : requestedTab === 'notify' ? 'watcher-notifications' : requestedTab))?.key ?? 'categories') as TabKey);
+
+	// The native app already accepts Watcher pairing links from this Settings URL.
+	$effect(() => {
+		if (requestedTab === 'notify' && tab === 'watcher-notifications') {
+			void goto('/settings?tab=watcher-notifications', { replaceState: true, keepFocus: true, noScroll: true });
+		}
+	});
 
 	function go(k: TabKey) {
 		if (k !== tab) goto(`/settings?tab=${k}`, { replaceState: true, keepFocus: true, noScroll: true });
@@ -49,10 +97,24 @@
 </script>
 
 
-<div class="page settings workshop-page">
+<div class="page settings workshop-page" class:android-settings={inAndroidApp()}>
+	<nav class="compact-menu" aria-label="Settings sections">
+		<h1>Settings</h1>
+		<label for="settings-section">Settings section</label>
+		<select id="settings-section" class="input" value={tab} onchange={(event) => go(event.currentTarget.value)} use:focusable>
+			{#each GROUPS as group}
+				<optgroup label={group.label}>
+					{#each group.tabs as item}<option value={item.key}>{item.label}</option>{/each}
+				</optgroup>
+			{/each}
+		</select>
+		<a href="/welcome" use:focusable>Setup guide</a>
+	</nav>
 	<nav class="side" aria-label="Settings sections" data-nav-zone="side">
 		<h1>Settings</h1>
-		{#each TABS as t}
+		{#each GROUPS as g}
+			<p class="group">{g.label}</p>
+			{#each g.tabs as t}
 			<button
 				class="tab"
 				class:on={tab === t.key}
@@ -62,6 +124,7 @@
 				<span class="ic">{t.icon}</span>
 				<span class="tx"><span class="l">{t.label}</span><span class="h">{t.hint}</span></span>
 			</button>
+			{/each}
 		{/each}
 		<a class="tab" href="/welcome" use:focusable={{ group: 'set-tabs', id: 'set-welcome' }}>Setup guide</a>
 	</nav>
@@ -71,16 +134,22 @@
 		{:else}
 			{#key tab}
 				<div class="pane">
-					{#if !session.isAdmin && !['categories', 'feeds', 'profiles', 'keys', 'appearance', ...(session.hubAllowed ? ['curator'] : [])].includes(tab)}
+					{#if !allowed(tab)}
 						<h2>Administrator access required</h2><p class="muted">Switch to an administrator profile to change shared server settings.</p>
 					{:else if tab === 'categories'}<CategoriesTab />
 					{:else if tab === 'feeds'}<FeedsTab />
+					{:else if tab === 'jellyfin'}<JellyfinTab />
 					{:else if tab === 'curator'}<CuratorTab />
 					{:else if tab === 'memory'}<MemoryTab />
 					{:else if tab === 'ai'}<AiTab />
 					{:else if tab === 'search'}<SearchTab />
+					{:else if tab === 'commonroom'}<CommonRoomTab />
+					{:else if tab === 'moodsources'}<MoodSourcesTab />
 					{:else if tab === 'memes'}<MemeLanguagesTab />
-					{:else if tab === 'notify'}<NotificationsTab />
+					{:else if tab === 'watcher-notifications'}
+						<h2>Notifications</h2>
+						<WatcherNotificationsTab />
+						{#if session.isAdmin}<NotificationsTab />{/if}
 					{:else if tab === 'player'}<PlayerTab />
 					{:else if tab === 'appearance'}<AppearanceTab />
 					{:else if tab === 'storage'}<StorageTab />
@@ -88,6 +157,8 @@
 					{:else if tab === 'extras'}<ExtrasTab />
 					{:else if tab === 'cookies'}<CookiesTab />
 					{:else if tab === 'profiles'}<ProfilesTab />
+					{:else if tab === 'accounts'}<AccountsTab />
+					{:else if tab === 'devices'}<DevicesTab />
 					{:else if tab === 'screens'}<ScreensTab />
 					{:else}<KeysTab />{/if}
 				</div>
@@ -112,6 +183,17 @@
 	.side h1 {
 		font-size: clamp(1.5rem, 1.5vw + 0.8rem, 2.4rem);
 		margin: 0.5rem 0 1rem 0.4rem;
+	}
+	.group {
+		margin: 0.9rem 0 0.15rem 0.8rem;
+		font-size: 0.7rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--faint);
+	}
+	.side h1 + .group {
+		margin-top: 0;
 	}
 	.tab {
 		--focus-scale: 1.04;
@@ -166,26 +248,16 @@
 	.pane {
 		animation: rise 0.25s var(--ease);
 	}
+	.compact-menu { display: none; }
+	.compact-menu h1 { margin: 0; }
+	.compact-menu select { width: 100%; min-width: 0; min-height: 2.75rem; }
+	.compact-menu a { justify-self: start; }
+	.settings.android-settings { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+	.android-settings .side { display: none; }
+	.android-settings .compact-menu { display: grid; gap: 0.5rem; min-width: 0; }
 	@media (max-width: 900px) {
-		.settings {
-			grid-template-columns: 1fr;
-		}
-		.side {
-			position: static;
-			display: flex;
-			overflow-x: auto;
-			gap: 0.4rem;
-			padding-bottom: 0.4rem;
-			scrollbar-width: none;
-		}
-		.side h1 {
-			display: none;
-		}
-		.tab {
-			flex: none;
-		}
-		.h {
-			display: none;
-		}
+		.settings { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+		.side { display: none; }
+		.compact-menu { display: grid; gap: 0.5rem; min-width: 0; }
 	}
 </style>

@@ -47,7 +47,7 @@ def review(title: str, body: str) -> dict:
             rows = [{'index': n, 'text': parts[index]} for n, index in enumerate(batch)]
             payload = json.dumps({'title': title, 'paragraphs': rows}, ensure_ascii=False)
             result = ai._call(_SYSTEM, '<data>\n' + ai._esc(payload) + '\n</data>',
-                              _SCHEMA, max_tokens=1000, role='worker')
+                              _SCHEMA, max_tokens=1000, role='article_cleanup')
             if not isinstance(result, dict) or set(result) != {'drop'} or not isinstance(result['drop'], list):
                 raise ValueError('invalid cleanup shape')
             picks = result['drop']

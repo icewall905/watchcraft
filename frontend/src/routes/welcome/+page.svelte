@@ -57,7 +57,7 @@
 	}
 </script>
 
-<svelte:head><title>Welcome to WatchCraft</title></svelte:head>
+<svelte:head><title>Welcome to The Hub</title></svelte:head>
 
 <div class="page welcome workshop-page">
 	<header>
@@ -69,7 +69,7 @@
 			<li class:current={step === i} class:done={step > i} aria-current={step === i ? 'step' : undefined}><span>{step > i ? '✓' : i + 1}</span>{label}</li>
 		{/each}
 	</ol>
-	{#if error}<p role="alert" class="error">{error} Try again, or check that WatchCraft is still running.</p>{/if}
+	{#if error}<p role="alert" class="error">{error} Try again, or check that The Hub is still running.</p>{/if}
 	{#if step === 0}
 		<section>
 			<h2>Who is watching?</h2>
@@ -80,7 +80,7 @@
 	{:else if step === 1}
 		<section>
 			<h2>Let AI find things you'll enjoy.</h2>
-			<p class="muted">Connect a model you already run or a service you use. WatchCraft doesn't install an AI model. Hosted services may charge for use. Prefer to browse yourself? Skip this step and connect AI later.</p>
+			<p class="muted">Connect a model you already run or a service you use. The Hub doesn't install an AI model. Hosted services may charge for use. Prefer to browse yourself? Skip this step and connect AI later.</p>
 			<div class="actions">
 				<button class="btn" disabled={busy || connecting} use:focusable={{ group: 'welcome-ai', onSelect: skipAi }}>Skip AI and start browsing</button>
 				<button class="btn" disabled={connecting} use:focusable={{ group: 'welcome-ai', onSelect: () => (step = 0) }}>Back</button>

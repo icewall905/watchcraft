@@ -20,7 +20,7 @@ class MusicTrack(SQLModel, table=True):
 
 class MusicFavorite(SQLModel, table=True):
     profile_id: int = Field(primary_key=True)
-    kind: str = Field(primary_key=True)  # track | artist
+    kind: str = Field(primary_key=True)  # track | artist (favourites) | dislike | less (taught away)
     ref: str = Field(primary_key=True)   # video id | artist name (lower-cased)
     name: str = ''
     artist_id: str = ''

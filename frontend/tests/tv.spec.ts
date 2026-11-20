@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { resetBackend } from './helpers';
+import { resetBackend, remoteKeys } from './helpers';
+test.beforeEach(async ({ page }) => { await remoteKeys(page); }); // remote-key navigation is TV/opt-in only
 
 // TV mode is the default home experience: a deliberately small drawer, remote-first focus,
 // and no desktop chrome. These checks run at projector size with the same autoplay policy
@@ -31,7 +32,7 @@ test('TV mode hides the desktop sidebar and offers the small drawer', async ({ p
 	// The drawer is deliberately small: TV Home, video search, subscriptions, playlists, Hub, settings.
 	await expect(drawer.getByRole('link', { name: 'TV' })).toBeVisible();
 	await expect(drawer.getByRole('link', { name: 'Discover' })).toHaveCount(0);
-	await expect(drawer.getByRole('link', { name: 'Hub' })).toHaveAttribute('href', '/today');
+	await expect(drawer.getByRole('link', { name: 'Today' })).toHaveAttribute('href', '/today');
 	await page.getByRole('button', { name: 'Close menu →' }).click();
 	await expect(drawer).toBeHidden();
 });

@@ -14,7 +14,8 @@
 	];
 </script>
 
-<Section title="Search and sources" intro="Web search lets curators and research briefs look beyond feeds. Queries are sent to the provider you choose here, nowhere else.">
+
+<Section title="Web search" intro="Web search lets curators and research briefs look beyond feeds. Queries are sent to the provider you choose here, nowhere else.">
 	<Select label="Web search provider" bind:value={d.value.provider} options={PROVIDERS} />
 	{#if d.value.provider === 'searxng'}
 		<TextField label="SearXNG URL" type="url" hint="Your instance, with JSON output enabled (search.formats includes json). Example: https://searx.example.org" placeholder="https://searx.example.org" bind:value={d.value.searxng_url} />

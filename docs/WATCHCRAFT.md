@@ -1,6 +1,6 @@
-# WatchCraft — "Watching the Internet for you."
+# The Hub — "Watching the Internet for you."
 
-WatchCraft evolves BetterTube into a self-hosted hub that goes on the internet for you. TV (`/`, `/tv`) remains
+The Hub evolves BetterTube into a self-hosted hub that goes on the internet for you. TV (`/`, `/tv`) remains
 the default and is unchanged. Design, route map, provider registry and API contract: [HUB.md](HUB.md).
 
 ## What exists now (schema v2)
@@ -127,7 +127,7 @@ does not enforce the new roles, so rolling back must also restrict access until 
 3. `BT_PORT=6646` in `.env`. Optional: `WC_SEARCH_PROVIDER=searxng` and `WC_SEARXNG_URL=http://searxng:8080`
    (or configure in Settings → Search & sources). SearXNG must have the JSON format enabled.
 4. Install `deploy/traefik-wc.yml` as `/opt/traefik/dynamic/wc.yml` on 10.0.10.60.
-5. Media center: point the TV browser at `https://wc.tdgs.org/tv?mode=tv`.
+5. Media center: point the TV browser at `https://hub.tdgs.org/tv?mode=tv`.
 
 ## Source Scout
 
@@ -317,7 +317,7 @@ frontend navigation fix `880f732`. The previous image, source archive and pre-mi
 restored copy was migrated twice and checked for integrity, matching profile preferences and preserved profiles,
 playlists, video records, history and legacy discoveries. The existing NVIDIA Compose override was retained.
 
-VERIFIED ON SERVER: API health and the public `https://wc.tdgs.org` health endpoint; eleven Hub/TV routes; adult
+VERIFIED ON SERVER: API health and the public `https://hub.tdgs.org` health endpoint; eleven Hub/TV routes; adult
 authorization and cross-profile isolation; and a saved video playing at 1920×1080 with decoded, changing frames.
 A disposable container on the same server passed the child-profile, administrator PIN and player-error browser
 checks without changing production PINs or child profiles. The live acceptance test removed its temporary profile.

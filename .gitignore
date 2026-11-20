@@ -14,3 +14,6 @@ backups/
 # Local notes and Markdown documents
 AGENTS.md
 *.md
+
+# Android build instructions are shipped with the app sources.
+!android/README.md

@@ -37,6 +37,15 @@ test('import a page into the library and find it', async ({ page, request }) => 
 	expect(d.provider_keys).toContain('web_search');
 	await freshPage(page, '/curators/new?goal=Find%20beginner%20knitting%20patterns');
 	await expect(page.locator('main')).toContainText(/knitting/i);
+	// Drafting must reach a usable form: a duplicate list key used to abort the whole render.
+	const errors: string[] = [];
+	page.on('pageerror', (e) => errors.push(e.message));
+	await freshPage(page, '/curators/new');
+	await page.getByLabel('Your goal').fill('Find beginner knitting patterns for scarves');
+	await page.getByRole('button', { name: 'Draft a curator' }).click();
+	await expect(page.getByRole('heading', { name: 'Review the proposal' })).toBeVisible();
+	await expect(page.getByRole('textbox', { name: 'Name', exact: true })).toHaveValue(d.name);
+	expect(errors).toEqual([]);
 });
 
 test('the curator form can add a Mastodon source', async ({ page, request }) => {

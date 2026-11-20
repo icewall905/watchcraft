@@ -9,9 +9,18 @@
 	let editing = $state<Profile | null | undefined>(undefined); // undefined = closed, null = new
 	let manage = $state(false);
 
+	const accounts = $derived(session.mode === 'accounts' ? [...session.accounts].sort((a, b) => Number(b.public_id === session.accountId) - Number(a.public_id === session.accountId)) : []);
+	const canManage = $derived(session.isAdmin || (session.mode === 'accounts' && session.grownUp));
+	const others = $derived(accounts.filter((a) => a.public_id !== session.accountId));
+
+	async function pickOther(publicId: string, p: Profile | null) {
+		if (!(await session.switchAccount(publicId))) return;
+		if (p) { if (await session.switchProfile(p.id)) onClose(); }
+	}
+
 	async function pick(p: Profile) {
 		if (manage) {
-			if (!session.isAdmin && p.id !== session.profileId) return;
+			if (!canManage && p.id !== session.profileId) return;
 			if (await session.ensureUnlocked(p.id)) editing = p;
 			return;
 		}
@@ -22,6 +31,11 @@
 <div class="picker" class:fullscreen role="dialog" aria-label="Who's watching?" use:navScope={{ onBack: fullscreen ? undefined : onClose }}>
 	<div class="inner">
 		<h1>{manage ? 'Manage profiles' : "Who's watching?"}</h1>
+		{#if session.mode === 'accounts' && session.account}
+			<p class="acct">{session.account.username}
+				<button class="link" use:focusable={{ group: 'people', id: 'signout-active', onSelect: () => session.signOut(session.accountId ?? undefined) }}>Sign out</button>
+			</p>
+		{/if}
 		<div class="people">
 			{#each session.profiles as p (p.id)}
 				<button
@@ -34,14 +48,35 @@
 					{#if manage}<span class="edit">✎ Edit</span>{/if}
 				</button>
 			{/each}
-			{#if session.isAdmin}<button class="person add" use:focusable={{ group: 'people', id: 'person-add', onSelect: () => (editing = null) }}>
+			{#if canManage}<button class="person add" use:focusable={{ group: 'people', id: 'person-add', onSelect: () => (editing = null) }}>
 				<span class="plus">+</span>
 				<span class="name">Add person</span>
 			</button>{/if}
 		</div>
+		{#each others as a (a.public_id)}
+			<section class="other" aria-label={`Account ${a.username}`}>
+				<p class="acct">{a.username}
+					<button class="link" use:focusable={{ group: `acct-${a.public_id}`, onSelect: () => session.signOut(a.public_id) }}>Sign out</button>
+				</p>
+				<div class="people">
+					{#each session.profileCache[a.public_id] ?? [] as p (p.id)}
+						<button class="person" use:focusable={{ group: `acct-${a.public_id}`, id: `other-${a.public_id}-${p.id}`, onSelect: () => pickOther(a.public_id, p) }}>
+							<Avatar emoji={p.emoji} color={p.color} size="clamp(3.5rem, 5vw, 6rem)" />
+							<span class="name">{p.name}</span>
+						</button>
+					{:else}
+						<button class="person" use:focusable={{ group: `acct-${a.public_id}`, id: `other-${a.public_id}`, onSelect: () => pickOther(a.public_id, null) }}>
+							<span class="plus">→</span>
+							<span class="name">Open</span>
+						</button>
+					{/each}
+				</div>
+			</section>
+		{/each}
 		<div class="hstack actions">
+			{#if session.mode === 'accounts'}<button class="btn" use:focusable={{ id: 'add-account', onSelect: () => session.addAccount() }}>Add account</button>{/if}
 			{#if session.profile?.pin_required && !session.profile?.pin_locked}<button class="btn" use:focusable={{ onSelect: () => session.lockProfile() }}>Lock profile</button>{/if}
-			{#if session.isAdmin}<button class="btn" use:focusable={{ id: 'manage', onSelect: () => (manage = !manage) }}>{manage ? 'Done' : 'Manage profiles'}</button>{/if}
+			{#if canManage}<button class="btn" use:focusable={{ id: 'manage', onSelect: () => (manage = !manage) }}>{manage ? 'Done' : 'Manage profiles'}</button>{/if}
 			{#if !fullscreen}<button class="btn ghost" use:focusable={{ onSelect: onClose }}>Close</button>{/if}
 		</div>
 	</div>
@@ -121,6 +156,26 @@
 		border: 2px dashed var(--line-strong);
 		font-size: 2.5rem;
 		color: var(--muted);
+	}
+	.acct {
+		margin: 0;
+		color: var(--muted);
+		font-weight: 600;
+	}
+	.link {
+		margin-left: 0.6rem;
+		background: none;
+		border: 0;
+		color: var(--accent);
+		font: inherit;
+		font-size: 0.85rem;
+		cursor: pointer;
+		text-decoration: underline;
+	}
+	.other {
+		display: grid;
+		justify-items: center;
+		gap: 0.5rem;
 	}
 	.actions {
 		justify-content: center;

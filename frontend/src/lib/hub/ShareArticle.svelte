@@ -18,6 +18,7 @@
 	$effect(() => {
 		const key = scope;
 		const id = itemId;
+		if (session.isChild) return; // public links are grown-up only
 		const my = ++generation;
 		let disposed = false;
 		loadedScope = key; path = null; busy = true; error = ''; copied = false;
@@ -51,6 +52,7 @@
 	}
 </script>
 
+{#if !session.isChild}
 <div class="share" aria-busy={busy || !current}>
 	{#if url}
 		<label class="small muted">Public article link
@@ -67,6 +69,7 @@
 	<p class="small muted">Anyone with the link can view the archived article and AI summary. Your profile, notes and reading history stay private.</p>
 	{#if current && error}<p class="small error" role="alert">{error}</p>{/if}
 </div>
+{/if}
 
 <style>
 	.share { display: grid; gap: var(--sp-2); min-width: 0; }

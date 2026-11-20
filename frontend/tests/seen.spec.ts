@@ -1,7 +1,8 @@
 import { test, expect } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
-import { expectFocus, freshPage, moveUntil } from './helpers';
+import { expectFocus, freshPage, moveUntil, remoteKeys } from './helpers';
+test.beforeEach(async ({ page }) => { await remoteKeys(page); }); // remote-key navigation is TV/opt-in only
 
 // "Seen it" on a category card: the video disappears from the feed and is marked watched.
 const DATA = process.env.BT_E2E_DATA;

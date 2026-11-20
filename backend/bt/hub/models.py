@@ -1,4 +1,4 @@
-"""WatchCraft Hub tables (schema v2). Canonical content is stored once; everything
+"""The Hub tables (schema v2). Canonical content is stored once; everything
 profile-specific (discoveries, state, collections, topics, alerts) is a relation."""
 import time
 from typing import Optional
@@ -40,7 +40,7 @@ class Curator(SQLModel, table=True):
     content_types: list = J()
     ai_enabled: bool = False
     min_score: int = 0
-    max_per_run: int = 30
+    max_per_run: int = 500  # article collectors find a deep feed; the scheduler still backs off when stocked
     collection_id: int | None = None
     topic_id: int | None = None
     alert_enabled: bool = False
@@ -478,6 +478,7 @@ class HubLesson(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     profile_id: int = Field(index=True)
     text: str = T()
+    reason: str = T()        # the learner's one-sentence why, shown beside the lesson
     scope: str = ''          # '' = all hub items, or a type such as meme / news / article
     polarity: int = 1        # 1 more like this, -1 less like this
     weight: float = 1.0
@@ -525,3 +526,284 @@ class ArticleText(SQLModel, table=True):
     removed: int = 0
     reviewed_at: float = 0
     backfill: bool = False
+
+
+class NewsImpression(SQLModel, table=True):
+    """When a profile's News feed last showed an article; drives a fresh For you mix per visit."""
+    profile_id: int = Field(primary_key=True)
+    item_id: int = Field(primary_key=True)
+    first_shown: float = Field(default_factory=time.time)
+    last_shown: float = Field(default_factory=time.time, index=True)
+    prev_shown: float = 0  # last_shown before the current visit touched it, keeping that visit's order stable
+    visits: int = 1  # distinct visits that showed it, so repeat exposure sinks gradually
+
+
+class MoodBoard(SQLModel, table=True):
+    """An isolated visual curator; never enters the news or meme pipeline."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    profile_id: int = Field(index=True)
+    name: str
+    interests: str
+    instructions: str = ''
+    enabled: bool = True
+    interval_hours: int = 12
+    next_run: float = 0
+    last_run: float | None = None
+    last_status: str = ''
+    error: str = ''
+    lease: str = ''
+    build_started: float = 0
+    revision: int = 0
+    source_offset: int = 0
+    target_images: int = 100
+    avoid: str = ''           # Hard rejects for the vision judge ("text graphics, gaming chairs")
+    seed_searches: str = ''   # Owner's own search phrases, used before AI-planned ones
+    media: str = 'any'        # any | photos | gifs
+    min_width: int = 0        # Skip captured images narrower than this (px)
+    strictness: str = 'strict'  # strict | balanced
+    child_friendly: bool = False  # safe sources + child-safety vision rule; always on for child profiles
+    ai_images: str = 'reject'  # ignore | mark | reject — how the curator treats AI-generated images
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodPin(SQLModel, table=True):
+    __table_args__ = (UniqueConstraint('board_id', 'source_url'),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    board_id: int = Field(index=True)
+    profile_id: int = Field(index=True)
+    title: str
+    source_url: str
+    image_url: str
+    media_type: str = 'image'
+    width: int = 0
+    height: int = 0
+    attribution: str = ''
+    license: str = ''
+    saved: bool = False
+    hidden: bool = False
+    ai_flag: str = ''  # why the curator thinks it is AI-generated ('' = not flagged)
+    # Kid check on boards a child shares: '' unchecked | ok | hidden (failed or hidden by a grown-up) | override
+    kid_state: str = ''
+    kid_reason: str = ''
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodBoardMember(SQLModel, table=True):
+    """Extra profiles that work on a board together with its owner (MoodBoard.profile_id)."""
+    board_id: int = Field(primary_key=True)
+    profile_id: int = Field(primary_key=True, index=True)
+    added_by: int = 0
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodAsset(SQLModel, table=True):
+    pin_id: int = Field(primary_key=True)
+    mime: str
+    data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+
+
+class MoodThumb(SQLModel, table=True):
+    """Small WebP preview for the board grid. Empty `data` means "serve the original" (animated or undecodable)."""
+    pin_id: int = Field(primary_key=True)
+    mime: str = ''
+    width: int = 0
+    height: int = 0
+    data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+
+
+class ExtensionKey(SQLModel, table=True):
+    """Browser-extension connection key for one profile. Only a SHA-256 of the key is stored.
+
+    Scope: list that profile's Mood Boards and add images to them. Nothing else."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    profile_id: int = Field(index=True)
+    name: str = ''
+    key_hash: str = Field(index=True, unique=True)
+    hint: str = ''  # last 4 characters, to tell keys apart
+    created_at: float = Field(default_factory=time.time)
+    last_used: float = 0
+
+
+class MoodPinNote(SQLModel, table=True):
+    """Why the curator kept a pin: the vision model's own description and reason, shown in the viewer."""
+    pin_id: int = Field(primary_key=True)
+    seen: str = ''
+    why: str = ''
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodVerdict(SQLModel, table=True):
+    """Every vision verdict on a board candidate, kept or not: the curator's audit trail and lesson material.
+
+    Rows without a pin are pruned after VERDICT_DAYS; a kept pin's row stays as that pin's full description."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    board_id: int = Field(index=True)
+    pin_id: int | None = Field(default=None, index=True)
+    source_url: str = ''
+    host: str = ''
+    dhash: int = 0  # 64-bit perceptual hash, stored signed; 0 = unknown
+    description: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    fits: bool = False
+    confidence: int = 0
+    violations: list = J()
+    why: str = ''
+    created_at: float = Field(default_factory=time.time, index=True)
+
+
+class MoodHash(SQLModel, table=True):
+    """Perceptual hash of a stored pin, so near-identical pictures (same shoot, re-crops) are not found again."""
+    pin_id: int = Field(primary_key=True)
+    board_id: int = Field(index=True)
+    dhash: int = 0
+
+
+class MoodFeedback(SQLModel, table=True):
+    """Owner's review of one pin, taught to that board's curator. 'bad' pins are hidden from the board."""
+    pin_id: int = Field(primary_key=True)
+    board_id: int = Field(index=True)
+    profile_id: int = Field(index=True)
+    verdict: str  # 'good' | 'bad'
+    note: str = ''
+    title: str = ''  # Snapshot: the lesson survives if the pin later moves or is deleted.
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodPinVector(SQLModel, table=True):
+    """Image+caption embedding of one pin under one embeddings model (packed float32).
+
+    dim == 0 marks a pin whose image could not be embedded, so the sweep does not retry it forever."""
+    pin_id: int = Field(primary_key=True)
+    model: str = Field(primary_key=True)
+    dim: int = 0
+    vector: bytes = Field(default=b'', sa_column=Column(LargeBinary, default=b''))
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodImport(SQLModel, table=True):
+    """Durable, profile-owned snapshot imports; no Pinterest credentials retained."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    board_id: int = Field(index=True)
+    profile_id: int = Field(index=True)
+    url: str
+    status: str = 'queued'
+    imported: int = 0
+    skipped: int = 0
+    total: int = 0
+    processed: list = J([])
+    candidates: list = J([])
+    fetched: bool = False
+    error: str = ''
+    lease: str = ''
+    lease_until: float = 0
+    created_at: float = Field(default_factory=time.time)
+    # Whole-board paging, a slice per scheduler tick; see moodboard_imports.
+    full: bool = False          # False: legacy 25-pin RSS snapshot (resumed once by resume_partial)
+    board_ref: str = ''         # Pinterest board id
+    cursor: str = ''            # bookmark of the next feed page
+    exhausted: bool = False     # no further pages
+    existing: int = 0           # pins already on the board
+    failures: int = 0           # consecutive failed attempts, for backoff
+    next_at: float = 0          # do not touch Pinterest for this job before this time
+    note: str = ''              # why it is waiting
+
+
+class MoodReference(SQLModel, table=True):
+    """One locally stored inspiration image per board, scoped through its owner."""
+    board_id: int = Field(primary_key=True)
+    name: str = ''
+    mime: str
+    data: bytes = Field(sa_column=Column(LargeBinary, nullable=False))
+
+
+class MoodShareLink(SQLModel, table=True):
+    """Public, revocable link to one Mood Board image or a whole board. Only a SHA-256 of the token is stored;
+    deleting the row revokes it at once (every public request looks it up again)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    profile_id: int = Field(index=True)
+    kind: str  # 'pin' | 'board' (copies) | 'member' (joined a shared board) | 'added' (images added by a member)
+    board_id: int = Field(index=True)
+    pin_id: Optional[int] = None
+    token_hash: str = Field(index=True, unique=True)
+    hint: str = ''  # last 4 characters, to tell links apart
+    include_source: bool = False  # owner chose to show the original image/page links
+    expires_at: Optional[float] = None
+    created_at: float = Field(default_factory=time.time)
+    views: int = 0
+    last_viewed: float = 0
+
+
+class MoodShareNotice(SQLModel, table=True):
+    """Tells a recipient profile that another household profile copied images onto one of their boards."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    recipient_id: int = Field(index=True)
+    sender_id: int
+    kind: str  # 'pin' | 'board' (copies) | 'member' (joined a shared board) | 'added' (images added by a member)
+    board_id: int
+    count: int = 1
+    seen: bool = False
+    created_at: float = Field(default_factory=time.time)
+
+
+class KidSafeVerdict(SQLModel, table=True):
+    """Kid-safety check of one Hub item under one set of safety rails. Child profiles only ever see
+    items with a current, safe verdict for their own rails: no verdict (model off, error, not judged
+    yet) means hidden. `rules` is kidsafe.rails_key of the child's rails; '' = the default rules only,
+    so children with the same rails share verdicts."""
+    item_id: int = Field(primary_key=True)
+    rules: str = Field(default='', primary_key=True)
+    safe: bool = False
+    image_checked: bool = False  # the item's picture was seen by the vision model and passed
+    reason: str = ''
+    version: int = 0
+    judged_at: float = Field(default_factory=time.time)
+
+
+class MoodSite(SQLModel, table=True):
+    """Shared, household-wide image-source "skill": a declarative recipe the board engine runs (never code).
+
+    Written by the board source curator; any board may link to it through MoodBoardSource."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    host: str = Field(index=True)
+    name: str = ''
+    kind: str  # feed | gallery | search_template | subreddit — see board_recipes.KINDS
+    recipe: dict = J({})
+    recipe_key: str = Field(default='', index=True)  # host+kind+recipe hash, for de-duplication
+    status: str = 'ok'  # ok | broken | disabled
+    notes: str = ''  # why it was chosen / quirks, for the next curator
+    failures: int = 0  # consecutive failed fetches
+    last_ok: float = 0
+    created_by_board: int = 0
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodBoardSource(SQLModel, table=True):
+    """A board's use of one shared site recipe, with its own parameters and track record."""
+    __table_args__ = (UniqueConstraint('board_id', 'site_id'),)
+    id: Optional[int] = Field(default=None, primary_key=True)
+    board_id: int = Field(index=True)
+    site_id: int = Field(index=True)
+    params: dict = J({})  # {'query': ...} for search templates
+    enabled: bool = True
+    added_by: str = 'curator'  # curator | user
+    fit: int = 0  # images the curator's vision trial accepted (of `tried`)
+    tried: int = 0
+    hits: int = 0  # candidates delivered to board runs
+    kept: int = 0  # of those, pinned
+    last_run: float = 0
+    created_at: float = Field(default_factory=time.time)
+
+
+class MoodSourceHunt(SQLModel, table=True):
+    """One run of the board source curator ("Find sources"); durable job row with a lease."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    board_id: int = Field(index=True)
+    profile_id: int = Field(index=True)
+    status: str = 'queued'  # queued | running | complete | failed
+    lease: str = ''
+    lease_until: float = 0
+    found: int = 0
+    error: str = ''
+    log: list = J([])  # [{at, step, message}], newest last, bounded
+    created_at: float = Field(default_factory=time.time)
+    started_at: float = 0
+    finished_at: float = 0

@@ -84,6 +84,11 @@ def select_memory(s, pid, lessons, content_type="video"):
     New source lessons are corrections until the next successful consolidation.
     """
     lessons = [le for le in lessons if le.profile_id == pid and le.content_type == content_type]
+    from ..knowledge import render as knowledge
+    woven = knowledge.section_text(s, pid, knowledge.ARTICLE if content_type == "article" else knowledge.VIDEO)
+    if woven is not None:
+        # One brain: the profile's living knowledge is the core; lessons not woven in yet stay corrections.
+        return woven, lessons
     core = latest(s, pid, content_type)
     if not core:
         return "", lessons
@@ -141,7 +146,7 @@ def _compact_batch(rt, rules, budget_chars=None, content_type="video"):
          "Retain useful nuance when space allows; compress more tightly when necessary. Do not pad to fill the budget." if budget_chars else "")},
         {"role": "user", "content": json.dumps(rules, ensure_ascii=False)}],
         json_schema=SCHEMA, schema_name="memory_compaction", max_tokens=8000, timeout_s=600,
-        temperature=0.1, abort=rt.check)
+        temperature=0.1, abort=rt.check, role='memory_compact')
     out = result.get("rules")
     if not isinstance(out, list) or not out:
         raise ValueError("The model returned no core rules; originals retained")
@@ -168,7 +173,7 @@ def _compact_batch(rt, rules, budget_chars=None, content_type="video"):
         json_schema={"type": "object", "properties": {"ok": {"type": "boolean"},
             "issues": {"type": "array", "items": {"type": "string"}}},
             "required": ["ok", "issues"], "additionalProperties": False}, schema_name="memory_audit",
-        max_tokens=2500, timeout_s=600, temperature=0.1, abort=rt.check)
+        max_tokens=2500, timeout_s=600, temperature=0.1, abort=rt.check, role='memory_audit')
     if audit.get("ok") is not True:
         raise ValueError("The model's preservation audit failed; originals retained")
     return cleaned
@@ -270,7 +275,7 @@ def compact_profile(rt, pid, budget, content_type="video"):
             json_schema={"type": "object", "properties": {"ok": {"type": "boolean"},
                 "issues": {"type": "array", "items": {"type": "string"}}},
                 "required": ["ok", "issues"], "additionalProperties": False},
-            schema_name="memory_continuity_audit", max_tokens=2500, timeout_s=600, temperature=0.1, abort=rt.check)
+            schema_name="memory_continuity_audit", max_tokens=2500, timeout_s=600, temperature=0.1, abort=rt.check, role='memory_audit')
         if audit.get("ok") is not True:
             raise ValueError("Core identity continuity review failed; previous core and corrections retained")
     rt.check()
@@ -302,7 +307,21 @@ def process(rt):
     try:
         with session() as s:
             pids = list(s.exec(select(Profile.id).order_by(Profile.id)).all())
+        from ..knowledge import render as knowledge, weave
         for pid in pids:
+            rt.check()
+            try:
+                woven = weave.weave(pid, abort=rt.check)
+                if woven.get("status") not in ("unchanged", "no model"):
+                    state["profiles"].append({"profile_id": pid, "knowledge": woven})
+            except Interrupt:
+                raise
+            except Exception as e:  # noqa: BLE001 — knowledge stays at its previous version
+                rt.event("learn", f"⚠️ Knowledge weave for profile {pid}: {str(e)[:200]}", "warn", profile_id=pid)
+            with session() as s:
+                has_knowledge = knowledge.current(s, pid) is not None
+            if has_knowledge:
+                continue  # its knowledge replaces the per-type core memory
             for content_type in ("video", "article"):
                 result = compact_profile(rt, pid, int(cfg["max_core_tokens"]) * 4, content_type=content_type)
                 if result.get("status") != "unchanged" or result.get("lessons"):

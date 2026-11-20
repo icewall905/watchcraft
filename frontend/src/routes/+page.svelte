@@ -179,8 +179,8 @@
 					<h1>Tell the AI what you like to watch</h1>
 					<p class="muted lead">Create a playlist like "Science for kids" or "Woodworking". The curator searches YouTube slowly in the background, reads transcripts and comments, and only keeps videos that fit.</p>
 					<div class="hstack">
-						<a class="btn primary big" href="/settings?tab=categories&new=1" use:focusable={{ group: 'hero', autofocus: true }}>Create a playlist</a>
-						<a class="btn big" href="/search" use:focusable={{ group: 'hero' }}>Search instead</a>
+						{#if session.allows('playlists_edit')}<a class="btn primary big" href="/settings?tab=categories&new=1" use:focusable={{ group: 'hero', autofocus: true }}>Create a playlist</a>{/if}
+						{#if session.allows('yt_search')}<a class="btn big" href="/search" use:focusable={{ group: 'hero' }}>Search instead</a>{/if}
 					</div>
 				{:else}
 					<h1>Your curator is on it</h1>

@@ -8,6 +8,7 @@ compose_check
 action=${1:-}
 if [ -z "$action" ]; then
   echo '1) Start  2) Update  3) Backup  4) Restore  5) Status  6) Stop  7) Reset profile PIN'
+  echo '8) Create account invite  9) Reset account password  10) List accounts'
   read -r -p 'Choose an action: ' action
 fi
 make_backup() {
@@ -64,5 +65,17 @@ case "$action" in
     echo 'When child profiles are enabled, adult PINs are replaced with a new PIN shown here.'
     read -r -p 'Reset this profile PIN? [y/N]: ' confirm
     case "$confirm" in y|Y|yes|YES) helper bt-api - reset-pin "$pid" ;; esac ;;
-  *) fail 'Choose start, update, backup, restore, status, stop or reset-pin.' ;;
+  8|invite)
+    read -r -p 'Username for the new account: ' name
+    [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || fail 'Use letters, numbers, dots, dashes or underscores.'
+    read -r -p 'Make this account an administrator? [y/N]: ' admin
+    case "$admin" in y|Y|yes|YES) docker compose exec bt-api python -m bt.accounts_cli invite "$name" --admin ;;
+      *) docker compose exec bt-api python -m bt.accounts_cli invite "$name" ;; esac ;;
+  9|reset-account)
+    docker compose exec bt-api python -m bt.accounts_cli list
+    read -r -p 'Username to reset the password for: ' name
+    [[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || fail 'Enter a username shown above.'
+    docker compose exec bt-api python -m bt.accounts_cli reset "$name" ;;
+  10|accounts) docker compose exec bt-api python -m bt.accounts_cli list ;;
+  *) fail 'Choose start, update, backup, restore, status, stop, reset-pin, invite, reset-account or accounts.' ;;
 esac

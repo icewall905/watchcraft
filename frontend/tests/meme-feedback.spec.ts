@@ -130,21 +130,28 @@ test('a German meme offers its language as the reason and hides it', async ({ pa
 	await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
 });
 
-test('Settings lists meme languages and hides one', async ({ page }) => {
-	const posts: unknown[] = [];
+test('Settings: choose the meme languages to show', async ({ page }) => {
+	const puts: unknown[] = [];
 	await page.route('**/api/hub/memes/facets*', (route) => route.fulfill({
-		json: { communities: [], languages: [{ key: 'en', count: 14 }, { key: 'de', count: 1 }], hidden_languages: [] }
+		json: { communities: [], languages: [{ key: 'en', count: 14 }, { key: 'de', count: 1 }], hidden_languages: [], allowed_languages: [] }
 	}));
-	await page.route('**/api/hub/memes/languages/*/hide', async (route) => {
-		posts.push(route.request().postDataJSON());
-		await route.fulfill({ json: { hidden_languages: ['de'] } });
+	await page.route('**/api/hub/memes/languages', async (route) => {
+		const body = route.request().postDataJSON();
+		puts.push(body);
+		await route.fulfill({ json: { languages: body.languages, hidden_languages: [] } });
 	});
 
 	await freshPage(page, '/settings?tab=memes');
-	const german = page.locator('li').filter({ hasText: 'German' });
-	await expect(german).toBeVisible();
-	await expect(german.getByRole('button', { name: 'Shown' })).toBeVisible();
-	await german.getByRole('button', { name: 'Shown' }).click();
-	await expect(german.getByRole('button', { name: 'Hidden' })).toBeVisible();
-	expect(posts).toEqual([{ hidden: true }]);
+	await expect(page.getByText('No language chosen: every language is shown.')).toBeVisible();
+	const english = page.getByRole('checkbox', { name: /English/ });
+	await expect(english).not.toBeChecked();
+	await expect(page.getByRole('checkbox', { name: /Danish/ })).toBeVisible(); // common languages offered before any meme
+	await english.check();
+	await expect(english).toBeChecked();
+	await expect(page.getByText('Showing: English.')).toBeVisible();
+	await page.getByRole('checkbox', { name: /Danish/ }).check();
+	expect(puts).toEqual([{ languages: ['en'] }, { languages: ['en', 'da'] }]);
+	await page.getByRole('button', { name: 'Show all languages' }).click();
+	await expect(page.getByText('No language chosen: every language is shown.')).toBeVisible();
+	expect(puts.at(-1)).toEqual({ languages: [] });
 });

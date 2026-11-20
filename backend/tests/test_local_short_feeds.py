@@ -138,11 +138,14 @@ def test_short_feed_counts_batch_queries_without_loading_video_payloads(tmp_path
         s.commit()
         pid = p.id
     statements, paths = [], []
-    original = core._readable_short_file
-    def readable(path):
+    original = core._short_file_present
+    def present(path):
         paths.append(path)
         return original(path)
-    monkeypatch.setattr(core, '_readable_short_file', readable)
+    monkeypatch.setattr(core, '_short_file_present', present)
+    def must_not_open(path):
+        raise AssertionError(f'feed counts must not open {path}')
+    monkeypatch.setattr(core, '_readable_short_file', must_not_open)
     def record(conn, cursor, statement, parameters, context, executemany):
         if statement.lstrip().upper().startswith('SELECT'):
             statements.append(statement)
@@ -157,3 +160,58 @@ def test_short_feed_counts_batch_queries_without_loading_video_payloads(tmp_path
     assert paths == ['shared.mp4']
     assert len(statements) == 4  # profile feed list, watched IDs, stats and availability
     assert not any('video.transcript' in sql or 'video.comments' in sql for sql in statements)
+
+
+def test_scroll_opens_only_served_clips_and_caches_caption_checks(tmp_path, monkeypatch):
+    """A page opens only the files it serves (not every stored clip), an unreadable clip is
+    replaced by the next one, and feed counts validate each caption track once per version."""
+    from pathlib import Path
+    from bt import subtitle_jobs
+    from bt.api import core
+    from bt.models import GeneratedSubtitles
+    monkeypatch.setattr(service, 'MEDIA_DIR', tmp_path)
+    vtt = 'WEBVTT\n\n00:00:00.000 --> 00:00:02.000\nhello\n'
+    with TestClient(app) as c:
+        from bt.models import Profile
+        with db.session() as s:
+            prof = Profile(name='Scroll speed'); s.add(prof); s.commit()
+            cat = Category(profile_id=prof.id, name='Fast', kind='shorts'); s.add(cat); s.commit()
+            h, feed = {'X-Profile-Id': str(prof.id)}, {'id': cat.id}
+        ids = [f'speed{i:06d}' for i in range(25)]
+        with db.session() as s:
+            for i, vid in enumerate(ids):
+                s.add(Video(id=vid, duration_s=30, is_short=True))
+                s.add(Candidate(category_id=feed['id'], video_id=vid, status='accepted', score=99 - i))
+                s.add(Download(video_id=vid, status='done', path=f'{vid}.mp4'))
+                s.add(GeneratedSubtitles(video_id=vid, status='ready', vtt=vtt, updated_at=1.0))
+                (tmp_path / f'{vid}.mp4').write_bytes(b'clip')
+            s.commit()
+        opened = []
+        real_open = Path.open
+        def counting_open(self, *a, **k):
+            if self.parent == tmp_path.resolve():
+                opened.append(self.stem)
+                if self.stem == ids[1]:
+                    raise OSError('unreadable')
+            return real_open(self, *a, **k)
+        monkeypatch.setattr(Path, 'open', counting_open)
+        got = c.get('/api/shorts', params={'category_id': feed['id'], 'limit': 5}, headers=h).json()
+        assert [x['video']['id'] for x in got['items']] == [ids[0], *ids[2:6]]
+        assert opened == ids[:6]
+        assert got['total'] == 24 and got['next_offset'] == 5
+        assert got['items'][0]['video']['subtitles']['status'] == 'ready'
+
+        checks = []
+        real_usable = subtitle_jobs.usable_vtt
+        monkeypatch.setattr(subtitle_jobs, 'usable_vtt', lambda v: checks.append(1) or real_usable(v))
+        subtitle_jobs._USABLE.clear()
+        first = c.get('/api/shorts/feeds', headers=h).json()[0]
+        assert first['caption_ready_count'] == first['ready_count'] == 25
+        assert len(checks) == 25
+        assert c.get('/api/shorts/feeds', headers=h).json()[0]['caption_ready_count'] == 25
+        assert len(checks) == 25  # cached
+        with db.session() as s:
+            row = s.get(GeneratedSubtitles, ids[0]); row.vtt = 'WEBVTT\n\n'; row.updated_at = 2.0; s.add(row); s.commit()
+        assert c.get('/api/shorts/feeds', headers=h).json()[0]['caption_ready_count'] == 24
+        assert len(checks) == 26
+        assert core._readable_short_file  # page path still reads

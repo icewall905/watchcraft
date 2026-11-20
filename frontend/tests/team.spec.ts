@@ -67,3 +67,18 @@ test('Agent Activity shows real agent state and the parallel-agent setting saves
 	expect((await res.json()).max_parallel).toBe(3);
 	await request.put('/api/settings/team', { data: { max_parallel: 1 } });
 });
+
+test('Mood Board curators show actual counts, status and visual milestones', async ({ page }) => {
+ const now = Date.now()/1000;
+ await page.route('**/api/hub/team', r => r.fulfill({json: {limit: 1, running: 0, waiting: 0, agents: [{key:'moodboard-3',kind:'moodboard',id:3,name:'Heart dresses',icon:'🖼️',color:'#d3a5d8',mission:'Dresses with heart patterns only',role:'visual',status:'running',since:now-3,next_run:now+3600,last_run:now-3,pin_count:8,found_today:2,doing:'Inspecting the captured images.',timeline:[{step:'judge',message:'Inspecting the captured images.',at:now-1}]}],journal:[{at:now-60,agent:'moodboard-3',name:'Heart dresses',icon:'🖼️',kind:'moodboard_run',status:'ok',new_items:2,title:'Collected two matching images.'}]}}));
+ await freshPage(page,'/team');
+ const card = page.getByRole('article').filter({hasText:'Mood Board curator'});
+ await expect(card.getByRole('heading',{name:'Heart dresses'})).toBeVisible();
+ await expect(card.getByText('8 images · 2 added today')).toBeVisible();
+ await expect(card.locator('.now')).toHaveText('Inspecting the captured images.');
+ await expect(card.getByRole('link')).toHaveAttribute('href','/boards');
+ await card.getByText('Run timeline').click();
+ await expect(card.getByRole('listitem')).toContainText('Inspecting the captured images.');
+ await expect(page.getByRole('region',{name:'Research journal'})).toContainText('Collected two matching images.');
+ await expect(page.getByText('0/1')).toBeVisible();
+});

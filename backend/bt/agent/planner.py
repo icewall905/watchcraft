@@ -151,7 +151,7 @@ def make_plan(rt: Runtime, cat: Category, plan: dict) -> bool:
     rt.event("plan", f"🧭 Planning new searches for {cat.name}", "info", cat)
     try:
         out = rt.llm.chat_json(msgs, json_schema=prompts.PLAN_SCHEMA, max_tokens=2500, schema_name="plan",
-                               abort=rt.check)
+                               abort=rt.check, role='video_plan')
     except Interrupt:
         raise
     except Exception as e:  # noqa: BLE001
@@ -185,7 +185,7 @@ def _screen(rt: Runtime, cat: Category, entries: list[dict]) -> dict[str, str]:
         return {}
     try:
         out = rt.llm.chat_json(prompts.screen_messages(cat, entries), json_schema=prompts.SCREEN_SCHEMA,
-                               schema_name="screen", max_tokens=1500, temperature=0.1, abort=rt.check, role="worker")
+                               schema_name="screen", max_tokens=1500, temperature=0.1, abort=rt.check, role='video_screen')
     except Interrupt:
         raise
     except Exception as e:  # noqa: BLE001

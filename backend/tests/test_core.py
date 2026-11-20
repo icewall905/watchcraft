@@ -1,4 +1,5 @@
 import os
+from bt.llm import role_for
 import tempfile
 
 os.environ.setdefault("BT_DATA_DIR", tempfile.mkdtemp(prefix="bt-test-"))
@@ -608,7 +609,7 @@ def test_autofill_brief_writes_a_brief_from_the_name(monkeypatch):
     assert r.status_code == 200
     assert r.json()["brief"] == "Simple, fun science for kids 5-9: experiments, space, animals."
     assert "Science for kids" in seen[0][0][-1]["content"]
-    assert seen[0][1]["role"] == "worker"
+    assert role_for(seen[0][1]["role"]) == "worker"
     assert seen[0][1]["schema_name"] == "category_brief"
     # The brief must not be pushed towards a child audience unless the name asks for one.
     system = seen[0][0][0]["content"]
@@ -628,3 +629,19 @@ def test_autofill_brief_requires_a_name_and_rejects_empty_or_failed_output(monke
 
     monkeypatch.setattr(llm, "chat_json", boom)
     assert c.post("/api/categories/autofill-brief", json={"name": "Cats"}).status_code == 502
+
+
+def test_player_autoplay_and_preview_settings():
+    c = client()
+    pl = c.get('/api/settings').json()['player']
+    assert (pl['autoplay_next'], pl['autoplay_delay_s'], pl['preview_autoplay'], pl['preview_limit_s']) == (True, 10, True, 0)
+    assert pl['scroll_autoplay_next'] is True
+    for bad in ({'scroll_autoplay_next': 'off'}, {'autoplay_delay_s': -1}, {'autoplay_delay_s': 61}, {'autoplay_delay_s': 2.5},
+                {'preview_limit_s': 301}, {'preview_limit_s': '5'}, {'preview_autoplay': 'no'}, {'autoplay_next': 1}):
+        assert c.put('/api/settings/player', json={**pl, **bad}).status_code == 400, bad
+    saved = c.put('/api/settings/player', json={**pl, 'autoplay_delay_s': 0, 'scroll_autoplay_next': False, 'preview_autoplay': False, 'preview_limit_s': 15}).json()
+    assert (saved['autoplay_delay_s'], saved['preview_autoplay'], saved['preview_limit_s']) == (0, False, 15)
+    player = c.get('/api/settings').json()['player']
+    assert player['preview_limit_s'] == 15
+    assert player['scroll_autoplay_next'] is False
+    assert player['autoplay_next'] is True

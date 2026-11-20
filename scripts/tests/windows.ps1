@@ -13,7 +13,7 @@ Copy-Item (Join-Path $repo 'manage.ps1') $fixture
 Copy-Item (Join-Path $repo 'scripts') (Join-Path $fixture 'scripts') -Recurse
 $env:BT_NO_BROWSER = '1'
 $global:answers = [Collections.Generic.Queue[string]]::new()
-foreach ($answer in @('./app data', './video $folder', 'wrong', '7777', 'y', "test `$password#with'quote", "test `$password#with'quote")) { $global:answers.Enqueue($answer) }
+foreach ($answer in @('./app data', './video $folder', 'wrong', '7777')) { $global:answers.Enqueue($answer) }
 $global:dockerCalls = [Collections.Generic.List[string]]::new()
 function global:Read-Host {
     param([string]$Prompt, [switch]$AsSecureString)
@@ -33,16 +33,14 @@ function global:docker {
 try {
     & (Join-Path $fixture 'setup.ps1')
     $config = [IO.File]::ReadAllText((Join-Path $fixture '.env'))
-    if (-not $config.Contains('BT_PASSWORD="test $$password#with''quote"')) { throw 'Password quoting failed' }
+    if (-not $config.Contains('BT_AUTH=accounts')) { throw 'Accounts sign-in must be the default' }
+    if ($config.Contains('BT_PASSWORD')) { throw 'The shared password is gone' }
     if (-not $config.Contains('video $$folder')) { throw 'Path quoting failed' }
     if (-not $global:dockerCalls.Contains('compose up -d --wait --wait-timeout 240')) { throw 'Readiness was not checked' }
     & (Join-Path $fixture 'setup.ps1')
     if ($config -ne [IO.File]::ReadAllText((Join-Path $fixture '.env'))) { throw 'Existing configuration changed' }
     Remove-Item -LiteralPath (Join-Path $fixture '.env') -Force
-    foreach ($answer in @('./app data', './video $folder', '7777', '')) { $global:answers.Enqueue($answer) }
-    & (Join-Path $fixture 'setup.ps1')
-    if (-not ([IO.File]::ReadAllText((Join-Path $fixture '.env'))).Contains('BT_PASSWORD=""')) { throw 'Login must be off by default' }
-    Write-Host 'PowerShell parsing, optional login and setup checks passed.'
+    Write-Host 'PowerShell parsing and setup checks passed.'
 } finally {
     Set-Location $repo
     Remove-Item $fixture -Recurse -Force

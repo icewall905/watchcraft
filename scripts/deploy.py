@@ -1,4 +1,5 @@
 """Container-side deployment checks and portable backups. No extra host dependencies."""
+from contextlib import closing
 import datetime
 import hashlib
 import json
@@ -115,7 +116,8 @@ def profile_pin(data, pid=None):
     database = data / 'bt.sqlite3'
     if not database.is_file():
         raise ValueError('Start BetterTube once before managing profile PINs.')
-    with sqlite3.connect(database, timeout=30) as connection:
+    # closing(): a sqlite3 context manager only commits; Windows cannot delete an open file.
+    with closing(sqlite3.connect(database, timeout=30)) as connection, connection:
         if pid is None:
             for ident, name in connection.execute('SELECT id, name FROM profile ORDER BY id'):
                 print(f'{ident}: {name}')

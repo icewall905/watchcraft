@@ -11,7 +11,8 @@ from .downloader.service import abs_path
 
 def snapshot(s, pid, heartbeat_path=None, clock=None):
     stamp = time.time() if clock is None else clock
-    admin = s.get(Profile, pid).role == 'admin'
+    from .access import is_admin_profile
+    admin = is_admin_profile(s, s.get(Profile, pid))
     children = has_children(s)
     allowed = {p.id for p in s.exec(select(Profile)).all()
                if (admin or p.id == pid) and (not children or p.role == 'child' or grown_up_access(s, p))}

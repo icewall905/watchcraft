@@ -22,7 +22,7 @@ export const scheduleOptions = (current: number) =>
 
 export const emptyCurator = (kind: 'watch' | 'research' = 'watch'): import('./types').CuratorInput => ({
 	name: '', description: '', icon: '🔭', color: '#7c5cff', kind, tone: 'friendly', instructions: '', queries: [], keywords: [], exclusions: [],
-	content_types: [], source_ids: [], interval_hours: 24, enabled: true, ai_enabled: true, min_score: 30, max_per_run: 20,
+	content_types: [], source_ids: [], interval_hours: 24, enabled: true, ai_enabled: true, min_score: 30, max_per_run: 500,
 	collection_id: null, topic_id: null, alert_enabled: false, alert_keywords: [], alert_min_severity: 'high',
 	subject: '', subject_type: 'topic', aliases: [], tuned_up: [], tuned_down: []
 });

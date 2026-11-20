@@ -4,13 +4,13 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlmodel import Session, col, select
 
 from ..db import get_kv, get_session, get_settings
-from ..access import require_admin
+from ..access import own_profile_ids, profile_id, require_admin
 from ..music.offline import HAND_DELETED
 from ..downloader.service import GB, delete_files, used_bytes
 from ..models import Download, ReencodeJob, Video, now
@@ -98,17 +98,22 @@ def _remove(s: Session, d: Download) -> None:
 
 
 @router.delete("/downloads/{video_id}")
-def delete_download(video_id: str, s: Session = Depends(get_session)):
+def delete_download(video_id: str, s: Session = Depends(get_session), request: Request = None,
+                    pid: int = Depends(profile_id)):
     s.exec(text("BEGIN IMMEDIATE"))
     d = s.get(Download, video_id)
     if not d:
         raise HTTPException(404, "not downloaded")
+    # The offline library is shared: an account removes what its own profiles saved; admins remove anything.
+    own = own_profile_ids(request) if request is not None else None
+    if own is not None and d.requested_by_profile not in own:
+        require_admin(pid)
     _remove(s, d)
     s.commit()
     return {"ok": True}
 
 
-@router.delete("/downloads")
+@router.delete("/downloads", dependencies=[Depends(require_admin)])
 def clear_downloads(s: Session = Depends(get_session)):
     s.exec(text("BEGIN IMMEDIATE"))
     n = 0

@@ -7,9 +7,8 @@ x-bt: &bt
   volumes:
     - ${BT_DATA_HOST_DIR:-./data}:/data
     - ${BT_MEDIA_HOST_DIR:-./media}:/media
-  # Browser capture is disabled on every host until browser egress can enforce public-only
-  # fetching for redirects and subresources. Do not grant SYS_ADMIN or disable security profiles
-  # to enable it: filesystem isolation alone does not protect the LAN. See docs/SECURITY.md.
+  # Chromium never runs in these containers: the only browser is the isolated `browser` sidecar below,
+  # whose traffic is forced through the public-only `egress` proxy. See docs/SECURITY.md.
   depends_on:
     - pot
 
@@ -20,6 +19,8 @@ services:
     container_name: bt-api
     environment:
       BT_SUBTITLE_WORKER: "0"
+      BT_BROWSER_URL: http://browser:9300
+    networks: [default, browser-ctl]
     ports:
       - "${BT_PORT:-6645}:6645"
     healthcheck:
@@ -56,8 +57,51 @@ services:
       retries: 3
       start_period: 60s
 
+  # Isolated headless Chromium for the board source curator (browser/). No data volume, no secrets,
+  # no direct route out: internal networks only, every request through the public-only egress proxy.
+  browser:
+    build: ./browser
+    image: bt-browser:latest
+    container_name: bt-browser
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    shm_size: 512m
+    mem_limit: 2g
+    pids_limit: 512
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      EGRESS_PROXY: http://egress:3128
+    networks: [browser-ctl, browser-egress]
+    depends_on: [egress]
+
+  # Squid forward proxy: ports 80/443 to public addresses only; LAN, loopback, link-local and Docker
+  # ranges are refused on the resolved address (browser/egress/squid.conf).
+  egress:
+    build: ./browser/egress
+    image: bt-egress:latest
+    container_name: bt-egress
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 256m
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [browser-egress, browser-out]
+
   pot:
     image: brainicism/bgutil-ytdlp-pot-provider:2.0.2-deno
     container_name: bt-pot
     restart: unless-stopped
     init: true
+
+networks:
+  default: {}
+  browser-ctl:
+    internal: true
+  browser-egress:
+    internal: true
+  browser-out: {}

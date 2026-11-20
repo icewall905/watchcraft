@@ -5,7 +5,8 @@ from fastapi import HTTPException
 from sqlalchemy import text
 from sqlmodel import select
 
-from ..access import hub_allowed
+from ..access import hub_worker_allowed, is_child
+from . import kidsafe
 from ..db import session
 from . import stories
 from .models import (Alert, ContentItem, Curator, CuratorDiscovery, CuratorRun, ScoutPlan, ScoutReportIssue, ScoutRun)
@@ -39,7 +40,7 @@ def generate(pid: int, period: str, curator_id: int | None = None):
     # Serialize duplicate checks and issue insertion across API/scheduler processes.
     with session() as s:
         s.exec(text('BEGIN IMMEDIATE'))
-        if not hub_allowed(s, pid):
+        if not hub_worker_allowed(s, pid):
             raise HTTPException(403, 'Hub discovery and research are unavailable for this profile.')
         curator = s.get(Curator, curator_id) if curator_id is not None else None
         if curator_id is not None and (not curator or curator.profile_id != pid):
@@ -53,9 +54,12 @@ def generate(pid: int, period: str, curator_id: int | None = None):
              .where(CuratorDiscovery.profile_id == pid, Curator.profile_id == pid, CuratorDiscovery.found_at >= since))
         if curator_id is not None: q = q.where(Curator.id == curator_id)
         rows = s.exec(q.order_by(CuratorDiscovery.found_at.desc()).limit(500)).all()
+        kid = is_child(s, pid)
+        safe = kidsafe.safe_set(s, [item.id for _, item, _ in rows], pid) if kid else set()
         findings, seen = [], set()
         for discovery, item, owner in rows:
             if item.id in already or item.id in seen: continue
+            if kid and item.id not in safe: continue
             seen.add(item.id)
             findings.append({'id': item.id, 'title': item.title[:500], 'summary': (item.enrichment.get('summary') or item.summary or '')[:500],
                              'summary_ai': bool(item.enrichment.get('summary')), 'url': item.url, 'publisher': item.publisher, 'curator_id': owner.id,
@@ -69,7 +73,7 @@ def generate(pid: int, period: str, curator_id: int | None = None):
             .order_by(ScoutRun.created_at.desc()).limit(20)).all()
         alert_query = select(Alert).where(Alert.profile_id == pid, Alert.state == 'new')
         if curator_id is not None: alert_query = alert_query.where(Alert.curator_id == curator_id)
-        alerts = s.exec(alert_query.order_by(Alert.created_at.desc()).limit(5)).all()
+        alerts = [] if kid else s.exec(alert_query.order_by(Alert.created_at.desc()).limit(5)).all()
         upcoming_query = select(Curator).where(Curator.profile_id == pid, Curator.enabled == True,
                                                Curator.next_run > now, Curator.next_run < 1e11)
         if curator_id is not None: upcoming_query = upcoming_query.where(Curator.id == curator_id)
@@ -83,10 +87,10 @@ def generate(pid: int, period: str, curator_id: int | None = None):
                     'runs': {'count': len(runs), 'new_items': sum(r.new_items for r in runs),
                              'failed': sum(r.status in ('failed', 'partial') for r in runs)},
                     'scout': {'runs': len(scouts), 'validated_sources': sum(len(r.suggestions) for r in scouts)},
-                    'memes': _meme_lines(s, pid, since),
+                    'memes': [] if kid else _meme_lines(s, pid, since),
                     'alerts': [{'id': a.id, 'title': a.title, 'severity': a.severity} for a in alerts],
                     'upcoming': next_work,
-                    'stories': stories.generate(s, pid, since, curator_id)}
+                    'stories': stories.generate(s, pid, since, curator_id, kid=kid)}
         issue = ScoutReportIssue(profile_id=pid, curator_id=curator_id, period=period,
                                  item_ids=[item['id'] for item in findings], sections=sections)
         s.add(issue); s.commit(); s.refresh(issue)

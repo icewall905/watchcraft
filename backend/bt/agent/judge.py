@@ -54,7 +54,7 @@ def normalize(out: dict) -> dict:
 
 
 def decide(cat: Category, v: dict) -> tuple[bool, str]:
-    if cat.kid_safe and not v["kid_safe"]:
+    if not v["kid_safe"] and (cat.kid_safe or prompts.child_rails(cat)):
         return False, "not kid-safe"
     if v["score"] < (cat.threshold or 0):
         return False, (v["red_flags"][0] if v["red_flags"] else v["summary"] or "below threshold")
@@ -122,7 +122,7 @@ def judge_one(rt: Runtime, cand: Candidate) -> Optional[str]:
         images = [img] if img else None
     kw = dict(json_schema=prompts.JUDGE_SCHEMA, max_tokens=3000, schema_name="verdict", abort=rt.check)
     try:
-        out = rt.llm.chat_json(msgs, images=images, **kw)
+        out = rt.llm.chat_json(msgs, images=images, **kw, role='video_verdict')
     except Interrupt:
         raise
     except Exception as e:  # noqa: BLE001
@@ -131,7 +131,7 @@ def judge_one(rt: Runtime, cand: Candidate) -> Optional[str]:
             return None
         log.info("vision judge failed (%s); retrying without image", e)
         try:
-            out = rt.llm.chat_json(msgs, images=None, **kw)
+            out = rt.llm.chat_json(msgs, images=None, **kw, role='video_verdict')
         except Interrupt:
             raise
         except Exception as e2:  # noqa: BLE001

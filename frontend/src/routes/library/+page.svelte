@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { session } from '$lib/stores/session.svelte';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
@@ -188,18 +189,18 @@
 		const blob = new Blob([JSON.stringify(items.map((i) => ({ id: i.id, title: i.title, url: i.url, type: i.type, publisher: i.publisher, published_at: i.published_at, summary: i.summary, tags: i.state.tags, notes: i.state.notes, meta: i.meta })), null, 2)], { type: 'application/json' });
 		const a = document.createElement('a');
 		a.href = URL.createObjectURL(blob);
-		a.download = `watchcraft-${activeCol ? activeCol.name.replace(/\W+/g, '-').toLowerCase() : view}.json`;
+		a.download = `the-hub-${activeCol ? activeCol.name.replace(/\W+/g, '-').toLowerCase() : view}.json`;
 		document.body.appendChild(a); a.click(); a.remove();
 		setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 	}
 </script>
 
-<svelte:head><title>Library · WatchCraft</title></svelte:head>
+<svelte:head><title>The Stacks · The Hub</title></svelte:head>
 
 <div class="page reading-page">
 	<header class="head">
 		<div>
-			<h1>{activeCol ? activeCol.name : 'Library'}</h1>
+			<h1>{activeCol ? activeCol.name : 'The Stacks'}</h1>
 			<p class="muted">{activeCol ? (activeCol.description || 'Collection') : "Everything you've chosen to keep."}</p>
 		</div>
 		{#if !showCollections}
@@ -223,10 +224,12 @@
 		<LiveFilter placeholder="Filter saved items by words or tags…" label="Filter library" count={loading ? null : total} />
 	{/if}
 
+	{#if !session.isChild}
 	<form class="import" onsubmit={doImport}>
 		<input class="input" type="url" bind:value={importUrl} placeholder="Import a page by URL (https://…)" aria-label="URL to import" aria-invalid={!!importError} />
 		<button class="btn" disabled={!importUrl.trim() || importing} use:focusable>{importing ? 'Importing…' : 'Import'}</button>
 	</form>
+	{/if}
 	{#if importError}<p class="err" role="alert">Couldn't import: {importError}</p>{/if}
 	{#if note}<p class="note small" role="status">{note}</p>{/if}
 
@@ -276,7 +279,7 @@
 		<div class="empty">
 			<span class="big-emoji">📚</span>
 			<h2>{view === 'favorites' ? 'No favorites yet' : view === 'later' ? 'Nothing queued' : view === 'archive' ? 'Archive is empty' : colId ? 'Empty collection' : 'Your library is empty'}</h2>
-			<p>Save items from Discover or News, or import a page by URL above.</p>
+			<p>{session.isChild ? 'Save items from Discover or News.' : 'Save items from Discover or News, or import a page by URL above.'}</p>
 			<a class="btn primary" href="/discover" use:focusable>Browse Discover</a>
 		</div>
 	{:else}

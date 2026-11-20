@@ -1,4 +1,4 @@
-// Desktop notifications for new alerts, while a WatchCraft tab is open.
+// Desktop notifications for new alerts, while a Hub tab is open.
 // No push server: the page polls the same alerts endpoint the Alerts page uses.
 import { hub } from '$lib/hub/api';
 import { session } from './session.svelte';
@@ -45,7 +45,7 @@ class BrowserNotify {
 
 	private async poll() {
 		if (this.busy || !this.enabled || this.permission !== 'granted') return;
-		if (!session.ready || session.needsLogin || !session.profileId) return;
+		if (!session.ready || session.needsLogin || !session.profileId || !session.allows('alerts')) return;
 		this.busy = true;
 		try {
 			const page = await hub.alerts('new');
@@ -55,7 +55,7 @@ class BrowserNotify {
 			try { localStorage.setItem(SEEN, String(newest)); } catch { /* storage unavailable */ }
 			for (const a of fresh.slice(0, 3)) {
 				const n = new Notification(`${a.severity.toUpperCase()}: ${a.title}`.slice(0, 120), {
-					body: (a.reason || 'New alert in WatchCraft').slice(0, 200),
+					body: (a.reason || 'New alert in The Hub').slice(0, 200),
 					tag: `wc-alert-${a.id}`
 				});
 				n.onclick = () => { window.focus(); location.href = '/alerts'; };

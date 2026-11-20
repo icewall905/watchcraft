@@ -6,6 +6,7 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import { THEMES } from '$lib/themes';
 	import Section from './Section.svelte';
+	import { LANDING_CHOICES, inAndroidApp, landingPath } from '$lib/navigation';
 
 	let saving = $state(false);
 	let savingShelf = $state(false);
@@ -53,6 +54,31 @@
 </Section>
 </div>
 
+<div class="device-section">
+<Section title="Landing page" intro={inAndroidApp() ? 'The Android app picks its own start page: open the app menu and choose Landing page.' : 'The page this browser opens on. Saved in this browser only.'}>
+	{#if !inAndroidApp()}
+		<label class="landing">Open The Hub on
+			<select value={landingPath(deviceMode.landing)} onchange={(e) => deviceMode.setLanding(e.currentTarget.value)} use:focusable={{ group: 'landing', id: 'landing' }}>
+				{#each LANDING_CHOICES as c (c.href)}<option value={c.href}>{c.label}</option>{/each}
+			</select>
+		</label>
+	{/if}
+</Section>
+</div>
+
+<div class="device-section">
+<Section title="Remote-control keys" intro="Arrow keys move between buttons, Enter selects and Backspace goes back or closes dialogs, like a TV remote. Saved in this browser only.">
+	<div class="themes" aria-label="Remote-control keys">
+		{#each [{ id: 'auto' as const, name: 'Automatic', description: 'On in TV mode, off in desktop mode.' }, { id: 'on' as const, name: 'Always on', description: 'Use the remote-style keys in desktop mode too.' }, { id: 'off' as const, name: 'Always off', description: 'Normal keyboard: arrows scroll, Backspace only edits text, Escape closes dialogs.' }] as option}
+			<button class="theme-card" class:selected={deviceMode.remoteKeys === option.id} aria-pressed={deviceMode.remoteKeys === option.id}
+				use:focusable={{ group: 'remote-keys', id: `remote-${option.id}`, onSelect: () => deviceMode.setRemoteKeys(option.id) }}>
+				<span class="details"><span class="name">{option.name}</span><span class="small muted">{option.description}</span></span>
+			</button>
+		{/each}
+	</div>
+</Section>
+</div>
+
 {#if session.hubAllowed}
 <div class="device-section">
 <Section title="Home activity shelf" intro="Show research activity and recent discoveries on this profile's home page.">
@@ -78,7 +104,7 @@
 </div>
 {/if}
 
-<Section title="Appearance" intro="Choose a look for WatchCraft. Your selection is shared across profiles and devices and applies immediately.">
+<Section title="Appearance" intro="Choose a look for The Hub. Your selection is shared across profiles and devices and applies immediately.">
 	<div class="themes" aria-label="Themes">
 		{#each THEMES as theme (theme.id)}
 			<button class="theme-card" class:selected={selected === theme.id} aria-pressed={selected === theme.id}
@@ -115,4 +141,5 @@
 	.name { display: flex; justify-content: space-between; gap: 0.5rem; align-items: center; font-weight: 750; }
 	.chosen { color: var(--accent); font-size: 0.75rem; white-space: nowrap; }
 	.note { margin-top: 1rem; }
+	.landing { display: grid; gap: .4rem; max-width: 22rem; font-weight: 600; }
 </style>

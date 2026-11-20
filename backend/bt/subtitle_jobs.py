@@ -102,8 +102,45 @@ def usable_vtt(value):
     return readable
 
 
+# (video_id, updated_at, length) -> usable. A track is rewritten with a new updated_at, so a key
+# never goes stale; validating every stored track on each Scroll poll cost ~1 ms per clip.
+_USABLE: dict[tuple, bool] = {}
+_USABLE_MAX = 20000
+
+
+def _remember(key, value):
+    if len(_USABLE) >= _USABLE_MAX:
+        _USABLE.clear()
+    _USABLE[key] = value
+    return value
+
+
+def usable_row(row):
+    """usable_vtt for a loaded row, memoised by its version."""
+    key = (row.video_id, row.updated_at, len(row.vtt or ''))
+    hit = _USABLE.get(key)
+    return hit if hit is not None else _remember(key, usable_vtt(row.vtt))
+
+
+def usable_vtt_batch(s, keys):
+    """{video_id: usable} for (video_id, updated_at, length) keys, loading only uncached tracks."""
+    out, missing = {}, []
+    for vid, updated, size in keys:
+        hit = _USABLE.get((vid, updated, size or 0))
+        if hit is None:
+            missing.append(vid)
+        else:
+            out[vid] = hit
+    for i in range(0, len(missing), 500):
+        for vid, updated, vtt in s.exec(select(GeneratedSubtitles.video_id, GeneratedSubtitles.updated_at,
+                                               GeneratedSubtitles.vtt)
+                                        .where(GeneratedSubtitles.video_id.in_(missing[i:i + 500]))).all():
+            out[vid] = _remember((vid, updated, len(vtt or '')), usable_vtt(vtt))
+    return out
+
+
 def status_out(video_id, row, configured=None):
-    valid = bool(row and row.status == 'ready' and usable_vtt(row.vtt))
+    valid = bool(row and row.status == 'ready' and usable_row(row))
     invalid = bool(row and row.status == 'ready' and not valid)
     state = 'failed' if invalid else row.status if row else 'idle'
     error = 'The saved subtitle track is invalid. Regenerate subtitles.' if invalid else row.error if row else ''

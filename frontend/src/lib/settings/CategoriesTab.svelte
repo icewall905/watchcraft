@@ -77,7 +77,7 @@
 {:else}
 	<Section title="Playlists" intro="Each playlist becomes a row on Home. Order here is the order on Home.">
 		{#snippet actions()}
-			<button class="btn primary" use:focusable={{ group: 'cat-top', id: 'cat-new', onSelect: () => open('&new=1') }}>＋ New playlist</button>
+			{#if session.allows('playlists_edit')}<button class="btn primary" use:focusable={{ group: 'cat-top', id: 'cat-new', onSelect: () => open('&new=1') }}>＋ New playlist</button>{/if}
 		{/snippet}
 		{#if playlists.length === 0}
 			<div class="empty">
@@ -93,10 +93,12 @@
 						<strong><a class="catname" href="/category/{c.id}" use:focusable={{ group: `cat-${c.id}`, id: `cat-view-${c.id}` }}>{c.name}</a></strong>
 						<span class="small muted">{c.stats?.accepted ?? 0} ready, {(c.stats?.found ?? 0) + (c.stats?.enriched ?? 0)} in review, {c.stats?.rejected ?? 0} rejected{c.kid_safe ? ', kid-safe' : ''}{c.created_at ? `, created ${timeAgo(c.created_at)}` : ''}</span>
 					</div>
+					{#if session.allows('playlists_edit')}
 					<button class="btn mini" aria-label="Move up" disabled={i === 0} use:focusable={{ group: `cat-${c.id}`, disabled: i === 0, onSelect: () => move(c, -1) }}>▲</button>
 					<button class="btn mini" aria-label="Move down" disabled={i === playlists.length - 1} use:focusable={{ group: `cat-${c.id}`, disabled: i === playlists.length - 1, onSelect: () => move(c, 1) }}>▼</button>
 					<button class="btn mini" use:focusable={{ group: `cat-${c.id}`, onSelect: () => toggle(c) }}>{c.enabled ? 'On' : 'Off'}</button>
 					<button class="btn mini primary" use:focusable={{ group: `cat-${c.id}`, id: `cat-edit-${c.id}`, onSelect: () => open(`&edit=${c.id}`) }}>Edit</button>
+					{/if}
 				</div>
 			{/each}
 		</div>

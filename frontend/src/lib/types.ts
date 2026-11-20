@@ -1,4 +1,39 @@
-// Shapes returned by the WatchCraft backend (see docs/CONTRACT.md, backend/bt/api/*.py).
+// Shapes returned by the Hub backend (see docs/CONTRACT.md, backend/bt/api/*.py).
+
+export interface Account {
+	id?: number;
+	public_id?: string;
+	username: string;
+	role: 'admin' | 'user';
+}
+export interface AuthStatus {
+	mode: 'open' | 'accounts';
+	bootstrap: boolean;
+	active: string | null;
+	account: Account | null;
+	accounts: { public_id: string; username: string; role: 'admin' | 'user'; active: boolean }[];
+}
+export interface AuthDevice {
+	public_id: string;
+	device_label: string;
+	user_agent: string;
+	created_at: string;
+	last_seen_at: string;
+	current: boolean;
+}
+export interface InviteInfo { username: string | null; role: 'admin' | 'user'; purpose: 'register' | 'reset' }
+export interface DeviceStart { code: string; poll: string; expires_in: number; link: string }
+export interface AdminAccount {
+	id: number;
+	username: string | null;
+	role: 'admin' | 'user';
+	disabled: boolean;
+	registered: boolean;
+	created_at: string;
+	profiles: { id: number; name: string; emoji: string; color: string; role: string; safety_rails?: string; controls?: Record<string, boolean> }[];
+	sessions: number;
+	invite: { purpose: 'register' | 'reset'; expires_at: string } | null;
+}
 
 export interface Profile {
 	id: number;
@@ -10,7 +45,13 @@ export interface Profile {
 	created_at?: string;
 	pin_required?: boolean;
 	pin_locked?: boolean;
+	/** Child profiles: the grown-ups' own instructions for this child's AI safety checks. */
+	safety_rails?: string;
+	/** Parental-control switches (all on for grown-ups). */
+	controls?: Record<string, boolean>;
 }
+
+export interface ParentalFeature { key: string; label: string; group: string; hint: string; default: boolean }
 
 export interface CategoryStats {
 	found?: number;
@@ -330,7 +371,9 @@ export interface Settings {
 	setup?: { completed: boolean };
 	hub_master: { enabled: boolean; time: string };
 	search: { provider: 'none' | 'searxng' | 'brave'; searxng_url: string; brave_api_key: string; hub_ai: boolean };
-	llm: { base_url: string; model: string; api_key: string; timeout_s: number; vision: boolean; temperature: number; embed_model: string; embed_base_url: string; embed_api_key: string; worker_model: string; worker_base_url: string; worker_api_key: string };
+	moodboard_sources: { web: boolean; reddit: boolean; bluesky: boolean; mastodon: boolean; mastodon_instance: string; flickr_api_key: string; tumblr_api_key: string; giphy_api_key: string; tenor_api_key: string; pinterest: boolean; source_timeout_s: number };
+	commonroom: { reddit_client_id: string; reddit_secret: string; stackexchange_key: string; show_nsfw: boolean };
+	llm: { base_url: string; model: string; api_key: string; timeout_s: number; vision: boolean; temperature: number; embed_model: string; embed_base_url: string; embed_api_key: string; worker_model: string; worker_base_url: string; worker_api_key: string; routes?: Record<string, 'worker' | 'judge'> };
 	throttle: {
 		min_delay_s: number;
 		max_delay_s: number;
@@ -361,7 +404,7 @@ export interface Settings {
 	appearance: { theme: string };
 	memory: { enabled: boolean; time: string; timezone: string; max_core_tokens: number };
 	stt: { base_url: string; model: string; api_key: string; language: string; subtitles_enabled: boolean };
-	player: { max_height: number; prefer_codec: string; autoplay_next: boolean; default_speed: number; captions_lang: string };
+	player: { max_height: number; prefer_codec: string; autoplay_next: boolean; scroll_autoplay_next: boolean; autoplay_delay_s: number; preview_autoplay: boolean; preview_limit_s: number; default_speed: number; captions_lang: string };
 	sponsorblock: { enabled: boolean; categories: Record<string, SbAction>; min_segment_s: number };
 	extras: { dearrow: boolean; dearrow_thumbnails: boolean; ryd: boolean; hide_shorts: boolean };
 	cache: { enabled: boolean; auto: 'accepted' | 'manual'; max_gb: number; max_height: number; rate_limit: number; min_gap_s: number; hw_transcode: boolean };

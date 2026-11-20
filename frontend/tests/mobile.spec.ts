@@ -12,7 +12,7 @@ test('the phone gets a bottom bar and no desktop sidebar', async ({ page }) => {
 	await freshPage(page, '/');
 	const bar = page.getByRole('navigation', { name: 'Primary' });
 	await expect(bar).toBeVisible();
-	for (const name of ['TV', 'Today', 'Library', 'Alerts']) {
+	for (const name of ['The Screen', 'The Front Page', 'The Stacks', 'Alerts']) {
 		await expect(bar.getByRole('link', { name, exact: true })).toBeVisible();
 	}
 	await expect(bar.getByRole('button', { name: 'More' })).toBeVisible();
@@ -21,7 +21,7 @@ test('the phone gets a bottom bar and no desktop sidebar', async ({ page }) => {
 });
 
 test('pages do not scroll sideways on a phone', async ({ page }) => {
-	for (const url of ['/', '/today', '/today/set-aside', '/discover', '/memes', '/library', '/settings']) {
+	for (const url of ['/', '/today', '/today/set-aside', '/news', '/discover', '/memes', '/library', '/settings']) {
 		await freshPage(page, url);
 		const overflow = await page.evaluate(() => ({
 			scroll: document.documentElement.scrollWidth,
@@ -35,7 +35,7 @@ test('bottom bar targets are big enough to tap', async ({ page }) => {
 	await freshPage(page, '/');
 	const bar = page.getByRole('navigation', { name: 'Primary' });
 	await expect(bar).toBeVisible();
-	await expect(bar.getByRole('link', { name: 'TV', exact: true })).toBeVisible();
+	await expect(bar.getByRole('link', { name: 'The Screen', exact: true })).toBeVisible();
 	const boxes = await bar.locator('a, button').evaluateAll((els) =>
 		els.map((el) => {
 			const r = el.getBoundingClientRect();

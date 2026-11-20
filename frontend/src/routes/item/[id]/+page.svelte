@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { session } from '$lib/stores/session.svelte';
 	import { page } from '$app/state';
 	import { focusable } from '$lib/nav';
 	import { hub, ago, host } from '$lib/hub/api';
@@ -11,7 +12,7 @@
 	import LocalImage from '$lib/hub/LocalImage.svelte';
 	import ShareArticle from '$lib/hub/ShareArticle.svelte';
 	import ArticleFeedback from '$lib/hub/ArticleFeedback.svelte';
-	import { currentProfileId } from '$lib/api';
+	import { profileHeaders } from '$lib/api';
 
 	let item = $state<ItemDetail | null>(null);
 	let loading = $state(true);
@@ -94,9 +95,7 @@
 
 	async function openDocument() {
 		if (!item) return;
-		const headers: Record<string, string> = {};
-		const profile = currentProfileId();
-		if (profile) headers['X-Profile-Id'] = profile;
+		const headers = profileHeaders();
 		try {
 			const response = await fetch(`/api/hub/items/${item.id}/assets/document`, { headers, credentials: 'same-origin' });
 			if (!response.ok) throw new Error('Could not open the local document.');
@@ -154,7 +153,7 @@
 	}
 </script>
 
-<svelte:head><title>{item ? `${item.title} · ` : ''}WatchCraft</title></svelte:head>
+<svelte:head><title>{item ? `${item.title} · ` : ''}The Hub</title></svelte:head>
 
 <div class="page reading-page">
 	<a class="back small muted" href="/discover" use:focusable>← Back to Discover</a>
@@ -175,7 +174,7 @@
 				<div class="hstack top">
 					{#if str(m, 'article_url') && safeUrl(str(m, 'article_url')) && str(m, 'article_url') !== item.url}<a class="btn" href={safeUrl(str(m, 'article_url'))} target="_blank" rel="noopener noreferrer" use:focusable>Linked article ↗</a>{/if}
 					<a class="btn" href={safeUrl(item.url) || undefined} target="_blank" rel="noopener noreferrer" use:focusable>Open original ↗ <span class="faint host">{host(item.url)}</span></a>
-					{#if item.type === 'video' && str(m, 'video_id')}<a class="btn" href={`/watch/${encodeURIComponent(str(m, 'video_id'))}`} use:focusable>Watch in WatchCraft</a>{/if}
+					{#if item.type === 'video' && str(m, 'video_id')}<a class="btn" href={`/watch/${encodeURIComponent(str(m, 'video_id'))}`} use:focusable>Watch in The Hub</a>{/if}
 					<button class="btn" aria-pressed={item.state.saved} use:focusable onclick={() => patch({ saved: !item!.state.saved })}>{item.state.saved ? '✓ Saved' : 'Save'}</button>
 					<button class="btn" aria-pressed={item.state.favorite} use:focusable onclick={() => patch({ favorite: !item!.state.favorite })}>{item.state.favorite ? '★ Favorite' : '☆ Favorite'}</button>
 					<button class="btn" aria-pressed={item.state.read_later} use:focusable onclick={() => patch({ read_later: !item!.state.read_later })}>{item.state.read_later ? 'Queued' : 'Read later'}</button>
@@ -189,9 +188,11 @@
 					<div class="hstack" data-nav-row="verdict" aria-label="Curator selection">
 						<span class="small muted">{verdict.tier === 'set_aside' ? 'Set aside' : verdict.tier === 'feature' ? 'Featured today' : verdict.tier === 'reject' ? 'Excluded by your rules' : 'Kept for you'}</span>
 						<WhyPopover reasons={verdict.reasons} />
+						{#if !session.isChild}
 						<button class="btn ghost" disabled={overruling} use:focusable onclick={() => overrule('promote')}>Promote</button>
 						<button class="btn ghost" disabled={overruling} use:focusable onclick={() => overrule('demote')}>Set aside</button>
 						{#if verdict.overruled}<button class="btn ghost" disabled={overruling} use:focusable onclick={() => overrule('clear')}>Use curator selection</button>{/if}
+						{/if}
 					</div>
 				{/if}
 
@@ -213,7 +214,7 @@
 				{/if}
 
 				<section>
-					<h2>Read in WatchCraft</h2>
+					<h2>Read in The Hub</h2>
 					{#if item.capture}<p class="small muted">Local capture: {item.capture.status} · Summary: {item.capture.summary_status}{item.capture.error ? ` · ${item.capture.error}` : ''}</p>{/if}
 					{#if item.type === 'video'}<p class="small muted">Video download: {item.media_status || 'not queued'}</p>{/if}
 					{#if item.capture_truncated}<p class="small muted">This page was longer than the local text limit; the saved text is partial.</p>{/if}
