@@ -19,6 +19,16 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Background-prepared Front Page (`8594dbb`, 2026-11-20)
+
+- A dedicated background loop refreshes editions and overviews every five minutes and schedules preparation on a
+  cache miss. The Front Page reads the stored headline and intro and hydrates its visible entries. A recent previous
+  edition can show while today's is prepared. Profile visibility checks and delivery accounting still apply.
+- 101 focused backend tests and 17 Front Page browser tests passed. Both candidate-image prepared-path
+  regressions passed. The live prepared headline handler returned an edition with a saved intro in 13 ms.
+- Code and image rollback are at `/root/compose/watchcraft-backups/20261120-prepared-front-page-8594dbb`.
+  No schema change.
+
 ## Deployment record — Marquee trailers and title details (`aa719dd`, 2026-11-19)
 
 - Movie details show **Play Trailer** when Jellyfin exposes a playable local trailer or a supported YouTube
