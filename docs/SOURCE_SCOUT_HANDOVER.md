@@ -19,6 +19,19 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Board curator spot-check fixes (`e5b3153`, 2026-11-22)
+
+- Deployed `6e0d239..e5b3153`: AI-generated pictures are vetoed on boards that reject AI; one failing search query
+  no longer aborts a run with candidates; failed knowledge weave batches retry in pieces of five and over-long
+  model statements are shortened (Ria's board lessons had been stuck for six nights). No schema change.
+- All four application services run `watchcraft:release-e5b3153` (`sha256:1f0b70b39ba1…`) with zero restarts;
+  public health 200, Compose and environment hashes unchanged, no tracebacks after rollout.
+- Backup at `/root/compose/watchcraft-backups/20261122-spotfix-e5b3153`: online SQLite snapshot (`quick_check` ok),
+  previous source, `rollback.sh` (back to `release-6e0d239`).
+- Pruned to the newest two deploy backups (`spotfix-e5b3153`, `rating-6e0d239`): removed
+  `20261122-brief-absorb-35da711` (its rating replay results moved to `20261122-rating-6e0d239/`) and the
+  `release-efb4679` tag.
+
 ## Deployment record — Board preference rater (`6e0d239`, 2026-11-22)
 
 - Deployed `35da711..6e0d239`. The vision model rates each board candidate against a structured taste profile
@@ -26,7 +39,7 @@
   into the keep score (`RATE` in `moodboards.py`; `PREFERENCE_RATING = False` reverts to the older judge).
 - Calibration: `scripts/board_rating_replay.py` on a snapshot copy, 128 owner-reviewed pictures over 4 boards:
   kept 35/41 approved and dropped 52/87 rejected, against 33/41 and 44/87 for the older judge. Raw results in
-  `20261122-brief-absorb-35da711/rating-replay-out.jsonl`; the snapshot copy was deleted.
+  `20261122-rating-6e0d239/rating-replay-out.jsonl`; the snapshot copy was deleted.
 - Schema: additive column `moodverdict.rating`.
 - All four application services run `watchcraft:release-6e0d239` (`sha256:87ca68f42967…`) with zero restarts;
   public health 200, Compose and environment hashes unchanged, no tracebacks after rollout.
