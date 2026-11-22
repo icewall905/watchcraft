@@ -415,3 +415,63 @@ def test_collect_rates_with_board_profile_and_stores_rating(client, model, monke
         verdicts = s.exec(select(MoodVerdict).where(MoodVerdict.board_id == board['id'])).all()
     assert len(pins) == 1
     assert sorted(v.rating['subject_fit'] for v in verdicts) == [10, 90]
+
+
+@pytest.mark.rating
+def test_ai_generated_is_a_veto_when_the_owner_rejects_ai(monkeypatch):
+    monkeypatch.setattr(mb.ai, 'enabled', lambda: True)
+    monkeypatch.setattr(mb, 'get_settings', lambda: {'llm': {'vision': True}})
+    monkeypatch.setattr(mb, 'vision_image', lambda data: 'data:image/jpeg;base64,eA==')
+    monkeypatch.setattr(mb, 'describe_images', lambda batch: [{'summary': 's'}] * len(batch))
+    great = {'subject_fit': 95, 'appeal': 95, 'quality': 90, 'more': [], 'less': [], 'hard_violations': [], 'appeal_why': 'a', 'why': 'w'}
+    seen = []
+
+    def rate(system, user, schema, **kw):
+        seen.append(schema['properties']['ratings']['items']['properties'])
+        n = schema['properties']['ratings']['maxItems']
+        return {'ratings': [{'index': i, **great, **({'ai_generated': i == 0} if 'ai_generated' in seen[-1] else {})} for i in range(n)]}
+    monkeypatch.setattr(mb.ai, '_call', rate)
+    profile = {'subject': 'Style', 'more_of': [], 'less_of': []}
+    rows = [_row(i) for i in range(2)]
+    assert mb.select_candidates(rows, 'Style', '', profile=profile) == [rows[1]]  # default mode: reject AI
+    assert rows[0]['_judgement']['confidence'] == 0 and 'looks AI-generated' in rows[0]['_judgement']['violations']
+    rows = [_row(i) for i in range(2)]
+    assert mb.select_candidates(rows, 'Style', '', profile=profile, ai_mode='ignore') == rows
+    assert 'ai_generated' not in seen[-1]
+
+
+@pytest.mark.rating
+def test_one_failing_search_query_does_not_abort_the_run(client, model, monkeypatch):  # noqa: F811
+    from bt.hub import moodboard_sources
+    board = make(client)
+    monkeypatch.setattr(mb, 'get_settings', lambda: {'llm': {'vision': True}})
+    monkeypatch.setattr(mb, 'discovery_queries', lambda *a, **k: ['broken', 'works'])
+    monkeypatch.setattr(mb, 'describe_images', lambda batch: [None] * len(batch))
+
+    def search(q, **k):
+        if q == 'broken':
+            raise ValueError('Image sources are unavailable. Try again later.')
+        return [{'title': 'P', 'source_url': 'https://commons.wikimedia.org/wiki/File:P.jpg',
+                 'image_url': 'https://upload.wikimedia.org/wikipedia/commons/p.jpg', 'attribution': 'a', 'license': 'CC'}]
+    monkeypatch.setattr(moodboard_sources, 'search', search)
+    captured = []
+    monkeypatch.setattr(mb, 'capture_candidates', lambda c, *a, **k: (captured.extend(c) or [], 0))
+    with session() as s:
+        b = s.get(MoodBoard, board['id'])
+        b.lease, revision = 'L', b.revision
+        s.add(b)
+        s.commit()
+    mb.collect(board['id'], 'L', revision)
+    with session() as s:
+        b = s.get(MoodBoard, board['id'])
+    assert len(captured) == 1 and b.last_status != 'error' and 'unavailable' not in b.error
+    # Every query failing is still reported as a source outage.
+    monkeypatch.setattr(moodboard_sources, 'search', lambda q, **k: (_ for _ in ()).throw(ValueError('down')))
+    with session() as s:
+        b = s.get(MoodBoard, board['id'])
+        b.lease, revision = 'M', b.revision
+        s.add(b)
+        s.commit()
+    mb.collect(board['id'], 'M', revision)
+    with session() as s:
+        assert s.get(MoodBoard, board['id']).last_status == 'error'

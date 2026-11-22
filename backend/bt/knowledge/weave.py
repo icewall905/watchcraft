@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 SECTION_BUDGET = 2500
 STATEMENT_MAX = 300
 BATCH = 30
+SMALL_BATCH = 5  # retry size after a failed batch
 TIMEOUT = 600
 
 OPS_SCHEMA = {'type': 'object', 'properties': {
@@ -134,6 +135,8 @@ def apply_ops(sections: list[dict], key: str, ops: list[dict], batch: dict[int, 
         cited = [batch[i] for i in ids if i in batch]
         authored = user_edit or any(t.user_authored for t in cited)
         text = ' '.join(str(op.get('text') or '').split())
+        if len(text) > STATEMENT_MAX and not user_edit:
+            text = _shorten(text)  # a wordy model statement is shortened, not a reason to lose the whole batch
         polarity = 1 if op.get('polarity', 1) != -1 else -1
         confidence = op.get('confidence') if op.get('confidence') in CONFIDENCE else 'tentative'
         if confidence == 'explicit' and not authored:
@@ -177,6 +180,15 @@ def apply_ops(sections: list[dict], key: str, ops: list[dict], batch: dict[int, 
         elif not protected:
             st['confidence'] = confidence
     return sections
+
+
+def _shorten(text: str) -> str:
+    """Fit STATEMENT_MAX: whole sentences when they fit, else whole words."""
+    cut = text[:STATEMENT_MAX]
+    end = max(cut.rfind('. '), cut.rfind('; '))
+    if end >= STATEMENT_MAX // 2:
+        return cut[:end + 1].rstrip(';')
+    return cut.rsplit(' ', 1)[0].rstrip(',;:') if ' ' in cut else cut
 
 
 _ALL = object()
@@ -368,14 +380,26 @@ def weave(pid: int, collect: bool = True, abort=None) -> dict:
             if abort:
                 abort()  # the video agent can pause or stop between model calls
             batch = rows[start:start + BATCH]
+            refusals = [t for t in refused if t.section == key and (board is _ALL or t.board_id == board)]
             try:
-                sections, outcomes = merge_batch(
-                    sections, key, batch,
-                    [t for t in refused if t.section == key and (board is _ALL or t.board_id == board)], now, board)
+                sections, outcomes = merge_batch(sections, key, batch, refusals, now, board)
                 decided.update(outcomes)
-            except Exception as e:  # noqa: BLE001 — this batch stays pending; others proceed
-                failures[label] = str(e)[:300]
-                log.warning('knowledge weave for profile %s section %s kept teachings pending: %s', pid, label, e)
+            except Exception as e:  # noqa: BLE001 — retried in small pieces; what still fails stays pending
+                log.warning('knowledge weave for profile %s section %s failed, retrying in pieces: %s', pid, label, e)
+                errors = []
+                # A small worker model fails big conflicting batches night after night; small pieces get through.
+                for part in range(0, len(batch), SMALL_BATCH) if len(batch) > SMALL_BATCH else []:
+                    if abort:
+                        abort()
+                    try:
+                        sections, outcomes = merge_batch(sections, key, batch[part:part + SMALL_BATCH], refusals, now, board)
+                        decided.update(outcomes)
+                    except Exception as e2:  # noqa: BLE001
+                        errors.append(str(e2))
+                if len(batch) <= SMALL_BATCH or errors:
+                    failures[label] = (errors[0] if errors else str(e))[:300]
+                    log.warning('knowledge weave for profile %s section %s kept teachings pending: %s', pid, label,
+                                failures[label])
     if not decided:
         return {'status': 'failed', 'failures': failures, 'pending': len(pending)}
     with session() as s:

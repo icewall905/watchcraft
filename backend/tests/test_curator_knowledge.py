@@ -551,10 +551,12 @@ def test_one_board_cannot_exceed_its_own_budget_and_others_still_merge(model):
                 'dispositions': [{'teaching_id': i, 'outcome': 'merged', 'note': ''} for i in tid]}
     model.ops = ops
     out = weave.weave(p)
-    assert out['status'] == 'woven' and out['merged'] == 1 and list(out['failures']) == ['moodboards:1']
+    # Retried in small pieces: the first five fit the board's budget, the rest stay pending.
+    assert out['status'] == 'woven' and out['merged'] == 1 + weave.SMALL_BATCH and list(out['failures']) == ['moodboards:1']
     with session() as s:
         assert s.get(Teaching, small[0]).status == 'merged'
-        assert {s.get(Teaching, i).status for i in big} == {'pending'}
+        states = [s.get(Teaching, i).status for i in big]
+        assert states.count('merged') == weave.SMALL_BATCH and states.count('pending') == 9 - weave.SMALL_BATCH
 
 
 def test_board_batch_cannot_touch_another_boards_statement(model):
@@ -662,3 +664,31 @@ def test_deleting_a_scoped_lesson_still_leaves_a_tombstone(client):  # noqa: F81
     assert client.delete(f'/api/lessons/{lid}').status_code == 200
     with session() as s:
         assert [t.text for t in teachings.rejected(s, p)] == ['Only gentle videos here']
+
+
+def test_failed_big_batch_is_retried_in_small_pieces_and_long_text_is_shortened(model):
+    p, *_ = seeded(model)
+    with session() as s:
+        board = MoodBoard(profile_id=p, name='Whimsy', interests='whimsical clothes')
+        s.add(board)
+        s.flush()
+        rows = [Teaching(profile_id=p, surface='moodboard', section='moodboards', text=f'Lesson {i}', board_id=board.id,
+                         origin='mood', origin_id=f'b:{i}') for i in range(7)]
+        s.add_all(rows)
+        s.commit()
+        ids = [t.id for t in rows]
+
+    def ops(user):
+        cited = [i for i in ids if f'"id": {i},' in user or f'"id": {i}}}' in user]
+        if len(cited) > weave.SMALL_BATCH:
+            raise ValueError('server reported truncated structured output')  # big batch fails, as on prod
+        return {'ops': [{'op': 'add', 'sid': None, 'text': ('Wordy statement. ' * 30) + str(cited[0]), 'polarity': 1,
+                         'confidence': 'tentative', 'teaching_ids': cited}],
+                'dispositions': [{'teaching_id': i, 'outcome': 'merged', 'note': ''} for i in cited]}
+    model.ops = ops
+    result = weave.weave(p, collect=False)
+    assert result['status'] == 'woven' and result['merged'] == 7 and not result['failures']
+    with session() as s:
+        sec = next(x for x in render.current(s, p).sections if x['key'] == 'moodboards')
+        assert len(sec['statements']) == 2 and all(len(st['text']) <= weave.STATEMENT_MAX for st in sec['statements'])
+        assert all(st['text'].endswith('.') for st in sec['statements'])
