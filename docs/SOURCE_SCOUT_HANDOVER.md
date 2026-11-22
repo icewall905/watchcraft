@@ -19,6 +19,19 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Board learning overview and image limit fix (`efb4679`, 2026-11-22)
+
+- Deployed `04fd5b6..efb4679`. Hidden pins no longer count toward the 1,000-image limit (older hidden pictures are
+  trimmed to 200 per board). New `/boards/learned` page per board: learned items, editable curator brief with
+  "Refine master prompt now", correction chat, reviews with undo. The nightly pass refreshes changed briefs.
+- Schema: two new tables (`moodboardbrief`, `moodboardchat`); old code ignores them.
+- All four application services run `watchcraft:release-efb4679` (`sha256:bc2871c56858…`) with zero restarts;
+  public health 200, served UI contains the new page, Compose and environment hashes unchanged.
+- Backup at `/root/compose/watchcraft-backups/20261122-board-learning-efb4679`: online SQLite snapshot
+  (`quick_check` ok), previous source, `new-files.txt`, `rollback.sh` with the previous service images.
+- Pruned to the newest two deploy backups (`board-learning-efb4679`, `screen-scroll-04fd5b6`): removed
+  `20261120-scroll-3f529ff`.
+
 ## Deployment record — The Screen keeps scroll position on Back (`04fd5b6`, 2026-11-20)
 
 - Deployed `3f529ff..04fd5b6` (frontend only). Home and category pages keep the rows they last showed; a Back
