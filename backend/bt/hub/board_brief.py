@@ -187,6 +187,72 @@ def overview(s, board: MoodBoard) -> dict:
     }
 
 
+# ---------- taste profile for the image rater
+
+PROFILE_ITEMS = 10
+PROFILE_EXAMPLES = 4
+
+
+def _brief_bullets(text: str) -> dict[str, list[str]]:
+    """MORE OF / LESS OF / STYLE bullets of a compiled brief (owner-edited briefs may have none)."""
+    out: dict[str, list[str]] = {'more': [], 'less': [], 'style': []}
+    part = None
+    for raw in (text or '').splitlines():
+        line = raw.strip()
+        head = line.upper()
+        if head.startswith('MORE OF'):
+            part = 'more'
+        elif head.startswith('LESS OF') or head.startswith('NEVER'):
+            part = 'less'
+        elif head.startswith('STYLE'):
+            part = 'style'
+        elif head.startswith('SUBJECT'):
+            part = None
+        elif part and line[:1] in '-•*' and len(line) > 2:
+            out[part].append(line.lstrip('-•* ').strip()[:200])
+            continue
+        else:
+            continue
+        rest = line.split(':', 1)[1].strip() if ':' in line else ''
+        if part and rest:
+            out[part].append(rest[:200])
+    return out
+
+
+def taste_profile(s, board: MoodBoard) -> dict:
+    """The board and what was learned about it, structured for the vision model that rates each picture."""
+    from .board_quality import avoid_hosts
+    _pk, sections = _sections(s, board.profile_id)
+    rows = statements(sections, board.id)
+    brief = s.get(MoodBoardBrief, board.id)
+    bullets = _brief_bullets(brief.text if brief else '')
+    absorbed = bool(brief and brief.text.strip())
+    more = list(bullets['more'])
+    less = list(bullets['less'])
+    # Statements not (yet) in the brief count too; with no brief they are everything learned.
+    for st in rows:
+        text = str(st.get('text') or '').strip()[:200]
+        if text:
+            (more if int(st.get('polarity') or 1) > 0 else less).append(text)
+    more = list(dict.fromkeys(more))[:PROFILE_ITEMS]
+    less = list(dict.fromkeys(less))[:PROFILE_ITEMS]
+    reviews = _reviews(s, board.id, 80)
+    liked = [r['picture'][:180] for r in reviews if r['verdict'] == 'good' and r['picture']][:PROFILE_EXAMPLES]
+    disliked = [(r['picture'][:160] + (f' — owner: "{r["note"][:100]}"' if r['note'] else ''))
+                for r in reviews if r['verdict'] == 'bad' and r['picture']][:PROFILE_EXAMPLES]
+    return {
+        'subject': f'{board.name} — {board.interests}'[:400],
+        'owner_instructions': (board.instructions or '')[:800],
+        'never': avoid_hosts(board.avoid)[1][:400] if board.avoid else '',
+        'more_of': [{'id': f'm{i + 1}', 'text': t} for i, t in enumerate(more)],
+        'less_of': [{'id': f'l{i + 1}', 'text': t} for i, t in enumerate(less)],
+        'style': bullets['style'][:5],
+        'liked_examples': liked,
+        'disliked_examples': disliked,
+        'from_brief': absorbed,
+    }
+
+
 # ---------- compiling
 
 

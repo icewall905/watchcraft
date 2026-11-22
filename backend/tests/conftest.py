@@ -78,3 +78,10 @@ def _children_have_every_feature(monkeypatch, request):
         return
     from bt import parental
     monkeypatch.setattr(parental, 'DEFAULTS', {k: True for k in parental.KEYS})
+
+
+@pytest.fixture(autouse=True)
+def _legacy_board_judge(monkeypatch, request):
+    """Pipeline tests stub the older single-verdict judge; tests marked `rating` exercise the preference rater."""
+    if 'rating' not in request.keywords:
+        monkeypatch.setattr('bt.hub.moodboards.PREFERENCE_RATING', False)

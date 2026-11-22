@@ -18,13 +18,28 @@ def verdicts(keep):
     return {'verdicts': [{'index': i, 'seen': 'stub', 'fits': True} for i in keep]}
 
 
+def ratings(keep, n=None):
+    """Rater answer: listed indices score high, the others clearly off-subject."""
+    keep = set(keep)
+    return {'ratings': [{'index': i, 'seen': 'stub', 'subject_fit': 90 if i in keep else 5, 'appeal': 80 if i in keep else 10,
+                         'quality': 80, 'more': [], 'less': [], 'hard_violations': [], 'appeal_why': 'stub', 'why': 'stub'}
+                        for i in range(n if n is not None else max(keep, default=-1) + 1)]}
+
+
+def answer(schema, keep=None):
+    """Stub by schema: judge verdicts or preference ratings, keeping `keep` (default all)."""
+    key = 'ratings' if 'ratings' in schema['properties'] else 'verdicts'
+    n = schema['properties'][key]['maxItems']
+    keep = range(n) if keep is None else keep
+    return ratings(keep, n) if key == 'ratings' else verdicts(keep)
+
+
 @pytest.fixture(autouse=True)
 def model_stub(client, monkeypatch):
     monkeypatch.setattr(mb.ai, 'enabled', lambda: True)
     monkeypatch.setattr(mb, 'get_settings', lambda: {'llm': {'vision': True}})
     monkeypatch.setattr(mb, 'vision_image', lambda data: 'data:image/jpeg;base64,cGl4ZWxz')
-    monkeypatch.setattr(mb.ai, '_call', lambda system, user, schema, **kw:
-                        verdicts(range(schema['properties']['verdicts']['maxItems'])))
+    monkeypatch.setattr(mb.ai, '_call', lambda system, user, schema, **kw: answer(schema))
     # Judge-focused tests: the describe pass is covered by its own tests (test_board_quality.py).
     monkeypatch.setattr(mb, 'describe_images', lambda batch: [None] * len(batch))
 
@@ -331,7 +346,7 @@ def test_concurrent_import_cannot_push_curator_over_pin_limit(client, monkeypatc
     monkeypatch.setattr(mb, 'MAX_PINS', 2)
     monkeypatch.setattr(moodboard_sources, 'search', lambda *a, **kw: [candidate(99)])
     monkeypatch.setattr(mb, 'capture_image', lambda url: (b'bytes', 'image/jpeg', 20, 30))
-    def choose(rows, *args):
+    def choose(rows, *args, **kwargs):
         if rows:
             seed(b['id'], 2)  # Another writer fills the board during network/vision work.
         return rows

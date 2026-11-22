@@ -647,6 +647,7 @@ class MoodVerdict(SQLModel, table=True):
     confidence: int = 0
     violations: list = J()
     why: str = ''
+    rating: dict = J({})  # preference rating: subject_fit, appeal, quality, more/less matches, hard_violations
     created_at: float = Field(default_factory=time.time, index=True)
 
 

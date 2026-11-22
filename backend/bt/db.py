@@ -113,7 +113,8 @@ def init_db() -> None:
                 ('crthreadsource', (('fit', 'INTEGER NOT NULL DEFAULT 0'), ('tried', 'INTEGER NOT NULL DEFAULT 0'),
                                     ('kept', 'INTEGER NOT NULL DEFAULT 0'))),
                 ('crcandidate', (('misses', 'INTEGER NOT NULL DEFAULT 0'),)),
-                ('moodboardbrief', (('absorbed', 'INTEGER NOT NULL DEFAULT 0'),))):
+                ('moodboardbrief', (('absorbed', 'INTEGER NOT NULL DEFAULT 0'),)),
+                ('moodverdict', (('rating', 'JSON'),))):
             have = {c['name'] for c in inspect(connection).get_columns(table)}
             for name, definition in columns:
                 if name not in have:

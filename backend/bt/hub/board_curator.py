@@ -267,6 +267,8 @@ def hunt_sources(hid, lease) -> int:
         bid = board.id
         context = board.name + ' — ' + board.interests
         instructions = (board.instructions + mb.board_rules(board) + mb.feedback_lessons(s, bid)).strip()
+        from .board_brief import taste_profile
+        profile = taste_profile(s, board)
         child = bool(board.child_friendly)
         strict = child or board.strictness != 'balanced'
         media, min_width = board.media, board.min_width
@@ -335,7 +337,7 @@ def hunt_sources(hid, lease) -> int:
             return 'error'
         say('judging', f'{label}: {len(items)} images found; vision is checking a sample.')
         extra = {'ai_mode': ai_mode} if ai_mode != 'reject' else {}
-        fit = len(mb.select_candidates(captured, context, instructions, strict=strict, **extra))
+        fit = len(mb.select_candidates(captured, context, instructions, strict=strict, profile=profile, **extra))
         n = len(captured)
         if fit < (3 if strict else 2):
             say('rejected', f'{label}: only {fit} of {n} sample images fit the board.')

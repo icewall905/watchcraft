@@ -276,3 +276,142 @@ def test_planner_never_sees_review_examples(client, model, monkeypatch):  # noqa
         text = board_brief.planner_text(s, b)
         assert 'Crochet baby blanket' not in text
         assert 'Crochet baby blanket' in mb.feedback_lessons(s, b.id)
+
+
+# ---------- preference rating
+
+def _row(i):
+    return {'title': f'T{i}', 'description': '', 'source_url': f'https://e.org/{i}', 'image_url': f'https://e.org/{i}.jpg',
+            '_captured': (b'x', 'image/jpeg', 800, 800)}
+
+
+def test_taste_profile_reads_brief_bullets_statements_and_examples(client, model):  # noqa: F811
+    board = make(client)
+    pid = board['profile_id']
+    with session() as s:
+        s.add(MoodBoardBrief(board_id=board['id'], text='SUBJECT: whimsy.\nMORE OF:\n- playful prints\n- tiny charms\n'
+                                                         'LESS OF / NEVER:\n- nursery decor\nSTYLE: bright colour'))
+        b = s.get(MoodBoard, board['id'])
+        b.avoid = 'beige, pinterest.com'
+        pin = MoodPin(board_id=b.id, profile_id=pid, title='Cat ring', source_url='https://e.org/c', image_url='')
+        s.add(pin)
+        s.flush()
+        s.add(MoodFeedback(pin_id=pin.id, board_id=b.id, profile_id=pid, verdict='good', title='Cat ring'))
+        s.add(b)
+        s.commit()
+    seed_statements(pid, [('Glitter', 1, board['id']), ('Baby items', -1, board['id'])])
+    with session() as s:
+        p = board_brief.taste_profile(s, s.get(MoodBoard, board['id']))
+    assert [x['text'] for x in p['more_of']] == ['playful prints', 'tiny charms', 'Glitter']
+    assert [x['id'] for x in p['less_of']] == ['l1', 'l2'] and p['less_of'][1]['text'] == 'Baby items'
+    assert p['style'] == ['bright colour'] and p['never'] == 'beige'
+    assert p['liked_examples'] == ['Cat ring'] and 'whimsical clothes' in p['subject']
+
+
+def test_score_rating_floors_caps_and_matches():
+    good = {'subject_fit': 90, 'appeal': 85, 'quality': 80, 'more': [{'id': 'm1', 'match': 3}], 'less': [], 'hard_violations': []}
+    assert mb.score_rating(good) >= 90
+    assert mb.score_rating({**good, 'appeal': 20, 'more': []}) < mb.RATE['keep_strict']  # on-topic but not their taste
+    assert mb.score_rating({**good, 'subject_fit': 10}) <= 10  # off-subject never passes on appeal alone
+    one = mb.score_rating({**good, 'hard_violations': ['logo']})
+    assert abs(one - (mb.score_rating(good) - mb.RATE['violation_pt'])) <= 1  # a cost, not a veto: the model over-flags
+    assert abs(mb.score_rating({**good, 'hard_violations': list('abc')}) - (mb.score_rating(good) - 2 * mb.RATE['violation_pt'])) <= 1
+    assert mb.score_rating({'subject_fit': 'x'}) == 0
+
+
+@pytest.mark.rating
+def test_rater_gets_profile_and_code_decides(monkeypatch):
+    monkeypatch.setattr(mb.ai, 'enabled', lambda: True)
+    monkeypatch.setattr(mb, 'get_settings', lambda: {'llm': {'vision': True}})
+    monkeypatch.setattr(mb, 'vision_image', lambda data: 'data:image/jpeg;base64,eA==')
+    monkeypatch.setattr(mb, 'describe_images', lambda batch: [{'summary': f'seen {i}'} for i in range(len(batch))])
+    profile = {'subject': 'Whimsy — clothes', 'more_of': [{'id': 'm1', 'text': 'playful prints'}],
+               'less_of': [{'id': 'l1', 'text': 'nursery decor'}], 'liked_examples': ['cat ring'], 'from_brief': True}
+    seen = {}
+
+    def rate(system, user, schema, **kw):
+        seen.update(system=system, user=user, schema=schema)
+        item = schema['properties']['ratings']['items']['properties']
+        assert item['more']['items']['properties']['id']['enum'] == ['m1']
+        return {'ratings': [
+            {'index': 0, 'subject_fit': 92, 'appeal': 88, 'quality': 80, 'more': [{'id': 'm1', 'match': 2}], 'less': [],
+             'hard_violations': [], 'appeal_why': 'Cute cat print she would love.', 'why': 'On topic'},
+            {'index': 1, 'subject_fit': 10, 'appeal': 70, 'quality': 90, 'more': [], 'less': [{'id': 'l1', 'match': 3}],
+             'hard_violations': [], 'appeal_why': 'Pretty but nursery.', 'why': 'Nursery blanket'},
+            {'index': 2, 'subject_fit': 85, 'appeal': 25, 'quality': 70, 'more': [], 'less': [],
+             'hard_violations': [], 'appeal_why': 'Generic and dull.', 'why': 'Plain stock photo'}]}
+    monkeypatch.setattr(mb.ai, '_call', rate)
+    rows = [_row(i) for i in range(3)]
+    kept = mb.select_candidates(rows, 'Whimsy', 'ignored', profile=profile)
+    assert kept == [rows[0]]
+    assert 'TASTE PROFILE' in seen['user'] and 'playful prints' in seen['user'] and 'from_brief' not in seen['user']
+    assert 'appeal 0-100' in seen['system']
+    assert rows[0]['_verdict']['why'].startswith('Cute cat print') and 'Matches: playful prints' in rows[0]['_verdict']['why']
+    assert rows[1]['_judgement']['rating']['subject_fit'] == 10 and rows[1]['_judgement']['fits'] is False
+
+
+@pytest.mark.rating
+def test_rater_retries_one_by_one_and_child_needs_clean_rating(monkeypatch):
+    monkeypatch.setattr(mb.ai, 'enabled', lambda: True)
+    monkeypatch.setattr(mb, 'get_settings', lambda: {'llm': {'vision': True}})
+    monkeypatch.setattr(mb, 'vision_image', lambda data: 'data:image/jpeg;base64,eA==')
+    monkeypatch.setattr(mb, 'describe_images', lambda batch: [None] * len(batch))
+    good = {'seen': 's', 'subject_fit': 90, 'appeal': 90, 'quality': 90, 'more': [], 'less': [], 'appeal_why': 'ok', 'why': 'ok'}
+
+    def rate(system, user, schema, **kw):
+        n = schema['properties']['ratings']['maxItems']
+        if n > 1:
+            return {'ratings': 'broken'}
+        return {'ratings': [{'index': 0, **good, 'hard_violations': ['scary'] if 'T1' in user else []}]}
+    monkeypatch.setattr(mb.ai, '_call', rate)
+    rows = [_row(i) for i in range(2)]
+    profile = {'subject': 'Dinosaurs', 'more_of': [], 'less_of': []}
+    assert mb.select_candidates(rows, 'Dinosaurs', '', profile=profile, child=True) == [rows[0]]
+
+
+@pytest.mark.rating
+def test_collect_rates_with_board_profile_and_stores_rating(client, model, monkeypatch):  # noqa: F811
+    from bt.hub import moodboard_sources
+    from bt.hub.models import MoodVerdict
+    board = make(client)
+    monkeypatch.setattr(mb, 'get_settings', lambda: {'llm': {'vision': True}})
+    monkeypatch.setattr(mb, 'vision_image', lambda data: 'data:image/jpeg;base64,eA==')
+    monkeypatch.setattr(mb, 'describe_images', lambda batch: [None] * len(batch))
+    monkeypatch.setattr(mb, 'discovery_queries', lambda *a, **k: ['whimsy'])
+    monkeypatch.setattr(moodboard_sources, 'search', lambda *a, **k: [
+        {'title': f'P{i}', 'source_url': f'https://commons.wikimedia.org/wiki/File:P{i}.jpg',
+         'image_url': f'https://upload.wikimedia.org/wikipedia/commons/p{i}.jpg', 'attribution': 'a', 'license': 'CC'}
+        for i in range(2)])
+    from io import BytesIO
+    from PIL import Image
+    def picture(i):  # different pictures, so the near-duplicate check keeps both
+        buf = BytesIO()
+        img = Image.new('RGB', (900, 900), (255, 255, 255))
+        img.paste((0, 0, 0), (0, 0, 450, 900) if i == 0 else (0, 0, 900, 450))
+        img.save(buf, 'JPEG')
+        return buf.getvalue()
+    monkeypatch.setattr(mb, 'capture_candidates', lambda c, *a, **k: (
+        [{**x, '_captured': (picture(i), 'image/jpeg', 900, 900)} for i, x in enumerate(c)], 0))
+    users = []
+
+    def call(system, user, schema, **kw):
+        if 'ratings' in schema['properties']:
+            users.append(user)
+            n = schema['properties']['ratings']['maxItems']
+            return {'ratings': [{'index': i, 'seen': 's', 'subject_fit': 90 if i == 0 else 10, 'appeal': 90, 'quality': 80,
+                                 'more': [], 'less': [], 'hard_violations': [], 'appeal_why': 'Lovely', 'why': 'w'} for i in range(n)]}
+        return model(system, user, schema, **kw)
+    monkeypatch.setattr('bt.hub.ai._call', call)
+    with session() as s:
+        b = s.get(MoodBoard, board['id'])
+        lease, revision = 'L', b.revision
+        b.lease = lease
+        s.add(b)
+        s.commit()
+    mb.collect(board['id'], lease, revision)
+    assert users and 'TASTE PROFILE' in users[0] and 'whimsical clothes' in users[0]
+    with session() as s:
+        pins = s.exec(select(MoodPin).where(MoodPin.board_id == board['id'])).all()
+        verdicts = s.exec(select(MoodVerdict).where(MoodVerdict.board_id == board['id'])).all()
+    assert len(pins) == 1
+    assert sorted(v.rating['subject_fit'] for v in verdicts) == [10, 90]
