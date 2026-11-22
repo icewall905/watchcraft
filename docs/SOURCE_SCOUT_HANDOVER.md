@@ -19,6 +19,18 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Cleaned Hub logo (`2c2bd87`, 2026-11-22)
+
+- Deployed `e5b3153..2c2bd87` (frontend only): new Hub logo artwork for the site logo, favicon and PWA icons.
+  Android launcher icons changed in the same commit; they ship with the next APK. No schema change.
+- All four application services run `watchcraft:release-2c2bd87` (`sha256:433193ac63a5…`) with zero restarts;
+  public health 200, served `logo.png` matches the commit, Compose and environment hashes unchanged.
+- Code-only backup at `/root/compose/watchcraft-backups/20261122-logo-2c2bd87`: previous source, `new-files.txt`,
+  `rollback.sh` (back to `release-e5b3153`). The newest DB snapshot is in `20261122-spotfix-e5b3153`.
+- Pruned to the newest two deploy backups (`logo-2c2bd87`, `spotfix-e5b3153`): removed
+  `20261122-rating-6e0d239` (its `rating-replay-out.jsonl` moved to `20261122-spotfix-e5b3153/`) and the
+  `release-35da711` tag.
+
 ## Deployment record — Board curator spot-check fixes (`e5b3153`, 2026-11-22)
 
 - Deployed `6e0d239..e5b3153`: AI-generated pictures are vetoed on boards that reject AI; one failing search query
