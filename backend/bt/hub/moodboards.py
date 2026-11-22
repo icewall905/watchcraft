@@ -124,10 +124,10 @@ def note_map(s, pin_ids):
 
 def feedback_lessons(s, bid):
     """Owner reviews as curator guidance, described by what each picture showed. Returned text is untrusted."""
-    from ..knowledge.render import section_text
+    from .board_brief import learned_text
     from .board_quality import lessons
     board = s.get(MoodBoard, bid)
-    woven = (section_text(s, board.profile_id, ['moodboards'], board_id=bid) or '') if board else ''
+    woven = learned_text(s, board) if board else ''  # the board's brief when it has one, else the learned statements
     return lessons(s, bid, woven)
 
 
@@ -198,10 +198,28 @@ def profile_brief(p):
 
 
 def stored(s, bid) -> int:
-    """Images a board keeps the picture of. Reshuffled-away pins keep only their link (so they are never found
-    again) and do not count toward the 1,000-image limit."""
+    """Images that count toward the 1,000-image limit: the stored pictures still shown on the board. Hidden pins
+    (Not a fit, removed, reshuffled away) never count; a few keep their picture so they can be restored."""
     return s.exec(select(func.count()).select_from(MoodAsset).join(MoodPin, MoodPin.id == MoodAsset.pin_id)
-                  .where(MoodPin.board_id == bid)).one()
+                  .where(MoodPin.board_id == bid, MoodPin.hidden == False)).one()  # noqa: E712
+
+
+HIDDEN_KEEP = 200  # newest hidden pictures per board kept for "restore"; older ones keep only their link
+
+
+def trim_hidden(s, bid, keep=HIDDEN_KEEP) -> int:
+    """Drop the pictures of older hidden pins. Their link, hash and verdict stay, so they are never found again."""
+    ids = s.exec(select(MoodPin.id).join(MoodAsset, MoodAsset.pin_id == MoodPin.id)
+                 .where(MoodPin.board_id == bid, MoodPin.hidden == True)  # noqa: E712
+                 .order_by(MoodPin.id.desc()).offset(keep)).all()
+    if ids:
+        s.exec(delete(MoodAsset).where(MoodAsset.pin_id.in_(ids)))
+        s.exec(delete(MoodThumb).where(MoodThumb.pin_id.in_(ids)))
+        s.exec(delete(MoodPinVector).where(MoodPinVector.pin_id.in_(ids)))
+    return len(ids)
+
+
+LIMIT_ERROR = 'This board has reached its 1,000-image limit. Move images to another board to make room.'
 
 
 def liked():
@@ -223,6 +241,8 @@ def board_json(s, board, viewer=None):
     result['reference_url'] = f'/api/hub/boards/{board.id}/reference/media?v={board.revision}' if reference else None
     result['reference_name'] = reference.name if reference else ''
     result['retry_after'] = retry_after(board)
+    if (board.error or '').startswith('This board has reached its 1,000-image') and stored(s, board.id) < MAX_PINS:
+        result['error'] = ''  # stale from the old count (hidden pins used to count) or images moved away since
     result['last_result'] = last_result(s, board, result['pin_count'])
     # Overview collage: saved favourites first, then the newest finds.
     recent = s.exec(select(MoodPin.id).where(*visible)
@@ -378,6 +398,8 @@ def delete_profile(s, pid):
     s.exec(delete(MoodImport).where(MoodImport.profile_id == pid))
     from .board_curator import delete_board
     delete_board(s, own)
+    from .board_brief import delete_boards
+    delete_boards(s, own)
     s.exec(delete(AgentEvent).where(AgentEvent.kind == activity.KIND, AgentEvent.profile_id == pid,
                                   AgentEvent.payload['board_id'].as_integer() != None))
     s.exec(delete(MoodReference).where(MoodReference.board_id.in_(select(MoodBoard.id).where(MoodBoard.profile_id == pid))))
@@ -400,6 +422,8 @@ def remove(bid: int, pid: int = Depends(require_boards)):
         s.exec(delete(MoodImport).where(MoodImport.board_id == bid))
         from .board_curator import delete_board
         delete_board(s, [bid])
+        from .board_brief import delete_boards
+        delete_boards(s, [bid])
         s.exec(delete(AgentEvent).where(AgentEvent.kind == activity.KIND, AgentEvent.profile_id == pid,
                                       AgentEvent.payload['board_id'].as_integer() == bid))
         s.exec(delete(MoodReference).where(MoodReference.board_id == bid))
@@ -1153,6 +1177,8 @@ def collect(bid, lease, revision):
         child = bool(board.child_friendly)
         strict = child or board.strictness != 'balanced'
         context = board.name + ' — ' + board.interests
+        from .board_brief import planner_text
+        planning = planner_text(s, board)  # past picture examples are for the judge only: they drag searches off-topic
         ai_mode = board.ai_images if board.ai_images in ai_detect.MODES else 'reject'
         offset = board.source_offset
         query = interests[(offset // 30) % len(interests)]
@@ -1176,7 +1202,7 @@ def collect(bid, lease, revision):
     try:
         select_candidates([], query, instructions)  # Fail before fetching when vision is disabled.
         milestone('search', 'Planning image searches for ' + board.name + '.')
-        planned = discovery_queries(context, instructions, reference_data) if reference_data else discovery_queries(context, instructions)
+        planned = discovery_queries(context, planning, reference_data) if reference_data else discovery_queries(context, planning)
         queries = plan_queries(seeds, planned, offset)
         seen_candidates, seen_images = set(), set()
         if links:
@@ -1301,7 +1327,8 @@ def collect(bid, lease, revision):
             elif hits and board.enabled and board.source_offset:  # Page had results but nothing new fit: try the next page soon, until pages wrap.
                 board.next_run = time.time() + EMPTY_RETRY_S
                 board.last_status = 'queued'
-        board.error = error or ('This board has reached its 1,000-image limit. Move images to another board to make room.'
+        trim_hidden(s, bid)
+        board.error = error or (LIMIT_ERROR
                                if count >= MAX_PINS else (f'{failures} images could not be captured.' if failures else ''))
         board.lease = ''
         board.build_started = 0

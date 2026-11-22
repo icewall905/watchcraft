@@ -314,6 +314,10 @@ def process(rt):
                 woven = weave.weave(pid, abort=rt.check)
                 if woven.get("status") not in ("unchanged", "no model"):
                     state["profiles"].append({"profile_id": pid, "knowledge": woven})
+                from ..hub import board_brief
+                briefs = board_brief.nightly(pid, abort=rt.check)  # fold tonight's board learnings into each board's brief
+                if briefs.get("compiled") or briefs.get("failed"):
+                    state["profiles"].append({"profile_id": pid, "board_briefs": briefs})
             except Interrupt:
                 raise
             except Exception as e:  # noqa: BLE001 — knowledge stays at its previous version

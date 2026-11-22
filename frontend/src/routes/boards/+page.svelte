@@ -421,6 +421,7 @@
      {#if mine(board)}<button class="btn pill" disabled={curatorActive || reshuffling} title="Replace every image you have not hearted or given a thumbs up" onclick={() => { error = ''; reshuffleOpen = true; }}>{@render icon('shuffle')}Reshuffle</button>{/if}
      <button class="btn pill" onclick={() => openImage('manual')}>{@render icon('plus')}Add image</button>
      {#if !session.isChild}<button class="btn pill" title="Let the source curator research sites for this board" onclick={() => { sourcesOpen = true; }}>{@render icon('puzzle')}Find sources</button>{/if}
+     {#if mine(board)}<a class="btn pill" href={`/boards/learned?board=${board.id}`} title="See and correct what this board's curator learned about your taste">{@render icon('spark')}What it learned</a>{/if}
      {#if !session.isChild && mine(board)}
      <button class="btn pill" onclick={() => openImage('reference')}>{@render icon('eye')}{board.reference_url ? 'Change inspiration image' : 'Add inspiration image'}</button>
      <button class="btn pill" onclick={() => { error = ''; importOpen = true; }}>{@render icon('pin')}Import Pinterest</button>

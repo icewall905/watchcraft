@@ -19,7 +19,7 @@ def test_defaults_send_grunt_work_to_worker_and_judgement_to_judge(client):
     assert llm.role_for('knowledge_chat') == 'judge'
     assert {k for k, (_s, _l, role) in llm.TASKS.items() if role == 'judge'} == {
         'video_verdict', 'memory_audit', 'knowledge_review', 'frontpage_review', 'knowledge_chat',
-        'watcher_setup', 'watcher_check'}
+        'watcher_setup', 'watcher_check', 'board_brief', 'board_chat'}
 
 
 def test_routes_pick_the_endpoint(client):

@@ -707,6 +707,29 @@ class MoodImport(SQLModel, table=True):
     note: str = ''              # why it is waiting
 
 
+class MoodBoardBrief(SQLModel, table=True):
+    """One board's curator brief: everything learned about the board, compiled into one editable prompt."""
+    board_id: int = Field(primary_key=True)
+    text: str = T()
+    source_hash: str = ''          # what it was compiled from; a different hash means newer learnings exist
+    compiled_at: float = 0
+    edited_at: float = 0           # owner edited the text by hand after the last compile
+    dropped: list = J()            # [{sid, text, why}] learned statements the compiler judged off-topic for this board
+    error: str = ''
+
+
+class MoodBoardChat(SQLModel, table=True):
+    """The correction chat on a board's "What it learned" page."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    board_id: int = Field(index=True)
+    profile_id: int = Field(index=True)
+    role: str = 'user'             # user | curator
+    text: str = T()
+    proposal: dict = J({})         # {ops: [{op: add|edit|remove|scope, sid, text, polarity, before}]}
+    proposal_status: str = 'none'  # none | pending | accepted | rejected | stale
+    created_at: float = Field(default_factory=time.time)
+
+
 class MoodReference(SQLModel, table=True):
     """One locally stored inspiration image per board, scoped through its owner."""
     board_id: int = Field(primary_key=True)

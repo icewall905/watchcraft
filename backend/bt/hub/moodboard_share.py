@@ -106,7 +106,7 @@ def _copy(s, pin, bid, recipient):
 
 def _stored(s, bid):
     return s.exec(select(func.count()).select_from(MoodAsset).join(MoodPin, MoodPin.id == MoodAsset.pin_id)
-                  .where(MoodPin.board_id == bid)).one()
+                  .where(MoodPin.board_id == bid, MoodPin.hidden == False)).one()  # noqa: E712
 
 
 def _kid_check(pictures: list[tuple[int, bytes]], unchecked: set[int] | None = None,

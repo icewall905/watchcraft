@@ -257,6 +257,11 @@ def night_pass(pid: int, claimed: int, day: str) -> dict:
                 out['knowledge'] = weave.weave(pid)
             except Exception:  # noqa: BLE001 — yesterday's knowledge stays in service
                 log.exception('knowledge weave for profile %s failed', pid)
+            try:
+                from .. import board_brief
+                out['board_briefs'] = board_brief.nightly(pid)
+            except Exception:  # noqa: BLE001 — yesterday's briefs stay in service
+                log.exception('board briefs for profile %s failed', pid)
         out['kid_safe'] = _kid_safe(pid, limit=200)
         with session() as s:
             out['rules'] = pipeline.run(s, pid)

@@ -30,6 +30,20 @@ export interface PinterestStatus { enabled: boolean; blocked: boolean; blocked_u
 export interface BoardSource { id: number; name: string; host: string; kind: 'search_template' | 'gallery' | 'feed' | 'subreddit' | 'network_search' | 'commons_category'; status: 'ok' | 'broken' | 'disabled'; enabled: boolean; added_by: string; fit: number; tried: number; hits: number; kept: number; last_run: number; created_at: number; url: string }
 export interface SourceHunt { id: number; status: 'queued' | 'running' | 'complete' | 'failed'; found: number; error: string; log: {at: number; step: string; message: string}[]; created_at: number; finished_at: number }
 export interface BoardSources { sources: BoardSource[]; hunt: SourceHunt | null }
+export interface LearnedStatement { sid: string; text: string; polarity: 1 | -1; confidence: 'tentative' | 'established' | 'explicit'; locked: boolean; scope: 'board' | 'all'; updated: number }
+export interface LearnedReview { pin_id: number; verdict: 'good' | 'bad'; note: string; title: string; picture: string; created_at: number; thumb_url: string | null }
+export interface LearnedChatOp { op: 'add' | 'edit' | 'remove' | 'scope'; sid: string | null; text: string | null; polarity: 1 | -1; before?: string }
+export interface LearnedChat { id: number; role: 'user' | 'curator'; text: string; proposal: {ops?: LearnedChatOp[]}; proposal_status: 'none' | 'pending' | 'accepted' | 'rejected' | 'stale'; created_at: number }
+export interface BoardLearned {
+ board: {id: number; name: string; interests: string; instructions: string; avoid: string; rules: string};
+ statements: LearnedStatement[];
+ brief: {text: string; state: 'none' | 'fresh' | 'stale'; compiled_at: number; edited_at: number; error: string; dropped: {sid: string; text: string; why: string}[]};
+ pending: {id: number; text: string; polarity: number; reason: string; created_at: number}[];
+ reviews: LearnedReview[]; review_counts: {good: number; bad: number};
+ hosts: {host: string; reason: string; good: number; bad: number}[];
+ prompt: string; chat: LearnedChat[];
+}
+export interface LearnedIndex { boards: {id: number; name: string; interests: string; statements: number; brief: 'none' | 'fresh' | 'stale'; flagged: number; fits: number; not_fits: number}[]; shared: LearnedStatement[] }
 const base = '/hub/boards';
 export const boardsApi = {
  pinterest: (id: number, url: string) => request<{import: PinterestImport}>(`${base}/${id}/pinterest`, {method: 'POST', body: {url}, toast: false}),
@@ -57,5 +71,15 @@ export const boardsApi = {
  findSources: (id: number) => request<BoardSources>(`${base}/${id}/find-sources`, {method: 'POST', body: {}, toast: false}),
  setSource: (id: number, source: number, enabled: boolean) => request<BoardSources>(`${base}/${id}/sources/${source}`, {method: 'PATCH', body: {enabled}, toast: false}),
  removeSource: (id: number, source: number) => request<BoardSources>(`${base}/${id}/sources/${source}`, {method: 'DELETE', toast: false}),
+ learnedIndex: (signal?: AbortSignal) => request<LearnedIndex>(`${base}/learned`, {signal, toast: false}),
+ learned: (id: number, signal?: AbortSignal) => request<BoardLearned>(`${base}/${id}/learned`, {signal, toast: false}),
+ learnAdd: (id: number, text: string, polarity: 1 | -1) => request<BoardLearned>(`${base}/${id}/learned/statements`, {method: 'POST', body: {text, polarity}, toast: false}),
+ learnEdit: (id: number, sid: string, body: {text?: string; polarity?: 1 | -1; scope?: 'board' | 'all' | 'off'; remove?: boolean}) => request<BoardLearned>(`${base}/${id}/learned/statements/${sid}`, {method: 'PATCH', body, toast: false}),
+ learnReject: (id: number, tid: number) => request<BoardLearned>(`${base}/${id}/learned/teachings/${tid}/reject`, {method: 'POST', body: {}, toast: false}),
+ saveBrief: (id: number, text: string) => request<BoardLearned>(`${base}/${id}/learned/brief`, {method: 'PUT', body: {text}, toast: false}),
+ refineBrief: (id: number) => request<BoardLearned>(`${base}/${id}/learned/refine`, {method: 'POST', body: {}, toast: false}),
+ learnChat: (id: number, text: string) => request<BoardLearned & {messages: LearnedChat[]}>(`${base}/${id}/learned/chat`, {method: 'POST', body: {text}, toast: false}),
+ learnAccept: (id: number, mid: number) => request<BoardLearned>(`${base}/${id}/learned/chat/${mid}/accept`, {method: 'POST', body: {}, toast: false}),
+ learnDiscard: (id: number, mid: number) => request<BoardLearned>(`${base}/${id}/learned/chat/${mid}/reject`, {method: 'POST', body: {}, toast: false}),
  remove: (id: number) => request<unknown>(`${base}/${id}`, {method: 'DELETE', toast: false})
 };

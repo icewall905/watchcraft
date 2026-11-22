@@ -174,6 +174,8 @@ TASKS: dict[str, tuple[str, str, str]] = {
     "board_queries": ("Boards", "Plan image searches", "worker"),
     "board_vision": ("Boards", "Vision check of candidate images", "worker"),
     "board_sources": ("Boards", "Research image sources (Find sources)", "worker"),
+    "board_brief": ("Boards", "Write each board's curator brief from what it learned", "judge"),
+    "board_chat": ("Boards", "Board preferences chat", "judge"),
     "commonroom_curate": ("Common Room", "Pick threads worth reading", "worker"),
     "commonroom_discover": ("Common Room", "Source expedition (Find sources)", "worker"),
     "music_dj": ("Music", "DJ picks and mixes", "worker"),
