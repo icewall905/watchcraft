@@ -19,6 +19,22 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Board preference rater (`6e0d239`, 2026-11-22)
+
+- Deployed `35da711..6e0d239`. The vision model rates each board candidate against a structured taste profile
+  (subject fit, appeal to this owner, quality, matched more/less items, hard violations); code combines the rating
+  into the keep score (`RATE` in `moodboards.py`; `PREFERENCE_RATING = False` reverts to the older judge).
+- Calibration: `scripts/board_rating_replay.py` on a snapshot copy, 128 owner-reviewed pictures over 4 boards:
+  kept 35/41 approved and dropped 52/87 rejected, against 33/41 and 44/87 for the older judge. Raw results in
+  `20261122-brief-absorb-35da711/rating-replay-out.jsonl`; the snapshot copy was deleted.
+- Schema: additive column `moodverdict.rating`.
+- All four application services run `watchcraft:release-6e0d239` (`sha256:87ca68f42967…`) with zero restarts;
+  public health 200, Compose and environment hashes unchanged, no tracebacks after rollout.
+- Backup at `/root/compose/watchcraft-backups/20261122-rating-6e0d239`: online SQLite snapshot (`quick_check` ok),
+  previous source, `new-files.txt`, `rollback.sh` (back to `release-35da711`).
+- Pruned to the newest two deploy backups (`rating-6e0d239`, `brief-absorb-35da711`): removed
+  `20261122-board-learning-efb4679` and its `rollback-20261122-board-*` tags.
+
 ## Deployment record — Brief absorbs learned board items (`35da711`, 2026-11-22)
 
 - Deployed `efb4679..35da711`. Compiling a board brief folds that board's own learned items into it and removes
