@@ -37,7 +37,7 @@ export interface LearnedChat { id: number; role: 'user' | 'curator'; text: strin
 export interface BoardLearned {
  board: {id: number; name: string; interests: string; instructions: string; avoid: string; rules: string};
  statements: LearnedStatement[];
- brief: {text: string; state: 'none' | 'fresh' | 'stale'; compiled_at: number; edited_at: number; error: string; dropped: {sid: string; text: string; why: string}[]};
+ brief: {text: string; state: 'none' | 'fresh' | 'stale'; compiled_at: number; edited_at: number; error: string; absorbed: number; dropped: {sid: string; text: string; why: string}[]};
  pending: {id: number; text: string; polarity: number; reason: string; created_at: number}[];
  reviews: LearnedReview[]; review_counts: {good: number; bad: number};
  hosts: {host: string; reason: string; good: number; bad: number}[];

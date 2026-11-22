@@ -54,7 +54,7 @@
   try { const d = await fn(); if (selected === id) { data = d; refreshIndexRow(d); notice = done; } }
   catch (e) { error = msg(e); } finally { busy = ''; }
  }
- const refine = () => act('refine', () => boardsApi.refineBrief(selected!), 'Brief rewritten from everything the curator learned.');
+ const refine = () => act('refine', () => boardsApi.refineBrief(selected!), '').then(() => { if (!error && data) notice = data.brief.absorbed ? `Brief rewritten. ${data.brief.absorbed} learned item${data.brief.absorbed === 1 ? ' is' : 's are'} now part of it and left the list.` : 'Brief rewritten from everything the curator learned.'; });
  async function refineAll() {
   if (!index || refiningAll) return;
   const ids = index.boards.map(b => b.id);
@@ -161,7 +161,7 @@
        <h2>Curator brief</h2>
        <span class="badge {data.brief.state}">{BRIEF_LABEL[data.brief.state]}</span>
       </div>
-      <p class="small muted">One prompt compiled from your instructions, everything learned and your reviews. The curator reads it on every search. It is rewritten each night when something new was learned{data.brief.edited_at ? ', keeping your own edits' : ''}.</p>
+      <p class="small muted">One prompt compiled from your instructions, everything learned and your reviews. Learned items it absorbs leave the list below (undo under Settings → Curator → History). The curator reads it on every search. It is rewritten each night when something new was learned{data.brief.edited_at ? ', keeping your own edits' : ''}.</p>
       {#if briefEditing}
        <textarea class="input brief-text" rows="12" maxlength="3000" aria-label="Curator brief" bind:value={briefDraft}></textarea>
        <div class="hstack"><button class="btn primary" disabled={!!busy} onclick={saveBrief}>{busy === 'brief' ? 'Saving…' : 'Save brief'}</button><button class="btn" onclick={() => { briefEditing = false; }}>Cancel</button></div>
@@ -218,6 +218,7 @@
        </li>
       {/snippet}
       {#if boardOnly.length}<ul class="list">{#each boardOnly as st (st.sid)}{@render item(st)}{/each}</ul>
+      {:else if data.brief.text}<p class="muted small">Everything learned so far is part of the brief above — edit it there. New learnings show here until the brief absorbs them (tonight, or when you refine).</p>
       {:else}<p class="muted small">Nothing learned for this board yet. Mark pictures Fits or Not a fit and the nightly pass learns from them.</p>{/if}
       {#if shared.length}
        <h3>Also applied from all your boards</h3>

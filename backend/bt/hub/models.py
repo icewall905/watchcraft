@@ -715,6 +715,7 @@ class MoodBoardBrief(SQLModel, table=True):
     compiled_at: float = 0
     edited_at: float = 0           # owner edited the text by hand after the last compile
     dropped: list = J()            # [{sid, text, why}] learned statements the compiler judged off-topic for this board
+    absorbed: int = 0              # learned statements the last compile folded in (they then left the learned list)
     error: str = ''
 
 

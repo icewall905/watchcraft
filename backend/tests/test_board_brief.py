@@ -158,17 +158,55 @@ def test_refine_compiles_brief_flags_off_topic_and_feeds_curator(client, model):
     assert brief['state'] == 'fresh' and 'playful prints' in brief['text']
     assert [d['sid'] for d in brief['dropped']] == [off]
     assert model.calls[-1][2] == 'board_brief'
+    # The absorbed item left the list; the flagged one stays for the owner; the brief is current.
+    assert [x['sid'] for x in r.json()['statements']] == [off] and brief['absorbed'] == 1
+    with session() as s:
+        assert render.current(s, pid).cause == 'brief'
     with session() as s:
         b = s.get(MoodBoard, board['id'])
         lessons = mb.feedback_lessons(s, board['id'])
         assert 'BOARD BRIEF' in lessons and 'playful prints' in lessons
         assert 'NEWER LEARNINGS' not in lessons
-    # Removing the flagged statement makes the brief stale; the curator then also reads the newer statements.
-    client.patch(f'/api/hub/boards/{board["id"]}/learned/statements/{off}', json={'remove': True})
+    # Removing the flagged statement leaves nothing outside the brief; a new learning makes it stale and the
+    # curator reads it next to the brief until the next compile.
+    data = client.patch(f'/api/hub/boards/{board["id"]}/learned/statements/{off}', json={'remove': True}).json()
+    assert data['statements'] == [] and data['brief']['dropped'] == []
+    client.post(f'/api/hub/boards/{board["id"]}/learned/statements', json={'text': 'Tiny hats', 'polarity': 1})
     data = client.get(f'/api/hub/boards/{board["id"]}/learned').json()
-    assert data['brief']['state'] == 'stale' and data['brief']['dropped'] == []
+    assert data['brief']['state'] == 'stale'
     with session() as s:
         assert 'NEWER LEARNINGS' in mb.feedback_lessons(s, board['id'])
+
+
+def test_shared_and_edited_statements_are_not_absorbed(client, model, monkeypatch):  # noqa: F811
+    board = make(client)
+    pid = board['profile_id']
+    own, shared, edited = seed_statements(pid, [('Playful prints', 1, board['id']), ('Pastels', 1, None),
+                                                ('Glitter', 1, board['id'])])
+    real = board_brief._absorb
+
+    def edit_midway(s, *a, **kw):  # the owner edits one item while the model writes the brief
+        pk = render.current(s, pid)
+        sections = weave._normalized(pk.sections)
+        next(st for sec in sections for st in sec['statements'] if st['sid'] == edited)['text'] = 'Fine glitter'
+        weave.write_version(s, pid, sections, 'edit', pk)
+        s.flush()
+        return real(s, *a, **kw)
+    monkeypatch.setattr(board_brief, '_absorb', edit_midway)
+    r = client.post(f'/api/hub/boards/{board["id"]}/learned/refine').json()
+    assert {x['text'] for x in r['statements']} == {'Pastels', 'Fine glitter'}
+    assert r['brief']['state'] == 'fresh'
+    # Next night: nothing changed, nothing to do; a new item makes it due again and the old brief is the base.
+    assert board_brief.nightly(pid)['due'] == 0
+    seed_statements(pid, [('Rainbow', 1, board['id'])])
+    seen = []
+    model.brief = lambda user: seen.append(user) or {'brief': 'SUBJECT: whimsy. MORE OF: rainbow.', 'dropped': []}
+    monkeypatch.setattr(board_brief, '_absorb', real)
+    board_brief.nightly(pid)
+    assert 'playful prints' in seen[0] and 'Rainbow' in seen[0]
+    with session() as s:
+        left = [st['text'] for st in board_brief.statements(board_brief._sections(s, pid)[1], board['id'])]
+    assert sorted(left) == ['Pastels']
 
 
 def test_owner_edits_brief_and_nightly_recompiles_only_changed(client, model):  # noqa: F811

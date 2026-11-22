@@ -21,7 +21,7 @@ export type Statement = {
 	teaching_ids: number[]; board_id: number | null; since: number; updated: number;
 };
 export type KnowledgeSection = { key: SectionKey; title: string; statements: Statement[] };
-export type Cause = 'migration' | 'nightly' | 'chat' | 'edit' | 'undo';
+export type Cause = 'migration' | 'nightly' | 'chat' | 'edit' | 'undo' | 'brief';
 type Diffed = { sid: string; section: SectionKey; polarity: Polarity };
 export type Changes = {
 	added: (Diffed & { text: string })[]; changed: (Diffed & { before: string; after: string })[];
@@ -96,7 +96,7 @@ export const VERB: Record<SignalKind, string> = {
 export const verb = (k: string) => VERB[k as SignalKind] ?? k;
 
 export const CONFIDENCE: Record<Statement['confidence'], string> = { explicit: 'You told me', established: 'Established', tentative: 'Tentative' };
-export const CAUSE: Record<Cause, string> = { nightly: 'Nightly weave', chat: 'Chat correction', edit: 'Your edit', undo: 'Restored', migration: 'Initial import' };
+export const CAUSE: Record<Cause, string> = { nightly: 'Nightly weave', chat: 'Chat correction', edit: 'Your edit', undo: 'Restored', migration: 'Initial import', brief: 'Folded into a board brief' };
 /** Only same-site paths and http(s) links; feed data can carry javascript: URLs. */
 export function safeHref(u: string | undefined): string {
 	if (!u) return '';

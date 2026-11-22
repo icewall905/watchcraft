@@ -46,7 +46,9 @@ Rules:
   jewellery board) must not shape the brief: list its id under dropped with a one-sentence reason.
 - Never contradict the owner's written instructions; they win on any conflict. Do not repeat them word for word.
 - Statements marked "told by user" are authoritative unless they are off-subject for this board.
-- If the CURRENT brief was edited by the owner, keep every point they wrote and only fold in new learnings.
+- The CURRENT brief already holds everything learned before: learned items are removed once a brief absorbs them.
+  Keep every point of the CURRENT brief unless a newer learned statement or the owner's instructions contradict it,
+  then fold the LEARNED statements in. If the owner edited it, keep their wording.
 - Never infer identity, health, politics or other sensitive traits. Never invent preferences no input supports.
 - dropped lists only ids from LEARNED. Return an empty list when everything fits."""
 
@@ -174,7 +176,7 @@ def overview(s, board: MoodBoard) -> dict:
         'statements': [_row(st) for st in rows],
         'brief': {'text': brief.text if brief else '', 'state': brief_state(brief, current),
                   'compiled_at': brief.compiled_at if brief else 0, 'edited_at': brief.edited_at if brief else 0,
-                  'error': brief.error if brief else '',
+                  'error': brief.error if brief else '', 'absorbed': brief.absorbed if brief else 0,
                   'dropped': [d for d in (brief.dropped if brief else []) if d.get('sid') in sids]},
         'pending': [{'id': t.id, 'text': t.text, 'polarity': t.polarity, 'reason': t.reason, 'created_at': t.created_at}
                     for t in pending],
@@ -235,15 +237,42 @@ def compile_brief(pid: int, bid: int) -> MoodBoardBrief:
     with session() as s:
         row = s.get(MoodBoardBrief, bid) or MoodBoardBrief(board_id=bid)
         if text is not None:
-            row.text, row.dropped, row.source_hash = text, dropped, digest
+            board = s.get(MoodBoard, bid)
+            absorbed = _absorb(s, pid, bid, known, {d['sid'] for d in dropped})
+            _pk, sections = _sections(s, pid)
+            row.text, row.dropped = text, dropped
+            row.source_hash = source_hash(board, statements(sections, bid)) if board else digest
             row.compiled_at, row.edited_at = time.time(), 0
+            row.absorbed = absorbed
         row.error = error
         s.add(row)
         s.commit()
         s.refresh(row)
-        if error:
-            raise RuntimeError(error)
-        return row
+    if text is not None and row.absorbed:
+        _changed(pid)  # after commit: consumers open their own sessions
+    if error:
+        raise RuntimeError(error)
+    return row
+
+
+def _absorb(s, pid: int, bid: int, known: dict[str, str], keep: set[str]) -> int:
+    """Board-only statements the new brief now carries leave the learned list (one knowledge version, undoable in
+    Settings). Flagged ones stay for the owner to judge; shared ones keep serving other boards; anything edited
+    while the brief was being written stays too."""
+    from ..knowledge import render, weave
+    pk = render.current(s, pid)
+    if pk is None:
+        return 0
+    sections = weave._normalized(pk.sections)
+    sec = next(x for x in sections if x['key'] == SECTION)
+    gone = {st['sid'] for st in sec['statements'] if st.get('board_id') == bid and st['sid'] in known
+            and st['sid'] not in keep and st.get('text', '') == known[st['sid']]}
+    if not gone:
+        return 0
+    sec['statements'] = [st for st in sec['statements'] if st['sid'] not in gone]
+    weave.write_version(s, pid, sections, 'brief', pk, extra={'board_id': bid})
+    s.flush()
+    return len(gone)
 
 
 def nightly(pid: int, abort=None) -> dict:
