@@ -155,7 +155,7 @@
 		<div class="overlay" bind:this={panel} use:navScope={{ onBack: () => close() }}>
 			<button class="backdrop" aria-label="Close navigation" tabindex="-1" onclick={() => close()}></button>
 			<aside id="tv-navigation" class="sidebar tv" aria-label="Navigation drawer">
-				<div class="brand"><img src="/logo.png" alt="" width="40" height="40" /><span class="bt"><b>The Hub</b></span></div>
+				<div class="brand"><img src="/logo.png" alt="" width="40" height="40" /><span class="bt"><b>The Hub</b><small>Watching the Internet for you.</small></span></div>
 				<nav aria-label="Main" data-nav-zone="main-navigation" data-nav-skip-initial>
 					{#each drawer as it}
 						{@const on = it.active(path, search)}
@@ -180,6 +180,14 @@
 	.bt { display: grid; line-height: 1.15; }
 	.bt b { font-weight: 800; font-size: 1.15rem; }
 	.bt small { font: 500 .68rem var(--font); color: var(--muted); letter-spacing: .01em; }
+	/* Expanded sidebar and TV drawer: the logo fills the width, title and subtitle sit over its lower part.
+	   The desktop brand slides up beside the collapse toggle, which only covers the logo's empty corner. */
+	.sidebar:not(.compact) .brand { display: grid; justify-items: center; gap: 0; margin: -1.6rem 0 .9rem; padding: 0; text-align: center; }
+	.sidebar.tv .brand { margin-top: -.6rem; }
+	.sidebar:not(.compact) .brand img { width: 100%; height: auto; mask-image: linear-gradient(to bottom, #000 55%, transparent 97%); -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 97%); }
+	.sidebar:not(.compact) .bt { position: relative; margin-top: -3.8rem; text-shadow: 0 0 4px var(--bg-1), 0 0 12px var(--bg-1), 0 0 22px var(--bg-1); }
+	.sidebar:not(.compact) .bt b { font-size: 1.6rem; letter-spacing: -.01em; }
+	.sidebar:not(.compact) .bt small { margin-top: .2rem; font-size: .74rem; color: var(--text); }
 	nav { display: grid; gap: .1rem; flex: 1; align-content: start; }
 	section { display: grid; gap: .15rem; margin-bottom: .55rem; }
 	hr { border: 0; border-top: 1px solid var(--line); margin: .3rem .4rem; width: calc(100% - .8rem); }

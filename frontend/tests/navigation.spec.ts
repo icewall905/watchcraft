@@ -32,7 +32,7 @@ test('tv mode drawer lists only TV entries; /tv?mode=tv switches mode', async ({
 	await expect(page.getByRole('button', { name: 'Open navigation' })).toBeVisible();
 	await page.getByRole('button', { name: 'Open navigation' }).click();
 	const nav = page.getByRole('navigation', { name: 'Main', exact: true });
-	await expect(nav.getByRole('link')).toHaveText(['TV Home', 'Video search', 'Subscriptions', 'The Jukebox', 'Playlists', 'Today', 'Settings']);
+	await expect(nav.getByRole('link')).toHaveText(['TV Home', 'Video search', 'Subscriptions', 'The Jukebox', 'The Marquee', 'Playlists', 'Today', 'Settings']);
 	await nav.getByRole('link', { name: 'The Jukebox' }).click();
 	await expect(page).toHaveURL(/\/music$/);
 	await expect(nav.getByRole('link', { name: 'The Wire' })).toHaveCount(0);
