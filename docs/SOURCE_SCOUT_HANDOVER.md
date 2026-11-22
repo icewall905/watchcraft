@@ -19,6 +19,19 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Large logo on sign-in and Front Page (`9067770`, 2026-11-22)
+
+- Deployed `2c2bd87..9067770` (frontend only): the sign-in card and the Front Page masthead show the Hub logo
+  large with the title and subtitle over it. The obsolete hexagon sources (`1296e44`) were removed from the prod
+  tree too. No schema change.
+- All four application services run `watchcraft:release-9067770` (`sha256:a5a71273e49e…`) with zero restarts;
+  public health 200, Compose and environment hashes unchanged, served CSS has the new styles.
+- Code-only backup at `/root/compose/watchcraft-backups/20261122-hero-9067770`: previous source including the
+  deleted files (`deleted-files.txt`), `rollback.sh` (back to `release-2c2bd87`).
+- Pruned to the newest two deploy backups (`hero-9067770`, `logo-2c2bd87`): removed `20261122-spotfix-e5b3153`
+  (its online DB snapshot; nightly `daily-*` backups remain) and the `release-6e0d239` tag.
+  `rating-replay-out.jsonl` moved to `20261122-logo-2c2bd87/`.
+
 ## Deployment record — Cleaned Hub logo (`2c2bd87`, 2026-11-22)
 
 - Deployed `e5b3153..2c2bd87` (frontend only): new Hub logo artwork for the site logo, favicon and PWA icons.
