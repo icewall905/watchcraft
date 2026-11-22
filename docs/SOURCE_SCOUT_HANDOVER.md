@@ -19,6 +19,17 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Sidebar logo fills the sidebar (`3240775`, 2026-11-22)
+
+- Deployed `9067770..3240775` (frontend only): the expanded sidebar and the TV drawer show the Hub logo at full
+  sidebar width with "The Hub" and its subtitle over it; the collapsed sidebar is unchanged. No schema change.
+- All four application services run `watchcraft:release-3240775` (`sha256:f176737f6ac4…`) with zero restarts;
+  public health 200, Compose and environment hashes unchanged.
+- Code-only backup at `/root/compose/watchcraft-backups/20261122-sidebar-3240775`: previous source,
+  `rollback.sh` (back to `release-9067770`).
+- Pruned to the newest two deploy backups (`sidebar-3240775`, `hero-9067770`): removed `20261122-logo-2c2bd87`
+  and the `release-e5b3153` tag. `rating-replay-out.jsonl` moved to `20261122-hero-9067770/`.
+
 ## Deployment record — Large logo on sign-in and Front Page (`9067770`, 2026-11-22)
 
 - Deployed `2c2bd87..9067770` (frontend only): the sign-in card and the Front Page masthead show the Hub logo
