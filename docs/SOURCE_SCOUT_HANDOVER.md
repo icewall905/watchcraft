@@ -19,6 +19,18 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Brief absorbs learned board items (`35da711`, 2026-11-22)
+
+- Deployed `efb4679..35da711`. Compiling a board brief folds that board's own learned items into it and removes
+  them from the learned list (one knowledge version, cause `brief`); flagged, shared and mid-compile edits stay.
+- Schema: additive column `moodboardbrief.absorbed`.
+- All four application services run `watchcraft:release-35da711` (`sha256:9301e3ee34e9…`) with zero restarts;
+  public health 200, Compose and environment hashes unchanged.
+- Backup at `/root/compose/watchcraft-backups/20261122-brief-absorb-35da711`: online SQLite snapshot
+  (`quick_check` ok), previous source, `rollback.sh` (back to `release-efb4679`).
+- Pruned to the newest two deploy backups (`brief-absorb-35da711`, `board-learning-efb4679`): removed
+  `20261120-screen-scroll-04fd5b6` and the `release-04fd5b6` tag.
+
 ## Deployment record — Board learning overview and image limit fix (`efb4679`, 2026-11-22)
 
 - Deployed `04fd5b6..efb4679`. Hidden pins no longer count toward the 1,000-image limit (older hidden pictures are
