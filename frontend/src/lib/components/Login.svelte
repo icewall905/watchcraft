@@ -86,11 +86,20 @@
 	onDestroy(stopPolling);
 </script>
 
+{#snippet hero(title: string, subtitle?: string)}
+	<div class="hero">
+		<img src="/logo.png" alt="" width="512" height="512" />
+		<div class="hero-text">
+			<h1>{title}</h1>
+			{#if subtitle}<p>{subtitle}</p>{/if}
+		</div>
+	</div>
+{/snippet}
+
 <div class="login" use:navScope={{ onBack: canCancel ? () => (session.adding = false) : undefined }}>
 	{#if view === 'code'}
 		<div class="card panel">
-			<img src="/logo.png" alt="" width="72" height="72" />
-			<h1>Sign in with a code</h1>
+			{@render hero('Sign in with a code')}
 			{#if device}
 				<p class="muted">On a phone or computer that is signed in, open this address and enter the code.</p>
 				<p class="code" data-testid="device-code">{device.code}</p>
@@ -105,15 +114,7 @@
 		</div>
 	{:else}
 		<form class="card panel" onsubmit={(e) => (e.preventDefault(), submit())}>
-			<img src="/logo.png" alt="" width="72" height="72" />
-			<h1>The Hub</h1>
-			{#if bootstrap}
-				<p class="muted">Create the first admin to get started.</p>
-			{:else if canCancel}
-				<p class="muted">Sign in to add another account.</p>
-			{:else}
-				<p class="muted">Sign in to continue.</p>
-			{/if}
+			{@render hero('The Hub', bootstrap ? 'Create the first admin to get started.' : canCancel ? 'Sign in to add another account.' : 'Welcome back. Sign in to continue.')}
 			<TextField label="Username" bind:value={username} autofocus autocomplete="username" name="username" />
 			<TextField type="password" label="Password" bind:value={password} autocomplete={bootstrap ? 'new-password' : 'current-password'} name="password" onsubmit={bootstrap ? undefined : submit} />
 			{#if bootstrap}<TextField type="password" label="Repeat password" bind:value={repeat} autocomplete="new-password" onsubmit={submit} />{/if}
@@ -145,8 +146,34 @@
 		justify-items: stretch;
 		text-align: center;
 	}
-	.card img {
-		justify-self: center;
+	/* Big logo fading into the card; title and subtitle sit over its lower part. */
+	.hero {
+		display: grid;
+		justify-items: center;
+		margin-top: -0.5rem;
+		background: radial-gradient(closest-side, rgba(124, 92, 255, 0.28), transparent) top center / clamp(14rem, 42vh, 21rem) clamp(14rem, 42vh, 21rem) no-repeat;
+	}
+	.hero img {
+		width: clamp(11rem, 34vh, 17rem);
+		height: auto;
+		mask-image: linear-gradient(to bottom, #000 50%, transparent 96%);
+		-webkit-mask-image: linear-gradient(to bottom, #000 50%, transparent 96%);
+	}
+	.hero-text {
+		position: relative;
+		margin-top: clamp(-5.5rem, -11vh, -3.5rem);
+		padding: 0.6rem 1.2rem 0;
+		text-shadow: 0 2px 14px var(--bg-0), 0 0 4px var(--bg-0);
+	}
+	.hero h1 {
+		margin: 0;
+		font: 600 clamp(2.1rem, 5vh, 2.8rem) / 1.05 var(--font-display, var(--font));
+		letter-spacing: -0.02em;
+	}
+	.hero p {
+		margin: 0.45rem 0 0;
+		color: var(--text);
+		opacity: 0.85;
 	}
 	.err {
 		color: var(--bad);

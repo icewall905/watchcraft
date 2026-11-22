@@ -149,6 +149,7 @@
 	<WatcherBanner />
 	<div class="top" class:has-lead={!!lead}>
 		<header class="masthead">
+			<img class="mast-logo" src="/logo.png" alt="" width="512" height="512" />
 			<p class="date">Today · {today}</p>
 			<h1>{greeting}</h1>
 			<button class="btn regen" use:focusable disabled={rerunning} onclick={regenerate} title="Rebuild The Front Page from the best of The Wire, The Finds, The Dispatch, The Study and Meme Radar, then let the curator re-check it">{rerunning ? 'Regenerating…' : curating ? '↻ Regenerate (polishing…)' : '↻ Regenerate'}</button>
@@ -189,6 +190,12 @@
 	@media (min-width: 1000px) {
 		.top.has-lead { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: clamp(1.5rem, 3.5vw, 3.5rem); align-items: start; }
 	}
+	/* Large logo behind the greeting; faded at the edges so the text on top stays readable. */
+	.masthead { position: relative; isolation: isolate; }
+	.mast-logo { position: absolute; z-index: -1; top: clamp(-5rem, -6vw, -2rem); left: clamp(-6rem, -7vw, -2rem); width: clamp(15rem, 32vw, 28rem); height: auto; opacity: .3; pointer-events: none; mask-image: radial-gradient(circle, #000 34%, transparent 68%); -webkit-mask-image: radial-gradient(circle, #000 34%, transparent 68%); }
+	:global(:root[data-scheme='light']) .mast-logo { opacity: .2; }
+	.masthead :is(.date, h1, .plain-greeting, .status, :global(.cited)) { text-shadow: 0 0 4px var(--bg), 0 0 12px var(--bg), 0 0 24px var(--bg); }
+	.masthead .date { color: var(--muted); font-weight: 500; }
 	.date { margin-bottom: .6rem; color: var(--faint); font-size: var(--fs-sm); }
 	.masthead h1 { margin-bottom: 1.1rem; font: 520 clamp(2rem, 5.5vw, 4.2rem) / 1.05 var(--font-display); letter-spacing: -.025em; overflow-wrap: anywhere; }
 	:global(.masthead .cited) { font-size: var(--fs-md); line-height: 1.7; }
