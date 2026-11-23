@@ -63,7 +63,7 @@ with session() as s:
 	await expect.poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.videoWidth)).toBe(200);
 	await expect.poll(() => page.locator('video').evaluate((v: HTMLVideoElement) => v.currentTime)).toBeGreaterThan(.2);
 	await page.locator('video').click();
-	await page.getByRole('button', { name: '← Feeds' }).click();
+	await page.getByRole('button', { name: 'All feeds', exact: true }).click();
 	await expect(page.locator('video')).toHaveCount(0);
 	expect(forbidden).toEqual([]);
 });

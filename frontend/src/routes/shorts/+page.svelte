@@ -12,6 +12,8 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import { focusable, nav } from '$lib/nav';
 	import { errMsg } from '$lib/hub/ui';
+	import { immersive } from '$lib/stores/immersive.svelte';
+	import Icon from '$lib/components/Icon.svelte';
 	import type { Candidate, Video, ShortsFeed, SubtitleStatus } from '$lib/types';
 	type Short = Candidate & {
 		video: Video & { subtitles?: SubtitleStatus };
@@ -41,6 +43,9 @@
 		x: number;
 	} | null = null;
 	const current = $derived(items[index] ?? null);
+	// The picker and an empty feed live inside the app shell; only a playing (or loading) feed goes full-screen.
+	const playing = $derived(!!selected && (loading || !!current));
+	$effect(() => { immersive.on = playing; });
 	let observedVersion = session.version, observedProfileId = session.profileId;
 	$effect(() => {
 		const version = session.version, profileId = session.profileId;
@@ -516,6 +521,7 @@
 		};
 	});
 	onDestroy(() => {
+		immersive.on = false;
 		record();
 		alive = false;
 		navigation++;
@@ -525,66 +531,88 @@
 	});
 </script>
 <svelte:head><title>The Scroll · The Hub</title></svelte:head>
-<div class="feed" class:playing={!!selected} class:beside={deviceMode.mode === 'desktop'} role="region" aria-label="Video feed" ontouchstart={onTouchStart} ontouchend={onTouchEnd} ontouchcancel={()=>touchStart=null} onpointerdown={()=>{if(showControls) keepControlsVisible();}}>
-	{#if !current || captionState !== 'ready' || needsTap || playbackError || showControls}
-	<nav class="shorts-navigation" aria-label="Feeds navigation">
-		<a class="btn" href="/" use:focusable>← Back to The Hub</a>
-		{#if selected}<button class="btn" use:focusable onclick={picker}>← Feeds</button>
-			<span class="now-feed" aria-hidden="true">{selected.emoji} {selected.name}{#if items.length}<span class="count">{index + 1} / {items.length}{nextOffset !== null ? '+' : ''}</span>{/if}</span>{/if}
-		{#if current}<button class="btn" disabled={captionState !== 'ready'} use:focusable onclick={()=>{if(videoEl){muted=!muted;videoEl.muted=muted;}}}>{muted ? 'Unmute' : 'Mute'}</button>{/if}
-	</nav>
-	{/if}
-	{#if !selected}
-		<div class="picker">
-			<header class="picker-head">
-				<p class="eyebrow">The Scroll</p>
-				<h1>Choose a feed</h1>
-				<p class="muted">Short clips your curator collected, played only from local storage.</p>
+{#if !playing}
+	<div class="page scroll-page">
+		{#if !selected}
+			<header class="head">
+				<div class="head-text">
+					<h1>The Scroll</h1>
+					<p class="muted">Short clips your curator collected, played full-screen from local storage with captions.</p>
+				</div>
+				<div class="head-acts">
+					<a class="btn primary" href="/settings?tab=feeds&new=1" use:focusable><Icon name="plus" />New feed</a>
+					<a class="btn" href="/settings?tab=feeds" use:focusable>Manage feeds</a>
+					<button class="btn icon" aria-label="Refresh feeds" title="Refresh feeds" disabled={loading || switchingProfile} onclick={()=>loadFeeds()} use:focusable><Icon name="refresh" /></button>
+				</div>
 			</header>
-			{#if session.profiles.length > 1}<div class="profile-choices" role="group" aria-label="Choose Feeds profile">
-				{#each session.profiles as profile (profile.id)}<button class="chip" class:on={profile.id === session.profileId} aria-pressed={profile.id === session.profileId} disabled={switchingProfile} onclick={()=>switchProfile(profile.id)} use:focusable>{profile.emoji} {profile.name}{profile.pin_required ? ' 🔒' : ''}</button>{/each}
-			</div>{:else}<p class="small muted">Feeds for <strong>{session.profile?.name ?? 'your profile'}</strong></p>{/if}
-			{#if loading}
-				<p class="small muted">Loading feeds…</p>
-				<div class="feed-grid" aria-hidden="true">{#each [0, 1, 2] as n (n)}<div class="feed-card skeleton"></div>{/each}</div>
-			{:else}
-				{#if error}<div class="notice" role="alert"><p class="err">{error}</p><button class="btn" onclick={()=>loadFeeds()} use:focusable>Try again</button></div>{/if}
-				{#if feeds.length}<div class="feed-grid">
-					{#each feeds as feed (feed.id)}
-						{@const ready = feed.ready_count}
-						{@const playable = !feedsProvisional && (feed.caption_ready_count ?? ready) > 0}
-						<button class="feed-card" class:paused={!feed.enabled} class:playable style:--tint={feed.color || 'var(--ai)'} use:focusable onclick={()=>choose(feed)}>
-							<span class="feed-emoji" aria-hidden="true">{feed.emoji}</span>
-							<span class="feed-body">
-								<span class="feed-top"><strong>{feed.name}</strong><span class="play-label">{playable ? '▶ Play' : 'View feed'}</span></span>
-								{#if feedsProvisional}
-									<span class="stats"><span class="stat checking">Checking local availability…</span></span>
-								{:else}
-									<span class="stats">
-										<span class="stat ok">{ready} stored locally</span>
-										{#if feed.caption_ready_count !== undefined}<span class="stat">{feed.caption_ready_count} captioned</span>{/if}
-										{#if feed.pending_count}<span class="stat">{feed.pending_count} waiting for local files</span>{/if}
-										{#if feed.error_count}<span class="stat bad">{feed.error_count} download errors</span>{/if}
-										{#if !feed.enabled}<span class="stat warn">Collection paused</span>{/if}
-									</span>
-									<span class="meter" aria-hidden="true"><span style:width={`${ready + feed.pending_count ? (100 * ready) / (ready + feed.pending_count) : 0}%`}></span></span>
-								{/if}
-							</span>
-						</button>
-					{/each}
-				</div>{/if}
-				{#if !feeds.length && !error}<div class="notice"><p>No feeds for {session.profile?.name ?? 'this profile'} yet.</p><p class="small muted">{session.profiles.length > 1 ? 'Choose another profile above to see its feeds, or create a feed for this profile.' : 'Give your curator a brief to start collecting local clips.'}</p></div>{/if}
-			{/if}
-			<div class="picker-actions">
-				<a class="btn primary" href="/settings?tab=feeds&new=1" use:focusable>New feed</a>
-				<a class="btn" href="/settings?tab=feeds" use:focusable>Manage feeds</a>
-				<button class="btn ghost" disabled={loading || switchingProfile} onclick={()=>loadFeeds()} use:focusable>Refresh feeds</button>
-				<a class="btn ghost" href="/" use:focusable>Leave Feeds</a>
+			<section class="stack" aria-labelledby="choose-feed">
+				<div class="section-head">
+					<h2 id="choose-feed">Choose a feed</h2>
+					{#if session.profiles.length > 1}<div class="profile-choices" role="group" aria-label="Choose Feeds profile">
+						{#each session.profiles as profile (profile.id)}<button class="chip" class:on={profile.id === session.profileId} aria-pressed={profile.id === session.profileId} disabled={switchingProfile} onclick={()=>switchProfile(profile.id)} use:focusable>{profile.emoji} {profile.name}{profile.pin_required ? ' 🔒' : ''}</button>{/each}
+					</div>{:else}<span class="small faint">for {session.profile?.name ?? 'your profile'}</span>{/if}
+				</div>
+				{#if loading}
+					<p class="small muted">Loading feeds…</p>
+					<div class="feed-grid" aria-hidden="true">{#each [0, 1, 2] as n (n)}<div class="skeleton sk"></div>{/each}</div>
+				{:else}
+					{#if error}<div class="panel notice" role="alert"><p class="err">{error}</p><button class="btn" onclick={()=>loadFeeds()} use:focusable>Try again</button></div>{/if}
+					{#if feeds.length}<div class="feed-grid">
+						{#each feeds as feed (feed.id)}
+							{@const ready = feed.ready_count}
+							{@const playable = !feedsProvisional && (feed.caption_ready_count ?? ready) > 0}
+							<button class="feed-card" class:paused={!feed.enabled} class:playable style:--tint={feed.color || 'var(--ai)'} use:focusable onclick={()=>choose(feed)}>
+								<span class="emo" aria-hidden="true">{feed.emoji}</span>
+								<span class="card-body">
+									<span class="card-top"><strong>{feed.name}</strong><span class="play-label">{playable ? '▶ Play' : 'View feed'}</span></span>
+									{#if feedsProvisional}
+										<span class="stats"><span class="checking">Checking local availability…</span></span>
+									{:else}
+										<span class="stats">
+											<span class="ok">{ready} stored locally</span>
+											{#if feed.caption_ready_count !== undefined}<span>{feed.caption_ready_count} captioned</span>{/if}
+											{#if feed.pending_count}<span>{feed.pending_count} waiting for local files</span>{/if}
+											{#if feed.error_count}<span class="bad">{feed.error_count} download errors</span>{/if}
+											{#if !feed.enabled}<span class="warn">Collection paused</span>{/if}
+										</span>
+										<span class="meter" aria-hidden="true"><span style:width={`${ready + feed.pending_count ? (100 * ready) / (ready + feed.pending_count) : 0}%`}></span></span>
+									{/if}
+								</span>
+							</button>
+						{/each}
+					</div>{/if}
+					{#if !feeds.length && !error}<div class="panel notice"><span class="big-emoji" aria-hidden="true">🎞️</span><p>No feeds for {session.profile?.name ?? 'this profile'} yet.</p><p class="small muted">{session.profiles.length > 1 ? 'Choose another profile above to see its feeds, or create a feed for this profile.' : 'Give your curator a brief to start collecting local clips.'}</p><a class="btn primary" href="/settings?tab=feeds&new=1" use:focusable>Create a feed</a></div>{/if}
+				{/if}
+			</section>
+		{:else}
+			<button class="btn ghost back" use:focusable onclick={picker}><Icon name="back" />All feeds</button>
+			<header class="head feed-head" style:--tint={selected.color || 'var(--ai)'}>
+				<span class="emo big" aria-hidden="true">{selected.emoji}</span>
+				<div class="head-text"><h1>{selected.name}</h1><p class="muted">{selected.brief || 'A feed in The Scroll'}</p></div>
+			</header>
+			<div class="panel notice">
+				{#if error}<p role="alert" class="err">{error}</p>
+				{:else}
+					<p><strong>No local clips ready yet.</strong></p>
+					{#if !session.settings?.cache.enabled}<p class="small muted">Enable Storage → Offline cache in Settings so accepted clips can download.</p>{/if}
+					{#if !session.settings?.agent.enabled}<p class="small muted">Enable the AI agent in Settings to collect new clips.</p>{/if}
+					<p class="small muted">{#if selectedProvisional}Refresh once local downloads finish.{:else}{selected.pending_count} waiting for local files{selected.error_count ? `; ${selected.error_count} download errors` : ''}. Refresh once downloads finish.{/if}</p>
+				{/if}
+				<div class="hstack"><button class="btn primary" use:focusable onclick={retry}>Refresh availability</button><a class="btn" href={`/settings?tab=feeds&edit=${selected.id}`} use:focusable>Edit feed</a></div>
 			</div>
-		</div>
-	{:else}
-		{#if loading}<div class="state"><span class="spinner" aria-hidden="true"></span><p>Checking local videos…</p></div>
-		{:else if !current}<div class="state"><span class="state-emoji" aria-hidden="true">{selected.emoji}</span><h1>{selected.name}</h1>{#if error}<p role="alert" class="err">{error}</p>{:else}<p>No local clips ready yet.</p>{#if !session.settings?.cache.enabled}<p class="muted">Enable Storage → Offline cache in Settings so accepted clips can download.</p>{/if}{#if !session.settings?.agent.enabled}<p class="muted">Enable the AI agent in Settings to collect new clips.</p>{/if}<p class="muted">{#if selectedProvisional}Refresh once local downloads finish.{:else}{selected.pending_count} waiting for local files{selected.error_count ? `; ${selected.error_count} download errors` : ''}. Refresh once downloads finish.{/if}</p>{/if}<div class="row"><button class="btn primary" use:focusable onclick={retry}>Refresh availability</button><a class="btn" href={`/settings?tab=feeds&edit=${selected.id}`} use:focusable>Edit feed</a></div></div>
+		{/if}
+	</div>
+{:else if selected}
+	<div class="feed" class:beside={deviceMode.mode === 'desktop'} role="region" aria-label="Video feed" ontouchstart={onTouchStart} ontouchend={onTouchEnd} ontouchcancel={()=>touchStart=null} onpointerdown={()=>{if(showControls) keepControlsVisible();}}>
+		{#if !current || captionState !== 'ready' || needsTap || playbackError || showControls}
+		<nav class="toolbar" aria-label="Feeds navigation">
+			<button class="btn glass" use:focusable onclick={picker}><Icon name="back" />All feeds</button>
+			<span class="now-feed" aria-hidden="true"><span class="now-emoji">{selected.emoji}</span><span class="now-name">{selected.name}</span>{#if items.length}<span class="count">{index + 1} / {items.length}{nextOffset !== null ? '+' : ''}</span>{/if}</span>
+			{#if current}<button class="btn glass" disabled={captionState !== 'ready'} use:focusable onclick={()=>{if(videoEl){muted=!muted;videoEl.muted=muted;}}}>{muted ? 'Unmute' : 'Mute'}</button>{/if}
+			<a class="btn glass icon" href="/" aria-label="Back to The Hub" title="Back to The Hub" use:focusable><Icon name="x" /></a>
+		</nav>
+		{/if}
+		{#if !current}<div class="state"><span class="spinner" aria-hidden="true"></span><p class="muted">Checking local videos…</p></div>
 		{:else}
 		{#key current.video.id}<div class="backdrop" aria-hidden="true" style:background-image={`url(${api.thumb(current.video.id)})`}></div>{/key}
 		<video bind:this={videoEl} class="stage" muted playsinline preload="auto" poster={api.thumb(current.video.id)} ontimeupdate={onTime} ondurationchange={onDurationChange} onplay={()=>paused=false} onpause={()=>paused=true} onended={onEnded} onerror={()=>{if(activeId===current?.video.id)playbackError='This local file is unavailable or cannot be played. Refresh availability to check stored clips.';}} onclick={onStageClick}></video>
@@ -614,68 +642,65 @@
 		</div>
 		{/if}
 		{/if}
-	{/if}
-</div>
+	</div>
+{/if}
 <style>
+	/* ---------- picker: an ordinary page inside the app shell ---------- */
+	.scroll-page { display: grid; gap: 2rem; align-content: start; }
+	.head { display: flex; justify-content: space-between; align-items: flex-end; gap: 1rem 2rem; flex-wrap: wrap; padding-top: 1rem; }
+	.head-text { display: grid; gap: .5rem; max-width: 44rem; }
+	.head-acts { display: flex; gap: .6rem; flex-wrap: wrap; }
+	.section-head { display: flex; align-items: center; justify-content: space-between; gap: .75rem 1rem; flex-wrap: wrap; }
+	.profile-choices { display: flex; flex-wrap: wrap; gap: .5rem; }
 	@media (min-width: 761px) { .feed.beside { left: var(--sidebar-width, 15rem); } }  /* desktop keeps the sidebar menu in view; phones stay full screen */
-	.feed { --shorts-toolbar-height: calc(4.5rem + env(safe-area-inset-top, 0px)); position: fixed; inset: 0; z-index: 140; display: grid; place-items: center; overflow: hidden; touch-action: none; color: var(--text);
-		background: radial-gradient(120% 80% at 50% -10%, rgba(157, 134, 255, .22), transparent 60%), radial-gradient(90% 60% at 100% 110%, rgba(255, 181, 71, .1), transparent 60%), var(--bg-0); }
-	.feed.playing { background: #000; }
 
-	/* toolbar */
-	.shorts-navigation { position:absolute; top:0; left:0; right:0; z-index:5; display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; padding:calc(.75rem + env(safe-area-inset-top, 0px)) max(.75rem, env(safe-area-inset-right, 0px)) 1.25rem max(.75rem, env(safe-area-inset-left, 0px)); background:linear-gradient(rgba(5,4,12,.85), rgba(5,4,12,.45) 60%, transparent); touch-action:manipulation; pointer-events:none; }
-	.shorts-navigation > * { pointer-events:auto; }
-	.shorts-navigation .btn { white-space:nowrap; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
-	.now-feed { display:inline-flex; align-items:center; gap:.5rem; margin-inline:auto; font-weight:650; font-size:.95rem; color:#fff; text-shadow:0 1px 6px #000; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-	.count { font-size:.75rem; font-weight:600; padding:.15rem .5rem; border-radius:var(--r-pill); background:rgba(255,255,255,.14); font-variant-numeric:tabular-nums; }
-	@media (max-width: 560px) { .now-feed { display:none; } }
-	@media (max-width: 360px) { .shorts-navigation { gap:.35rem; } .shorts-navigation .btn { padding-inline:.55rem; font-size:.85rem; } }
+	.feed-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 21rem), 1fr)); gap: clamp(.9rem, 1.3vw, 1.6rem); }
+	.sk { min-height: 7.5rem; border-radius: var(--r-lg); }
+	.emo { --tint: var(--ai); flex: none; display: grid; place-items: center; width: 3.5rem; height: 3.5rem; border-radius: var(--r-md); font-size: 1.8rem;
+		background: color-mix(in srgb, var(--tint) 22%, transparent); border: 1px solid color-mix(in srgb, var(--tint) 50%, transparent); }
+	.emo.big { width: clamp(4rem, 6vw, 6.5rem); height: clamp(4rem, 6vw, 6.5rem); border-radius: var(--r-lg); font-size: clamp(2.2rem, 3vw, 3.5rem); box-shadow: 0 0 40px -6px color-mix(in srgb, var(--tint) 60%, transparent); }
+	.feed-card { --focus-scale: 1.04; display: flex; gap: 1rem; align-items: flex-start; width: 100%; min-height: 7.5rem; padding: 1.1rem; text-align: left; color: inherit; font: inherit; cursor: pointer;
+		border-radius: var(--r-lg); border: 1px solid var(--line); background: color-mix(in srgb, var(--text) 3%, transparent); }
+	.feed-card:hover { border-color: var(--line-strong); background: var(--surface); }
+	.feed-card.paused { opacity: .75; }
+	.card-body { flex: 1; display: grid; gap: .55rem; min-width: 0; }
+	.card-top { display: flex; align-items: baseline; justify-content: space-between; gap: .75rem; }
+	.card-top strong { font-size: 1.1rem; line-height: 1.25; overflow-wrap: anywhere; }
+	.play-label { flex: none; font-size: .8rem; font-weight: 650; padding: .2rem .65rem; border-radius: var(--r-pill); border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+	.feed-card.playable .play-label { background: var(--accent); border-color: transparent; color: var(--accent-ink); }
+	.stats { display: flex; flex-wrap: wrap; gap: .15rem .9rem; font-size: .8rem; color: var(--muted); }
+	.stats .ok { color: var(--ok); }
+	.stats .bad { color: var(--bad); }
+	.stats .warn { color: var(--warn); }
+	.checking { animation: pulse 1.4s ease-in-out infinite; }
+	.meter { height: 4px; border-radius: var(--r-pill); background: var(--line); overflow: hidden; }
+	.meter span { display: block; height: 100%; border-radius: inherit; background: var(--tint); }
 
-	/* picker */
-	.picker { width: min(100%, 64rem); height: 100%; overflow-y:auto; touch-action:pan-y; display:grid; gap:1.25rem; align-content:start; padding: calc(var(--shorts-toolbar-height) + .5rem) var(--gutter) calc(2rem + env(safe-area-inset-bottom, 0px)); }
-	.picker-head { display:grid; gap:.35rem; }
-	.picker-head h1 { margin:0; font-size:clamp(1.6rem, 2.4vw + .8rem, 2.6rem); letter-spacing:-.02em; }
-	.picker-head p { margin:0; }
-	.eyebrow { font-size:.8rem; font-weight:700; letter-spacing:.14em; text-transform:uppercase; color:var(--accent); }
-	.profile-choices { display:flex; flex-wrap:wrap; gap:.5rem; }
-	.feed-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(min(100%, 19rem), 1fr)); gap:clamp(.75rem, 1.2vw, 1.25rem); }
-	.feed-card { --tint: var(--ai); position:relative; display:grid; grid-template-columns:auto 1fr; gap:1rem; align-items:start; min-height:7.5rem; text-align:left; width:100%; padding:1.1rem; border:1px solid var(--line); border-radius:var(--r-lg); color:inherit; font:inherit; cursor:pointer; overflow:hidden;
-		background: linear-gradient(140deg, color-mix(in srgb, var(--tint) 24%, transparent), transparent 55%), var(--surface); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
-	.feed-card.skeleton { min-height:7.5rem; border-radius:var(--r-lg); }
-	.feed-card:hover { border-color:var(--line-strong); }
-	.feed-card.paused { opacity:.78; }
-	.feed-emoji { display:grid; place-items:center; width:3.25rem; height:3.25rem; border-radius:var(--r-md); font-size:1.7rem; background:color-mix(in srgb, var(--tint) 30%, rgba(0,0,0,.25)); box-shadow: inset 0 0 0 1px rgba(255,255,255,.08); }
-	.feed-body { display:grid; gap:.55rem; min-width:0; }
-	.feed-top { display:flex; align-items:baseline; justify-content:space-between; gap:.75rem; }
-	.feed-top strong { font-size:1.08rem; line-height:1.25; overflow-wrap:anywhere; }
-	.play-label { flex:none; font-size:.8rem; font-weight:650; padding:.25rem .65rem; border-radius:var(--r-pill); background:var(--surface-2); color:var(--muted); white-space:nowrap; }
-	.feed-card.playable .play-label { background:var(--accent); color:var(--accent-ink); }
-	.stats { display:flex; flex-wrap:wrap; gap:.35rem; }
-	.stat { font-size:.75rem; font-weight:550; padding:.15rem .5rem; border-radius:var(--r-pill); background:rgba(255,255,255,.06); color:var(--muted); }
-	.stat.ok { color:var(--ok); background:rgba(61,220,151,.12); }
-	.stat.bad { color:var(--bad); background:rgba(255,92,122,.12); }
-	.stat.warn { color:var(--warn); background:rgba(255,207,92,.12); }
-	.stat.checking { background: linear-gradient(100deg, rgba(255,255,255,.04) 20%, rgba(255,255,255,.12) 40%, rgba(255,255,255,.04) 60%); background-size:220% 100%; animation: shimmer 1.4s linear infinite; }
-	.meter { height:4px; border-radius:var(--r-pill); background:rgba(255,255,255,.08); overflow:hidden; }
-	.meter span { display:block; height:100%; background:linear-gradient(90deg, var(--tint), var(--accent)); border-radius:inherit; }
-	.picker-actions { display:flex; flex-wrap:wrap; gap:.5rem; padding-top:.25rem; }
-	.notice { display:grid; gap:.5rem; justify-items:start; padding:1.25rem; border:1px dashed var(--line-strong); border-radius:var(--r-lg); }
-	.notice p { margin:0; }
-	@keyframes shimmer { to { background-position: -220% 0; } }
-
-	/* states */
-	.state { display: grid; gap: .8rem; justify-items: center; text-align: center; padding: var(--shorts-toolbar-height) 2rem calc(2rem + env(safe-area-inset-bottom, 0px)); max-width: 34rem; }
-	.state h1 { margin: 0; font-size: 1.4rem; }
-	.state p { margin: 0; }
-	.state-emoji { font-size:2.5rem; }
-	.row { display:flex; flex-wrap:wrap; justify-content:center; gap:.5rem; }
+	.notice { display: grid; gap: .6rem; justify-items: start; max-width: 40rem; }
+	.notice .big-emoji { font-size: 2.2rem; }
+	.notice .btn, .notice .hstack { margin-top: .4rem; }
 	.err { color: var(--bad); }
-	.spinner { width:2rem; height:2rem; border-radius:50%; border:3px solid rgba(255,255,255,.15); border-top-color:var(--accent); animation: spin .8s linear infinite; }
-	@keyframes spin { to { transform: rotate(360deg); } }
-	@media (prefers-reduced-motion: reduce) { .spinner, .stat.checking { animation-duration: 3s; } }
+	.back { justify-self: start; margin: 1rem 0 0 -.9rem; }
+	.feed-head { justify-content: flex-start; align-items: center; padding-top: 0; }
 
-	/* player */
-	.backdrop { position:absolute; inset:-8%; background-size:cover; background-position:center; filter: blur(40px) brightness(.45) saturate(1.3); transform: scale(1.1); animation: fade .35s ease both; }
+	/* ---------- player: full-screen, same glass + amber language ---------- */
+	.feed { position: fixed; inset: 0; z-index: 140; display: grid; place-items: center; overflow: hidden; touch-action: none; color: #fff; background: #000; }
+	.toolbar { position: absolute; top: 0; left: 0; right: 0; z-index: 5; display: flex; align-items: center; gap: .5rem; pointer-events: none; touch-action: manipulation;
+		padding: calc(.75rem + env(safe-area-inset-top, 0px)) max(.75rem, env(safe-area-inset-right, 0px)) 1.5rem max(.75rem, env(safe-area-inset-left, 0px));
+		background: linear-gradient(rgba(0, 0, 0, .6), transparent); }
+	.toolbar > * { pointer-events: auto; }
+	.btn.glass { background: rgba(20, 16, 40, .55); border-color: rgba(255, 255, 255, .16); color: #fff; backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); }
+	.btn.glass:hover { background: rgba(40, 34, 80, .75); }
+	.now-feed { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; gap: .5rem; font-weight: 650; font-size: .95rem; text-shadow: 0 1px 6px #000; }
+	.now-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.count { flex: none; font-size: .75rem; font-weight: 600; padding: .15rem .55rem; border-radius: var(--r-pill); background: rgba(255, 255, 255, .14); font-variant-numeric: tabular-nums; text-shadow: none; }
+	@media (max-width: 560px) { .now-name, .now-emoji { display: none; } .toolbar .btn:not(.icon) { padding-inline: .8rem; } }
+
+	.state { display: grid; gap: .8rem; justify-items: center; text-align: center; }
+	.row { display: flex; flex-wrap: wrap; justify-content: center; gap: .5rem; }
+	.spinner { width: 2rem; height: 2rem; border-radius: 50%; border: 3px solid rgba(255, 255, 255, .15); border-top-color: var(--accent); animation: spin .8s linear infinite; }
+
+	.backdrop { position: absolute; inset: -8%; background-size: cover; background-position: center; filter: blur(40px) brightness(.4) saturate(1.2); transform: scale(1.1); animation: fade .35s ease both; }
 	@keyframes fade { from { opacity: 0; } }
 	.stage { position:absolute; inset:0; width: 100%; height: 100%; object-fit: contain; background: transparent; }
 	.scrim { position:absolute; left:0; right:0; bottom:0; height:45%; z-index:1; pointer-events:none; background:linear-gradient(transparent, rgba(0,0,0,.7)); }
@@ -701,4 +726,5 @@
 	.transport input { flex:1; min-width:0; accent-color:var(--accent); }
 	.transport [aria-pressed="true"] { background:var(--accent); color:var(--accent-ink); }
 	@media (max-width: 760px) { .meta { bottom: 6.5rem; } .acts { bottom: 6.5rem; } }
+	@media (prefers-reduced-motion: reduce) { .spinner, .checking { animation-duration: 3s; } }
 </style>

@@ -28,6 +28,7 @@
 	import { applyTheme } from '$lib/themes';
 	import PlaybackPicker from '$lib/components/PlaybackPicker.svelte';
 	import { playback } from '$lib/stores/playback.svelte';
+	import { immersive } from '$lib/stores/immersive.svelte';
 	import { inAndroidApp, isHubPath, landingPath } from '$lib/navigation';
 	import { markNavigation } from '$lib/backCache';
 
@@ -109,7 +110,7 @@
 
 	// Calm editorial styling (tokens.css [data-area='hub']) applies only to non-video routes.
 	const hubArea = $derived(isHubPath(page.url.pathname) || ['/settings', '/stats', '/agent', '/welcome'].some((p) => page.url.pathname === p || page.url.pathname.startsWith(p + '/')));
-	const fullscreen = $derived(page.url.pathname.startsWith('/watch/') || page.url.pathname.startsWith('/jellyfin/play/') || (page.url.pathname === '/shorts' && deviceMode.mode !== 'desktop'));  // desktop keeps the sidebar beside The Scroll
+	const fullscreen = $derived(page.url.pathname.startsWith('/watch/') || page.url.pathname.startsWith('/jellyfin/play/') || (page.url.pathname === '/shorts' && immersive.on && deviceMode.mode !== 'desktop'));  // only a playing feed goes full-screen; desktop keeps the sidebar beside it
 </script>
 
 {#if publicShare}
