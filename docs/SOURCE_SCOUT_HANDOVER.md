@@ -19,6 +19,20 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — The Commons fun redesign (`f98b183`, 2026-11-24)
+
+- Deployed `3240775..f98b183`: the judge scores fun and kind and lets delightful near-misses in as wildcards;
+  cards show top replies, "Also on" chips for the same link elsewhere and hot/rising/fresh badges; Today, Hot, New,
+  Top and Saved views with kind chips; Commons votes feed curator knowledge. Additive schema: `crpick.fun`,
+  `crpick.kind`, `crpick.wildcard`, `crpost.link_key` (+ `ix_crpost_link_key`); link keys backfill 500 per tick.
+- All four application services run `watchcraft:release-f98b183` (`sha256:44ce3e750baa…`) with zero restarts;
+  public health 200, Compose and environment hashes unchanged, no tracebacks after rollout. Every feed mode answered
+  on real data (profile 2: Today 15 with end card, Hot 30 all badged).
+- Backup at `/root/compose/watchcraft-backups/20261124-commons-f98b183`: online SQLite snapshot (`quick_check` ok),
+  previous source, `rollback.sh` (back to `release-3240775`; old code ignores the new columns).
+- Pruned to the newest two deploy backups (`commons-f98b183`, `sidebar-3240775`): removed `20261122-hero-9067770`
+  and the `release-2c2bd87` tag. `rating-replay-out.jsonl` moved to `20261122-sidebar-3240775/`.
+
 ## Deployment record — Sidebar logo fills the sidebar (`3240775`, 2026-11-22)
 
 - Deployed `9067770..3240775` (frontend only): the expanded sidebar and the TV drawer show the Hub logo at full
