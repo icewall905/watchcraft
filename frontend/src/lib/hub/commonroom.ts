@@ -45,7 +45,7 @@ export const crApi = {
  visit: (thread: 'all' | number) => request<{boundary: number}>(`${base}/visit`, {method: 'POST', body: {thread}, toast: false}),
  feed: (p: {thread: 'all' | number; section?: 'new' | 'deep'; mode?: Mode | 'deep'; kind?: Kind; boundary?: number; cursor?: string}, signal?: AbortSignal) => request<FeedPage>(`${base}/feed${qs(p)}`, {signal, toast: false}),
  post: (id: number) => request<PostDetail>(`${base}/posts/${id}`, {toast: false}),
- comments: (id: number) => request<{comments: Comment[]; url: string}>(`${base}/posts/${id}/comments`, {toast: false}),
+ comments: (id: number, refresh = false) => request<{comments: Comment[]; url: string; fetched_at?: number; supported?: boolean}>(`${base}/posts/${id}/comments${refresh ? '?refresh=1' : ''}`, {toast: false}),
  seen: (pick_ids: number[], keepalive = false) => request<unknown>(`${base}/seen`, {method: 'POST', body: {pick_ids}, toast: false, keepalive}),
  feedback: (pick: number, body: {verdict: Verdict; reasons: string[]; note: string}) => request<{ok: boolean}>(`${base}/picks/${pick}/feedback`, {method: 'PUT', body, toast: false}),
  pick: (pick: number, body: {saved?: boolean; hidden?: boolean}) => request<unknown>(`${base}/picks/${pick}`, {method: 'PUT', body, toast: false}),

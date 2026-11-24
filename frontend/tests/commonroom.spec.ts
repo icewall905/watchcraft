@@ -55,14 +55,45 @@ test('thumbs down hides the card and sends feedback', async ({ page }) => {
 	expect(calls.find((c) => c.path === '/picks/1/feedback')?.body).toMatchObject({ verdict: 'down' });
 });
 
-test('opening a post loads its comments', async ({ page }) => {
+test('opening a post shows its comments straight away', async ({ page }) => {
 	await setup(page);
 	await freshPage(page, '/common-room');
 	await page.getByRole('link', { name: 'Fresh Amiga find' }).click();
 	await expect(page.getByText('Full body text')).toBeVisible();
-	await page.getByRole('button', { name: 'Load comments' }).click();
 	await expect(page.getByText('Great find')).toBeVisible();
 	await expect(page.getByText('Agreed')).toBeVisible();
+	await expect(page.getByRole('button', { name: /Refresh/ })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Join the discussion' })).toHaveAttribute('href', 'https://example.org/p/1');
+});
+
+test('long comment threads fold deep replies and page the rest, best first', async ({ page }) => {
+	await setup(page);
+	const c = (id: string, author: string, score: number, children: unknown[] = []) => ({ id, author, body: `Body ${id}`, score, published_at: null, children });
+	const deep = c('d1', 'ann', 50, [c('d2', 'x', 1, [c('d3', 'y', 1, [c('d4', 'z', 1)])])]);
+	const many = Array.from({ length: 13 }, (_, i) => c(`m${i}`, `u${i}`, i));
+	await page.route('**/api/hub/commonroom/posts/*/comments*', (route) => route.fulfill({ json: { comments: [...many, deep], url: 'https://example.org/p/1', fetched_at: Math.floor(Date.now() / 1000) - 600, supported: true } }));
+	await freshPage(page, '/common-room');
+	await page.getByRole('link', { name: 'Fresh Amiga find' }).click();
+	const talk = page.getByRole('region', { name: 'Comments' });
+	await expect(talk.locator('.body').first()).toHaveText('Body d1');  // best (highest score) first
+	await expect(talk.getByText('OP')).toBeVisible();                     // ann wrote the post
+	await expect(talk.getByText('Body d3')).toHaveCount(0);
+	await talk.getByRole('button', { name: 'Show 2 replies' }).click();
+	await expect(talk.getByText('Body d3')).toBeVisible();
+	await expect(talk.getByText('Body m0')).toHaveCount(0);
+	await talk.getByRole('button', { name: 'Show 4 more comments' }).click();
+	await expect(talk.getByText('Body m0')).toBeVisible();
+	await talk.getByRole('button', { name: 'New' }).click();
+	await expect(talk.getByText(/Updated/)).toBeVisible();
+});
+
+test('a source without comments says so instead of loading forever', async ({ page }) => {
+	await setup(page);
+	await page.route('**/api/hub/commonroom/posts/*/comments*', (route) => route.fulfill({ json: { comments: [], url: 'https://example.org/p/1', fetched_at: 0, supported: false } }));
+	await freshPage(page, '/common-room');
+	await page.getByRole('link', { name: 'Fresh Amiga find' }).click();
+	await expect(page.getByText('This source has no comments to show here.')).toBeVisible();
+	await expect(page.getByRole('button', { name: /Refresh/ })).toHaveCount(0);
 });
 
 test('app back closes an open post and keeps the list in place', async ({ page }) => {

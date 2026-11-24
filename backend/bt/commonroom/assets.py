@@ -22,7 +22,7 @@ log = logging.getLogger(__name__)
 MEDIA_DIR = DATA_DIR / 'commonroom-media'
 MAX_PER_POST = 8
 IMAGES_PER_TICK = 16
-COMMENTS_PER_TICK = 4
+COMMENTS_PER_TICK = 8
 MAX_BYTES = 8_000_000
 TYPES = ('image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/avif')
 
@@ -117,24 +117,29 @@ def sweep_images(limit: int = IMAGES_PER_TICK) -> int:
     return saved
 
 
-REFETCH_S = 2 * 3600          # wait at least this long between fetches of one post's comments
-REFETCH_WINDOW_S = 7 * 86400  # only posts this young are refetched
-REFETCH_GROWTH = 3            # comments gained since the last fetch before it is worth fetching again
+# Comments are kept current for every picked post on a platform that has them: young posts often, older ones
+# now and then, and only when the post's comment count says something changed (or nothing is stored yet).
+REFETCH_YOUNG_S = 3600        # posts under two days old: at most hourly
+REFETCH_S = 6 * 3600          # older posts up to a week: at most every six hours
+YOUNG_S = 2 * 86400
+REFETCH_WINDOW_S = 7 * 86400
 
 
 def _due(s, limit: int) -> list[CRPost]:
-    """Picked posts whose comments were never fetched, then young ones whose stored tree is empty or behind."""
+    """Picked posts whose comments were never fetched, then those whose stored tree is empty or behind."""
     now = time.time()
     picked = select(CRPick.post_id)
+    talk = [k for k, a in ADAPTERS.items() if a.comments]
     rows = list(s.exec(select(CRPost).where(CRPost.id.in_(picked), CRPost.id.not_in(select(CRComments.post_id)))
                        .order_by(CRPost.id.desc()).limit(limit)).all())
     if len(rows) < limit:
+        last = func.max(CRComments.checked_at, CRComments.fetched_at)
         stale = s.exec(select(CRPost).join(CRComments, CRComments.post_id == CRPost.id).where(
-            CRPost.id.in_(picked), CRPost.comments > 0, CRPost.published_at >= now - REFETCH_WINDOW_S,
-            CRComments.checked_at < now - REFETCH_S, CRComments.fetched_at < now - REFETCH_S,
-            (func.coalesce(func.json_array_length(CRComments.tree), 0) == 0)
-            | (CRPost.comments >= CRComments.count + REFETCH_GROWTH))
-            .order_by(CRPost.comments.desc()).limit(limit - len(rows))).all()
+            CRPost.id.in_(picked), CRPost.platform.in_(talk), CRPost.comments > 0,
+            CRPost.published_at >= now - REFETCH_WINDOW_S,
+            ((CRPost.published_at >= now - YOUNG_S) & (last < now - REFETCH_YOUNG_S)) | (last < now - REFETCH_S),
+            (func.coalesce(func.json_array_length(CRComments.tree), 0) == 0) | (CRPost.comments > CRComments.count))
+            .order_by(CRPost.published_at.desc()).limit(limit - len(rows))).all()
         rows += list(stale)
     return rows
 

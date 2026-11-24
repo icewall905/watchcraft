@@ -264,3 +264,27 @@ def test_rejudge_fills_fun_and_kind_of_older_picks_once(client, monkeypatch):
     assert (picks[b].fun, picks[b].kind) == (5, 'news')
     assert curate.rejudge() == 0  # throttled
     assert curate.rejudge(time.time() + 120) == 0 and len(seen) == 1  # nothing left
+
+
+def test_comment_endpoint_serves_stored_tree_and_refreshes_on_request(client, monkeypatch):
+    from bt.commonroom import api as crapi
+    from test_commonroom import FAKE
+    t = thread(client)
+    a = _pick(t, 'https://fake.example/e1', comments=3)
+    calls = []
+    monkeypatch.setattr(FAKE, 'comments', lambda data: calls.append(1) or [{'id': 'n', 'author': 'new', 'body': 'fresh',
+                                                                          'score': 1, 'children': []}])
+    old = time.time() - 86400
+    with session() as s:
+        s.add(CRComments(post_id=a, tree=[{'id': 'o', 'author': 'old', 'body': 'stored', 'score': 1, 'children': []}],
+                         fetched_at=old, count=3))
+        s.commit()
+    r = client.get(f'/api/hub/commonroom/posts/{a}/comments').json()
+    assert r['comments'][0]['body'] == 'stored' and r['supported'] is True and r['fetched_at'] == old
+    assert calls == []  # a stored tree is served at once, however old: the sweep keeps it current
+    r = client.get(f'/api/hub/commonroom/posts/{a}/comments', params={'refresh': 1}).json()
+    assert r['comments'][0]['body'] == 'fresh' and calls == [1]
+    client.get(f'/api/hub/commonroom/posts/{a}/comments', params={'refresh': 1})
+    assert calls == [1]  # refresh is not honoured again within a couple of minutes
+    monkeypatch.setattr(crapi.ADAPTERS['fake'], 'comments', None)
+    assert client.get(f'/api/hub/commonroom/posts/{a}/comments').json()['supported'] is False

@@ -17,7 +17,8 @@ router = APIRouter(prefix='/hub/commonroom', tags=['Common Room'])
 PAGE = 30
 MAX_THREADS = 50
 MAX_SOURCES = 60
-COMMENTS_TTL = 15 * 60
+COMMENTS_TTL = 15 * 60      # an empty stored tree is fetched live again after this
+COMMENTS_REFRESH_S = 120    # a manual refresh is honoured once the stored copy is this old
 FIRST_VISIT_S = 24 * 3600
 REASONS = {'off-topic', 'low effort', 'seen it', 'too basic', 'more like this', 'too advanced', 'clickbait', 'repost'}
 
@@ -654,7 +655,10 @@ def get_post(post_id: int, pid: int = Depends(require_room)):
 
 
 @router.get('/posts/{post_id}/comments')
-def comments(post_id: int, pid: int = Depends(require_room)):
+def comments(post_id: int, refresh: bool = False, pid: int = Depends(require_room)):
+    """The stored comment tree, kept current by the scheduler sweep; fetched live only when nothing is stored
+    yet, or on request (refresh) when the stored copy is older than a few minutes. Child profiles get the
+    kid-checked copy."""
     from . import kids
     with session() as s:
         post, _, _ = _post_for(s, pid, post_id)
@@ -663,29 +667,35 @@ def comments(post_id: int, pid: int = Depends(require_room)):
         data = {'url': post.url, 'external_id': post.external_id, 'community': post.community, 'meta': post.meta or {},
                 'platform': post.platform}
         post_comments = post.comments
-        fresh = cached and time.time() - cached.fetched_at < COMMENTS_TTL
-        if fresh and (not child or cached.kid is not None):
-            return {'comments': cached.kid if child else cached.tree, 'url': post.url}
+        tree, kid, fetched = (cached.tree or [], cached.kid, cached.fetched_at) if cached else ([], None, 0.0)
     adapter = ADAPTERS.get(data['platform'])
-    tree = cached.tree if fresh else []
-    if not fresh and adapter and adapter.comments:
+    supported = bool(adapter and adapter.comments)
+    now = time.time()
+    live = supported and ((refresh and now - fetched > COMMENTS_REFRESH_S) or (not tree and now - fetched > COMMENTS_TTL))
+    if live:
         try:
-            tree = adapter.comments(data) or []
-        except Exception:  # noqa: BLE001 — comments are optional
-            tree = cached.tree if cached else []
-    kid = kids.filter_comments(tree) if child else None
-    with session() as s:
-        s.connection().exec_driver_sql('BEGIN IMMEDIATE')
-        row = s.get(CRComments, post_id) or CRComments(post_id=post_id)
-        if not fresh:
-            row.checked_at = time.time()
-        if not fresh and (tree or not row.tree):
-            row.tree, row.fetched_at, row.kid, row.count = tree, time.time(), None, post_comments
-        if kid is not None:
-            row.kid = kid
-        s.add(row)
-        s.commit()
-    return {'comments': kid if child else tree, 'url': data['url']}
+            got = adapter.comments(data) or []
+        except Exception:  # noqa: BLE001 — comments are optional; the stored copy stays
+            got = []
+        with session() as s:
+            s.connection().exec_driver_sql('BEGIN IMMEDIATE')
+            row = s.get(CRComments, post_id) or CRComments(post_id=post_id)
+            row.checked_at = now
+            if got or not row.tree:  # an empty answer never wipes a stored tree
+                row.tree, row.kid, row.fetched_at, row.count = got, None, now, post_comments
+            tree, kid, fetched = row.tree or [], row.kid, row.fetched_at
+            s.add(row)
+            s.commit()
+    if child and kid is None:
+        kid = kids.filter_comments(tree) if tree else []
+        with session() as s:
+            s.connection().exec_driver_sql('BEGIN IMMEDIATE')
+            row = s.get(CRComments, post_id)
+            if row and (row.tree or []) == tree:
+                row.kid = kid
+                s.add(row)
+            s.commit()
+    return {'comments': kid if child else tree, 'url': data['url'], 'fetched_at': fetched, 'supported': supported}
 
 
 @router.get('/posts/{post_id}/media/{n}')
