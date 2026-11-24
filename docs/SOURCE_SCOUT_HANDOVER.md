@@ -19,6 +19,20 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Commons video fixes and re-curation (`e4519d3`, 2026-11-24)
+
+- Deployed `8bde810..e4519d3`: a v.redd.it playlist Reddit refuses (403) falls back to the plain CMAF/DASH video
+  and audio files; the video sweep covers every picked post with a video; YouTube links get a click-to-play
+  youtube-nocookie player in the post view and a badge on cards. No schema change.
+- All four application services run `watchcraft:release-e4519d3` (`sha256:8c4595916963…`) with zero restarts;
+  public health 200, Compose and environment hashes unchanged, no tracebacks.
+- Re-curation for profile 2 (user-approved): cleared `video_failed` on 1 post; hid 122 unsaved picks from the last
+  7 days that the T-139 aggregator rule now rejects (radwebhosting, ossalt.com, awesome.ecosyste.ms, feedspot;
+  reversible: `crpick.hidden`, `hidden_at` set); queued a source expedition and an immediate run for threads 1, 2, 4.
+- Code-only backup at `/root/compose/watchcraft-backups/20261124-videofix-e4519d3` (`rollback.sh` → `release-8bde810`).
+- Pruned to the newest two deploy backups (`videofix-e4519d3`, `talk-8bde810`): removed `20261124-videos-66b833f`
+  and the `release-697e522` tag. `rating-replay-out.jsonl` moved to `20261124-talk-8bde810/`.
+
 ## Deployment record — Commons favours posts with conversations (`8bde810`, 2026-11-24)
 
 - Deployed `66b833f..8bde810` (backend only, T-139): discovery puts discussion platforms first (HN and Lobsters
