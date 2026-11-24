@@ -205,6 +205,10 @@
 		</section>
 	{/if}
 
+	{#if session.allows('playlists_edit') && !noCategories}
+		<div class="page screen-tools"><a class="btn" href="/settings?tab=categories&new=1" use:focusable={{ group: 'screen-tools', id: 'new-playlist' }}>＋ New playlist</a></div>
+	{/if}
+
 	{#if session.profile?.prefs?.scouts_home_position !== 'bottom'}<TodayCard /><ScoutsShelf />{/if}
 
 	{#if failed}
@@ -518,4 +522,5 @@
 	:global(html[data-scheme='light']) .how li {
 		background: var(--surface);
 	}
+	.screen-tools { display: flex; justify-content: flex-end; margin-top: .75rem; }
 </style>
