@@ -55,12 +55,14 @@ def _visible_picks(s, pid: int):
 
 
 def _thread_stats(s, pid: int) -> dict[int, tuple[int, int, int]]:
-    """{thread_id: (picks, new picks, sources)} in three grouped queries."""
+    """{thread_id: (picks, new picks, sources)} in three grouped queries. A thread never opened counts only the
+    last day as new, the same window its first New view shows."""
     base = _visible_picks(s, pid).where(CRPick.hidden == False).subquery()  # noqa: E712
     picks = dict(s.exec(select(base.c.thread_id, func.count()).group_by(base.c.thread_id)).all())
     visit = select(CRVisit.visit_at).where(CRVisit.profile_id == pid,
                                            CRVisit.scope == func.cast(base.c.thread_id, String)).scalar_subquery()
-    new = dict(s.exec(select(base.c.thread_id, func.count()).where(base.c.picked_at > func.coalesce(visit, 0))
+    since = func.coalesce(visit, time.time() - FIRST_VISIT_S)
+    new = dict(s.exec(select(base.c.thread_id, func.count()).where(base.c.picked_at > since)
                       .group_by(base.c.thread_id)).all())
     sources = dict(s.exec(select(CRThreadSource.thread_id, func.count()).join(CRThread, CRThread.id == CRThreadSource.thread_id)
                           .where(CRThread.profile_id == pid).group_by(CRThreadSource.thread_id)).all())
@@ -860,7 +862,7 @@ def remove_block(bid: int, pid: int = Depends(require_room)):
 
 def new_count(s, pid: int) -> int:
     v = s.exec(select(CRVisit).where(CRVisit.profile_id == pid, CRVisit.scope == 'all')).first()
-    since = v.visit_at if v else 0
+    since = v.visit_at if v else time.time() - FIRST_VISIT_S
     base = _visible_picks(s, pid).where(CRPick.hidden == False, CRPick.picked_at > since)  # noqa: E712
     return s.exec(select(func.count()).select_from(base.subquery())).one()
 

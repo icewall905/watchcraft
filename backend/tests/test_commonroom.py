@@ -365,6 +365,18 @@ def test_thread_new_counts(client):
     assert client.get('/api/hub/commonroom/threads').json()['threads'][0]['new_count'] == 0
 
 
+def test_unopened_thread_counts_only_the_last_day_as_new(client):
+    thread(client)
+    run_all()
+    with session() as s:  # picks from last week: in the thread, but not new on a thread never opened
+        for p in s.exec(select(CRPick)).all():
+            p.picked_at = time.time() - 7 * 86400
+            s.add(p)
+        s.commit()
+    th = client.get('/api/hub/commonroom/threads').json()['threads'][0]
+    assert th['pick_count'] > 0 and th['new_count'] == 0
+
+
 def test_visit_accepts_numeric_thread_id_like_the_page_sends(client):
     t = thread(client)
     r = client.post('/api/hub/commonroom/visit', json={'thread': t['id']})

@@ -108,7 +108,7 @@ export const LOADERS: Loader[] = [
 		pics.sort((x, y) => Number(!!y.img) - Number(!!x.img));
 		return panel('commons', '/common-room', fresh_n || posts.length, fresh_n ? ['new post', 'new posts'] : ['post worth reading', 'posts worth reading'], {
 			today: posts.filter((p) => within(p.published_at, DAY)).length, pics: pics.slice(0, 6),
-			chips: on.sort((x, y) => (y.new_count || 0) - (x.new_count || 0)).map((t) => ({ title: t.name, href: '/common-room', count: t.new_count || t.pick_count }))
+			chips: on.sort((x, y) => (y.new_count || 0) - (x.new_count || 0)).map((t) => ({ title: t.name, href: '/common-room', count: t.new_count || undefined }))
 		});
 	} },
 	{ key: 'boards', href: '/boards', load: async (signal) => {
