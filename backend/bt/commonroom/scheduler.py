@@ -138,6 +138,11 @@ async def scheduler():
         except Exception:
             log.exception('Common Room local copies failed')
         try:
+            from . import articles
+            await asyncio.to_thread(articles.sweep)
+        except Exception:
+            log.exception('Common Room article summaries failed')
+        try:
             from . import curate
             await asyncio.to_thread(curate.rejudge)
         except Exception:

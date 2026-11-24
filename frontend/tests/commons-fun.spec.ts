@@ -114,3 +114,20 @@ test('a YouTube link plays in the post view only when asked', async ({ page }) =
 	await dialog.getByRole('button', { name: 'Play video here' }).click();
 	await expect(dialog.locator('iframe')).toHaveAttribute('src', /youtube-nocookie\.com\/embed\/MVKUXLcl8pQ\?autoplay=1/);
 });
+
+test('an article post shows its summary on the card and the whole article on demand', async ({ page }) => {
+	await setup(page);
+	const body = Array.from({ length: 60 }, (_, n) => `Paragraph ${n} about the safety coffin.`).join('\n\n');
+	const art = post(9, 'The Coffin That Waved a Flag', { platform: 'web', kind: 'oddity', summary: 'A patented safety coffin failed its public demo.' });
+	await page.route('**/api/hub/commonroom/feed*', (route) => route.fulfill({ json: { posts: [art], next_cursor: '', has_more: false, building: false, mode: 'today', end: true } }));
+	await page.route('**/api/hub/commonroom/posts/109', (route) => route.fulfill({ json: { ...art, body, article: null } }));
+	await page.route('**/api/hub/commonroom/posts/109/comments*', (route) => route.fulfill({ json: { comments: [], url: art.url, fetched_at: 0, supported: false } }));
+	await freshPage(page, '/common-room');
+	await expect(page.locator('.card')).toContainText('A patented safety coffin failed its public demo.');
+	await page.getByRole('link', { name: 'The Coffin That Waved a Flag' }).click();
+	const dialog = page.getByRole('dialog');
+	await expect(dialog.getByRole('region', { name: 'Summary' })).toContainText('failed its public demo');
+	await expect(dialog.getByText('Paragraph 59')).toHaveCount(0);
+	await dialog.getByRole('button', { name: /Read the full article/ }).click();
+	await expect(dialog.getByText(/Paragraph 59/)).toBeVisible();
+});

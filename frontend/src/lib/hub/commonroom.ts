@@ -20,9 +20,9 @@ export interface Post {
  pick_id: number; post_id: number; thread_id: number; thread_name: string; platform: string; community: string; author: string; title: string; excerpt: string;
  url: string; link_url: string; domain: string; media: Media[]; score: number | null; comments: number | null; published_at: number | null;
  why: string; relevance: number; saved: boolean; verdict: Verdict; nsfw: boolean; spoiler: boolean;
- fun?: number; kind?: Kind | ''; wildcard?: boolean; top?: TopComment[]; elsewhere?: Elsewhere[]; velocity?: number; badges?: Badge[];
+ fun?: number; kind?: Kind | ''; wildcard?: boolean; top?: TopComment[]; elsewhere?: Elsewhere[]; velocity?: number; badges?: Badge[]; summary?: string;
 }
-export type PostDetail = Post & { body: string };
+export type PostDetail = Post & { body: string; article?: { url: string; title: string; text: string } | null };
 export interface Comment { id: string; author: string; body: string; score: number | null; published_at: number | null; children: Comment[] }
 export interface FeedPage { posts: Post[]; next_cursor: string; has_more: boolean; building: boolean; mode?: Mode | 'deep'; end?: boolean }
 export interface Block { id: number; kind: 'community' | 'author' | 'domain'; value: string }

@@ -234,7 +234,7 @@ def _judge(thread: CRThread, lessons: str, batch: list[CRPost]) -> dict[int, Ver
     items = [{'type': 'post', 'title': p.title, 'publisher': f'{p.platform} {p.community}'.strip(),
               'summary': p.body[:600], 'url': p.link_url or p.url,
               **({'comments': p.comments} if getattr(p, 'comments', 0) else {}),
-              **({'body': p.body[:2000]} if len(p.body) > 600 else {})} for p in batch]
+              **({'body': p.body[:kids.BODY_SEEN]} if len(p.body) > 600 else {})} for p in batch]
     user = ai._data(items)
     if lessons:
         user = '<data>\n' + ai._esc(lessons) + '\n</data>\n\n' + user
@@ -343,6 +343,9 @@ def run(thread: CRThread, lease: str) -> dict:
     # Borrowed posts only reach the judge when embeddings rank them close; the rest wait unjudged.
     ranked = [(p, rel) for p, rel in _rank(thread, keep) if p.id not in borrowed or rel >= CROSS_MIN]
     ranked = ranked[:JUDGE_MAX_MORE if thread.want_more else JUDGE_MAX]
+    if ai.enabled():  # teasers from scraped pages and feeds: judge the whole article, under its real headline
+        from . import articles
+        articles.complete([p for p, _ in ranked])
     threshold = THRESHOLD.get(thread.strictness, 60)
     wild = not (child or thread.child_friendly)
     scores: dict[int, Verdict] = {}

@@ -12,7 +12,8 @@
 	let { post, onClose, onGone }: { post: Post; onClose: () => void; onGone?: (p: Post) => void } = $props();
 	let detail = $state<PostDetail | null>(null), comments = $state<Comment[] | null>(null), cUrl = $state(''), err = $state(''), cErr = $state(''), cLoading = $state(false);
 	let fetchedAt = $state(0), supported = $state(true), discussion = $state(''), sort = $state<'best' | 'new'>('best');
-	let shown = $state(0), broken = $state<Record<number, boolean>>({});
+	let shown = $state(0), broken = $state<Record<number, boolean>>({}), full = $state(false);
+	const CLIP = 1400;
 	const view = $derived(detail ?? post);
 	const plat = $derived(platformOf(post.platform));
 	const pics = $derived(post.media.filter((_, i) => !broken[i]));
@@ -26,7 +27,7 @@
 	const where = $derived(discussion ? new URL(discussion).hostname.replace(/^www\./, '') : '');
 	$effect(() => {
 		const id = post.post_id; let live = true;
-		detail = null; comments = null; cErr = ''; shown = 0; broken = {};
+		detail = null; comments = null; cErr = ''; shown = 0; broken = {}; full = false;
 		crApi.post(id).then((d) => { if (live) detail = d; }, (e) => { if (live) err = e instanceof Error ? e.message : 'Could not load post.'; });
 		loadComments(id, false, () => live);
 		return () => { live = false; };
@@ -81,8 +82,22 @@
 			</div>
 		{/if}
 
+		{#if post.summary}
+			<section class="summary" aria-label="Summary"><h4>Summary</h4><p>{post.summary}</p></section>
+		{/if}
 		{#if detail}
-			{#if detail.body}<div class="text">{detail.body}</div>{:else if post.excerpt}<div class="text">{post.excerpt}</div>{/if}
+			{@const text = detail.body || post.excerpt}
+			{#if text}
+				<div class="text" class:clipped={text.length > CLIP && !full}>{text.length > CLIP && !full ? text.slice(0, CLIP) + '…' : text}</div>
+				{#if text.length > CLIP}<button type="button" class="more" onclick={() => { full = !full; }}>{full ? 'Show less' : `Read the full article (${Math.round(text.length / 1000)}k characters)`}</button>{/if}
+			{/if}
+			{#if detail.article}
+				<details class="art">
+					<summary>Linked article{detail.article.title ? `: ${detail.article.title}` : ''}</summary>
+					<div class="text">{detail.article.text}</div>
+					<a class="out" href={detail.article.url} target="_blank" rel="noopener noreferrer">Open the article ↗</a>
+				</details>
+			{/if}
 		{:else if !err}<div class="skeleton" aria-label="Loading post"><span></span><span></span><span></span></div>{/if}
 
 		{#if post.domain && post.link_url}
@@ -158,6 +173,15 @@
 	.pager button{width:2.2rem;height:2.2rem;border-radius:50%;border:0;background:rgba(0,0,0,.65);color:#fff;font-size:1.3rem;cursor:pointer}
 	.pager button:disabled{opacity:.35;cursor:default}
 	.text{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.6;font-size:1rem;max-width:68ch}
+	.summary{padding:.8rem 1rem;border-radius:var(--r-md);background:var(--surface-2);border:1px solid var(--line)}
+	.summary h4{margin:0 0 .3rem;font-size:.72rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+	.summary p{margin:0;line-height:1.55}
+	.clipped{-webkit-mask-image:linear-gradient(#000 75%,transparent);mask-image:linear-gradient(#000 75%,transparent)}
+	.more{justify-self:start;background:none;border:0;padding:0;color:var(--info);cursor:pointer;font:inherit;font-weight:600}
+	.art{border:1px solid var(--line);border-radius:var(--r-md);padding:.7rem 1rem}
+	.art summary{cursor:pointer;font-weight:600}
+	.art .text{margin-top:.6rem;max-height:60vh;overflow:auto}
+	.out{color:var(--info)}
 	.linkcard{display:grid;grid-template-columns:1fr auto;gap:0 .8rem;padding:.8rem 1rem;border-radius:var(--r-md);background:var(--surface-2);border:1px solid var(--line);text-decoration:none;color:var(--text)}
 	.linkcard:hover{border-color:var(--info)}
 	.lc-k{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}

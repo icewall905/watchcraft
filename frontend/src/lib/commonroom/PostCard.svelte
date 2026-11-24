@@ -52,7 +52,7 @@
 		{#if blurred}
 			<button type="button" class="reveal" onclick={() => { revealed = true; }}>{post.nsfw ? 'NSFW' : 'Spoiler'} content hidden. Click to show.</button>
 		{:else}
-			{#if post.excerpt}<p class="excerpt">{post.excerpt}</p>{/if}
+			{#if post.summary}<p class="excerpt">{post.summary}</p>{:else if post.excerpt}<p class="excerpt">{post.excerpt}</p>{/if}
 			{#if first && !broken}
 				<div class="media">
 					{#if first.kind === 'video' && first.src}

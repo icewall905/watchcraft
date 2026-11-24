@@ -103,14 +103,15 @@ def _media(post: CRPost, child: bool) -> list[dict]:
 
 
 def _post_json(pick: CRPick, post: CRPost, thread: CRThread, child: bool, verdict: str = '') -> dict:
-    body = post.body or ''
+    body = ((post.meta or {}).get('teaser') if child else '') or post.body or ''
     return {'pick_id': pick.id, 'post_id': post.id, 'thread_id': thread.id, 'thread_name': thread.name,
             'platform': post.platform, 'community': post.community, 'author': post.author, 'title': post.title,
             'excerpt': body[:600] + ('…' if len(body) > 600 else ''), 'url': post.url, 'link_url': post.link_url,
             'domain': post.domain, 'media': _media(post, child), 'score': post.score, 'comments': post.comments,
             'published_at': post.published_at, 'why': pick.why, 'relevance': pick.score, 'saved': pick.saved,
             'verdict': verdict, 'nsfw': post.nsfw, 'spoiler': post.spoiler,
-            'fun': pick.fun, 'kind': pick.kind, 'wildcard': pick.wildcard, 'top': [], 'elsewhere': []}
+            'fun': pick.fun, 'kind': pick.kind, 'wildcard': pick.wildcard, 'top': [], 'elsewhere': [],
+            'summary': '' if child else str((post.meta or {}).get('summary') or '')}
 
 
 ELSEWHERE_MAX = 4
@@ -662,7 +663,10 @@ def get_post(post_id: int, pid: int = Depends(require_room)):
         from .kids import BODY_SEEN
         child = _child(s, pid)
         one = _socialize(s, [(pick, post, thread)], [_post_json(pick, post, thread, child, verdict)], child)[0]
-        return {**one, 'body': post.body[:BODY_SEEN] if child else post.body}
+        if child:  # only the text the kid check read: the original teaser when the article was fetched later
+            return {**one, 'body': ((post.meta or {}).get('teaser') or post.body)[:BODY_SEEN], 'article': None}
+        art = (post.meta or {}).get('article') or None
+        return {**one, 'body': post.body, 'article': art}
 
 
 @router.get('/posts/{post_id}/comments')
