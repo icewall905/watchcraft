@@ -6,10 +6,12 @@
  import type { BoardPin } from '$lib/hub/boards';
 
  type Pin = BoardPin & {board_name?: string};
- let { pin, pins, boardName = '', busy = false, onClose, onNavigate, onSave, onFits, onNotFit, onHide, onShare, actions }: {
+ let { pin, pins, boardName = '', busy = false, onClose, onNavigate, onSave, onFits, onNotFit, onHide, onShare, onWhy, onTags, actions }: {
   pin: Pin; pins: Pin[]; boardName?: string; busy?: boolean;
   onClose: () => void; onNavigate: (p: Pin) => void;
   onSave: (p: Pin) => void; onFits: (p: Pin) => void; onNotFit: (p: Pin) => void; onHide: (p: Pin) => void;
+  onWhy?: (p: Pin) => void;
+  onTags?: (p: Pin, disputed: string[]) => void;  // Owner marks curator tags as wrong; without it tags are read-only.  // Asks why a liked picture fits, so the curator learns what to look for.
   onShare?: (p: Pin) => void;  // Opens the household/link share dialog; without it, the device share sheet.
   actions?: Snippet;
  } = $props();
@@ -152,11 +154,23 @@
      <h3>Why your curator picked it</h3>
      {#if pin.vision_seen}<p><span class="label">Sees</span>{pin.vision_seen}</p>{/if}
      {#if pin.vision_why}<p><span class="label">Fits because</span>{pin.vision_why}</p>{/if}
+     {#if pin.vision_tags?.length}
+      <div class="tags" role="group" aria-label="Curator's tags">
+       {#each pin.vision_tags as tag (tag)}{@const wrong = pin.vision_disputed?.includes(tag) ?? false}
+        {#if onTags}<button class="tag" class:wrong aria-pressed={wrong} disabled={busy} title={wrong ? 'You said this is wrong — click to agree again' : 'Click if this is wrong'}
+         aria-label={`${tag}${wrong ? ', marked wrong' : ''}`}
+         onclick={() => onTags(pin, wrong ? (pin.vision_disputed ?? []).filter(t => t !== tag) : [...(pin.vision_disputed ?? []), tag])}>{tag}</button>
+        {:else}<span class="tag" class:wrong>{tag}</span>{/if}
+       {/each}
+      </div>
+      {#if onTags}<p class="muted small">Tap a tag that's wrong; your curator learns how you see it.</p>{/if}
+     {/if}
     {:else if uploaded}<h3>Added by you</h3><p class="muted">You uploaded this image.</p>
     {:else}<h3>No curator notes</h3><p class="muted">Added before notes were kept, or saved by hand.</p>{/if}
     {#if pin.ai_flag}<p><span class="label">AI generated</span>{pin.ai_flag}</p>{/if}
     {#if pin.feedback === 'good'}<p class="verdict good">You confirmed it fits.</p>{/if}
     {#if pin.feedback_note}<p class="muted">Your note: {pin.feedback_note}</p>{/if}
+    {#if pin.feedback === 'good' && onWhy}<button class="why-btn" disabled={busy} onclick={() => onWhy(pin)}>{pin.feedback_note ? 'Change why you like it' : 'Tell the curator why you like it'}</button>{/if}
    </section>
 
    <div class="primary">
@@ -219,4 +233,10 @@
   .side{overflow:visible}
   .hint{display:none}
  }
+ .why-btn{justify-self:start;border:0;background:none;padding:0;color:var(--accent, inherit);font:inherit;font-size:.85rem;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
+ .tags{display:flex;flex-wrap:wrap;gap:.35rem;margin:.25rem 0}
+ .tag{padding:.2rem .6rem;border-radius:999px;border:1px solid var(--line);background:transparent;color:var(--text);font:inherit;font-size:.78rem}
+ button.tag{cursor:pointer}
+ .tag.wrong{text-decoration:line-through;opacity:.6;border-style:dashed}
+ .small{font-size:.75rem}
 </style>

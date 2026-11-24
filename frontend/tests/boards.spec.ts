@@ -23,6 +23,7 @@ async function setup(page:Page,empty=false,tweak?:(rows:any[])=>void,pageSize=0)
   if(path.endsWith('/reshuffle')){const b:any=boards.find(b=>b.id===id)!;const gone=pins.filter((p:any)=>p.board_id===id&&!p.saved&&p.feedback!=='good');pins=pins.filter(p=>!gone.includes(p));Object.assign(b,{last_status:'queued',pin_count:pins.filter(p=>p.board_id===id).length});return route.fulfill({json:{replaced:gone.length,kept:b.pin_count,board:b}});}
   if(path.endsWith('/refresh')){const b=boards.find(b=>b.id===id)!;Object.assign(b,{last_status:'no_matches',last_result:'No images met your instructions in the last search.',retry_after:3});return route.fulfill({json:{queued:false,status:'cooldown',retry_after:3,last_result:b.last_result,board:b}});}
   if(path.endsWith('/feedback')){const pid=Number(path.split('/').at(-2)),row:any=pins.find(p=>p.id===pid)!;row.feedback=body.verdict;row.feedback_note=body.note||'';if(body.verdict==='bad')pins=pins.filter(p=>p.id!==pid);return route.fulfill({json:{pin:{...row,hidden:body.verdict==='bad'},board:boards.find(b=>b.id===id)}});}
+  if(path.endsWith('/tags')){const pid=Number(path.split('/').at(-2)),row:any=pins.find(p=>p.id===pid)!;row.vision_disputed=(row.vision_tags||[]).filter((t:string)=>(body.disputed as string[]).includes(t));return route.fulfill({json:{pin:row,board:boards.find(b=>b.id===id)}});}
   if(path.includes('/pins/')){const pid=Number(path.split('/').at(-1)),row=pins.find(p=>p.id===pid)!;Object.assign(row,body);row.image_url=`/api/hub/boards/${row.board_id}/pins/${row.id}/media`;if(body.hidden)pins=pins.filter(p=>p.id!==pid);return route.fulfill({json:{pin:row}});}
   if(method==='PATCH'){const b=boards.find(b=>b.id===id)!;Object.assign(b,body);return route.fulfill({json:{board:b}});}
   if(method==='DELETE'){boards=boards.filter(b=>b.id!==id);return route.fulfill({json:{ok:true}});}
@@ -203,6 +204,20 @@ test('review pins: confirm fits and teach the curator what does not fit',async({
  const fits=page.getByRole('group',{name:'Actions for Quiet courtyard'}).getByRole('button',{name:'Fits'});
  await fits.click();await expect(fits).toHaveAttribute('aria-pressed','true');
  expect(writes.at(-1)).toMatchObject({method:'PUT',body:{verdict:'good'}});
+ // Liking stays one tap; saying why is offered afterwards and teaches the curator what to look for.
+ await page.getByRole('button',{name:'Tell it why you like it'}).click();
+ await page.getByRole('button',{name:'Natural light'}).click();
+ await page.getByLabel('Tell the curator (optional)').fill('Natural light + mossy stones');
+ await page.getByRole('button',{name:'Teach curator'}).click();
+ await expect(page.getByText('look for more of what you like here')).toBeVisible();
+ await expect(fits).toHaveAttribute('aria-pressed','true');
+ expect(writes.at(-1)).toMatchObject({method:'PUT',body:{verdict:'good',note:'Natural light + mossy stones'}});
+ await page.getByRole('button',{name:'View Quiet courtyard'}).click();
+ await expect(page.getByText('Your note: Natural light + mossy stones')).toBeVisible();
+ await page.getByRole('button',{name:'Change why you like it'}).click();
+ await expect(page.getByLabel('Tell the curator (optional)')).toHaveValue('Natural light + mossy stones');
+ await page.getByRole('button',{name:'Cancel'}).click();
+ await page.keyboard.press('Escape');
  await page.getByRole('group',{name:'Actions for Stone garden path'}).getByRole('button',{name:'Not a fit'}).click();
  await page.getByRole('button',{name:'Text, quote or poster image'}).click();
  await expect(page.getByLabel('Tell the curator (optional)')).toHaveValue('Text, quote or poster image');
@@ -248,11 +263,18 @@ test('the grid never reshuffles: loading more, hiding and reviewing keep every i
 });
 
 test('image viewer: why it was picked, zoom, keyboard browsing, download',async({page})=>{
- await setup(page,false,rows=>{Object.assign(rows[0],{width:320,height:405,vision_seen:'A moss courtyard with a stone lantern',vision_why:'Matches Japanese gardens.'});});
+ await setup(page,false,rows=>{Object.assign(rows[0],{width:320,height:405,vision_seen:'A moss courtyard with a stone lantern',vision_why:'Matches Japanese gardens.',vision_tags:['Calm','Green','Cozy']});});
  await freshPage(page,'/boards?board=1');
  await page.getByRole('button',{name:'View Quiet courtyard',exact:true}).click();
  const viewer=page.getByRole('dialog');const why=viewer.getByRole('region',{name:'Why this image is here'});
  await expect(why).toContainText('Why your curator picked it');await expect(why).toContainText('A moss courtyard with a stone lantern');await expect(why).toContainText('Matches Japanese gardens.');
+ // The curator's tags are visible and the owner can mark a wrong one, which the curator learns from.
+ const tags=why.getByRole('group',{name:"Curator's tags"});
+ await expect(tags.getByRole('button')).toHaveText(['Calm','Green','Cozy']);
+ await tags.getByRole('button',{name:'Cozy'}).click();
+ await expect(tags.getByRole('button',{name:'Cozy, marked wrong'})).toHaveAttribute('aria-pressed','true');
+ await tags.getByRole('button',{name:'Cozy, marked wrong'}).click();
+ await expect(tags.getByRole('button',{name:'Cozy',exact:true})).toHaveAttribute('aria-pressed','false');
  await expect(viewer.getByText('1 / 3')).toBeVisible();
  await viewer.getByRole('button',{name:'Zoom in'}).click();await expect(viewer.getByRole('button',{name:'Fit to screen'})).toHaveText('140%');
  await viewer.getByRole('button',{name:'Fit to screen'}).click();await expect(viewer.getByRole('button',{name:'Fit to screen'})).toHaveText('100%');

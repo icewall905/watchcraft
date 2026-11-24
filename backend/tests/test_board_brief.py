@@ -196,9 +196,10 @@ def test_shared_and_edited_statements_are_not_absorbed(client, model, monkeypatc
     r = client.post(f'/api/hub/boards/{board["id"]}/learned/refine').json()
     assert {x['text'] for x in r['statements']} == {'Pastels', 'Fine glitter'}
     assert r['brief']['state'] == 'fresh'
-    # Next night: nothing changed, nothing to do; a new item makes it due again and the old brief is the base.
+    # Later tonight: just refined, nothing to do. Next night it is refined again with the old brief as the base.
     assert board_brief.nightly(pid)['due'] == 0
     seed_statements(pid, [('Rainbow', 1, board['id'])])
+    next_night(board['id'])
     seen = []
     model.brief = lambda user: seen.append(user) or {'brief': 'SUBJECT: whimsy. MORE OF: rainbow.', 'dropped': []}
     monkeypatch.setattr(board_brief, '_absorb', real)
@@ -209,15 +210,35 @@ def test_shared_and_edited_statements_are_not_absorbed(client, model, monkeypatc
     assert sorted(left) == ['Pastels']
 
 
-def test_owner_edits_brief_and_nightly_recompiles_only_changed(client, model):  # noqa: F811
-    a, b = make(client), make(client, 'Empty', 'anything')
+def next_night(*bids):
+    with session() as s:
+        for bid in bids:
+            brief = s.get(MoodBoardBrief, bid)
+            brief.compiled_at -= board_brief.NIGHTLY_GAP_S + 60
+            s.add(brief)
+        s.commit()
+
+
+def test_owner_edits_brief_and_nightly_refines_every_board(client, model):  # noqa: F811
+    a, b, c = make(client), make(client, 'Empty', 'anything'), make(client, 'Reviewed', 'anything')
     pid = a['profile_id']
     seed_statements(pid, [('Playful prints', 1, a['id'])])
-    assert board_brief.nightly(pid) == {'compiled': 1, 'failed': 0, 'due': 1}  # b has nothing learned: no brief
-    assert board_brief.nightly(pid)['due'] == 0
+    with session() as s:
+        pin = MoodPin(board_id=c['id'], profile_id=pid, title='p', source_url='https://x.org/p', image_url='https://x.org/p.jpg')
+        s.add(pin)
+        s.flush()
+        s.add(MoodFeedback(pin_id=pin.id, board_id=c['id'], profile_id=pid, verdict='good', note='Soft light', title='p'))
+        s.commit()
+    # b has nothing to learn from yet; c has only a review, which is enough.
+    assert board_brief.nightly(pid) == {'compiled': 2, 'failed': 0, 'due': 2}
+    assert board_brief.nightly(pid)['due'] == 0  # the second nightly caller leaves fresh briefs alone
+    next_night(a['id'], c['id'])
+    assert board_brief.nightly(pid)['due'] == 2  # unchanged boards are still refined every night
+    next_night(a['id'], c['id'])
     r = client.put(f'/api/hub/boards/{a["id"]}/learned/brief', json={'text': 'SUBJECT: my own words.'})
     assert r.json()['brief']['text'] == 'SUBJECT: my own words.' and r.json()['brief']['state'] == 'fresh'
     seed_statements(pid, [('Glitter', 1, a['id'])])
+    next_night(a['id'])
     seen = []
     model.brief = lambda user: seen.append(user) or {'brief': 'SUBJECT: my own words. MORE OF: glitter.', 'dropped': []}
     board_brief.nightly(pid)

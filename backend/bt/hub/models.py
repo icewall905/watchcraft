@@ -629,6 +629,8 @@ class MoodPinNote(SQLModel, table=True):
     pin_id: int = Field(primary_key=True)
     seen: str = ''
     why: str = ''
+    tags: list = J()  # up to 10 short words for what the judge thought of it ("Warm", "Cozy"), shown to the owner
+    disputed: list = J()  # tags the owner said are wrong; taught back to the judge
     created_at: float = Field(default_factory=time.time)
 
 

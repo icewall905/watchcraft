@@ -103,6 +103,10 @@ class BoardEdit(BaseModel):
     ai_images: str | None = Field(default=None, pattern='^(ignore|mark|reject)$')
 
 
+class PinTags(BaseModel):
+    disputed: list[str] = Field(default_factory=list, max_length=10)
+
+
 class PinFeedback(BaseModel):
     verdict: str = Field(pattern='^(good|bad|)$')  # '' clears the review
     note: str = Field(default='', max_length=300)
@@ -272,6 +276,8 @@ def pin_json(pin, feedback=None, note=None, grown_up=True, added_by=''):
     result['added_by'] = added_by
     result['vision_seen'] = note.seen if note else ''
     result['vision_why'] = note.why if note else ''
+    result['vision_tags'] = list(note.tags or []) if note else []
+    result['vision_disputed'] = list(note.disputed or []) if note else []
     result['image_url'] = f'/api/hub/boards/{pin.board_id}/pins/{pin.id}/media'
     # Versioned so a reused pin id can never hit a stale browser-cached preview.
     result['thumb_url'] = f'/api/hub/boards/{pin.board_id}/pins/{pin.id}/thumb?v={int(pin.created_at or 0)}'
@@ -550,6 +556,22 @@ def review_pin(bid: int, pin_id: int, data: PinFeedback, pid: int = Depends(requ
         s.add(pin)
         s.commit()
         return {'pin': pin_json(pin, current, s.get(MoodPinNote, pin.id), not is_child(s, pid)), 'board': board_json(s, board, pid)}
+
+
+@router.put('/{bid}/pins/{pin_id}/tags')
+def dispute_tags(bid: int, pin_id: int, data: PinTags, pid: int = Depends(require_boards)):
+    """The owner disagrees with some of the curator's tags for this picture; the judge learns what those words mean here."""
+    with session() as s:
+        board, pin = board_pin(s, pid, bid, pin_id)
+        note = s.get(MoodPinNote, pin_id)
+        if not note or not note.tags:
+            raise HTTPException(404, 'This image has no curator tags')
+        wanted = {t.strip().lower() for t in data.disputed}
+        note.disputed = [t for t in note.tags if t.lower() in wanted]
+        s.add(note)
+        s.commit()
+        s.refresh(note)
+        return {'pin': pin_json(pin, s.get(MoodFeedback, pin.id), note, not is_child(s, pid)), 'board': board_json(s, board, pid)}
 
 
 class ImageInput(BaseModel):
@@ -948,9 +970,23 @@ def judge_system(strict, ai_mode, reference):
         'candidate, in order: index; violations: short labels of each hard rule or lesson the picture clearly breaks '
         '(empty when none); fits; keep_likelihood: 0-100, how likely this owner is to keep the picture (not how sure '
         'you are of your verdict: a clear reject is near 0); why: one short sentence naming the rule or lesson it '
-        'meets or breaks. All fits=false is correct when none qualify.'
+        'meets or breaks; tags: up to 10 short tags (one or two words, Title Case) saying what you think of the picture — mood, '
+        'style, colours, era, setting, quality (for example Warm, Cozy, Minimal, Vintage, Soft Light); the owner sees them and '
+        'corrects the ones that are wrong, so name what you actually see, not the board subject. '
+        'All fits=false is correct when none qualify.'
         + (' The final image is inspiration only, not a candidate: match its relevant visual style, subject and '
            'details while honoring the written instructions. Never return its index.' if reference else ''))
+
+
+def clean_tags(raw) -> list[str]:
+    """At most 10 distinct short tags from the judge, in its order."""
+    out, seen = [], set()
+    for t in raw if isinstance(raw, list) else []:
+        t = ' '.join(str(t).split())[:30]
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            out.append(t)
+    return out[:10]
 
 
 def judge_images(batch, descriptions, interests, instructions, strict, ai_mode, reference_data):
@@ -962,6 +998,7 @@ def judge_images(batch, descriptions, interests, instructions, strict, ai_mode, 
              'fits': {'type': 'boolean'},
              'keep_likelihood': {'type': 'integer', 'minimum': 0, 'maximum': 100},
              'why': _text(240),
+             'tags': {'type': 'array', 'maxItems': 10, 'items': _text(30)},
              **({'ai_generated': {'type': 'boolean'}} if ai_mode == 'mark' else {})}
     schema = {'type': 'object', 'properties': {'verdicts': {'type': 'array', 'minItems': len(batch), 'maxItems': len(batch),
               'items': {'type': 'object', 'properties': props, 'required': list(props), 'additionalProperties': False}}},
@@ -974,7 +1011,7 @@ def judge_images(batch, descriptions, interests, instructions, strict, ai_mode, 
     result = ai._call(judge_system(strict, ai_mode, bool(reference_data)),
                       'Interests: ' + ai._esc(interests) + '\nCurator instructions: ' + ai._esc(instructions) +
                       '\n<data>' + ai._esc(json.dumps(rows)) + '</data>', schema,
-                      max_tokens=350 * len(batch) + 200, images=images, role='board_vision', timeout_s=VISION_TIMEOUT_S)
+                      max_tokens=430 * len(batch) + 200, images=images, role='board_vision', timeout_s=VISION_TIMEOUT_S)
     return _by_index(result.get('verdicts'), len(batch), 'verdicts')
 
 
@@ -1159,7 +1196,7 @@ def select_candidates(candidates, interests, instructions, progress=None, refere
             log.info('Mood Board vision %s (%s): %s', 'keep' if keep else 'reject', confidence, seen[:160])
             if not keep:
                 continue
-            item['_verdict'] = {'seen': seen, 'why': why[:240]}
+            item['_verdict'] = {'seen': seen, 'why': why[:240], 'tags': clean_tags(v.get('tags'))}
             if ai_mode == 'mark' and not item.get('_ai_flag') and (v.get('ai_generated') is True or str(d.get('ai_signs') or '').strip()):
                 item['_ai_flag'] = 'looks AI-generated'
             chosen.append(item)
@@ -1444,7 +1481,7 @@ def collect(bid, lease, revision):
             s.flush()
             s.add(MoodAsset(pin_id=pin.id, mime=mime, data=data))
             if verdict := item.get('_verdict'):
-                s.add(MoodPinNote(pin_id=pin.id, seen=verdict['seen'], why=verdict['why']))
+                s.add(MoodPinNote(pin_id=pin.id, seen=verdict['seen'], why=verdict['why'], tags=verdict.get('tags', [])))
             s.add(MoodHash(pin_id=pin.id, board_id=bid, dhash=item.get('_dhash', 0)))
             item['_pin_id'] = pin.id
             count += 1

@@ -178,6 +178,7 @@
         <button class="btn" disabled={!!busy} onclick={startBrief}>{data.brief.text ? 'Edit' : 'Write my own'}</button>
         {#if data.brief.text}<button class="btn ghost" disabled={!!busy} onclick={clearBrief}>Clear</button>{/if}
        </div>
+       <p class="muted small">Refined automatically every night from new reviews, notes and learnings.</p>
       {/if}
       {#if data.brief.dropped.length}
        <div class="flags">
@@ -218,7 +219,7 @@
        </li>
       {/snippet}
       {#if boardOnly.length}<ul class="list">{#each boardOnly as st (st.sid)}{@render item(st)}{/each}</ul>
-      {:else if data.brief.text}<p class="muted small">Everything learned so far is part of the brief above — edit it there. New learnings show here until the brief absorbs them (tonight, or when you refine).</p>
+      {:else if data.brief.text}<p class="muted small">Everything learned so far is part of the brief above — edit it there. New learnings show here until the brief absorbs them (every night, or when you refine).</p>
       {:else}<p class="muted small">Nothing learned for this board yet. Mark pictures Fits or Not a fit and the nightly pass learns from them.</p>{/if}
       {#if shared.length}
        <h3>Also applied from all your boards</h3>

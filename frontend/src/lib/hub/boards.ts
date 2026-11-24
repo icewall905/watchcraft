@@ -15,6 +15,8 @@ export interface BoardPin {
  media_type: string; attribution?: string; license?: string; saved: boolean;
  feedback?: '' | 'good' | 'bad'; feedback_note?: string;
  width?: number; height?: number; vision_seen?: string; vision_why?: string; ai_flag?: string;
+ /** The curator's own words for the picture ("Warm", "Cozy"); disputed = the ones the owner says are wrong. */
+ vision_tags?: string[]; vision_disputed?: string[];
  /** Grown-ups only, on boards a child uses: '' unchecked | ok | hidden | override, and why. */
  kid_state?: '' | 'ok' | 'hidden' | 'override'; kid_reason?: string; added_by?: string; profile_id?: number;
 }
@@ -63,6 +65,7 @@ export const boardsApi = {
  removeReference: (id: number) => request<{board: MoodBoard}>(`${base}/${id}/reference`, {method: 'DELETE', toast: false}),
  pin: (id: number, pin: number, body: {saved?: boolean; hidden?: boolean; board_id?: number}) => request<{pin: BoardPin}>(`${base}/${id}/pins/${pin}`, {method: 'PATCH', body, toast: false}),
  kid: (id: number, pin: number, visible: boolean) => request<{pin: BoardPin; board: MoodBoard}>(`${base}/${id}/pins/${pin}/kid`, {method: 'POST', body: {visible}, toast: false}),
+ tags: (id: number, pin: number, disputed: string[]) => request<{pin: BoardPin; board: MoodBoard}>(`${base}/${id}/pins/${pin}/tags`, {method: 'PUT', body: {disputed}, toast: false}),
  review: (id: number, pin: number, body: {verdict: '' | 'good' | 'bad'; note?: string}) => request<{pin: BoardPin; board: MoodBoard}>(`${base}/${id}/pins/${pin}/feedback`, {method: 'PUT', body, toast: false}),
  extKeys: () => request<{keys: ExtensionKey[]}>('/ext/keys', {toast: false}),
  createExtKey: (name: string) => request<{key: string; info: ExtensionKey}>('/ext/keys', {method: 'POST', body: {name}, toast: false}),

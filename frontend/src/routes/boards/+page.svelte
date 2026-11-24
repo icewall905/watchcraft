@@ -255,10 +255,25 @@
  }
  async function copy(text: string, what: string) { try { await navigator.clipboard.writeText(text); extCopied = what; } catch { extCopied = ''; } }
  let reviewing = $state<BoardPin | null>(null), reviewNote = $state('');
+ // Why a picture fits: optional, asked after 👍 so liking stays one tap. The note teaches the curator what to look for.
+ let liking = $state<BoardPin | null>(null), likeNote = $state(''), likedPin = $state<BoardPin | null>(null);
+ const LIKED = 'Thanks. Your curator will look for more like this.';
+ const LIKE_REASONS = ['Exactly the mood', 'Great colours', 'Love the outfit', 'Right era', 'Natural light', 'Good composition', 'Real, not staged', 'Interesting detail', 'Love the setting'];
+ async function disputeTags(p: BoardPin, disputed: string[]) {
+  if (!allowed() || busy !== null) return; busy = p.id; const owner = stamp();
+  try {
+   const r = await boardsApi.tags(p.board_id, p.id, disputed); if (owner !== stamp()) return;
+   pins = pins.map(v => v.id === p.id ? {...v, ...r.pin} : v);
+   if (found) found = found.map(v => v.id === p.id ? {...v, ...r.pin} : v);
+   if (preview?.id === p.id) preview = {...preview, ...r.pin};
+  } catch (e) { if (owner === stamp()) error = message(e); } finally { if (owner === stamp()) busy = null; }
+ }
+ function openWhy(p: BoardPin) { liking = p; likeNote = p.feedback_note ?? ''; }
  const REASONS = ['Costume / party look', 'Wrong era', 'Too young / teen', 'Advert or stock photo', 'Messy collage', 'Boring', 'Too revealing', 'Wrong fit or cut', 'High heels', 'AI generated', 'Low quality or blurry', 'Text, quote or poster image', 'Off-topic for this board'];
  const noteParts = (n: string) => n.split(' + ').map(x => x.trim()).filter(Boolean);
  const reasonOn = (n: string, r: string) => noteParts(n).includes(r);
- function toggleReason(r: string) { const parts = noteParts(reviewNote); reviewNote = (parts.includes(r) ? parts.filter(x => x !== r) : [...parts, r]).join(' + ').slice(0, 300); }
+ const toggled = (n: string, r: string) => { const parts = noteParts(n); return (parts.includes(r) ? parts.filter(x => x !== r) : [...parts, r]).join(' + ').slice(0, 300); };
+ function toggleReason(r: string) { reviewNote = toggled(reviewNote, r); }
  async function review(p: BoardPin, verdict: '' | 'good' | 'bad', note = '') {
   if (!allowed() || busy !== null) return; busy = p.id; const owner = stamp();
   try {
@@ -270,8 +285,9 @@
    if (found) found = verdict === 'bad' ? found.filter(v => v.id !== p.id) : found.map(v => v.id === p.id ? {...v, ...result.pin} : v);
    boards = boards.map(b => b.id === result.board.id ? result.board : b);
    if (preview?.id === p.id) preview = verdict === 'bad' ? after : result.pin;
-   reviewing = null; reviewNote = '';
-   notice = verdict === 'bad' ? 'Removed. Your curator will avoid images like this.' : verdict === 'good' ? 'Thanks. Your curator will look for more like this.' : '';
+   reviewing = null; reviewNote = ''; liking = null; likeNote = '';
+   likedPin = verdict === 'good' && !result.pin.feedback_note ? result.pin : null;
+   notice = verdict === 'bad' ? 'Removed. Your curator will avoid images like this.' : verdict === 'good' ? (note ? 'Thanks. Your curator will look for more of what you like here.' : LIKED) : '';
   } catch (e) { if (owner === stamp()) error = message(e); } finally { if (owner === stamp()) busy = null; }
  }
  let deleteConfirm = $state(false);
@@ -332,7 +348,7 @@
  </header>
  {#if error && !editing && !imageOpen && !importOpen}<div class="feedback error" role="alert"><span>{error}</span><button class="btn" onclick={() => load()}>Try again</button></div>{/if}
  {#if !selected}<ShareNotices onOpen={(id) => choose(id)} />{/if}
- {#if notice}<p class="feedback good" role="status">{notice}<button class="dismiss" aria-label="Dismiss message" onclick={() => { notice = ''; }}>×</button></p>{/if}
+ {#if notice}<p class="feedback good" role="status"><span>{notice}{#if notice === LIKED && likedPin} <button class="link-btn inline" onclick={() => { if (likedPin) openWhy(likedPin); }}>Tell it why you like it</button>{/if}</span><button class="dismiss" aria-label="Dismiss message" onclick={() => { notice = ''; }}>×</button></p>{/if}
 
  {#if boards.length}
   <form class="board-search" role="search" onsubmit={runSearch}>
@@ -557,6 +573,15 @@
   <div class="form-actions"><button type="button" class="btn" onclick={() => { reviewing = null; }}>Cancel</button><button class="btn primary" disabled={busy !== null}>Remove and teach curator</button></div>
  </form>
 </Modal>{/if}
+{#if liking}<Modal title="What do you like about it?" portal onClose={() => { if (busy === null) liking = null; }}>
+ <form class="board-form" onsubmit={(e) => { e.preventDefault(); if (liking) void review(liking, 'good', likeNote.trim().slice(0, 300)); }}>
+  <p class="muted">Your curator already looks for more like this picture. Saying why tells it what matters, so it doesn't guess. Pick every reason that applies.</p>
+  {#if liking.vision_seen}<div class="curator-belief"><p>Curator saw: {liking.vision_seen}</p></div>{/if}
+  <div class="reason-chips" role="group" aria-label="Common reasons">{#each LIKE_REASONS as reason}<button type="button" class="chip" class:on={reasonOn(likeNote, reason)} aria-pressed={reasonOn(likeNote, reason)} onclick={() => { likeNote = toggled(likeNote, reason); }}>{reason}</button>{/each}</div>
+  <label>Tell the curator (optional)<input maxlength="300" bind:value={likeNote} placeholder="e.g. The soft knit and muted tones" /></label>
+  <div class="form-actions"><button type="button" class="btn" onclick={() => { liking = null; }}>Cancel</button><button class="btn primary" disabled={busy !== null || !likeNote.trim()}>Teach curator</button></div>
+ </form>
+</Modal>{/if}
 {#if extOpen}<Modal portal size="lg" title="Add images from any website" onClose={() => { extOpen = false; }}>
  <div class="ext">
   <p class="muted">With the Hub extension, right-click any image on the web, choose <strong>The Hub</strong> and pick a board, or <strong>New board…</strong> to start one from that image. The image is saved here with a link to where you found it.</p>
@@ -606,7 +631,7 @@
 
 {#if preview}<PinViewer pin={preview} pins={found ?? pins} boardName={boards.find(b => b.id === preview?.board_id)?.name ?? ''} busy={busy === preview.id}
  onClose={() => { preview = null; moving = null; }} onNavigate={(p) => { preview = p; moving = null; }}
- onSave={(p) => pinAction(p, {saved: !p.saved})} onFits={(p) => review(p, p.feedback === 'good' ? '' : 'good')}
+ onSave={(p) => pinAction(p, {saved: !p.saved})} onFits={(p) => review(p, p.feedback === 'good' ? '' : 'good')} onWhy={openWhy} onTags={disputeTags}
  onNotFit={(p) => { reviewing = p; reviewNote = ''; }} onHide={(p) => remove(p)}
  onShare={session.isChild || !mine(boards.find(b => b.id === preview?.board_id)) ? undefined : (p) => { sharing = {board: {id: p.board_id, name: boards.find(b => b.id === p.board_id)?.name ?? ''}, pin: p}; }}>
  {#snippet actions()}
@@ -756,6 +781,7 @@
  .ref-pic :global(.placeholder){min-height:5.5rem;padding:.3rem}
  .ref-text{display:grid;gap:.15rem;font-size:.85rem}
  .ref-text p{margin:.2rem 0;font-size:.78rem;line-height:1.4}
+ .link-btn.inline{font-size:inherit;margin-left:.25rem}
  .link-btn{justify-self:start;border:0;background:none;padding:0;color:var(--mb-rose);font:inherit;font-size:.8rem;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
 
  .curator-activity{display:flex;gap:.8rem;align-items:flex-start;padding:.85rem 1.1rem;margin:1rem 0 1.4rem;border-radius:var(--r-md);background:var(--mb-card);border:1px solid var(--line)}

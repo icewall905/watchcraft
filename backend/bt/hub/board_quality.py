@@ -254,12 +254,31 @@ def source_rejects(s, bid: int, rows) -> set[int]:
     return out
 
 
+def disputed_tags(s, bid: int) -> str:
+    """Tags the owner said were wrong for a kept picture: how this owner reads those words differs from the judge."""
+    notes = s.exec(select(MoodPinNote).join(MoodPin, MoodPin.id == MoodPinNote.pin_id).where(MoodPin.board_id == bid)
+                   .order_by(MoodPinNote.created_at.desc()).limit(400)).all()
+    notes = [n for n in notes if n.disputed]
+    if not notes:
+        return ''
+    counts: dict[str, int] = {}
+    for n in notes:
+        for t in n.disputed:
+            counts[t.lower()] = counts.get(t.lower(), 0) + 1
+    common = ', '.join(f'"{t}" ({c}x)' for t, c in sorted(counts.items(), key=lambda kv: -kv[1])[:10])
+    recent = '\n'.join(f'- you tagged it {", ".join(chr(34) + t + chr(34) for t in n.disputed[:5])}; the owner says no — on: '
+                       f'{(n.seen or "untitled image")[:160]}' for n in notes[:RECENT_BAD])
+    return ('TAGS THE OWNER DISAGREED WITH (you misread these pictures; recalibrate what these words mean to this owner '
+            'and do not count on them when judging fit). Most disputed: ' + common + '\n' + recent)
+
+
 def lessons(s, bid: int, woven: str = '') -> str:
     """Owner reviews as judge guidance: counted reasons with examples of what was rejected, recent rejects and
     approvals described by what the picture shows (never the web title alone). Returned text is untrusted."""
     rows = s.exec(select(MoodFeedback).where(MoodFeedback.board_id == bid)
                   .order_by(MoodFeedback.created_at.desc()).limit(800)).all()
-    if not rows:
+    disputes = disputed_tags(s, bid)
+    if not rows and not disputes:
         return ('\n\n' + woven) if woven else ''
     details = _details(s, [f.pin_id for f in rows])
 
@@ -303,8 +322,12 @@ def lessons(s, bid: int, woven: str = '') -> str:
         parts.append('Recent owner notes on rejected pictures (the note is the reason, not the subject):\n' + '\n'.join(
             f'- "{" ".join(f.note.split())[:200]}" — on: {seen(f)}' for f in noted))
     if good:
+        # Owner's reasons for liking a picture name what to look for; the picture alone leaves the model guessing.
         parts.append(f'WHAT GOOD LOOKS LIKE: the owner approved {len(good)} pictures; most recent:\n' + '\n'.join(
-            f'- {seen(f)}' for f in good[:RECENT_GOOD]))
+            f'- {seen(f)}' + (f' — owner liked: "{" ".join(f.note.split())[:200]}"' if f.note.strip() else '')
+            for f in good[:RECENT_GOOD]))
+    if disputes:
+        parts.append(disputes)
     if covered:
         parts.append(f'{len(covered)} rejections of pictures from sources this board no longer uses are left out; '
                      'judge the remaining lessons on their own.')

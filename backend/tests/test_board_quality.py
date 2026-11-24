@@ -89,6 +89,42 @@ def test_lessons_group_reasons_and_use_vision_descriptions(client):
     assert bq.reasons_in('context') == []
 
 
+def test_owner_disputes_curator_tags_and_judge_learns(client):
+    b = make(client)
+    with session() as s:
+        pin = MoodPin(board_id=b['id'], profile_id=1, title='Kept', source_url='https://x.org/k', image_url='https://x.org/k.jpg')
+        s.add(pin)
+        s.flush()
+        s.add(MoodPinNote(pin_id=pin.id, seen='Beige knit sweater by a window', why='w', tags=['Warm', 'Cozy', 'Minimal']))
+        s.commit()
+        pin_id = pin.id
+    url = f"/api/hub/boards/{b['id']}/pins/{pin_id}"
+    page = client.get(f"/api/hub/boards/{b['id']}").json()
+    assert {p['id']: p['vision_tags'] for p in page['pins']}[pin_id] == ['Warm', 'Cozy', 'Minimal']
+    r = client.put(f'{url}/tags', json={'disputed': ['cozy', 'Not a tag']})
+    assert r.status_code == 200 and r.json()['pin']['vision_disputed'] == ['Cozy']
+    with session() as s:
+        text = mb.feedback_lessons(s, b['id'])
+    assert 'TAGS THE OWNER DISAGREED WITH' in text and '"cozy" (1x)' in text and 'Beige knit sweater' in text
+    assert client.put(f'{url}/tags', json={'disputed': []}).json()['pin']['vision_disputed'] == []
+    with session() as s:
+        assert 'DISAGREED' not in mb.feedback_lessons(s, b['id'])
+
+
+def test_lessons_quote_why_owner_liked_a_picture(client):
+    b = make(client)
+    with session() as s:
+        pin = MoodPin(board_id=b['id'], profile_id=1, title='Loved one', source_url='https://x.org/l',
+                      image_url='https://x.org/l.jpg')
+        s.add(pin)
+        s.flush()
+        s.add(MoodFeedback(pin_id=pin.id, board_id=b['id'], profile_id=1, verdict='good',
+                           note='Great colours + Natural light', title=pin.title))
+        s.commit()
+        text = mb.feedback_lessons(s, b['id'])
+    assert 'owner liked: "Great colours + Natural light"' in text
+
+
 def test_describe_pass_feeds_judge_and_survives_failure(monkeypatch):
     calls = []
     def call(system, user, schema, **kw):
@@ -102,7 +138,8 @@ def test_describe_pass_feeds_judge_and_survives_failure(monkeypatch):
         assert 'velvet flares 0' in user and 'no description' in user
         n = schema['properties']['verdicts']['maxItems']
         assert 'seen' in schema['properties']['verdicts']['items']['properties']  # one image lacks a description
-        return {'verdicts': [{'index': 0, 'fits': True, 'keep_likelihood': 90, 'violations': [], 'why': 'Velvet flares'},
+        return {'verdicts': [{'index': 0, 'fits': True, 'keep_likelihood': 90, 'violations': [], 'why': 'Velvet flares',
+                              'tags': ['Warm', 'Cozy', ' warm ', 'Velvet'] + [f'T{k}' for k in range(10)]},
                              {'index': 1, 'fits': True, 'keep_likelihood': 10, 'violations': [], 'why': 'Unsure'},
                              {'index': 2, 'fits': False, 'keep_likelihood': 5, 'violations': ['costume'], 'why': 'Hat'}][:n]}
     monkeypatch.setattr(mb.ai, '_call', call)
@@ -110,6 +147,7 @@ def test_describe_pass_feeds_judge_and_survives_failure(monkeypatch):
     kept = mb.select_candidates(rows, 'Style', 'Velvet')
     assert kept == [rows[0]]  # a 10 % keep-likelihood is too low for a strict board; fits=false is rejected
     assert rows[0]['_verdict']['seen'] == 'velvet flares 0'
+    assert rows[0]['_verdict']['tags'] == ['Warm', 'Cozy', 'Velvet'] + [f'T{k}' for k in range(7)]  # distinct, max 10
     assert rows[1]['_judgement']['fits'] is False and rows[2]['_judgement']['violations'] == ['costume']
     assert calls[0][0] == 'descriptions' and calls[1][0] == 'descriptions' and calls[2][0] == 'verdicts'
     balanced = [{**cand(i), '_captured': (png(i), 'image/png', 64, 48)} for i in range(3)]

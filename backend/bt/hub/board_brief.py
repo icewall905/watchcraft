@@ -22,7 +22,8 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix='/hub/boards', tags=['Mood boards'])
 SECTION = 'moodboards'
 BRIEF_MAX = 3000
-NIGHTLY_BOARDS = 12  # boards recompiled per profile per night
+NIGHTLY_BOARDS = 200  # safety cap on boards refined per profile per night
+NIGHTLY_GAP_S = 18 * 3600  # a brief refined this recently (by hand or an earlier pass tonight) is left alone
 REVIEW_SAMPLE = 30
 
 BRIEF_SCHEMA = {'type': 'object', 'properties': {
@@ -269,7 +270,7 @@ def _compile_input(s, board: MoodBoard, rows: list[dict], brief: MoodBoardBrief 
                      'scope': 'all boards' if st.get('board_id') is None else 'this board'} for st in rows],
         'reviews': {'fits': len([r for r in reviews if r['verdict'] == 'good']),
                     'not_a_fit': len([r for r in reviews if r['verdict'] == 'bad']),
-                    'recent_fits': [r['picture'][:200] for r in good],
+                    'recent_fits': [(r['picture'][:200] + (f' (owner liked: {r["note"][:150]})' if r['note'] else '')) for r in good],
                     'recent_not_a_fit': [(r['picture'][:200] + (f' (owner note: {r["note"][:150]})' if r['note'] else '')) for r in bad]},
         'current_brief': {'text': brief.text[:BRIEF_MAX] if brief else '', 'edited_by_owner': bool(brief and brief.edited_at)},
     }
@@ -342,21 +343,24 @@ def _absorb(s, pid: int, bid: int, known: dict[str, str], keep: set[str]) -> int
 
 
 def nightly(pid: int, abort=None) -> dict:
-    """Recompile briefs whose sources changed, and write a first brief for boards that have learned something."""
+    """"Refine the master prompt" for every board each night: reviews, notes and disputed tags change what the brief
+    should say even when no learned statement did. Boards with nothing to learn from yet, and briefs refined in the
+    last NIGHTLY_GAP_S (a manual refine, or the other nightly caller), are skipped."""
     from . import ai as hub_ai
     if not hub_ai.enabled():
         return {'skipped': 'no model'}
+    cutoff = time.time() - NIGHTLY_GAP_S
     with session() as s:
         _pk, sections = _sections(s, pid)
         due = []
         for board in s.exec(select(MoodBoard).where(MoodBoard.profile_id == pid).order_by(MoodBoard.id)).all():
-            rows = statements(sections, board.id)
             brief = s.get(MoodBoardBrief, board.id)
-            own = [st for st in rows if st.get('board_id') == board.id]
-            if brief and brief.text.strip():
-                if brief.source_hash != source_hash(board, rows):
-                    due.append(board.id)
-            elif own:
+            if brief and brief.compiled_at > cutoff:
+                continue
+            has_brief = bool(brief and brief.text.strip())
+            own = [st for st in statements(sections, board.id) if st.get('board_id') == board.id]
+            reviewed = s.exec(select(MoodFeedback.pin_id).where(MoodFeedback.board_id == board.id).limit(1)).first()
+            if has_brief or own or reviewed is not None:
                 due.append(board.id)
     done, failed = 0, 0
     for bid in due[:NIGHTLY_BOARDS]:

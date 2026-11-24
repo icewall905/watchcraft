@@ -110,6 +110,7 @@ def init_db() -> None:
             connection.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_crpost_link_key ON crpost (link_key)')
         for table, columns in (
                 ('crthread', (('search_terms', "JSON NOT NULL DEFAULT '[]'"),)),
+                ('moodpinnote', (('tags', "JSON NOT NULL DEFAULT '[]'"), ('disputed', "JSON NOT NULL DEFAULT '[]'"))),
                 ('crsource', (('exhausted_at', 'FLOAT NOT NULL DEFAULT 0'), ('status', "VARCHAR NOT NULL DEFAULT 'ok'"),
                               ('notes', "VARCHAR NOT NULL DEFAULT ''"), ('created_by_thread', 'INTEGER NOT NULL DEFAULT 0'),
                               ('hits', 'INTEGER NOT NULL DEFAULT 0'), ('kept', 'INTEGER NOT NULL DEFAULT 0'))),
