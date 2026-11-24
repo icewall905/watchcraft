@@ -78,3 +78,61 @@ def test_only_grown_ups_change_switches_and_input_is_checked(client, family):
     with session() as s:
         assert not parental.allowed(s.get(Profile, kid['id']), 'yt_search')
     assert client.get('/api/parental/features').json()[0]['key'] == 'screen'
+
+
+def test_children_cannot_browse_any_channel_queue_downloads_or_read_agent_activity(client, family, monkeypatch):
+    from bt import ytdl
+    from bt.models import AgentEvent, ProfileChannel
+    admin, kid = family
+    chan = {'id': 'UC' + 'a' * 22, 'name': 'x', 'handle': '', 'avatar': ''}
+    monkeypatch.setattr(ytdl, 'channel_videos', lambda *a, **k: (chan, []))
+    with session() as s:
+        s.add(AgentEvent(kind='accept', level='success', profile_id=admin['id'], message='ADULT-ONLY event'))
+        s.commit()
+    assert client.get('/api/channel/@anything', headers=h(kid)).status_code == 403
+    assert client.post('/api/downloads', json={'video_id': 'dQw4w9WgXcQ'}, headers=h(kid)).status_code == 403
+    assert client.get('/api/agent/events', headers=h(kid)).status_code == 403
+    assert client.get('/api/channel/@anything', headers=h(admin)).status_code == 200
+
+    # Subscriptions on: a subscribed channel opens, any other channel stays closed without live search.
+    client.put(f"/api/profiles/{kid['id']}/parental", headers=h(admin), json={'controls': {'subscriptions': True}})
+    assert client.get('/api/channel/@anything', headers=h(kid)).status_code == 403
+    with session() as s:
+        s.add(ProfileChannel(profile_id=kid['id'], channel_id=chan['id'], subscribed=True))
+        s.commit()
+    assert client.get('/api/channel/@anything', headers=h(kid)).status_code == 200
+
+    # Curators on: the child sees agent activity, but only its own.
+    client.put(f"/api/profiles/{kid['id']}/parental", headers=h(admin), json={'controls': {'curators': True}})
+    r = client.get('/api/agent/events', headers=h(kid))
+    assert r.status_code == 200 and 'ADULT-ONLY' not in r.text
+    assert 'ADULT-ONLY' in client.get('/api/agent/events', headers=h(admin)).text
+    assert parental.needed('GET', '/channel/UCx/avatar') is None
+    assert parental.needed('GET', '/downloads') is None
+    assert parental.needed('POST', '/agent/playing') is None
+
+
+def test_agent_scope_is_the_childs_own_and_fails_closed(client, family):
+    from starlette.requests import Request
+    from bt.api.agent import _viewer_ids
+    from bt.models import Candidate, Category
+    admin, kid = family
+
+    def req(pid):
+        return Request({'type': 'http', 'method': 'GET', 'path': '/api/agent/stream', 'query_string': b'',
+                        'headers': [(b'x-profile-id', str(pid).encode())], 'state': {}})
+
+    assert _viewer_ids(req(kid['id'])) == {kid['id']}
+    assert _viewer_ids(req(admin['id'])) == set()  # PIN-locked without an unlock cookie
+    assert _viewer_ids(req(999999)) == set()  # unknown profile
+
+    with session() as s:
+        cat = Category(name='Adult list', profile_id=admin['id'])
+        s.add(cat)
+        s.commit()
+        cand = Candidate(category_id=cat.id, video_id='dQw4w9WgXcQ')
+        s.add(cand)
+        s.commit()
+        cid = cand.id
+    client.put(f"/api/profiles/{kid['id']}/parental", headers=h(admin), json={'controls': {'curators': True}})
+    assert client.get(f'/api/agent/candidates/{cid}', headers=h(kid)).status_code == 404

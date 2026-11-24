@@ -85,3 +85,16 @@ def test_last_profile_can_have_a_pin_and_logout_clears_unlocks(client):
     client.post('/api/auth/logout')
     assert client.get('/api/categories').status_code == 403
     assert client.post(f'/api/profiles/{pid}/unlock', json={'pin': '4826'}).status_code == 200
+
+
+def test_parallel_wrong_pins_still_trip_the_lockout(client):
+    from concurrent.futures import ThreadPoolExecutor
+    admin = client.get('/api/profiles').json()[0]
+    assert client.patch(f"/api/profiles/{admin['id']}", json={'pin': '4826'}).status_code == 200
+
+    def guess(i):
+        return TestClient(app).post(f"/api/profiles/{admin['id']}/unlock", json={'pin': '%04d' % i}).status_code
+
+    with ThreadPoolExecutor(20) as ex:
+        res = list(ex.map(guess, range(1, 21)))
+    assert res.count(403) == 5 and res.count(429) == 15, res

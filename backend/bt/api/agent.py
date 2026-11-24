@@ -83,6 +83,21 @@ def agent_status(pid: int = Depends(profile_id), s: Session = Depends(get_sessio
     return status_payload(s, pid)
 
 
+def _viewer_ids(request: Request):
+    """Profiles whose agent events this request may see: a child sees only its own; otherwise the account's
+    profiles (None in open mode, the whole household). No usable active profile (unknown, PIN-locked) sees none.
+    Limit: in open mode an EventSource sends no X-Profile-Id, so the stream resolves to the first profile."""
+    own = own_profile_ids(request)
+    try:
+        raw = request.headers.get("x-profile-id")
+        pid = profile_id(request, int(raw) if raw and raw.isdigit() else None)
+    except HTTPException:
+        return set()
+    with session() as s:
+        p = s.get(Profile, pid)
+    return {pid} if p and p.role == "child" else own
+
+
 def _event_scope(s: Session, own):
     """Accounts mode: the account's own events plus system events tied to no profile or playlist."""
     if own is None:
@@ -97,7 +112,7 @@ def _event_scope(s: Session, own):
 def agent_events(request: Request, after_id: int = 0, limit: int = 200, category_id: Optional[int] = None,
                  s: Session = Depends(get_session)):
     q = select(AgentEvent).where(AgentEvent.id > after_id, AgentEvent.kind.notin_(['source_scout', 'hub_curator']),
-                                 _event_scope(s, own_profile_ids(request)))
+                                 _event_scope(s, _viewer_ids(request)))
     if category_id:
         q = q.where(AgentEvent.category_id == category_id)
     if after_id:
@@ -108,7 +123,7 @@ def agent_events(request: Request, after_id: int = 0, limit: int = 200, category
 @router.get("/agent/stream")
 async def agent_stream(request: Request, after_id: int = 0):
     """SSE: `event: state` (agent_state+control+budget, on change) and `event: agent` (each AgentEvent)."""
-    own = own_profile_ids(request)
+    own = _viewer_ids(request)
 
     def poll(last_id: int, with_state: bool):
         with session() as s:
@@ -187,7 +202,7 @@ def candidate_detail(cand_id: int, request: Request, s: Session = Depends(get_se
     from ..models import Video
     from .core import candidate_out
     c = s.get(Candidate, cand_id)
-    own = own_profile_ids(request)
+    own = _viewer_ids(request)
     cat = s.get(Category, c.category_id) if c else None
     if not c or (own is not None and (not cat or cat.profile_id not in own)):
         raise HTTPException(404, "not found")

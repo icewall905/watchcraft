@@ -3,6 +3,7 @@ import hashlib
 import hmac
 import re
 import secrets
+import threading
 import time
 
 from fastapi import HTTPException, Request, Response
@@ -13,6 +14,9 @@ from .config import SECRET
 from .models import Setting
 
 _signer = URLSafeSerializer(SECRET, salt='bt-profile-pin')
+# One unlock attempt at a time: the lockout check, the hash and the failure count must not interleave, or parallel
+# guesses all read failures=0 and the lockout never trips. Only the bt-api process serves unlocks.
+_unlock_lock = threading.Lock()
 
 
 def key(pid: int) -> str:
@@ -70,23 +74,25 @@ def unlock_cookie(s: Session, pid: int, response: Response):
 
 def unlock(s: Session, pid: int, pin: str, response: Response):
     validate(pin)
-    entry = record(s, pid)
-    if not entry:
-        return
-    value = dict(entry.value)
-    if value.get('retry_at', 0) > time.time():
-        raise HTTPException(429, 'Too many attempts. Wait 30 seconds and try again.')
-    digest = hashlib.pbkdf2_hmac('sha256', pin.encode(), bytes.fromhex(value['salt']), 260_000).hex()
-    if not hmac.compare_digest(digest, value['hash']):
-        value['failures'] = value.get('failures', 0) + 1
-        if value['failures'] >= 5:
-            value['failures'] = 0
-            value['retry_at'] = time.time() + 30
-        entry.value = value
+    with _unlock_lock:
+        s.rollback()  # end any read snapshot taken before the lock, so the failure count read below is current
+        entry = record(s, pid)
+        if not entry:
+            return
+        value = dict(entry.value)
+        if value.get('retry_at', 0) > time.time():
+            raise HTTPException(429, 'Too many attempts. Wait 30 seconds and try again.')
+        digest = hashlib.pbkdf2_hmac('sha256', pin.encode(), bytes.fromhex(value['salt']), 260_000).hex()
+        if not hmac.compare_digest(digest, value['hash']):
+            value['failures'] = value.get('failures', 0) + 1
+            if value['failures'] >= 5:
+                value['failures'] = 0
+                value['retry_at'] = time.time() + 30
+            entry.value = value
+            s.add(entry)
+            s.commit()
+            raise HTTPException(403, 'Incorrect PIN. Try again.')
+        entry.value = {**value, 'failures': 0, 'retry_at': 0}
         s.add(entry)
         s.commit()
-        raise HTTPException(403, 'Incorrect PIN. Try again.')
-    entry.value = {**value, 'failures': 0, 'retry_at': 0}
-    s.add(entry)
-    s.commit()
     unlock_cookie(s, pid, response)

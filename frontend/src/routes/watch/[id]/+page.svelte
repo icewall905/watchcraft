@@ -1044,7 +1044,9 @@
 							{#if detail.channel?.blocked}<span class="small" style="color:var(--bad)">Blocked</span>{/if}
 						</div>
 						{#if detail.channel?.id}
+							{#if session.allows('yt_search') || (detail.channel.subscribed && (session.allows('subscriptions') || session.allows('subscribe')))}
 							<a class="btn" href="/channel/{detail.channel.id}" use:focusable={{ group: 'i-chan', scroll: 'nearest' }}>Channel</a>
+							{/if}
 							{#if session.allows('subscribe')}
 							<button class="btn" class:primary={!detail.channel.subscribed} use:focusable={{ group: 'i-chan', autofocus: true, scroll: 'nearest', onSelect: () => channelAction({ subscribed: !detail!.channel!.subscribed }) }}>
 								{detail.channel.subscribed ? 'Unsubscribe' : 'Subscribe'}

@@ -15,7 +15,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, RedirectResponse, Response
 from sqlmodel import Session, select
 
-from .. import extras, streams, ytdl
+from .. import extras, parental, streams, ytdl
 from ..db import get_settings, log_yt_request, session
 from ..downloader.service import abs_path
 from ..models import Candidate, Category, Channel, Download, Profile, ProfileChannel, Video, WatchHistory, now
@@ -395,7 +395,19 @@ def _channel_out(s: Session, ch: dict, entries: list[dict], pid: int) -> dict:
             "videos": vids}
 
 
+def _child_channel_check(s: Session, channel_id: str, pid: int) -> None:
+    """A child without live search may only open channels the profile subscribes to."""
+    p = s.get(Profile, pid)
+    if not p or p.role != "child" or parental.allowed(p, "yt_search"):
+        return
+    sub = s.exec(select(ProfileChannel).where(ProfileChannel.profile_id == pid, ProfileChannel.channel_id == channel_id,
+                                              ProfileChannel.subscribed == True)).first()  # noqa: E712
+    if not sub:
+        raise HTTPException(403, "A grown-up has switched this off for this profile.")
+
+
 @router.get("/channel/{ref:path}")
 async def channel(ref: str, n: int = 30, pid: int = Depends(profile_id)):
     ch, entries = await _yt(ytdl.channel_videos, ref, max(1, min(n, 100)), "user")
+    await _db(_child_channel_check, ch.get("id") or "", pid)
     return await _db(_channel_out, ch, entries, pid)
