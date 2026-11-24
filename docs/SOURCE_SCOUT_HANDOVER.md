@@ -19,6 +19,23 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Commons badge/Subs, The Scroll, New playlist (`a5efe66`, `464593e`, `131753d`, `a3f4872`, 2026-11-24)
+
+- Four file-only rollouts on top of `2740136` (prod copies of every changed file matched `HEAD` before rsync):
+  - `a5efe66`: a Commons chip with a badge opens the New view (not saved as the mode); the visit clears its badge.
+  - `464593e`: Commons "Threads" are called "Subs" in labels and messages (API, code and DB names unchanged).
+  - `131753d`: The Scroll keeps the sidebar in desktop mode at widths over 760 px (phones and TV mode stay full
+    screen); unmuting carries over to later clips until muted, falling back to muted if the browser refuses sound.
+  - `a3f4872`: The Screen shows "＋ New playlist" under the hero once playlists exist (new test file
+    `frontend/tests/screen-new-playlist.spec.ts`).
+- All four application services run `watchcraft:release-a3f4872` (`sha256:89d28b983d02…`); public health 200,
+  Compose and environment hashes unchanged, no tracebacks after each rollout.
+- Code-only backups `20261124-playlistbtn-a3f4872` (`rollback.sh` → `release-131753d`, removes the new test) and
+  `20261124-scroll-131753d` (`rollback.sh` → `release-464593e`).
+- Pruned to those two: removed `boardtags-b0e5277` (incl. its online DB snapshot; nightly `daily-*` remain),
+  `newcount-2740136`, `badgenew-a5efe66`, `subs-464593e` and tags `release-b0e5277`, `release-6185807`,
+  `release-2740136`, `release-a5efe66`. `picks-before-6185807.json` moved to `20261124-playlistbtn-a3f4872/`.
+
 ## Deployment record — Commons new-count on unopened threads (`2740136`, 2026-11-24)
 
 - Deployed on top of prod's `b0e5277` (board tags; not in this checkout): only the 3 files of `56c728a..2740136`
