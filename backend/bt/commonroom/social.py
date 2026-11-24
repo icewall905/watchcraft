@@ -23,6 +23,23 @@ def link_key(url: str) -> str:
     return p._replace(netloc=host).geturl()[:1000]
 
 
+# Sites that republish Reddit posts under /r/<sub>/<id> (no comments of their own).
+REDDIT_MIRRORS = ('reddclips.com',)
+_REDDIT_PATH = re.compile(r'^/r/([A-Za-z0-9_]{2,21})/(?:comments/)?([a-z0-9]{4,12})(?:/|$)')
+
+
+def reddit_ref(url: str) -> tuple[str, str] | None:
+    """(subreddit, post id) for a Reddit post URL or a known Reddit mirror; None otherwise."""
+    p = urlsplit(url or '')
+    host = (p.hostname or '').lower().removeprefix('www.')
+    if host not in REDDIT_MIRRORS and host not in ('reddit.com', 'old.reddit.com', 'np.reddit.com'):
+        return None
+    if host.endswith('reddit.com') and '/comments/' not in p.path:
+        return None
+    m = _REDDIT_PATH.match(p.path)
+    return (m.group(1), m.group(2)) if m else None
+
+
 def _walk(tree: list, depth: int = 0):
     for c in tree or []:
         if isinstance(c, dict):

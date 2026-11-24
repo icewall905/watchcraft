@@ -668,13 +668,14 @@ def comments(post_id: int, refresh: bool = False, pid: int = Depends(require_roo
                 'platform': post.platform}
         post_comments = post.comments
         tree, kid, fetched = (cached.tree or [], cached.kid, cached.fetched_at) if cached else ([], None, 0.0)
-    adapter = ADAPTERS.get(data['platform'])
-    supported = bool(adapter and adapter.comments)
+    from .assets import comment_source, discussion_url
+    read = comment_source(data)
+    supported = read is not None
     now = time.time()
     live = supported and ((refresh and now - fetched > COMMENTS_REFRESH_S) or (not tree and now - fetched > COMMENTS_TTL))
     if live:
         try:
-            got = adapter.comments(data) or []
+            got = read(data) or []
         except Exception:  # noqa: BLE001 — comments are optional; the stored copy stays
             got = []
         with session() as s:
@@ -695,7 +696,9 @@ def comments(post_id: int, refresh: bool = False, pid: int = Depends(require_roo
                 row.kid = kid
                 s.add(row)
             s.commit()
-    return {'comments': kid if child else tree, 'url': data['url'], 'fetched_at': fetched, 'supported': supported}
+    elsewhere = '' if child else discussion_url(data)
+    return {'comments': kid if child else tree, 'url': elsewhere or data['url'], 'fetched_at': fetched,
+            'supported': supported, 'discussion': elsewhere}
 
 
 @router.get('/posts/{post_id}/media/{n}')

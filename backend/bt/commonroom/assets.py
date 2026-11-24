@@ -9,12 +9,13 @@ import logging
 import time
 from pathlib import Path
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlmodel import select
 
 from .. import curation
 from ..config import DATA_DIR
 from ..db import session
+from . import reddit_oauth, social
 from .adapters import ADAPTERS
 from .models import CRComments, CRPick, CRPost, CRThread
 
@@ -125,17 +126,37 @@ YOUNG_S = 2 * 86400
 REFETCH_WINDOW_S = 7 * 86400
 
 
+def comment_source(data: dict):
+    """The function that reads this post's comments, or None. A Reddit mirror's post is read on Reddit itself,
+    which only works with Reddit API keys (Reddit blocks anonymous reads from the server)."""
+    adapter = ADAPTERS.get(data.get('platform') or '')
+    if adapter and adapter.comments:
+        return adapter.comments
+    ref = social.reddit_ref(data.get('url') or '')
+    reddit = ADAPTERS.get('reddit')
+    if ref and reddit and reddit.comments and reddit_oauth.configured():
+        return lambda _data: reddit.comments({'external_id': ref[1]})
+    return None
+
+
+def discussion_url(data: dict) -> str:
+    """Where people talk about this post, when that is somewhere else than the post itself."""
+    ref = social.reddit_ref(data.get('url') or '')
+    return f'https://www.reddit.com/r/{ref[0]}/comments/{ref[1]}/' if ref else ''
+
+
 def _due(s, limit: int) -> list[CRPost]:
     """Picked posts whose comments were never fetched, then those whose stored tree is empty or behind."""
     now = time.time()
     picked = select(CRPick.post_id)
     talk = [k for k, a in ADAPTERS.items() if a.comments]
+    mirrors = [CRPost.url.like(f'https://{h}/r/%') for h in social.REDDIT_MIRRORS] if reddit_oauth.configured() else []
     rows = list(s.exec(select(CRPost).where(CRPost.id.in_(picked), CRPost.id.not_in(select(CRComments.post_id)))
                        .order_by(CRPost.id.desc()).limit(limit)).all())
     if len(rows) < limit:
         last = func.max(CRComments.checked_at, CRComments.fetched_at)
         stale = s.exec(select(CRPost).join(CRComments, CRComments.post_id == CRPost.id).where(
-            CRPost.id.in_(picked), CRPost.platform.in_(talk), CRPost.comments > 0,
+            CRPost.id.in_(picked), or_(CRPost.platform.in_(talk) & (CRPost.comments > 0), *mirrors),
             CRPost.published_at >= now - REFETCH_WINDOW_S,
             ((CRPost.published_at >= now - YOUNG_S) & (last < now - REFETCH_YOUNG_S)) | (last < now - REFETCH_S),
             (func.coalesce(func.json_array_length(CRComments.tree), 0) == 0) | (CRPost.comments > CRComments.count))
@@ -156,14 +177,14 @@ def sweep_comments(limit: int = COMMENTS_PER_TICK) -> int:
                  'meta': p.meta or {}, 'platform': p.platform, 'comments': p.comments} for p in rows]
     done = 0
     for data in todo:
-        adapter = ADAPTERS.get(data['platform'])
+        read = comment_source(data)
         if done >= limit:
             break
         tree = []
-        if adapter and adapter.comments:
+        if read:
             done += 1
             try:
-                tree = adapter.comments(data) or []
+                tree = read(data) or []
             except Exception as e:  # noqa: BLE001 — retried later with backoff, and on open
                 log.debug('Common Room comments for %s failed: %s', data['url'], e)
         kid_tree = None

@@ -96,6 +96,18 @@ test('a source without comments says so instead of loading forever', async ({ pa
 	await expect(page.getByRole('button', { name: /Refresh/ })).toHaveCount(0);
 });
 
+test('a Reddit mirror post points to its Reddit thread and how to read it here', async ({ page }) => {
+	await setup(page);
+	const thread = 'https://www.reddit.com/r/interestingasfuck/comments/1y2uzek/';
+	await page.route('**/api/hub/commonroom/posts/*/comments*', (route) => route.fulfill({ json: { comments: [], url: thread, fetched_at: 0, supported: false, discussion: thread } }));
+	await freshPage(page, '/common-room');
+	await page.getByRole('link', { name: 'Fresh Amiga find' }).click();
+	await expect(page.getByText('The conversation is on reddit.com.')).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Read the thread ↗' })).toHaveAttribute('href', thread);
+	await expect(page.getByRole('link', { name: 'Discussion on reddit.com ↗' })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Settings → Common Room' })).toHaveAttribute('href', '/settings?tab=commonroom');
+});
+
 test('app back closes an open post and keeps the list in place', async ({ page }) => {
 	await setup(page);
 	await freshPage(page, '/common-room');

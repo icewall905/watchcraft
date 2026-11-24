@@ -288,3 +288,52 @@ def test_comment_endpoint_serves_stored_tree_and_refreshes_on_request(client, mo
     assert calls == [1]  # refresh is not honoured again within a couple of minutes
     monkeypatch.setattr(crapi.ADAPTERS['fake'], 'comments', None)
     assert client.get(f'/api/hub/commonroom/posts/{a}/comments').json()['supported'] is False
+
+
+# ---------- scraped pages and Reddit mirrors
+
+MIRROR = 'https://reddclips.com/r/interestingasfuck/1y2uzek'
+MIRROR_HTML = (b'<html><head><meta property="og:description" content="Scrabble by u/Marasitamer12 in '
+               b'r/interestingasfuck. 16,406 upvotes. Browse more on Reddclips."/><meta property="og:image" '
+               b'content="https://preview.redd.it/s8tfz6vy973i1.png?width=320&amp;crop=smart"/></head></html>')
+
+
+def test_reddit_ref_knows_reddit_and_mirrors_only():
+    assert social.reddit_ref(MIRROR) == ('interestingasfuck', '1y2uzek')
+    assert social.reddit_ref('https://old.reddit.com/r/homelab/comments/abc123/title/') == ('homelab', 'abc123')
+    assert social.reddit_ref('https://www.reddit.com/r/homelab/') is None
+    assert social.reddit_ref('https://blog.example/r/x/abcd12') is None
+
+
+def test_scraped_pages_get_their_own_picture_and_mirrors_their_reddit_numbers(client, monkeypatch):
+    from bt.commonroom import previews
+    from bt.commonroom.models import CRPost
+    t = thread(client)
+    mirror = _pick(t, MIRROR, platform='web', author='')
+    logo = _pick(t, 'https://site.example/story', platform='web')
+    pages = {MIRROR: MIRROR_HTML,
+             'https://site.example/story': b'<meta property="og:image" content="/static/logo.png">'}
+    monkeypatch.setattr(previews.curation, 'fetch', lambda url, **k: pages[url])
+    assert previews.sweep() == 1
+    with session() as s:
+        m, l = s.get(CRPost, mirror), s.get(CRPost, logo)
+        assert m.media[0]['url'] == 'https://i.redd.it/s8tfz6vy973i1.png'  # full size, not the 320 px preview
+        assert (m.author, m.score, m.meta['subreddit']) == ('Marasitamer12', 16406, 'interestingasfuck')
+        assert l.media == [] and l.meta['preview_checked']  # a site logo is not a picture of the post
+
+
+def test_mirror_comments_come_from_reddit_only_with_api_keys(client, monkeypatch):
+    from bt.commonroom import assets, reddit_oauth
+    t = thread(client)
+    pid = _pick(t, MIRROR, platform='web')
+    monkeypatch.setattr(reddit_oauth, 'configured', lambda: False)
+    r = client.get(f'/api/hub/commonroom/posts/{pid}/comments').json()
+    assert r['supported'] is False
+    assert r['discussion'] == r['url'] == 'https://www.reddit.com/r/interestingasfuck/comments/1y2uzek/'
+    asked = []
+    monkeypatch.setattr(reddit_oauth, 'configured', lambda: True)
+    from types import SimpleNamespace
+    monkeypatch.setitem(assets.ADAPTERS, 'reddit', SimpleNamespace(comments=lambda data: asked.append(
+        data['external_id']) or [{'id': 'r', 'author': 'a', 'body': 'wow', 'score': 9, 'children': []}]))
+    r = client.get(f'/api/hub/commonroom/posts/{pid}/comments', params={'refresh': 1}).json()
+    assert r['supported'] is True and r['comments'][0]['body'] == 'wow' and asked == ['1y2uzek']
