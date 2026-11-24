@@ -19,6 +19,20 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Commons judges and summarises whole articles (`b31e0f8`, 2026-11-24)
+
+- Deployed `e4519d3..b31e0f8`: website/feed posts that bring only a teaser get their full article and the article's
+  own headline before judging (`bt/commonroom/articles.py`); the judge reads up to 3,000 characters; kept posts get a
+  2-4 sentence summary of the complete article (own page or linked article, `hub_summaries` role) shown on cards and
+  in the post view, with the full article on demand. Child profiles keep the kid-checked teaser (`meta.teaser`).
+  No schema change.
+- All four application services run `watchcraft:release-b31e0f8` (`sha256:f60b9db3f743…`) with zero restarts;
+  public health 200, Compose and environment hashes unchanged, no tracebacks. 9 summaries in the first two minutes;
+  the reported safety-coffin post (8786) now has its real headline, the full 7,164-character article and a summary.
+- Code-only backup at `/root/compose/watchcraft-backups/20261124-articles-b31e0f8` (`rollback.sh` → `release-e4519d3`).
+- Pruned to the newest two deploy backups (`articles-b31e0f8`, `videofix-e4519d3`): removed `20261124-talk-8bde810`
+  and the `release-66b833f` tag. `rating-replay-out.jsonl` moved to `20261124-videofix-e4519d3/`.
+
 ## Deployment record — Commons video fixes and re-curation (`e4519d3`, 2026-11-24)
 
 - Deployed `8bde810..e4519d3`: a v.redd.it playlist Reddit refuses (403) falls back to the plain CMAF/DASH video
