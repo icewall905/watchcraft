@@ -19,7 +19,7 @@ test('hub sections render without errors', async ({ page, request }) => {
 	await freshPage(page, '/discover');
 	for (const r of [...ROUTES, `/curators/${cur.id}`, `/knowledge/${topic.id}`, `/library?collection=${col.id}`]) {
 		await page.goto(r);
-		await expect(page.locator('main h1, main h2').first()).toBeVisible();
+		await expect(page.locator('main h1:visible, main h2:visible').first()).toBeVisible();  // Settings keeps a hidden phone heading first
 		await expect(page.locator('main')).not.toContainText('Internal Server Error');
 	}
 	await expect(page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'Knitting' })).toBeVisible(); // pinned collection
