@@ -19,6 +19,19 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Commons badges, comment refetch, fun/kind re-judge (`86429e8`, 2026-11-24)
+
+- Deployed `f98b183..86429e8` (backend only), after reviewing profile H's live Commons feed: hot/rising need real
+  engagement (no badge for downvoted posts) and cut-offs use posts published in the last two days; comments of
+  picked posts are refetched when empty or grown (2 h backoff); last week's picks without fun/kind are re-judged one
+  batch a minute (score and status untouched). Additive schema: `crcomments.count`, `crcomments.checked_at`.
+- All four application services run `watchcraft:release-86429e8` (`sha256:fd167729b581…`) with zero restarts;
+  public health 200, Compose and environment hashes unchanged, no tracebacks after rollout.
+- Code-only backup at `/root/compose/watchcraft-backups/20261124-livefix-86429e8`: previous source, `rollback.sh`
+  (back to `release-f98b183`); DB snapshot from the same day in `20261124-commons-f98b183`.
+- Pruned to the newest two deploy backups (`livefix-86429e8`, `commons-f98b183`): removed `20261122-sidebar-3240775`
+  and the `release-9067770` tag. `rating-replay-out.jsonl` moved to `20261124-commons-f98b183/`.
+
 ## Deployment record — The Commons fun redesign (`f98b183`, 2026-11-24)
 
 - Deployed `3240775..f98b183`: the judge scores fun and kind and lets delightful near-misses in as wildcards;
