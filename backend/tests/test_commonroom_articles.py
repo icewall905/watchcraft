@@ -1,6 +1,8 @@
 """Whole articles behind Commons posts: judged in full, real headlines, summaries of the complete text."""
 import time
 
+from sqlmodel import select
+
 from test_curation import client  # noqa: F401
 from test_commonroom import fake_platform, run_all, thread  # noqa: F401
 from test_commonroom_fun import _feed, _pick
@@ -101,3 +103,52 @@ def test_curation_run_completes_teasers_before_judging(client, monkeypatch):
         s.commit()
     run_all()
     assert judged and 'Paragraph 25' in judged[0] and 'The Coffin That Waved a Flag' in judged[0]
+
+
+def test_headline_only_picks_are_scrapped_and_the_rest_captured(client, monkeypatch):
+    from bt.commonroom.models import CRCandidate, CRPick
+    t = thread(client)
+    bait = _pick(t, 'https://forum.example/t/3', link='https://paywall.example/story')       # page has no article
+    saved = _pick(t, 'https://forum.example/t/4', link='https://paywall.example/other', saved=True)
+    tweet = _pick(t, 'https://forum.example/t/5', link='https://x.com/someone/status/1')     # cannot be read
+    pic = _pick(t, 'https://forum.example/t/6')
+    toot = _pick(t, 'https://forum.example/t/7')
+    selfpost = _pick(t, 'https://forum.example/t/8')
+    with session() as s:
+        for pid, body, media in ((pic, '', [{'kind': 'image', 'url': 'https://i.example/a.png'}]),
+                                 (toot, 'A short post that says everything it has to say, ' * 4, []),
+                                 (tweet, '', [{'kind': 'image', 'url': 'https://i.example/b.png', 'from': 'link'}])):
+            p = s.get(CRPost, pid)
+            p.body, p.media = body, media
+            s.add(p)
+        s.add(CRCandidate(thread_id=t['id'], post_id=bait, status='kept'))
+        s.commit()
+    monkeypatch.setattr(articles.curation, 'fetch', lambda url, **k: b'<html><body><p>Subscribe to read</p></body></html>')
+    monkeypatch.setattr(articles.ai, 'enabled', lambda: False)
+    articles.sweep()
+    with session() as s:
+        left = {k.post_id for k in s.exec(select(CRPick)).all()}
+        assert left == {saved, pic, toot}  # saved picks stay; a link thumbnail alone is not content
+        assert s.exec(select(CRCandidate).where(CRCandidate.post_id == bait)).one().status == 'rejected'
+        assert s.get(CRPost, bait).meta['scrapped'] and s.get(CRPost, pic).meta['captured']
+        assert s.get(CRPost, selfpost).meta['scrapped']
+    assert articles.sweep() == 0  # every pick decided once
+
+
+def test_unreachable_pages_are_retried_before_scrapping(client, monkeypatch):
+    from bt.commonroom.models import CRPick
+    t = thread(client)
+    pid = _pick(t, 'https://forum.example/t/9', link='https://slow.example/story')
+
+    def boom(url, **k):
+        raise TimeoutError
+    monkeypatch.setattr(articles.curation, 'fetch', boom)
+    articles.sweep()
+    articles.sweep()
+    with session() as s:
+        assert s.exec(select(CRPick).where(CRPick.post_id == pid)).first()  # still there after two failures
+    monkeypatch.setattr(articles.curation, 'fetch', lambda url, **k: ARTICLE)
+    articles.sweep()
+    with session() as s:
+        assert s.exec(select(CRPick).where(CRPick.post_id == pid)).first()
+        assert 'Paragraph 39' in s.get(CRPost, pid).meta['article']['text']
