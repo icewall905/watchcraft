@@ -537,3 +537,30 @@ test('disabled transcription explains blocking and still permits skipping', asyn
  await page.getByRole('button', { name: 'Skip to next clip' }).click();
  await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
 });
+
+test('sound stays on for the next clip once unmuted', async ({ page }) => {
+ await fixture(page);
+ await freshPage(page, '/shorts');
+ await page.getByRole('button', { name: /Science clips/ }).click();
+ const video = page.locator('video');
+ await expect(video).toHaveAttribute('src', '/api/video/short000001/file');
+ await page.getByRole('button', { name: 'Unmute', exact: true }).click();
+ await page.keyboard.press('ArrowDown');
+ await expect(video).toHaveAttribute('src', '/api/video/short000002/file');
+ await expect(page.getByRole('button', { name: 'Mute', exact: true })).toBeVisible();
+ expect(await video.evaluate((v: HTMLVideoElement) => v.muted)).toBe(false);
+});
+
+test('desktop keeps the sidebar beside The Scroll; phones stay full screen', async ({ page }) => {
+ await page.setViewportSize({ width: 1280, height: 800 });
+ await fixture(page);
+ await freshPage(page, '/shorts');
+ const toggle = page.getByRole('button', { name: /(Collapse|Expand) sidebar/ });
+ await expect(toggle).toBeVisible();
+ const feed = await page.getByRole('region', { name: 'Video feed' }).boundingBox();
+ const side = await page.locator('.sidebar').boundingBox();
+ expect(feed!.x).toBeGreaterThanOrEqual(side!.x + side!.width - 1);
+ await page.screenshot({ path: '/tmp/watchcraft-scroll-desktop.png' });
+ await page.setViewportSize({ width: 390, height: 844 });
+ expect((await page.getByRole('region', { name: 'Video feed' }).boundingBox())!.x).toBe(0);
+});

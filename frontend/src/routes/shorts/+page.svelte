@@ -8,6 +8,7 @@
 	import { api, profileHeaders } from '$lib/api';
 	import { parseReelCaptions, type ReelCue } from '$lib/reelCaptions';
 	import { session } from '$lib/stores/session.svelte';
+	import { deviceMode } from '$lib/stores/deviceMode.svelte';
 	import { toast } from '$lib/stores/toast.svelte';
 	import { focusable, nav } from '$lib/nav';
 	import { errMsg } from '$lib/hub/ui';
@@ -236,7 +237,7 @@
   stop();
   const request = generation, item = items[i], profile = session.version, profileId = session.profileId, epoch = selectionEpoch;
   const valid = () => alive && request === generation && profile === session.version && profileId === session.profileId && epoch === selectionEpoch && current?.video.id === item?.video.id;
-  needsTap = false; playbackError = ''; progress = 0; duration = 0; muted = true; paused = true;
+  needsTap = false; playbackError = ''; progress = 0; duration = 0; paused = true;  // `muted` carries over: sound stays on until muted
   captionMessage = 'Preparing subtitles…';
   await tick();
   if (!valid() || !item || !videoEl) return;
@@ -246,9 +247,14 @@
   let requested = false;
   function start(parsed: ReelCue[]) {
    cues = parsed; captionState = 'ready'; activeId = item.video.id;
-   el.muted = true; el.src = api.fileUrl(item.video.id); el.load();
+   el.muted = muted; el.src = api.fileUrl(item.video.id); el.load();
    updateCaption(0);
-   el.play().catch(() => { if (valid()) needsTap = true; });
+   el.play().catch(() => {
+    if (!valid()) return;
+    if (el.muted) { needsTap = true; return; }
+    muted = el.muted = true;  // the browser refused sound without a tap: play muted rather than stop
+    el.play().catch(() => { if (valid()) needsTap = true; });
+   });
    readAhead(i);
   }
   async function check() {
@@ -493,7 +499,7 @@
 	});
 </script>
 <svelte:head><title>The Scroll · The Hub</title></svelte:head>
-<div class="feed" class:playing={!!selected} role="region" aria-label="Video feed" ontouchstart={onTouchStart} ontouchend={onTouchEnd} ontouchcancel={()=>touchStart=null} onpointerdown={()=>{if(showControls) keepControlsVisible();}}>
+<div class="feed" class:playing={!!selected} class:beside={deviceMode.mode === 'desktop'} role="region" aria-label="Video feed" ontouchstart={onTouchStart} ontouchend={onTouchEnd} ontouchcancel={()=>touchStart=null} onpointerdown={()=>{if(showControls) keepControlsVisible();}}>
 	{#if !current || captionState !== 'ready' || needsTap || playbackError || showControls}
 	<nav class="shorts-navigation" aria-label="Feeds navigation">
 		<a class="btn" href="/" use:focusable>← Back to The Hub</a>
@@ -584,6 +590,7 @@
 	{/if}
 </div>
 <style>
+	@media (min-width: 761px) { .feed.beside { left: var(--sidebar-width, 15rem); } }  /* desktop keeps the sidebar menu in view; phones stay full screen */
 	.feed { --shorts-toolbar-height: calc(4.5rem + env(safe-area-inset-top, 0px)); position: fixed; inset: 0; z-index: 140; display: grid; place-items: center; overflow: hidden; touch-action: none; color: var(--text);
 		background: radial-gradient(120% 80% at 50% -10%, rgba(157, 134, 255, .22), transparent 60%), radial-gradient(90% 60% at 100% 110%, rgba(255, 181, 71, .1), transparent 60%), var(--bg-0); }
 	.feed.playing { background: #000; }

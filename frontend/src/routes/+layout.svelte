@@ -109,7 +109,7 @@
 
 	// Calm editorial styling (tokens.css [data-area='hub']) applies only to non-video routes.
 	const hubArea = $derived(isHubPath(page.url.pathname) || ['/settings', '/stats', '/agent', '/welcome'].some((p) => page.url.pathname === p || page.url.pathname.startsWith(p + '/')));
-	const fullscreen = $derived(page.url.pathname.startsWith('/watch/') || page.url.pathname.startsWith('/jellyfin/play/') || page.url.pathname === '/shorts');
+	const fullscreen = $derived(page.url.pathname.startsWith('/watch/') || page.url.pathname.startsWith('/jellyfin/play/') || (page.url.pathname === '/shorts' && deviceMode.mode !== 'desktop'));  // desktop keeps the sidebar beside The Scroll
 </script>
 
 {#if publicShare}
@@ -122,7 +122,7 @@
 	{#if !session.profile?.pin_locked}
 		{#if !fullscreen}<Sidebar /><MobileNav />{/if}
 		<div class:desktop={!fullscreen && deviceMode.mode === 'desktop'}>
-		{#if !fullscreen}<TopBar />{:else if page.url.pathname.startsWith('/watch/')}<PlaybackPicker floating />{:else if page.url.pathname.startsWith('/jellyfin/play/')}<PlaybackPicker trigger={false} />{/if}
+		{#if !fullscreen}{#if page.url.pathname !== '/shorts'}<TopBar />{/if}{:else if page.url.pathname.startsWith('/watch/')}<PlaybackPicker floating />{:else if page.url.pathname.startsWith('/jellyfin/play/')}<PlaybackPicker trigger={false} />{/if}
 		<main class:fullscreen data-area={hubArea ? 'hub' : undefined}>
 			{#if !session.canOpen(page.url.pathname)}
 				{#if session.isChild && !isHubPath(page.url.pathname)}
