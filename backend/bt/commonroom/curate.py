@@ -10,6 +10,7 @@ import logging
 import math
 import time
 from typing import NamedTuple
+from urllib.parse import urlsplit
 
 from sqlalchemy import or_
 from sqlmodel import select
@@ -35,6 +36,11 @@ EMBED_BATCH = 32
 KINDS = ('humor', 'showcase', 'question', 'discussion', 'news', 'deepdive', 'oddity')
 WILD_FUN = 80          # a delightful post may be this fun ...
 WILD_SLACK = 20        # ... and this far under the threshold and still be kept as a wildcard
+TALK_BONUS_MAX = 8     # a post people are already discussing gets up to this much help over the keep line
+# Aggregator-like sources that bring listings, not conversations: kept only once someone replies to them.
+AGGREGATOR_DOMAINS = ('awesome.ecosyste.ms', 'ossalt.com', 'rss.feedspot.com')
+AGGREGATOR_URL_BITS = ('infiniterss.php',)   # feed-title scrapers that wrap someone else's headline
+PROMO_AUTHORS = ('radwebhosting',)
 SCHEMA = {'type': 'object', 'properties': {'scores': {'type': 'array', 'items': {'type': 'object', 'properties': {
     'n': {'type': 'integer'}, 'score': {'type': 'integer', 'minimum': 0, 'maximum': 100},
     'fun': {'type': 'integer', 'minimum': 0, 'maximum': 100}, 'kind': {'type': 'string', 'enum': list(KINDS)},
@@ -49,9 +55,34 @@ class Verdict(NamedTuple):
     kind: str = ''
 
 
-def keeps(v: Verdict, threshold: int, wild: bool) -> tuple[bool, bool]:
-    """(kept, wildcard). Wildcards are loosely on-topic posts kept because they are a delight."""
-    if v.score >= threshold:
+def talk_bonus(comments: int) -> int:
+    """Modest help over the keep line for posts with a conversation: 1 reply +2, 3 +4, 15+ +8."""
+    return min(TALK_BONUS_MAX, round(2 * math.log2(1 + max(0, comments or 0))))
+
+
+def _on(host: str, domains) -> bool:
+    host = (host or '').lower()
+    return any(host == d or host.endswith('.' + d) for d in domains)
+
+
+def aggregator(p) -> bool:
+    """A directory, feed-title scraper or promo account: listings and ads rather than posts people talk about."""
+    urls = f'{p.url} {p.link_url}'.lower()
+    hosts = [p.domain] + [urlsplit(u).hostname or '' for u in (p.url, p.link_url) if u]
+    author = (p.author or '').lower()
+    return any(_on(h, AGGREGATOR_DOMAINS) for h in hosts) or any(b in urls for b in AGGREGATOR_URL_BITS) \
+        or any(a in author for a in PROMO_AUTHORS)
+
+
+def capped(p) -> bool:
+    """Aggregator-like posts nobody engaged with never reach the judge."""
+    return aggregator(p) and not (p.comments or 0) and (p.score or 0) <= 1
+
+
+def keeps(v: Verdict, threshold: int, wild: bool, comments: int = 0) -> tuple[bool, bool]:
+    """(kept, wildcard). Wildcards are loosely on-topic posts kept because they are a delight. Posts with
+    replies get a small bonus (talk_bonus) over the line."""
+    if v.score + talk_bonus(comments) >= threshold:
         return True, False
     if wild and v.fun >= WILD_FUN and v.score >= threshold - WILD_SLACK:
         return True, True
@@ -160,7 +191,7 @@ def _rank(thread: CRThread, posts: list[CRPost]) -> list[tuple[CRPost, float]]:
     for p in posts:
         fresh = math.exp(-max(0.0, now - p.published_at) / (7 * 86400))
         # Feeds and scraped pages carry no votes: give them a neutral middle instead of zero.
-        buzz = 0.35 if not p.score and not p.comments else min(1.0, math.log1p(max(0, p.score) + 2 * max(0, p.comments)) / 8)
+        buzz = 0.35 if not p.score and not p.comments else min(1.0, math.log1p(max(0, p.score) + 3 * max(0, p.comments)) / 8)
         base = 0.6 * fresh + 0.4 * buzz
         v = vecs.get(p.id)
         if v and goal:
@@ -183,9 +214,12 @@ def _system(thread: CRThread) -> str:
                  'High: clearly on-topic and worth opening: substantive, novel, useful, funny or delightful. '
                  'Low: off-topic, reposts, rage bait, self-promotion or ads, help requests nobody else would '
                  'learn from, or only loosely related. A short post is fine when it is genuinely funny, clever '
-                 'or charming. '
+                 'or charming. Score 25 or less: SEO filler, promo and hosting/affiliate posts, "top N tools" or '
+                 '"alternatives to X" listings, directory or awesome-list entries, and stubs that only repeat a '
+                 'headline or link to somewhere else with nothing of their own. '
                  '"fun" is 0-100 for how entertaining it is to come across: funny, surprising, playful, weird, '
                  'a lively discussion or a cool thing someone made; dry news and plain questions score low. '
+                 '"comments", when given, is how many replies the post already has: a real conversation adds fun. '
                  '"kind" is the one that fits best: humor (jokes, memes, banter), showcase (something someone '
                  'built or made), question (asking for help or opinions), discussion (debate, hot take, '
                  'open conversation), news (announcement or report), deepdive (long article, analysis, '
@@ -199,6 +233,7 @@ def _system(thread: CRThread) -> str:
 def _judge(thread: CRThread, lessons: str, batch: list[CRPost]) -> dict[int, Verdict] | None:
     items = [{'type': 'post', 'title': p.title, 'publisher': f'{p.platform} {p.community}'.strip(),
               'summary': p.body[:600], 'url': p.link_url or p.url,
+              **({'comments': p.comments} if getattr(p, 'comments', 0) else {}),
               **({'body': p.body[:2000]} if len(p.body) > 600 else {})} for p in batch]
     user = ai._data(items)
     if lessons:
@@ -295,7 +330,7 @@ def run(thread: CRThread, lease: str) -> dict:
     for p in posts:
         if (p.nsfw and not show_nsfw) or ((child or thread.child_friendly) and p.spoiler) \
                 or _blocked(p, blocks) or (words and _avoided(p, words)) \
-                or (languages and p.language and p.language not in languages):
+                or (languages and p.language and p.language not in languages) or capped(p):
             decided[p.id] = ('rejected', no, False)
         else:
             keep.append(p)
@@ -303,7 +338,7 @@ def run(thread: CRThread, lease: str) -> dict:
     for p in cross:
         if not ((p.nsfw and not show_nsfw) or ((child or thread.child_friendly) and p.spoiler)
                 or _blocked(p, blocks) or (words and _avoided(p, words))
-                or (languages and p.language and p.language not in languages)):
+                or (languages and p.language and p.language not in languages) or capped(p)):
             keep.append(p)
     # Borrowed posts only reach the judge when embeddings rank them close; the rest wait unjudged.
     ranked = [(p, rel) for p, rel in _rank(thread, keep) if p.id not in borrowed or rel >= CROSS_MIN]
@@ -320,7 +355,8 @@ def run(thread: CRThread, lease: str) -> dict:
                 missed.update(p.id for p, _ in ranked[start:start + BATCH] if p.id not in got)
     else:
         scores = {p.id: Verdict(int(round(rel * 100)), '') for p, rel in ranked}
-    kept = [pid for pid, v in scores.items() if keeps(v, threshold, wild)[0]]
+    talk = {p.id: p.comments for p in posts + cross}
+    kept = [pid for pid, v in scores.items() if keeps(v, threshold, wild, talk.get(pid, 0))[0]]
     if child or thread.child_friendly:
         allowed, failed = kids.check_posts(kept)
         for pid in kept:
@@ -329,7 +365,7 @@ def run(thread: CRThread, lease: str) -> dict:
             elif pid not in allowed:
                 scores.pop(pid)  # the safety model gave no answer: judge again next run
     for pid, v in scores.items():
-        ok, wildcard = keeps(v, threshold, wild)
+        ok, wildcard = keeps(v, threshold, wild, talk.get(pid, 0))
         decided[pid] = ('kept' if ok else 'rejected', v, wildcard)
     _settle(thread, lease, decided, {p.id: p for p in posts + cross}, missed)
     return {'pool': len(posts), 'judged': len(scores), 'kept': sum(1 for d in decided.values() if d[0] == 'kept')}

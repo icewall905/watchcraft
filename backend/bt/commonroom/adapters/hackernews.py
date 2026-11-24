@@ -89,4 +89,4 @@ def comments(post: dict) -> list[dict]:
 
 
 ADAPTER = Adapter(key='hackernews', label='Hacker News', parse=parse, fetch=fetch, sorts=('new', 'hot'),
-                  search=search, comments=comments, example='front', discoverable=False)
+                  search=search, comments=comments, example='front, ask or show')

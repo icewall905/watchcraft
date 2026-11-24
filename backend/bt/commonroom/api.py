@@ -1,4 +1,5 @@
 """Common Room HTTP API under /api/hub/commonroom. Profile-scoped; child profiles see kid-checked posts only."""
+import math
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -438,6 +439,12 @@ TODAY_WINDOW_S = 36 * 3600
 HOT_WINDOW_S = 3 * 86400
 TOP_WINDOW_S = 7 * 86400
 POOL_MAX = 400
+TOP_MIN_SCORE = 5      # Top shows posts people engaged with: a reply, or at least this many votes
+
+
+def _talk(o: dict) -> float:
+    """A modest nudge for posts with a conversation (about +3 at 1 reply, +10 at ~25)."""
+    return min(10.0, 3 * math.log1p(max(0, o.get('comments') or 0)))
 
 
 def _heat(o: dict, cuts: dict) -> float:
@@ -464,9 +471,9 @@ def _ranked(s, pid: int, q, mode: str, child: bool, verdicts_for) -> list[dict]:
                      child)
     cuts = _velocity_cuts(s)
     if mode == 'hot':
-        key = lambda o: _heat(o, cuts) * 50 + o['relevance'] * 0.3 + o['fun'] * 0.2  # noqa: E731
-    else:  # today: the best of the day, with a nudge for what is buzzing and for fun
-        key = lambda o: o['relevance'] + o['fun'] * 0.5 + _heat(o, cuts) * 15  # noqa: E731
+        key = lambda o: _heat(o, cuts) * 50 + o['relevance'] * 0.3 + o['fun'] * 0.2 + _talk(o)  # noqa: E731
+    else:  # today: the best of the day, with a nudge for what is buzzing, being discussed and fun
+        key = lambda o: o['relevance'] + o['fun'] * 0.5 + _heat(o, cuts) * 15 + _talk(o)  # noqa: E731
     out.sort(key=key, reverse=True)
     return out
 
@@ -516,7 +523,8 @@ def feed(thread: str = 'all', section: str = '', mode: str = '', kind: str = '',
         if mode == 'saved':
             q = q.where(CRPick.saved == True).order_by(CRPick.id.desc())  # noqa: E712
         elif mode == 'top':
-            q = q.where(CRPick.published_at >= visit_at - TOP_WINDOW_S) \
+            q = q.where(CRPick.published_at >= visit_at - TOP_WINDOW_S,
+                        (CRPost.comments > 0) | (CRPost.score >= TOP_MIN_SCORE)) \
                 .order_by((CRPick.score + CRPick.fun * 0.5).desc(), CRPick.id.desc())
         elif section == 'new':
             q = q.where(CRPick.picked_at > edge, CRPick.picked_at <= visit_at) \

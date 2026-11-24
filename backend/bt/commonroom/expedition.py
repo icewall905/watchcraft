@@ -51,6 +51,10 @@ LOG_LIMIT = 60
 WEEKLY_S = 7 * 86400
 DRY_GAP_S = 12 * 3600         # a dry feed asks for a new expedition at most this often
 KID_SKIP = ('reddit',)        # platforms a child thread never follows
+# Platforms where people reply to each other. Most blog, DEV and Mastodon-tag posts arrive with no replies, and
+# Reddit blocks the production host, so discovery tries these first and offers Lemmy twins of subreddits.
+DISCUSSION = ('lemmy', 'mbin', 'hackernews', 'lobsters', 'tildes', 'discourse', 'bluesky', 'stackexchange', 'reddit')
+TWIN_INSTANCE = 'lemmy.world'  # where a subreddit's Lemmy twin is first looked for
 SKIP_HOSTS = ('facebook.com', 'instagram.com', 'x.com', 'twitter.com', 'tiktok.com', 'youtube.com', 'youtu.be',
               'linkedin.com', 'pinterest.', 'amazon.', 'ebay.', 'etsy.com', 'wikipedia.org', 'quora.com',
               'play.google.com', 'apps.apple.com')
@@ -193,14 +197,24 @@ def _named(t: CRThread, child: bool, platforms: list) -> tuple[list[tuple[str, s
             'required': ['platform', 'locator']}},
         'search_terms': {'type': 'array', 'maxItems': 20, 'items': {'type': 'string', 'maxLength': 80}}},
         'required': ['sources', 'search_terms']}
-    listing = '\n'.join(f'- {a.key}: {a.label}, locator like {a.example!r}' for a in platforms)
+    ordered = sorted(platforms, key=lambda a: a.key not in DISCUSSION)
+    listing = '\n'.join(f'- {a.key}: {a.label}, locator like {a.example!r}'
+                        + (' (discussion)' if a.key in DISCUSSION else '') for a in ordered)
     try:
         out = ai._call(
             'You find lasting places where people keep posting and discussing things a reader cares about: '
             'active communities, forums, Q&A sites, tags, and blogs or newsletters with an RSS feed (use the "rss" '
             'platform with the full https feed URL, e.g. https://name.substack.com/feed or https://medium.com/feed/tag/x). '
             'Suggest up to 30 real, active places across the platforms below, most valuable first, mixing platforms; '
-            'prefer focused, high-quality ones over huge generic ones. Use exactly the locator format shown. Only name '
+            'prefer focused, high-quality ones over huge generic ones. The feed lives on conversation: at least two '
+            'thirds should be discussion platforms (marked below) where posts get replies: Lemmy and Mbin/PieFed '
+            'communities, Hacker News, Lobsters tags, Tildes groups, Discourse forums, Bluesky accounts. Reddit is '
+            'often unreachable, so for every subreddit you would suggest also name its Lemmy or Mbin equivalent '
+            '(PieFed communities work as Lemmy ones via a Lemmy instance; e.g. for an "interesting things" thread: '
+            'interestingasfuck@lemmy.world, damnthatsinteresting@lemmy.world, til@lemmy.world). Blogs, DEV tags and '
+            'Mastodon hashtags rarely have replies: use them only for what discussion places lack, and never name '
+            'directories, awesome-list mirrors, feed aggregators or vendor promo accounts. Use exactly the locator '
+            'format shown. Only name '
             'places you are confident exist today. search_terms: 10-20 short, specific subtopics, names and keywords '
             'that find fresh posts for this reader (not just the interests repeated).'
             + (' The reader is a child: only places suitable for 10-12 year olds.' if child else ''),
@@ -212,8 +226,35 @@ def _named(t: CRThread, child: bool, platforms: list) -> tuple[list[tuple[str, s
     keys = {a.key for a in platforms}
     sources = [(str(r.get('platform')), str(r.get('locator') or '')[:300]) for r in (out.get('sources') or [])
                if isinstance(r, dict) and r.get('platform') in keys and r.get('locator')]
+    sources = favour_discussion(with_lemmy_twins(sources, 'lemmy' in keys))
     terms = [str(x).strip()[:80] for x in (out.get('search_terms') or []) if isinstance(x, str) and x.strip()]
     return sources, list(dict.fromkeys(terms))[:20]
+
+
+_SUB = re.compile(r'^(?:https?://(?:www\.|old\.)?reddit\.com)?/?(?:r/)?([A-Za-z0-9_]{2,21})/?$')
+
+
+def with_lemmy_twins(sources: list[tuple[str, str]], lemmy: bool = True) -> list[tuple[str, str]]:
+    """Follow each subreddit with a guess at its Lemmy twin (same name on lemmy.world); the fetch and the sample
+    judge drop guesses that do not exist or do not fit."""
+    if not lemmy:
+        return sources
+    have = {(p, loc.lower()) for p, loc in sources}
+    out = []
+    for platform, loc in sources:
+        out.append((platform, loc))
+        m = _SUB.match(loc.strip()) if platform == 'reddit' else None
+        if m:
+            twin = ('lemmy', f'{m.group(1).lower()}@{TWIN_INSTANCE}')
+            if twin not in have:
+                have.add(twin)
+                out.append(twin)
+    return out
+
+
+def favour_discussion(sources: list) -> list:
+    """Discussion platforms first, keeping the model's order within each group."""
+    return sorted(sources, key=lambda r: (r[0] if isinstance(r, tuple) else r.platform) not in DISCUSSION)
 
 
 def _queries(t: CRThread, child: bool, known_hosts: list[str], tried: list[str] | None = None) -> list[str]:
@@ -224,10 +265,11 @@ def _queries(t: CRThread, child: bool, known_hosts: list[str], tried: list[str] 
     try:
         out = ai._call(
             'You research where on the web a reader can keep finding fresh, worthwhile posts and articles on their '
-            'interests. Write up to six varied web-search queries that find SOURCES, not single articles: forums and '
-            'discussion boards (Discourse, phpBB, Lemmy), communities, Q&A sites, blogs and newsletters (Substack, '
-            'Ghost, Medium), magazines with an article listing, link aggregators and curated lists of the best blogs. '
-            'Vary the angle: forum, community, blog, newsletter, "best blogs about", "awesome list". '
+            'interests. Write up to six varied web-search queries that find SOURCES, not single articles, favouring '
+            'places where people reply to each other: forums and discussion boards (Discourse, phpBB, Flarum), Lemmy, '
+            'Mbin and PieFed communities, Q&A sites, then blogs and newsletters (Substack, Ghost, Medium) with '
+            'comments. Skip directories, "alternatives to" sites and feed aggregators. Vary the angle: forum, '
+            'community, lemmy, discussion board, blog, newsletter. '
             + ('Earlier attempts failed: try clearly different kinds of sites and more specific niche terms. ' if tried else '')
             + ('The reader is a child: only family-friendly, educational sources. ' if child else '')
             + 'Return queries only.',
@@ -241,8 +283,9 @@ def _queries(t: CRThread, child: bool, known_hosts: list[str], tried: list[str] 
         log.info('Common Room source query planning failed: %s', str(exc)[:200])
     topic = (re.split(r'[,;\n]+', t.interests or t.name)[0].strip() or t.name)[:80]
     if tried:
-        return [f'{topic} discussion board', f'{topic} newsletter substack', f'awesome {topic} blogs list']
-    return [f'{topic} forum', f'best {topic} blogs', f'{topic} community'] + ([] if child else [f'{topic} subreddit'])
+        return [f'{topic} discussion board', f'{topic} lemmy community', f'{topic} newsletter substack']
+    return [f'{topic} forum', f'{topic} community discussion', f'best {topic} blogs'] \
+        + ([] if child else [f'{topic} lemmy'])
 
 
 def _triage(t: CRThread, rows: list[dict]) -> list[dict]:
@@ -273,7 +316,7 @@ def _library_fits(t: CRThread, sources: list[CRSource]) -> list[int]:
     schema = {'type': 'object', 'properties': {'pick': {'type': 'array', 'maxItems': 8, 'items': {'type': 'integer'}}},
               'required': ['pick']}
     listing = [{'id': x.id, 'platform': x.platform, 'name': describe(x.platform, x.locator, x.label),
-                'notes': x.notes[:200]} for x in sources[:40]]
+                'notes': x.notes[:200]} for x in favour_discussion(sources)[:40]]
     try:
         out = ai._call('These sources are followed by other threads. Pick the ids of the ones likely to have many '
                        'posts for this thread too. Return ids only.',
@@ -396,7 +439,8 @@ def hunt_sources(hid, lease) -> int:
     def judge(posts: list[dict]) -> tuple[int, int] | None:
         sample = [SimpleNamespace(id=i, title=p.get('title') or '', platform=p.get('platform') or '',
                                   community=p.get('community') or '', body=p.get('body') or '',
-                                  link_url=p.get('link_url') or '', url=p.get('url') or '')
+                                  link_url=p.get('link_url') or '', url=p.get('url') or '',
+                                  comments=int(p.get('comments') or 0))
                   for i, p in enumerate(posts[:SAMPLE])]
         got = curate._judge(thread, '', sample)
         if not got:
