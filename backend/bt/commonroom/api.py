@@ -90,7 +90,10 @@ def _media(post: CRPost, child: bool) -> list[dict]:
         if m.get('kind') != 'video' and gone(m.get('url') or ''):
             continue
         if m.get('kind') == 'video':
+            local = bool(m.get('url')) and assets.video_path(m['url']).is_file()
             out.append({'kind': 'video', 'url': m.get('url') or '',
+                        'src': f'/api/hub/commonroom/posts/{post.id}/video/{n}' if local else '',
+                        'w': m.get('w') or 0, 'h': m.get('h') or 0,
                         'poster': f'/api/hub/commonroom/posts/{post.id}/media/{n}?size=thumb' if m.get('poster') else ''})
         else:
             u = f'/api/hub/commonroom/posts/{post.id}/media/{n}'
@@ -736,6 +739,25 @@ def media(post_id: int, n: int, size: str = '', pid: int = Depends(require_room)
     if not mime:
         raise HTTPException(404, 'That picture is not a supported image.')
     return Response(data, media_type=mime, headers=headers)
+
+
+@router.get('/posts/{post_id}/video/{n}')
+def video(post_id: int, n: int, pid: int = Depends(require_room)):
+    """The post's saved video (byte ranges for seeking). Only copies made when the post was picked; never fetched
+    here, and never for child profiles (videos are not kid-checked)."""
+    from fastapi.responses import FileResponse
+    from . import assets
+    with session() as s:
+        post, _, _ = _post_for(s, pid, post_id)
+        if _child(s, pid):
+            raise HTTPException(404, 'No video for this post.')
+        items = post.media or []
+        m = items[n] if 0 <= n < len(items) else {}
+    f = assets.video_path(m['url']) if m.get('kind') == 'video' and m.get('url') else None
+    if not f or not f.is_file():
+        raise HTTPException(404, 'No video for this post.')
+    return FileResponse(f, media_type='video/mp4', headers={'Cache-Control': 'private, max-age=86400',
+                                                            'X-Content-Type-Options': 'nosniff'})
 
 
 # ---------- languages

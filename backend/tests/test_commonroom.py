@@ -435,7 +435,7 @@ def test_curated_posts_work_offline_pictures_thumbnails_and_comments(client, mon
     thread(client)
     run_all()
     monkeypatch.setattr(assets.curation, 'fetch', lambda *a, **k: big)
-    assert assets.sweep() == {'images': 1, 'comments': 1}
+    assert assets.sweep() == {'images': 1, 'comments': 1, 'videos': 0}
 
     def offline(*a, **k):
         raise OSError('no network')

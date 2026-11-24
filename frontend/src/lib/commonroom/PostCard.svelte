@@ -7,6 +7,7 @@
 	import TopReplies from './cards/TopReplies.svelte';
 	import ElsewhereChips from './cards/ElsewhereChips.svelte';
 	import CardBadges from './cards/CardBadges.svelte';
+	import InlineVideo from './cards/InlineVideo.svelte';
 	import { ago, compact, platformOf } from './util';
 	let { post, onOpen, onGone }: { post: Post; onOpen: (p: Post) => void; onGone?: (p: Post) => void } = $props();
 	const plat = $derived(platformOf(post.platform));
@@ -53,7 +54,9 @@
 			{#if post.excerpt}<p class="excerpt">{post.excerpt}</p>{/if}
 			{#if first && !broken}
 				<div class="media">
-					{#if first.kind === 'video'}
+					{#if first.kind === 'video' && first.src}
+						<InlineVideo m={first} href={post.link_url || post.url} onOpen={open} />
+					{:else if first.kind === 'video'}
 						<a class="vid" href={post.link_url || post.url} target="_blank" rel="noopener noreferrer" aria-label="Play video (opens original)">
 							{#if first.poster}<img use:authSrc={first.poster} alt="" loading="lazy" onerror={() => { broken = true; }} />{:else}<span class="noposter"></span>{/if}<span class="playbtn">▶</span>
 						</a>

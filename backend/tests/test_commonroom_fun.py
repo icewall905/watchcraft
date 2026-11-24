@@ -337,3 +337,99 @@ def test_mirror_comments_come_from_reddit_only_with_api_keys(client, monkeypatch
         data['external_id']) or [{'id': 'r', 'author': 'a', 'body': 'wow', 'score': 9, 'children': []}]))
     r = client.get(f'/api/hub/commonroom/posts/{pid}/comments', params={'refresh': 1}).json()
     assert r['supported'] is True and r['comments'][0]['body'] == 'wow' and asked == ['1y2uzek']
+
+
+# ---------- videos from scraped pages
+
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+import pytest  # noqa: E402
+
+HLS = 'https://v.redd.it/abc123/HLSPlaylist.m3u8?a=1%2C2&v=1&f=sd'
+VIDEO_HTML = ('<meta property="og:video" content="https://reddclips.com/embed/r/x/1abcd"/>'
+              '<meta property="og:video:type" content="text/html"/>'
+              f'<meta property="og:video" content="{HLS.replace("&", "&amp;")}"/>'
+              '<meta property="og:video:width" content="720"/><meta property="og:video:height" content="1280"/>'
+              '<meta property="og:image" content="https://preview.redd.it/poster.jpg?width=320"/>').encode()
+
+
+def test_mirror_video_found_skipping_the_embed_page(client, monkeypatch):
+    from bt.commonroom import previews
+    from bt.commonroom.models import CRPost
+    t = thread(client)
+    pid = _pick(t, 'https://reddclips.com/r/x/1abcd', platform='web')
+    monkeypatch.setattr(previews.curation, 'fetch', lambda url, **k: VIDEO_HTML)
+    previews.sweep()
+    with session() as s:
+        [m] = s.get(CRPost, pid).media
+    assert (m['kind'], m['url'], m['poster'], m['w'], m['h']) == ('video', HLS, 'https://i.redd.it/poster.jpg', 720, 1280)
+
+
+def test_mirror_checked_before_videos_gets_one_more_look(client, monkeypatch):
+    from bt.commonroom import previews
+    from bt.commonroom.models import CRPost
+    t = thread(client)
+    pid = _pick(t, 'https://reddclips.com/r/x/1abcd', platform='web')
+    with session() as s:
+        p = s.get(CRPost, pid)
+        p.media = [{'kind': 'image', 'url': 'https://i.redd.it/a.png', 'poster': '', 'w': 0, 'h': 0}]
+        p.meta = {'preview_checked': 1}
+        s.add(p)
+        s.commit()
+    monkeypatch.setattr(previews.curation, 'fetch', lambda url, **k: VIDEO_HTML)
+    previews.sweep()
+    with session() as s:
+        p = s.get(CRPost, pid)
+        assert p.media[0]['kind'] == 'video' and p.meta['video_checked']
+    assert previews._due(10) == []
+
+
+def test_only_known_video_hosts_and_files_are_saveable():
+    from bt.commonroom.assets import video_saveable
+    assert video_saveable(HLS) and video_saveable('https://files.example/clip.mp4')
+    assert not video_saveable('https://evil.example/list.m3u8')        # ffmpeg never follows unknown playlists
+    assert not video_saveable('http://files.example/clip.mp4')
+    assert not video_saveable('https://reddclips.com/embed/r/x/1abcd')
+
+
+@pytest.mark.skipif(not shutil.which('ffmpeg'), reason='needs ffmpeg')
+def test_saved_video_is_served_with_ranges_and_listed_on_the_card(client, monkeypatch, tmp_path):
+    from bt.commonroom import assets
+    from bt.commonroom.models import CRPost
+    clip = tmp_path / 'c.mp4'
+    subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=10', '-f', 'lavfi',
+                    '-i', 'sine=frequency=440', '-t', '2', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-c:a', 'aac',
+                    '-shortest', str(clip)], check=True, capture_output=True)
+    url = 'https://files.example/clip.mp4'
+    monkeypatch.setattr(assets, 'MEDIA_DIR', tmp_path / 'media')
+    monkeypatch.setattr(assets.curation, 'fetch', lambda u, **k: clip.read_bytes())
+    t = thread(client)
+    pid = _pick(t, 'https://site.example/v', platform='web')
+    with session() as s:
+        p = s.get(CRPost, pid)
+        p.media = [{'kind': 'video', 'url': url, 'poster': '', 'w': 320, 'h': 240}]
+        s.add(p)
+        s.commit()
+    assert assets.sweep_videos() == 1 and assets.video_path(url).is_file()
+    assert assets.sweep_videos() == 0
+    [card] = _feed(client)
+    assert card['media'][0]['src'] == f'/api/hub/commonroom/posts/{pid}/video/0'
+    r = client.get(card['media'][0]['src'], headers={'Range': 'bytes=0-99'})
+    assert r.status_code == 206 and len(r.content) == 100 and r.headers['content-type'] == 'video/mp4'
+
+
+def test_a_video_that_cannot_be_saved_is_not_retried(client, monkeypatch):
+    from bt.commonroom import assets
+    from bt.commonroom.models import CRPost
+    t = thread(client)
+    pid = _pick(t, 'https://site.example/v2', platform='web')
+    with session() as s:
+        p = s.get(CRPost, pid)
+        p.media = [{'kind': 'video', 'url': HLS, 'poster': '', 'w': 0, 'h': 0}]
+        s.add(p)
+        s.commit()
+    calls = []
+    monkeypatch.setattr(assets, 'save_video', lambda u: calls.append(u) or False)
+    assert assets.sweep_videos() == 0 and assets.sweep_videos() == 0 and calls == [HLS]
+    assert _feed(client)[0]['media'][0]['src'] == ''

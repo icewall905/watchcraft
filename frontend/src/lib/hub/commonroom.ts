@@ -9,7 +9,7 @@ export interface PlatformInfo { key: string; label: string; example: string; sor
 export interface ThreadSource { id: number; source_id: number; platform: string; locator: string; label: string; origin: 'user' | 'ai'; enabled: boolean; error: string; last_ok: number | null; status?: 'ok' | 'broken' | 'disabled'; fit?: number; tried?: number; kept?: number; hits?: number; url?: string }
 export interface SourceHunt { id: number; status: 'queued' | 'running' | 'done' | 'failed'; reason: string; found: number; error: string; log: {at: number; step: string; message: string}[]; created_at: number; finished_at: number }
 export interface ThreadSources { sources: ThreadSource[]; hunt: SourceHunt | null }
-export interface Media { kind: 'image' | 'video'; url: string; thumb?: string; poster?: string }
+export interface Media { kind: 'image' | 'video'; url: string; thumb?: string; poster?: string; src?: string; w?: number; h?: number }
 export type Verdict = 'up' | 'down' | '';
 export type Kind = 'humor' | 'showcase' | 'question' | 'discussion' | 'news' | 'deepdive' | 'oddity';
 export type Mode = 'today' | 'hot' | 'new' | 'top' | 'saved';

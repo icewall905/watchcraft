@@ -5,9 +5,15 @@ WebP preview, and fetches its comments once. The media route serves from disk; t
 Files are keyed by the picture URL, so a fuller picture found later gets its own file. Network I/O never runs
 inside a DB transaction. Unreferenced files are removed by ``gc`` from the hourly prune."""
 import hashlib
+import json
 import logging
+import re
+import shutil
+import subprocess
+import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from sqlalchemy import func, or_
 from sqlmodel import select
@@ -203,8 +209,108 @@ def sweep_comments(limit: int = COMMENTS_PER_TICK) -> int:
     return done
 
 
+# ---------- videos: a local mp4 of each picked post's video, so it plays in the Commons without the source page
+
+VIDEO_MAX_BYTES = 60_000_000
+VIDEO_MAX_S = 300
+VIDEO_MAX_SIDE = 720          # the smaller side: 720p, portrait or landscape
+VIDEOS_PER_TICK = 1
+HLS_HOSTS = ('v.redd.it', 'video.bsky.app')   # streaming playlists ffmpeg may read (segments stay on that host)
+FILE_EXT = re.compile(r'\.(?:mp4|webm|mov|m4v)$', re.I)
+
+
+def video_saveable(url: str) -> bool:
+    p = urlsplit(url or '')
+    host = (p.hostname or '').lower()
+    return p.scheme == 'https' and ((host in HLS_HOSTS and p.path.endswith('.m3u8')) or bool(FILE_EXT.search(p.path)))
+
+
+def video_path(url: str) -> Path:
+    return path(url, 'mp4')
+
+
+def _probe(src: str, *extra: str) -> dict:
+    r = subprocess.run(['ffprobe', '-v', 'error', *extra, '-show_entries',
+                        'format=duration:stream=index,codec_type,width,height,bit_rate', '-of', 'json', src],
+                       capture_output=True, timeout=60, check=True)
+    return json.loads(r.stdout or b'{}')
+
+
+def save_video(url: str) -> bool:
+    """Fetch one post video into a faststart mp4 (best version up to 720p, with sound). False when it is too
+    long, too large or not a video. HLS playlists only from known video hosts; files through the safe fetch."""
+    if not video_saveable(url):
+        return False
+    host = (urlsplit(url).hostname or '').lower()
+    out = video_path(url)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix='wc-crvideo-') as tmp:
+        if host in HLS_HOSTS and urlsplit(url).path.endswith('.m3u8'):
+            src, net = url, ['-protocol_whitelist', 'https,tls,tcp,crypto,hls,http']
+        else:
+            data = curation.fetch(url, kinds=('video/mp4', 'video/webm', 'video/quicktime', 'application/octet-stream'),
+                                  limit=VIDEO_MAX_BYTES)
+            src, net = f'{tmp}/in', ['-protocol_whitelist', 'file']
+            Path(src).write_bytes(data)
+        info = _probe(src, *net)
+        duration = float((info.get('format') or {}).get('duration') or 0)
+        if not 0 < duration <= VIDEO_MAX_S:
+            return False
+        streams = info.get('streams') or []
+        videos = [st for st in streams if st.get('codec_type') == 'video' and st.get('width') and st.get('height')]
+        if not videos:
+            return False
+        fit = [st for st in videos if min(st['width'], st['height']) <= VIDEO_MAX_SIDE] or videos
+        best = max(fit, key=lambda st: (min(st['width'], st['height']), int(st.get('bit_rate') or 0)))
+        audio = [st for st in streams if st.get('codec_type') == 'audio']
+        audio = max(audio, key=lambda st: int(st.get('bit_rate') or 0)) if audio else None
+        tmp_out = f'{tmp}/out.mp4'
+        cmd = ['ffmpeg', '-v', 'error', '-y', *net, '-i', src, '-map', f'0:{best["index"]}']
+        if audio:
+            cmd += ['-map', f'0:{audio["index"]}']
+        cmd += ['-c', 'copy', '-movflags', '+faststart', '-fs', str(VIDEO_MAX_BYTES), tmp_out]
+        subprocess.run(cmd, capture_output=True, timeout=VIDEO_MAX_S, check=True)
+        done = Path(tmp_out)
+        if not done.is_file() or done.stat().st_size < 1000 or done.stat().st_size >= VIDEO_MAX_BYTES:
+            return False
+        part = out.with_suffix('.part')
+        shutil.move(str(done), part)
+        part.replace(out)
+    return True
+
+
+def sweep_videos(limit: int = VIDEOS_PER_TICK) -> int:
+    saved, tried = 0, 0
+    for pid, media, meta in _picked_posts():
+        failed = set((meta or {}).get('video_failed') or [])
+        for m in (media or [])[:MAX_PER_POST]:
+            url = m.get('url') or ''
+            if m.get('kind') != 'video' or url in failed or not video_saveable(url) or video_path(url).is_file():
+                continue
+            if tried >= limit:
+                return saved
+            tried += 1
+            try:
+                ok = save_video(url)
+            except Exception as e:  # noqa: BLE001 — a video we cannot save stays a link to the original
+                log.debug('Common Room video %s failed: %s', url, e)
+                ok = False
+            if ok:
+                saved += 1
+                continue
+            with session() as s:
+                s.connection().exec_driver_sql('BEGIN IMMEDIATE')
+                post = s.get(CRPost, pid)
+                if post:
+                    post.meta = {**(post.meta or {}),
+                                 'video_failed': [*((post.meta or {}).get('video_failed') or []), url][-MAX_PER_POST:]}
+                    s.add(post)
+                s.commit()
+    return saved
+
+
 def sweep() -> dict:
-    return {'images': sweep_images(), 'comments': sweep_comments()}
+    return {'images': sweep_images(), 'comments': sweep_comments(), 'videos': sweep_videos()}
 
 
 def gc(min_age_s: int = 3600) -> int:
@@ -213,6 +319,8 @@ def gc(min_age_s: int = 3600) -> int:
         return 0
     with session() as s:
         keep = {_key(u) for media in s.exec(select(CRPost.media)).all() for u in _urls(media)}
+        keep |= {_key(m['url']) for media in s.exec(select(CRPost.media)).all() for m in media or []
+                 if m.get('kind') == 'video' and m.get('url')}
     now, removed = time.time(), 0
     for f in MEDIA_DIR.glob('*/*'):
         if f.stem not in keep and now - f.stat().st_mtime > min_age_s:

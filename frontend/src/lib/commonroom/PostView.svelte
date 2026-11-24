@@ -6,6 +6,7 @@
 	import CommentTree from './CommentTree.svelte';
 	import CardBadges from './cards/CardBadges.svelte';
 	import ElsewhereChips from './cards/ElsewhereChips.svelte';
+	import InlineVideo from './cards/InlineVideo.svelte';
 	import { ago, compact, platformOf } from './util';
 	let { post, onClose, onGone }: { post: Post; onClose: () => void; onGone?: (p: Post) => void } = $props();
 	let detail = $state<PostDetail | null>(null), comments = $state<Comment[] | null>(null), cUrl = $state(''), err = $state(''), cErr = $state(''), cLoading = $state(false);
@@ -54,7 +55,9 @@
 				{#if pics.length > 1}<span class="count">{shown + 1} / {pics.length}</span>{/if}
 				{#each post.media as m, i (i)}
 					{#if !broken[i] && (pics.length === 1 || post.media.indexOf(pics[shown]) === i)}
-						{#if m.kind === 'video'}
+						{#if m.kind === 'video' && m.src}
+							<div class="frame"><InlineVideo {m} href={post.link_url || post.url} full /></div>
+						{:else if m.kind === 'video'}
 							<a class="frame vid" href={post.link_url || post.url} target="_blank" rel="noopener noreferrer">
 								{#if m.poster}<img use:authSrc={m.poster} alt="" onerror={() => { broken[i] = true; }} />{/if}<span class="playbtn">▶ Watch at source</span>
 							</a>

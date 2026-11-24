@@ -1,5 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 import { freshPage } from './helpers';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // The Commons redesign: Today/Hot/New/Top/Saved views, kind chips, card shapes, top replies, "also on" chips.
 const thread = { id: 1, name: 'Retro computing', interests: 'Amiga', instructions: '', avoid: '', strictness: 'balanced', child_friendly: false, enabled: true, last_run: 1700000000, last_status: 'ok', error: '', new_count: 0, pick_count: 6, source_count: 2 };
@@ -72,4 +76,23 @@ test('the new controls fit a phone without sideways page scroll', async ({ page 
 	await freshPage(page, '/common-room');
 	await expect(page.locator('.card').first()).toBeVisible();
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test('a saved post video plays on the card and with controls in the post view', async ({ page }) => {
+	await setup(page);
+	const dir = mkdtempSync(join(tmpdir(), 'crv-'));
+	execFileSync('ffmpeg', ['-v', 'error', '-f', 'lavfi', '-i', 'testsrc=size=160x284:rate=10', '-t', '1', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', join(dir, 'v.mp4')]);
+	await page.route('**/api/hub/commonroom/posts/107/video/0', (route) => route.fulfill({ body: readFileSync(join(dir, 'v.mp4')), contentType: 'video/mp4' }));
+	const vid = post(7, 'Therapy dog timelapse', { kind: 'oddity', media: [{ kind: 'video', url: 'https://v.redd.it/x/HLSPlaylist.m3u8', src: '/api/hub/commonroom/posts/107/video/0', poster: '', w: 720, h: 1280 }] });
+	await page.route('**/api/hub/commonroom/feed*', (route) => route.fulfill({ json: { posts: [vid], next_cursor: '', has_more: false, building: false, mode: 'today', end: true } }));
+	await page.route('**/api/hub/commonroom/posts/107', (route) => route.fulfill({ json: { ...vid, body: '' } }));
+	await page.route('**/api/hub/commonroom/posts/107/comments*', (route) => route.fulfill({ json: { comments: [], url: vid.url, fetched_at: 0, supported: false } }));
+	await freshPage(page, '/common-room');
+	const card = page.locator('[data-variant="media"] video');
+	await expect(card).toHaveAttribute('src', '/api/hub/commonroom/posts/107/video/0');
+	expect(await card.evaluate((v: HTMLVideoElement) => v.muted && v.loop && !v.controls)).toBe(true);
+	await page.getByRole('link', { name: 'Therapy dog timelapse' }).click();
+	const full = page.getByRole('dialog').locator('video');
+	await expect(full).toHaveAttribute('src', '/api/hub/commonroom/posts/107/video/0');
+	expect(await full.evaluate((v: HTMLVideoElement) => v.controls)).toBe(true);
 });
