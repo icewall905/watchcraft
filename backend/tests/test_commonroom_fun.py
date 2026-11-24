@@ -433,3 +433,40 @@ def test_a_video_that_cannot_be_saved_is_not_retried(client, monkeypatch):
     monkeypatch.setattr(assets, 'save_video', lambda u: calls.append(u) or False)
     assert assets.sweep_videos() == 0 and assets.sweep_videos() == 0 and calls == [HLS]
     assert _feed(client)[0]['media'][0]['src'] == ''
+
+
+def test_refused_reddit_playlist_falls_back_to_plain_files(monkeypatch, tmp_path):
+    from bt.commonroom import assets
+    monkeypatch.setattr(assets, 'MEDIA_DIR', tmp_path)
+    tried = []
+
+    def save_from(sources, net, out, tmp):
+        tried.append(sources)
+        if '.m3u8' in sources[0]:
+            raise subprocess.CalledProcessError(1, 'ffprobe', stderr=b'403 Forbidden')
+        return True
+    monkeypatch.setattr(assets, '_save_from', save_from)
+    monkeypatch.setattr(assets, '_exists', lambda u: u.endswith(('CMAF_480.mp4', 'CMAF_AUDIO_128.mp4')))
+    assert assets.save_video(HLS)
+    assert tried[-1] == ['https://v.redd.it/abc123/CMAF_480.mp4', 'https://v.redd.it/abc123/CMAF_AUDIO_128.mp4']
+    monkeypatch.setattr(assets, '_exists', lambda u: False)
+    assert assets.save_video(HLS) is False
+
+
+def test_older_picked_videos_are_saved_too(client, monkeypatch):
+    from bt.commonroom import assets
+    from bt.commonroom.models import CRPost
+    t = thread(client)
+    old = _pick(t, 'https://site.example/old-video', platform='web')
+    for n in range(5):
+        _pick(t, f'https://site.example/newer-{n}', platform='web')
+    with session() as s:
+        p = s.get(CRPost, old)
+        p.media = [{'kind': 'video', 'url': 'https://files.example/old.mp4', 'poster': '', 'w': 0, 'h': 0}]
+        s.add(p)
+        s.commit()
+    monkeypatch.setattr(assets, '_picked_posts', lambda limit=300: [])  # beyond the picture sweep's window
+    got = []
+    monkeypatch.setattr(assets, 'save_video', lambda u: got.append(u) or False)
+    assets.sweep_videos()
+    assert got == ['https://files.example/old.mp4']

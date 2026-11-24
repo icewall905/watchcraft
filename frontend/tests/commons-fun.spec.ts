@@ -96,3 +96,21 @@ test('a saved post video plays on the card and with controls in the post view', 
 	await expect(full).toHaveAttribute('src', '/api/hub/commonroom/posts/107/video/0');
 	expect(await full.evaluate((v: HTMLVideoElement) => v.controls)).toBe(true);
 });
+
+test('a YouTube link plays in the post view only when asked', async ({ page }) => {
+	await setup(page);
+	const yt = post(8, 'Great homelab tour', { link_url: 'https://youtu.be/MVKUXLcl8pQ', domain: 'youtu.be', media: [{ kind: 'image', url: '/api/hub/commonroom/posts/108/media/0', thumb: '/api/hub/commonroom/posts/108/media/0?size=thumb', poster: '' }] });
+	await page.route('**/api/hub/commonroom/feed*', (route) => route.fulfill({ json: { posts: [yt], next_cursor: '', has_more: false, building: false, mode: 'today', end: true } }));
+	await page.route('**/api/hub/commonroom/posts/108', (route) => route.fulfill({ json: { ...yt, body: '' } }));
+	await page.route('**/api/hub/commonroom/posts/108/comments*', (route) => route.fulfill({ json: { comments: [], url: yt.url, fetched_at: 0, supported: true } }));
+	const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+	await page.route('**/api/hub/commonroom/posts/108/media/0*', (route) => route.fulfill({ body: png, contentType: 'image/png' }));
+	await page.route('https://www.youtube-nocookie.com/**', (route) => route.fulfill({ body: '<html>player</html>', contentType: 'text/html' }));
+	await freshPage(page, '/common-room');
+	await expect(page.locator('.ytbadge')).toHaveText('▶ YouTube');
+	await page.getByRole('link', { name: 'Great homelab tour' }).click();
+	const dialog = page.getByRole('dialog');
+	await expect(dialog.locator('iframe')).toHaveCount(0);
+	await dialog.getByRole('button', { name: 'Play video here' }).click();
+	await expect(dialog.locator('iframe')).toHaveAttribute('src', /youtube-nocookie\.com\/embed\/MVKUXLcl8pQ\?autoplay=1/);
+});

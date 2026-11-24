@@ -8,7 +8,7 @@
 	import ElsewhereChips from './cards/ElsewhereChips.svelte';
 	import CardBadges from './cards/CardBadges.svelte';
 	import InlineVideo from './cards/InlineVideo.svelte';
-	import { ago, compact, platformOf } from './util';
+	import { ago, compact, platformOf, youtubeId } from './util';
 	let { post, onOpen, onGone }: { post: Post; onOpen: (p: Post) => void; onGone?: (p: Post) => void } = $props();
 	const plat = $derived(platformOf(post.platform));
 	let revealed = $state(false);
@@ -18,6 +18,7 @@
 	const first = $derived(post.media[0]);
 	let broken = $state(false); // the picture could not be loaded: show the post without a frame
 	const top = $derived(post.top ?? []);
+	const yt = $derived(!!(youtubeId(post.link_url) || youtubeId(post.url)));
 	// Each kind of post gets its own shape, so the wall has texture instead of one repeated card.
 	const variant = $derived.by(() => {
 		if (first && !broken && !blurred) return 'media';
@@ -63,6 +64,7 @@
 					{:else}
 						<button type="button" class="imgbtn" aria-label="Open post" onclick={() => onOpen(post)}><img use:authSrc={first.thumb || first.url} alt="" loading="lazy" onerror={() => { broken = true; }} /></button>
 					{/if}
+					{#if yt && first.kind !== 'video'}<span class="ytbadge" aria-hidden="true">▶ YouTube</span>{/if}
 					{#if post.media.length > 1}<span class="count">{post.media.length} images</span>{/if}
 				</div>
 			{/if}
@@ -94,6 +96,7 @@
 	.card{overflow-wrap:anywhere}
 	h3 a{color:var(--text);text-decoration:none}h3 a:hover{text-decoration:underline}
 	.excerpt{margin:0;color:var(--muted);font-size:.9rem;display:-webkit-box;-webkit-line-clamp:4;line-clamp:4;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+	.ytbadge{position:absolute;left:.5rem;bottom:.5rem;padding:.15rem .55rem;border-radius:var(--r-pill);background:#e00;color:#fff;font-size:.72rem;font-weight:800;pointer-events:none}
 	.media{position:relative;border-radius:var(--r-sm);overflow:hidden;background:#0006}
 	.media img{display:block;width:100%;max-height:28rem;object-fit:cover}
 	.imgbtn{display:block;width:100%;padding:0;border:0;background:none;cursor:pointer}

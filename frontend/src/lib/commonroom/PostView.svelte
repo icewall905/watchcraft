@@ -7,7 +7,8 @@
 	import CardBadges from './cards/CardBadges.svelte';
 	import ElsewhereChips from './cards/ElsewhereChips.svelte';
 	import InlineVideo from './cards/InlineVideo.svelte';
-	import { ago, compact, platformOf } from './util';
+	import YouTube from './cards/YouTube.svelte';
+	import { ago, compact, platformOf, youtubeId } from './util';
 	let { post, onClose, onGone }: { post: Post; onClose: () => void; onGone?: (p: Post) => void } = $props();
 	let detail = $state<PostDetail | null>(null), comments = $state<Comment[] | null>(null), cUrl = $state(''), err = $state(''), cErr = $state(''), cLoading = $state(false);
 	let fetchedAt = $state(0), supported = $state(true), discussion = $state(''), sort = $state<'best' | 'new'>('best');
@@ -15,6 +16,7 @@
 	const view = $derived(detail ?? post);
 	const plat = $derived(platformOf(post.platform));
 	const pics = $derived(post.media.filter((_, i) => !broken[i]));
+	const yt = $derived(post.media.some((m) => m.kind === 'video' && m.src) ? '' : youtubeId(post.link_url) || youtubeId(post.url));
 	const sorted = $derived.by(() => {
 		if (!comments) return [];
 		const key = sort === 'new' ? (c: Comment) => c.published_at ?? 0 : (c: Comment) => c.score ?? 0;
@@ -50,7 +52,9 @@
 		<CardBadges {post} />
 		{#if err}<p class="err" role="alert">{err}</p>{/if}
 
-		{#if pics.length}
+		{#if yt}
+			<YouTube id={yt} title={post.title} />
+		{:else if pics.length}
 			<div class="gallery" class:multi={pics.length > 1}>
 				{#if pics.length > 1}<span class="count">{shown + 1} / {pics.length}</span>{/if}
 				{#each post.media as m, i (i)}

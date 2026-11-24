@@ -15,7 +15,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from sqlalchemy import func, or_
+from sqlalchemy import String, func, or_
 from sqlmodel import select
 
 from .. import curation
@@ -236,52 +236,102 @@ def _probe(src: str, *extra: str) -> dict:
     return json.loads(r.stdout or b'{}')
 
 
+def _save_from(sources: list[str], net: list[str], out: Path, tmp: str) -> bool:
+    """Probe the inputs (one stream with both tracks, or a video file plus an audio file), copy the best video up
+    to 720p and the best audio into a faststart mp4 at ``out``."""
+    infos = [_probe(src, *net) for src in sources]
+    duration = max(float((i.get('format') or {}).get('duration') or 0) for i in infos)
+    if not 0 < duration <= VIDEO_MAX_S:
+        return False
+    videos = [(n, st) for n, i in enumerate(infos) for st in i.get('streams') or []
+              if st.get('codec_type') == 'video' and st.get('width') and st.get('height')]
+    if not videos:
+        return False
+    fit = [v for v in videos if min(v[1]['width'], v[1]['height']) <= VIDEO_MAX_SIDE] or videos
+    vin, best = max(fit, key=lambda v: (min(v[1]['width'], v[1]['height']), int(v[1].get('bit_rate') or 0)))
+    audios = [(n, st) for n, i in enumerate(infos) for st in i.get('streams') or [] if st.get('codec_type') == 'audio']
+    audio = max(audios, key=lambda a: int(a[1].get('bit_rate') or 0)) if audios else None
+    tmp_out = f'{tmp}/out.mp4'
+    cmd = ['ffmpeg', '-v', 'error', '-y']
+    for src in sources:
+        cmd += [*net, '-i', src]
+    cmd += ['-map', f'{vin}:{best["index"]}']
+    if audio:
+        cmd += ['-map', f'{audio[0]}:{audio[1]["index"]}']
+    cmd += ['-c', 'copy', '-movflags', '+faststart', '-fs', str(VIDEO_MAX_BYTES), tmp_out]
+    subprocess.run(cmd, capture_output=True, timeout=VIDEO_MAX_S, check=True)
+    done = Path(tmp_out)
+    if not done.is_file() or done.stat().st_size < 1000 or done.stat().st_size >= VIDEO_MAX_BYTES:
+        return False
+    part = out.with_suffix('.part')
+    shutil.move(str(done), part)
+    part.replace(out)
+    return True
+
+
+REDDIT_SIDES = (720, 480, 360, 1080, 270, 220)
+
+
+def _reddit_files(url: str) -> list[list[str]]:
+    """Plain-file fallbacks for a v.redd.it video whose playlist is refused: [video, audio] pairs, best first.
+    Reddit serves CMAF_<side>.mp4 (newer) or DASH_<side>.mp4 with a separate audio file."""
+    p = urlsplit(url)
+    base = f'https://v.redd.it/{p.path.strip("/").split("/")[0]}'
+    return [[f'{base}/{kind}_{side}.mp4', f'{base}/{audio}'] for kind, audio in
+            (('CMAF', 'CMAF_AUDIO_128.mp4'), ('DASH', 'DASH_AUDIO_128.mp4')) for side in REDDIT_SIDES]
+
+
+def _exists(url: str) -> bool:
+    """Whether a remote file answers (a 1-byte probe: 'too large' means it is there)."""
+    try:
+        curation.fetch(url, kinds=('video/mp4', 'audio/mp4', 'application/octet-stream'), limit=1)
+    except curation.FetchError:
+        return False
+    except ValueError:
+        return True
+    return True
+
+
 def save_video(url: str) -> bool:
     """Fetch one post video into a faststart mp4 (best version up to 720p, with sound). False when it is too
-    long, too large or not a video. HLS playlists only from known video hosts; files through the safe fetch."""
+    long, too large or not a video. HLS playlists only from known video hosts; files through the safe fetch.
+    A Reddit playlist that is refused falls back to the plain video and audio files next to it."""
     if not video_saveable(url):
         return False
-    host = (urlsplit(url).hostname or '').lower()
+    p = urlsplit(url)
+    host = (p.hostname or '').lower()
     out = video_path(url)
     out.parent.mkdir(parents=True, exist_ok=True)
+    https_only = ['-protocol_whitelist', 'https,tls,tcp,crypto,hls,http']
     with tempfile.TemporaryDirectory(prefix='wc-crvideo-') as tmp:
-        if host in HLS_HOSTS and urlsplit(url).path.endswith('.m3u8'):
-            src, net = url, ['-protocol_whitelist', 'https,tls,tcp,crypto,hls,http']
-        else:
-            data = curation.fetch(url, kinds=('video/mp4', 'video/webm', 'video/quicktime', 'application/octet-stream'),
-                                  limit=VIDEO_MAX_BYTES)
-            src, net = f'{tmp}/in', ['-protocol_whitelist', 'file']
-            Path(src).write_bytes(data)
-        info = _probe(src, *net)
-        duration = float((info.get('format') or {}).get('duration') or 0)
-        if not 0 < duration <= VIDEO_MAX_S:
+        if host in HLS_HOSTS and p.path.endswith('.m3u8'):
+            try:
+                return _save_from([url], https_only, out, tmp)
+            except subprocess.CalledProcessError:
+                if host != 'v.redd.it':
+                    raise
+            for video, audio in _reddit_files(url):
+                if _exists(video):
+                    return _save_from([video] + ([audio] if _exists(audio) else []), https_only, out, tmp)
             return False
-        streams = info.get('streams') or []
-        videos = [st for st in streams if st.get('codec_type') == 'video' and st.get('width') and st.get('height')]
-        if not videos:
-            return False
-        fit = [st for st in videos if min(st['width'], st['height']) <= VIDEO_MAX_SIDE] or videos
-        best = max(fit, key=lambda st: (min(st['width'], st['height']), int(st.get('bit_rate') or 0)))
-        audio = [st for st in streams if st.get('codec_type') == 'audio']
-        audio = max(audio, key=lambda st: int(st.get('bit_rate') or 0)) if audio else None
-        tmp_out = f'{tmp}/out.mp4'
-        cmd = ['ffmpeg', '-v', 'error', '-y', *net, '-i', src, '-map', f'0:{best["index"]}']
-        if audio:
-            cmd += ['-map', f'0:{audio["index"]}']
-        cmd += ['-c', 'copy', '-movflags', '+faststart', '-fs', str(VIDEO_MAX_BYTES), tmp_out]
-        subprocess.run(cmd, capture_output=True, timeout=VIDEO_MAX_S, check=True)
-        done = Path(tmp_out)
-        if not done.is_file() or done.stat().st_size < 1000 or done.stat().st_size >= VIDEO_MAX_BYTES:
-            return False
-        part = out.with_suffix('.part')
-        shutil.move(str(done), part)
-        part.replace(out)
-    return True
+        data = curation.fetch(url, kinds=('video/mp4', 'video/webm', 'video/quicktime', 'application/octet-stream'),
+                              limit=VIDEO_MAX_BYTES)
+        src = f'{tmp}/in'
+        Path(src).write_bytes(data)
+        return _save_from([src], ['-protocol_whitelist', 'file'], out, tmp)
+
+
+def _video_posts(limit: int = 1000) -> list[tuple[int, list, dict]]:
+    """Picked posts that carry a video, newest first (not just the newest picks: older clips get saved too)."""
+    with session() as s:
+        return list(s.exec(select(CRPost.id, CRPost.media, CRPost.meta).where(
+            CRPost.id.in_(select(CRPick.post_id)), func.cast(CRPost.media, String).like('%"video"%'))
+            .order_by(CRPost.id.desc()).limit(limit)).all())
 
 
 def sweep_videos(limit: int = VIDEOS_PER_TICK) -> int:
     saved, tried = 0, 0
-    for pid, media, meta in _picked_posts():
+    for pid, media, meta in _video_posts():
         failed = set((meta or {}).get('video_failed') or [])
         for m in (media or [])[:MAX_PER_POST]:
             url = m.get('url') or ''
