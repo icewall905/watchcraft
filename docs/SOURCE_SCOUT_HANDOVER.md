@@ -19,6 +19,19 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Commons pictures, Reddit-mirror threads, post view (`697e522`, 2026-11-24)
+
+- Deployed `fedd38f..697e522`: scraped pages, RSS entries and forum topics get their own page's share picture
+  (Reddit previews upgraded to full size, site logos skipped); Reddit-mirror posts (reddclips.com) link their Reddit
+  thread, take author and votes from the mirror, and read Reddit comments once Reddit API keys are set (none on prod;
+  anonymous Reddit reads stay blocked, B-062); the post view was redesigned. No schema change.
+- All four application services run `watchcraft:release-697e522` (`sha256:c1f92ab76c5a…`) with zero restarts;
+  public health 200, Compose and environment hashes unchanged, no tracebacks; 15 posts gained pictures in the first
+  90 s, the reported Scrabble post now has its full i.redd.it picture, author and 16,600 votes.
+- Code-only backup at `/root/compose/watchcraft-backups/20261124-postview-697e522` (`rollback.sh` → `release-fedd38f`).
+- Pruned to the newest two deploy backups (`postview-697e522`, `comments-fedd38f`): removed `20261124-livefix-86429e8`
+  and the `release-f98b183` tag. `rating-replay-out.jsonl` moved to `20261124-comments-fedd38f/`.
+
 ## Deployment record — Commons comments always loaded (`fedd38f`, 2026-11-24)
 
 - Deployed `86429e8..fedd38f`: the sweep keeps comments current for every picked post on a platform with comments
