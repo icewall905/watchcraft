@@ -19,6 +19,20 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Clean tree at `440e71d` (2026-11-24)
+
+- `b0e5277` (board pin tags and disputes) had been deployed from another checkout and never pushed; its 13 files were
+  imported from production unchanged as `440e71d`, so the repository and production now hold the same code. After
+  this rollout an rsync checksum dry run of `git archive 440e71d` against `/root/compose/watchcraft` (excluding
+  `android/`) lists no differences. `DEPLOYED_COMMIT` is `440e71d`.
+- All four application services run `watchcraft:release-440e71d` (`sha256:32b005fe8628…`); public health 200,
+  Compose and environment hashes unchanged, no tracebacks.
+- Tests before rollout: backend 1718 passed, 6 skipped, 1 failed (`test_shared_polling` concurrent pollers, which
+  fails only under the B-072 venv workaround). Browser 288 passed; 24 tests fail the same way at `56c728a` (B-077).
+- Production at the time logged ~35 `database is locked` errors per 30 min with the API near 200% CPU (B-073).
+- Code-only backup `20261124-clean-440e71d` (`rollback.sh` → `release-a3f4872`); kept `20261124-playlistbtn-a3f4872`.
+  Removed `20261124-scroll-131753d` and tag `release-464593e`. `picks-before-6185807.json` moved to the clean backup.
+
 ## Deployment record — Commons badge/Subs, The Scroll, New playlist (`a5efe66`, `464593e`, `131753d`, `a3f4872`, 2026-11-24)
 
 - Four file-only rollouts on top of `2740136` (prod copies of every changed file matched `HEAD` before rsync):
