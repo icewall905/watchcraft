@@ -19,6 +19,19 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Commons comments always loaded (`fedd38f`, 2026-11-24)
+
+- Deployed `86429e8..fedd38f`: the sweep keeps comments current for every picked post on a platform with comments
+  (hourly under two days old, six-hourly up to a week, only when the count moved; 8 posts a tick); opening a post
+  serves the stored tree at once (live fetch only when nothing is stored, or on Refresh); the post view loads
+  comments without a button, sorts Best/New, tags the OP and folds long threads. No schema change.
+- All four application services run `watchcraft:release-fedd38f` (`sha256:b045b14b53fa…`) with zero restarts;
+  public health 200, Compose and environment hashes unchanged, no tracebacks; 20 trees refreshed in the first minute.
+- Code-only backup at `/root/compose/watchcraft-backups/20261124-comments-fedd38f` (`rollback.sh` → `release-86429e8`).
+- Pruned to the newest two deploy backups (`comments-fedd38f`, `livefix-86429e8`): removed `20261124-commons-f98b183`
+  (its DB snapshot; the nightly `daily-20261124T023013Z` copy predates f98b183) and the `release-3240775` tag.
+  `rating-replay-out.jsonl` moved to `20261124-livefix-86429e8/`.
+
 ## Deployment record — Commons badges, comment refetch, fun/kind re-judge (`86429e8`, 2026-11-24)
 
 - Deployed `f98b183..86429e8` (backend only), after reviewing profile H's live Commons feed: hot/rising need real
