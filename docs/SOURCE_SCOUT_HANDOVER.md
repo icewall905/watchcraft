@@ -19,6 +19,18 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Commons favours posts with conversations (`8bde810`, 2026-11-24)
+
+- Deployed `66b833f..8bde810` (backend only, T-139): discovery puts discussion platforms first (HN and Lobsters
+  now suggestible, Lemmy twins guessed for subreddits); zero-engagement aggregator/promo posts never reach the judge;
+  replies give up to +8 over the keep line and nudge Today/Hot; Top needs a reply or 5+ votes. No schema change.
+- All four application services run `watchcraft:release-8bde810` (`sha256:b989adcb538b…`) with zero restarts;
+  public health 200, Compose and environment hashes unchanged, no tracebacks. Profile 2: Top 28 posts, 17 with
+  replies; Today 15, 2 with replies (Today fills from new picks as threads run).
+- Code-only backup at `/root/compose/watchcraft-backups/20261124-talk-8bde810` (`rollback.sh` → `release-66b833f`).
+- Pruned to the newest two deploy backups (`talk-8bde810`, `videos-66b833f`): removed `20261124-postview-697e522`
+  and the `release-fedd38f` tag. `rating-replay-out.jsonl` moved to `20261124-videos-66b833f/`.
+
 ## Deployment record — Commons post videos (`66b833f`, 2026-11-24)
 
 - Deployed `697e522..66b833f`: scraped pages' og:video streams (v.redd.it via Reddit mirrors, Bluesky HLS) and
