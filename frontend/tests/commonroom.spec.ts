@@ -259,3 +259,17 @@ test('Edit thread: Find sources starts an expedition and shows its log and found
 	await expect(dialog.getByText('broken, retried daily')).toBeVisible();
 	await expect(dialog.getByText('Last expedition: 1 new source')).toBeVisible();
 });
+
+test('a thread badge opens New from Today and clears once visited', async ({ page }) => {
+	await page.addInitScript(() => { try { localStorage.setItem('commons.mode', 'today'); } catch { /* opaque origin */ } });
+	const calls = await setup(page);
+	await freshPage(page, '/common-room');
+	const chip = page.getByRole('navigation', { name: 'Threads' }).getByRole('button', { name: /Retro computing/ });
+	await expect(chip.locator('.badge')).toHaveText('2');
+	await chip.click();
+	await expect(page.getByRole('tab', { name: 'New' })).toHaveAttribute('aria-selected', 'true');
+	await expect(page.getByText('Fresh Amiga find').first()).toBeVisible();
+	expect(calls.some((c) => c.path === '/visit' && String(c.body.thread) === '1')).toBe(true);
+	await expect(chip.locator('.badge')).toHaveCount(0);
+	expect(await page.evaluate(() => localStorage.getItem('commons.mode'))).toBe('today');
+});

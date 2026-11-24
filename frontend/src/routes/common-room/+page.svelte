@@ -18,6 +18,8 @@
  const readMode = (): Mode => { try { const m = localStorage.getItem(MODE_KEY); return MODES.some((x) => x.key === m) ? m as Mode : 'today'; } catch { return 'today'; } };
  let mode = $state<Mode>(readMode()), kind = $state<Kind | ''>('');
  function setMode(m: Mode) { if (m === mode) return; mode = m; try { localStorage.setItem(MODE_KEY, m); } catch { /* ignore */ } void start(selected); }
+ // A badge counts picks since the last New visit, so a chip with a badge opens New (just this once, not saved).
+ function openThread(thread: 'all' | number, fresh: number) { if (fresh) mode = 'new'; void start(thread); }
  function setKind(k: Kind | '') { kind = kind === k ? '' : k; void start(selected); }
  const COL_PX = 384, GAP_PX = 14; // 24rem columns
  const cols = $derived(Math.max(1, Math.min(4, Math.floor((wallWidth + GAP_PX) / (COL_PX + GAP_PX)))));
@@ -46,6 +48,7 @@
     const v = await crApi.visit(thread);
     if (token !== generation) return;
     boundary = v.boundary;
+    threads = threads.map((t) => thread === 'all' || t.id === thread ? { ...t, new_count: 0 } : t);  // this visit catches them up
    } catch (e) { if (token === generation) { error = msg(e); loaded = true; } return; }
   }
   hasMore = true; await more(token);
@@ -170,9 +173,9 @@
  {/if}
  {#if loaded || threads.length}
  <nav class="chips" aria-label="Threads">
-  <button type="button" class="chip" class:on={selected === 'all'} aria-pressed={selected === 'all'} onclick={() => start('all')}>All{#if allNew}<span class="badge">{allNew}</span>{/if}</button>
+  <button type="button" class="chip" class:on={selected === 'all'} aria-pressed={selected === 'all'} onclick={() => openThread('all', allNew)}>All{#if allNew}<span class="badge" title="{allNew} new since your last New visit">{allNew}</span>{/if}</button>
   {#each threads as t (t.id)}
-   <button type="button" class="chip" class:on={selected === t.id} aria-pressed={selected === t.id} onclick={() => start(t.id)}>{t.name}{#if t.new_count}<span class="badge">{t.new_count}</span>{/if}</button>
+   <button type="button" class="chip" class:on={selected === t.id} aria-pressed={selected === t.id} onclick={() => openThread(t.id, t.new_count)}>{t.name}{#if t.new_count}<span class="badge" title="{t.new_count} new since your last New visit">{t.new_count}</span>{/if}</button>
   {/each}
   <button type="button" class="chip add" onclick={() => { editing = 'new'; }}>+ Thread</button>
  </nav>
