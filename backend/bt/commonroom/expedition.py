@@ -520,7 +520,7 @@ def hunt_sources(hid, lease) -> int:
     # 1. Reuse what other threads' expeditions already found.
     picks = _library_fits(thread, [x for x in library if x.platform in allowed])
     if picks:
-        say('library', f'Checking {len(picks)} sources other threads follow.')
+        say('library', f'Checking {len(picks)} sources other subs follow.')
     for src in [x for x in library if x.id in picks][:6]:
         if enough():
             break
@@ -580,7 +580,7 @@ def hunt_sources(hid, lease) -> int:
             inspect_site(row, thread, say, attempt, tried, browser.available())
     if saved < TARGET_NEW and trials >= MAX_TRIALS:
         say('found', f'Judged {trials} sources this time; run Find sources again to keep looking.')
-    say('done', f'Expedition finished: {saved} new source{"s" if saved != 1 else ""} for this thread.')
+    say('done', f'Expedition finished: {saved} new source{"s" if saved != 1 else ""} for this sub.')
     return saved
 
 

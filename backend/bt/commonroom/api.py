@@ -34,7 +34,7 @@ def require_room(pid: int = Depends(profile_id)) -> int:
 def _owned(s, pid: int, tid: int) -> CRThread:
     t = s.get(CRThread, tid)
     if not t or t.profile_id != pid:
-        raise HTTPException(404, 'Thread not found')
+        raise HTTPException(404, 'Sub not found')
     return t
 
 
@@ -218,7 +218,7 @@ def create_thread(data: ThreadIn, pid: int = Depends(require_room)):
     with session() as s:
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
         if s.exec(select(func.count()).select_from(CRThread).where(CRThread.profile_id == pid)).one() >= MAX_THREADS:
-            raise HTTPException(409, f'Up to {MAX_THREADS} threads per profile.')
+            raise HTTPException(409, f'Up to {MAX_THREADS} subs per profile.')
         child = _child(s, pid)
         t = CRThread(profile_id=pid, name=data.name.strip(), interests=data.interests.strip() or data.name.strip(),
                      instructions=data.instructions.strip(), avoid=data.avoid.strip(),
@@ -334,7 +334,7 @@ def find_sources(tid: int, pid: int = Depends(require_room)):
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
         _owned(s, pid, tid)
         if expedition.active(s, tid):
-            raise HTTPException(409, 'A source expedition is already running for this thread.')
+            raise HTTPException(409, 'A source expedition is already running for this sub.')
         expedition.enqueue(s, tid, 'button')
         s.commit()
         return _sources_json(s, tid)
@@ -348,7 +348,7 @@ def add_source(tid: int, data: SourceIn, pid: int = Depends(require_room)):
     with session() as s:
         _owned(s, pid, tid)
         if s.exec(select(func.count()).select_from(CRThreadSource).where(CRThreadSource.thread_id == tid)).one() >= MAX_SOURCES:
-            raise HTTPException(409, f'Up to {MAX_SOURCES} sources per thread.')
+            raise HTTPException(409, f'Up to {MAX_SOURCES} sources per sub.')
     try:
         loc = adapter.parse(data.locator)
     except ValueError as e:

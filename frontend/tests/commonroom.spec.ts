@@ -230,7 +230,7 @@ test('Settings: choose Common Room post languages', async ({ page }) => {
 	expect(puts).toEqual([{ languages: ['da'] }, { languages: ['da', 'en'] }]);
 });
 
-test('Edit thread: Find sources starts an expedition and shows its log and found sources', async ({ page }) => {
+test('Edit sub: Find sources starts an expedition and shows its log and found sources', async ({ page }) => {
 	const calls = await setup(page);
 	let state = 0;
 	const lemmy = { id: 7, source_id: 70, platform: 'lemmy', locator: 'retro@lemmy.world', label: 'retro@lemmy.world', origin: 'ai', enabled: true, error: '', last_ok: null, status: 'ok', fit: 7, tried: 8, kept: 3, hits: 40, url: '' };
@@ -249,7 +249,7 @@ test('Edit thread: Find sources starts an expedition and shows its log and found
 	});
 	await freshPage(page, '/common-room');
 	await page.getByRole('button', { name: 'Retro computing' }).click();
-	await page.getByRole('button', { name: 'Edit thread' }).click();
+	await page.getByRole('button', { name: 'Edit sub' }).click();
 	const dialog = page.getByRole('dialog');
 	await expect(dialog.getByText('fit 7/8')).toBeVisible();
 	await dialog.getByRole('button', { name: 'Find sources' }).click();
@@ -264,7 +264,7 @@ test('a thread badge opens New from Today and clears once visited', async ({ pag
 	await page.addInitScript(() => { try { localStorage.setItem('commons.mode', 'today'); } catch { /* opaque origin */ } });
 	const calls = await setup(page);
 	await freshPage(page, '/common-room');
-	const chip = page.getByRole('navigation', { name: 'Threads' }).getByRole('button', { name: /Retro computing/ });
+	const chip = page.getByRole('navigation', { name: 'Subs' }).getByRole('button', { name: /Retro computing/ });
 	await expect(chip.locator('.badge')).toHaveText('2');
 	await chip.click();
 	await expect(page.getByRole('tab', { name: 'New' })).toHaveAttribute('aria-selected', 'true');

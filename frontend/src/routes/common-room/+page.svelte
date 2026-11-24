@@ -164,7 +164,7 @@
   <div><p class="eyebrow">Explore</p><h1>The Commons</h1></div>
   {#if current}<div class="acts">
    <button class="btn" disabled={running || activeStatus(current.last_status)} onclick={runNow}>{activeStatus(current.last_status) ? 'Gathering…' : 'Run now'}</button>
-   <button class="btn" onclick={() => { editing = current; }}>Edit thread</button>
+   <button class="btn" onclick={() => { editing = current; }}>Edit sub</button>
   </div>{/if}
  </header>
  <CommonsSwitch />
@@ -172,12 +172,12 @@
   <p class="keys small">Reddit runs in limited mode (public hot and top lists, no comments or search). <a href="/settings?tab=commonroom">Add Reddit keys in Settings</a></p>
  {/if}
  {#if loaded || threads.length}
- <nav class="chips" aria-label="Threads">
+ <nav class="chips" aria-label="Subs">
   <button type="button" class="chip" class:on={selected === 'all'} aria-pressed={selected === 'all'} onclick={() => openThread('all', allNew)}>All{#if allNew}<span class="badge" title="{allNew} new since your last New visit">{allNew}</span>{/if}</button>
   {#each threads as t (t.id)}
    <button type="button" class="chip" class:on={selected === t.id} aria-pressed={selected === t.id} onclick={() => openThread(t.id, t.new_count)}>{t.name}{#if t.new_count}<span class="badge" title="{t.new_count} new since your last New visit">{t.new_count}</span>{/if}</button>
   {/each}
-  <button type="button" class="chip add" onclick={() => { editing = 'new'; }}>+ Thread</button>
+  <button type="button" class="chip add" onclick={() => { editing = 'new'; }}>+ Sub</button>
  </nav>
  {#if threads.length}
  <div class="views">
@@ -198,9 +198,9 @@
 
  {#if loaded && !threads.length && !error}
   <section class="empty">
-   <h2>Start your first Thread</h2>
-   <p>A Thread is one interest, like "retro computing" or "home espresso". Your curator finds communities on Reddit, Lemmy, Mastodon, Bluesky, Hacker News and more, then keeps only the posts that fit. Rate posts and it learns your taste.</p>
-   <button class="btn primary" onclick={() => { editing = 'new'; }}>Create a thread</button>
+   <h2>Start your first Sub</h2>
+   <p>A Sub is one interest, like "retro computing" or "home espresso". Your curator finds communities on Reddit, Lemmy, Mastodon, Bluesky, Hacker News and more, then keeps only the posts that fit. Rate posts and it learns your taste.</p>
+   <button class="btn primary" onclick={() => { editing = 'new'; }}>Create a sub</button>
   </section>
  {:else}
   {#if newPosts.length}

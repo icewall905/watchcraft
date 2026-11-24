@@ -40,7 +40,7 @@
 		try {
 			const body = {name: name.trim(), interests: interests.trim(), instructions: instructions.trim(), avoid: avoid.trim(), strictness};
 			onSaved(id == null ? await crApi.create(body) : await crApi.update(id, body));
-		} catch (e) { err = e instanceof Error ? e.message : 'Could not save thread.'; }
+		} catch (e) { err = e instanceof Error ? e.message : 'Could not save sub.'; }
 		finally { busy = false; }
 	}
 	async function addSrc() {
@@ -60,13 +60,13 @@
 	}
 	async function del() {
 		if (id == null) return;
-		try { await crApi.remove(id); onDeleted?.(id); } catch (e) { err = e instanceof Error ? e.message : 'Could not delete thread.'; }
+		try { await crApi.remove(id); onDeleted?.(id); } catch (e) { err = e instanceof Error ? e.message : 'Could not delete sub.'; }
 	}
 	const groups = $derived([{title: 'Yours', list: sources.filter((s) => s.origin === 'user')}, {title: 'Found by the expedition', list: sources.filter((s) => s.origin !== 'user')}]);
 </script>
-<Modal portal title={id == null ? 'New thread' : 'Edit thread'} size="lg" {onClose}>
+<Modal portal title={id == null ? 'New sub' : 'Edit sub'} size="lg" {onClose}>
 	<form class="ed" onsubmit={save}>
-		<label>Thread name<input bind:value={name} required maxlength="80" placeholder="Retro computing" /></label>
+		<label>Sub name<input bind:value={name} required maxlength="80" placeholder="Retro computing" /></label>
 		<label>Interests<textarea bind:value={interests} required rows="2" placeholder="Amiga, demoscene, 8-bit homebrew"></textarea></label>
 		<label>What to look for<textarea bind:value={instructions} rows="2" placeholder="Deep dives and project write-ups"></textarea></label>
 		<label>What to avoid<textarea bind:value={avoid} rows="2" placeholder="Memes, hardware shopping"></textarea></label>
@@ -74,12 +74,12 @@
 			<select bind:value={strictness}><option value="strict">Strict: only clear matches</option><option value="balanced">Balanced</option><option value="loose">Loose: more variety</option></select>
 		</label>{/if}
 		{#if err}<p class="err" role="alert">{err}</p>{/if}
-		<div class="row"><button class="btn primary" disabled={busy || !name.trim() || !interests.trim()}>{id == null ? 'Create thread' : 'Save changes'}</button></div>
+		<div class="row"><button class="btn primary" disabled={busy || !name.trim() || !interests.trim()}>{id == null ? 'Create sub' : 'Save changes'}</button></div>
 	</form>
 	{#if id != null}
 		<section class="blk" aria-label="Sources">
 			<h3>Sources</h3>
-			<p class="muted small">Your curator sends out a source expedition to find communities, forums, blogs and sites for this thread, and again whenever the feed runs dry. Add your own, or switch any off.</p>
+			<p class="muted small">Your curator sends out a source expedition to find communities, forums, blogs and sites for this sub, and again whenever the feed runs dry. Add your own, or switch any off.</p>
 			<div class="hunt">
 				<button type="button" class="btn" disabled={hunting} onclick={findSources}>{hunting ? 'Expedition running…' : 'Find sources'}</button>
 				{#if hunt && !hunting}<span class="muted small">Last expedition: {hunt.status === 'failed' ? (hunt.error || 'failed') : `${hunt.found} new source${hunt.found === 1 ? '' : 's'}`}</span>{/if}
@@ -94,7 +94,7 @@
 						<li class:off={!s.enabled}>
 							<span class="lbl">{platformOf(s.platform).icon} {#if s.url}<a href={s.url} target="_blank" rel="noopener noreferrer"><strong>{s.label || s.locator}</strong></a>{:else}<strong>{s.label || s.locator}</strong>{/if} <span class="muted small">{platformOf(s.platform).label}</span>
 								{#if s.tried}<span class="muted small" title="Sample posts that fit when the expedition judged it">· fit {s.fit}/{s.tried}</span>{/if}
-								{#if s.kept}<span class="muted small" title="Posts this thread kept from it">· kept {s.kept}</span>{/if}</span>
+								{#if s.kept}<span class="muted small" title="Posts this sub kept from it">· kept {s.kept}</span>{/if}</span>
 							{#if s.status === 'broken'}<span class="bad small" title={s.error}>broken, retried daily</span>{:else if s.error}<span class="bad small" title={s.error}>error</span>{/if}
 							<button type="button" class="btn sm" onclick={() => toggle(s)} aria-label={`${s.enabled ? 'Disable' : 'Enable'} ${s.label || s.locator}`}>{s.enabled ? 'On' : 'Off'}</button>
 							<button type="button" class="btn sm" onclick={() => drop(s)} aria-label={`Remove ${s.label || s.locator}`}>✕</button>
@@ -117,9 +117,9 @@
 		</section>
 		<section class="blk danger">
 			{#if confirmDelete}
-				<p>Delete this thread and its picks?</p>
+				<p>Delete this sub and its picks?</p>
 				<button type="button" class="btn" onclick={del}>Yes, delete</button> <button type="button" class="btn" onclick={() => { confirmDelete = false; }}>Cancel</button>
-			{:else}<button type="button" class="btn" onclick={() => { confirmDelete = true; }}>Delete thread</button>{/if}
+			{:else}<button type="button" class="btn" onclick={() => { confirmDelete = true; }}>Delete sub</button>{/if}
 		</section>
 	{/if}
 </Modal>

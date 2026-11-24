@@ -3,7 +3,7 @@
 	import { focusable } from '$lib/nav';
 
 	const SECTIONS = [
-		{ href: '/common-room', label: 'Threads' },
+		{ href: '/common-room', label: 'Subs' },
 		{ href: '/memes', label: 'Meme Radar' }
 	];
 </script>

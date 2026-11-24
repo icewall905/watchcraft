@@ -7,7 +7,7 @@ test('Meme Radar lives under The Commons and renders its empty states', async ({
 	await expect(nav.getByRole('link', { name: 'Meme Radar' })).toHaveCount(0);
 	await nav.getByRole('link', { name: 'The Commons' }).click();
 	const commons = page.getByRole('navigation', { name: 'The Commons' });
-	await expect(commons.getByRole('link', { name: 'Threads' })).toHaveAttribute('aria-current', 'page');
+	await expect(commons.getByRole('link', { name: 'Subs' })).toHaveAttribute('aria-current', 'page');
 	await commons.getByRole('link', { name: 'Meme Radar' }).click();
 	await expect(page.getByRole('heading', { name: 'Meme Radar', level: 1 })).toBeVisible();
 	await expect(commons.getByRole('link', { name: 'Meme Radar' })).toHaveAttribute('aria-current', 'page');
