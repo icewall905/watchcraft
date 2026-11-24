@@ -19,6 +19,21 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Commons scraps headline-only picks, summaries for every pick (`6185807`, 2026-11-24)
+
+- Deployed `b31e0f8..6185807`: a pick must hold the post itself (own picture or clip, playable YouTube link, article
+  text, or text of its own); link posts whose page yields no article are scrapped (pick deleted, candidate rejected,
+  saved picks kept, `meta.scrapped`). The article sweep covers every picked post (`meta.captured`), summarises self
+  posts too, reads GitHub, Discourse and Stack Exchange pages, retries unreachable pages 3 times, and keeps the
+  scheduler on the 2 s cadence while a backlog remains. No schema change.
+- All four application services run `watchcraft:release-6185807` (`sha256:5fd83997068…`) with zero restarts;
+  public health 200, Compose and environment hashes unchanged, no tracebacks. First minutes: 433/3,079 picks
+  captured, 31 scrapped.
+- Backup at `/root/compose/watchcraft-backups/20261124-capture-6185807` (`rollback.sh` → `release-b31e0f8`), plus
+  `picks-before.json` (all `crpick` rows and the picked posts' `crcandidate` statuses) to restore scrapped picks.
+- Pruned to the newest two deploy backups (`capture-6185807`, `articles-b31e0f8`): removed `20261124-videofix-e4519d3`
+  and the `release-8bde810` tag. `rating-replay-out.jsonl` moved to `20261124-capture-6185807/`.
+
 ## Deployment record — Commons judges and summarises whole articles (`b31e0f8`, 2026-11-24)
 
 - Deployed `e4519d3..b31e0f8`: website/feed posts that bring only a teaser get their full article and the article's
