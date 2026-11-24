@@ -19,6 +19,19 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Commons post videos (`66b833f`, 2026-11-24)
+
+- Deployed `697e522..66b833f`: scraped pages' og:video streams (v.redd.it via Reddit mirrors, Bluesky HLS) and
+  direct video files become the post's video; each picked post's video is saved as a local faststart mp4 in
+  `data/commonroom-media/` (best up to 720p with sound, at most 5 min / 60 MB, one per scheduler pass) and served
+  with byte ranges; cards loop it silently, the post view plays it with sound. No schema change.
+- All four application services run `watchcraft:release-66b833f` (`sha256:fe2679c6e1e2…`) with zero restarts;
+  public health 200, Compose and environment hashes unchanged, no tracebacks. 40 picked posts carry a video;
+  5 saved (68 MB) in the first two minutes. Watch disk use of `commonroom-media` (V-099).
+- Code-only backup at `/root/compose/watchcraft-backups/20261124-videos-66b833f` (`rollback.sh` → `release-697e522`).
+- Pruned to the newest two deploy backups (`videos-66b833f`, `postview-697e522`): removed `20261124-comments-fedd38f`
+  and the `release-86429e8` tag. `rating-replay-out.jsonl` moved to `20261124-postview-697e522/`.
+
 ## Deployment record — Commons pictures, Reddit-mirror threads, post view (`697e522`, 2026-11-24)
 
 - Deployed `fedd38f..697e522`: scraped pages, RSS entries and forum topics get their own page's share picture
