@@ -176,6 +176,8 @@ class CRComments(SQLModel, table=True):
     tree: list = Field(default_factory=list, sa_column=Column(JSON))
     kid: list | None = Field(default=None, sa_column=Column(JSON))
     fetched_at: float = 0
+    count: int = 0          # the post's comment count when the tree was fetched
+    checked_at: float = 0   # last fetch attempt, successful or not (refetch backoff)
 
 
 class CRSourcePost(SQLModel, table=True):

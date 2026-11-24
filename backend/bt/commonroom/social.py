@@ -64,6 +64,8 @@ MIN_SPAN_S = 1200      # shorter sample spans fall back to the lifetime rate
 FRESH_BADGE_S = 2 * 3600
 RISING_Q, HOT_Q = 0.80, 0.95
 MIN_PEERS = 20         # a platform needs this many recent posts before it can award badges
+RISING_MIN_ENG = 5     # absolute floors: a quiet community cannot make a near-silent post look lively
+HOT_MIN_ENG, HOT_MIN_COMMENTS = 15, 3
 
 
 def sample(meta: dict | None, score: int, comments: int, now: float) -> dict:
@@ -112,12 +114,15 @@ def thresholds(rows) -> dict[str, tuple[float, float]]:
     return {p: (quantile(v, RISING_Q), quantile(v, HOT_Q)) for p, v in per.items() if len(v) >= MIN_PEERS}
 
 
-def badges(platform: str, v: float, published_at: float, now: float, cuts: dict) -> list[str]:
+def badges(platform: str, v: float, published_at: float, now: float, cuts: dict, score: int = 0,
+           comments: int = 0) -> list[str]:
+    """hot/rising against the platform's own cut-offs, but never for a downvoted or near-silent post."""
     out = []
     rising, hot = cuts.get(platform, (0.0, 0.0))
-    if hot and v >= hot:
+    eng = max(0, score) + 2 * max(0, comments)
+    if score >= 0 and hot and v >= hot and eng >= HOT_MIN_ENG and comments >= HOT_MIN_COMMENTS:
         out.append('hot')
-    elif rising and v >= rising:
+    elif score >= 0 and rising and v >= rising and eng >= RISING_MIN_ENG:
         out.append('rising')
     if now - published_at < FRESH_BADGE_S:
         out.append('fresh')

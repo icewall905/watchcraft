@@ -333,3 +333,53 @@ def run(thread: CRThread, lease: str) -> dict:
         decided[pid] = ('kept' if ok else 'rejected', v, wildcard)
     _settle(thread, lease, decided, {p.id: p for p in posts + cross}, missed)
     return {'pool': len(posts), 'judged': len(scores), 'kept': sum(1 for d in decided.values() if d[0] == 'kept')}
+
+
+# ---------- one-off: fun and kind for picks kept before the judge gave them
+
+REJUDGE_WINDOW_S = 7 * 86400   # Today, Hot and Top only look this far back
+REJUDGE_EVERY_S = 60           # at most one judge batch this often
+_rejudge = {'at': 0.0, 'tried': set()}
+
+
+def rejudge(now: float | None = None) -> int:
+    """Ask the judge for fun and kind of one batch of recent picks that have none. Score, status and the
+    wildcard flag stay as they were. A pick the judge skips is not asked again until restart."""
+    now = now or time.time()
+    if now - _rejudge['at'] < REJUDGE_EVERY_S or not ai.enabled():
+        return 0
+    tried = _rejudge['tried']
+    with session() as s:
+        rows = s.exec(select(CRPick.id, CRPick.thread_id).where(
+            CRPick.kind == '', CRPick.published_at >= now - REJUDGE_WINDOW_S)
+            .order_by(CRPick.published_at.desc()).limit(500)).all()
+        todo = [(pick_id, tid) for pick_id, tid in rows if pick_id not in tried]
+        if not todo:
+            return 0
+        tid = todo[0][1]
+        ids = [pick_id for pick_id, t in todo if t == tid][:BATCH]
+        thread = s.get(CRThread, tid)
+        picks = list(s.exec(select(CRPick).where(CRPick.id.in_(ids))).all())
+        posts = {p.id: p for p in s.exec(select(CRPost).where(CRPost.id.in_([k.post_id for k in picks]))).all()}
+        lessons = teach.prompt(s, thread) if thread else ''
+    _rejudge['at'] = now
+    tried.update(ids)
+    picks = [k for k in picks if k.post_id in posts]
+    if not thread or not picks:
+        return 0
+    got = _judge(thread, lessons, [posts[k.post_id] for k in picks])
+    if not got:
+        return 0
+    done = 0
+    with session() as s:
+        s.connection().exec_driver_sql('BEGIN IMMEDIATE')
+        for k in picks:
+            v = got.get(k.post_id)
+            live = s.get(CRPick, k.id)
+            if v and live and not live.kind:
+                live.fun, live.kind = v.fun, v.kind
+                s.add(live)
+                done += 1
+        s.commit()
+    log.info('Common Room re-judged %d older picks of thread %s for fun and kind', done, tid)
+    return done

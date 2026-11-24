@@ -138,6 +138,11 @@ async def scheduler():
         except Exception:
             log.exception('Common Room local copies failed')
         try:
+            from . import curate
+            await asyncio.to_thread(curate.rejudge)
+        except Exception:
+            log.exception('Common Room re-judge failed')
+        try:
             await asyncio.to_thread(prune)
         except Exception:
             log.exception('Common Room prune failed')

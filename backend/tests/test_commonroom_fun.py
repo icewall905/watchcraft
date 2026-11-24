@@ -138,10 +138,11 @@ def test_badges_are_relative_to_each_platform():
     cuts = social.thresholds(rows)
     assert 'tiny' not in cuts  # too few peers to judge
     now = 1e6
-    assert social.badges('reddit', 99, 0, now, cuts) == ['hot']
-    assert social.badges('reddit', 85, 0, now, cuts) == ['rising']
-    assert social.badges('hn', 9.9, 0, now, cuts) == ['hot']   # small numbers, but hot for HN
-    assert social.badges('reddit', 9.9, now - 60, now, cuts) == ['fresh']
+    busy = {'score': 20, 'comments': 5}
+    assert social.badges('reddit', 99, 0, now, cuts, **busy) == ['hot']
+    assert social.badges('reddit', 85, 0, now, cuts, **busy) == ['rising']
+    assert social.badges('hn', 9.9, 0, now, cuts, **busy) == ['hot']   # small numbers, but hot for HN
+    assert social.badges('reddit', 9.9, now - 60, now, cuts, **busy) == ['fresh']
 
 
 def test_feed_reports_velocity_and_badges(client):
@@ -195,3 +196,71 @@ def test_feed_modes_kind_filter_and_section_alias(client):
     assert client.get('/api/hub/commonroom/feed', params={'kind': 'nope'}).status_code == 400
     card = _feed(client, mode='saved')[0]
     assert card['kind'] == 'news' and card['saved'] is True and card['fun'] == 0
+
+
+# ---------- live-data fixes: badge floors, comment refetch, re-judge
+
+def test_badges_need_real_engagement_and_no_downvotes():
+    cuts = {'hn': (0.01, 0.02)}
+    now = 1e6
+    assert social.badges('hn', 5, 0, now, cuts, score=-15, comments=3) == []      # downvoted
+    assert social.badges('hn', 5, 0, now, cuts, score=1, comments=0) == []        # near-silent
+    assert social.badges('hn', 5, 0, now, cuts, score=4, comments=1) == ['rising']
+    assert social.badges('hn', 5, 0, now, cuts, score=10, comments=3) == ['hot']
+
+
+def test_comments_refetched_when_empty_or_grown(client, monkeypatch):
+    from bt.commonroom import assets
+    t = thread(client)
+    a = _pick(t, 'https://fake.example/c1', comments=5)
+    b = _pick(t, 'https://fake.example/c2', comments=2)
+    old = time.time() - 3 * 3600
+    with session() as s:
+        s.add(CRComments(post_id=a, tree=[], fetched_at=0, checked_at=old))
+        s.add(CRComments(post_id=b, tree=[{'author': 'x', 'body': 'kept', 'score': 1}], fetched_at=old,
+                         checked_at=old, count=2))
+        s.commit()
+    calls = []
+
+    class Adapter:
+        @staticmethod
+        def comments(data):
+            calls.append(data['id'])
+            return [{'author': 'bob', 'body': 'Now there are replies', 'score': 4}]
+    monkeypatch.setitem(assets.ADAPTERS, 'fake', Adapter)
+    assert assets.sweep_comments() == 1 and calls == [a]  # b has not grown
+    with session() as s:
+        row = s.get(CRComments, a)
+        assert row.tree and row.count == 5 and row.checked_at > old
+    assert assets.sweep_comments() == 0  # backoff
+    with session() as s:  # b gains comments; a failed refetch never wipes a stored tree
+        from bt.commonroom.models import CRPost
+        post = s.get(CRPost, b)
+        post.comments = 9
+        s.add(post)
+        s.commit()
+    Adapter.comments = staticmethod(lambda data: calls.append(data['id']) or [])
+    assert assets.sweep_comments() == 1 and calls[-1] == b
+    with session() as s:
+        assert s.get(CRComments, b).tree[0]['body'] == 'kept'
+
+
+def test_rejudge_fills_fun_and_kind_of_older_picks_once(client, monkeypatch):
+    t = thread(client)
+    a = _pick(t, 'https://fake.example/r1')
+    b = _pick(t, 'https://fake.example/r2', kind='news', fun=5)
+    monkeypatch.setattr(curate.ai, 'enabled', lambda: True)
+    monkeypatch.setattr(curate, '_rejudge', {'at': 0.0, 'tried': set()})
+    seen = []
+
+    def judge(thread, lessons, batch):
+        seen.append([p.id for p in batch])
+        return {p.id: Verdict(10, 'ignored', 77, 'humor') for p in batch}
+    monkeypatch.setattr(curate, '_judge', judge)
+    assert curate.rejudge() == 1 and seen == [[a]]
+    with session() as s:
+        picks = {p.post_id: p for p in s.exec(select(CRPick)).all()}
+    assert (picks[a].fun, picks[a].kind, picks[a].score) == (77, 'humor', 80)  # score untouched
+    assert (picks[b].fun, picks[b].kind) == (5, 'news')
+    assert curate.rejudge() == 0  # throttled
+    assert curate.rejudge(time.time() + 120) == 0 and len(seen) == 1  # nothing left

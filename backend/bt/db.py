@@ -116,6 +116,7 @@ def init_db() -> None:
                 ('crthreadsource', (('fit', 'INTEGER NOT NULL DEFAULT 0'), ('tried', 'INTEGER NOT NULL DEFAULT 0'),
                                     ('kept', 'INTEGER NOT NULL DEFAULT 0'))),
                 ('crcandidate', (('misses', 'INTEGER NOT NULL DEFAULT 0'),)),
+                ('crcomments', (('count', 'INTEGER NOT NULL DEFAULT 0'), ('checked_at', 'FLOAT NOT NULL DEFAULT 0'))),
                 ('crpick', (('fun', 'INTEGER NOT NULL DEFAULT 0'), ('kind', "VARCHAR NOT NULL DEFAULT ''"),
                             ('wildcard', 'BOOLEAN NOT NULL DEFAULT 0'))),
                 ('moodboardbrief', (('absorbed', 'INTEGER NOT NULL DEFAULT 0'),)),

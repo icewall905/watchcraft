@@ -9,6 +9,7 @@ import logging
 import time
 from pathlib import Path
 
+from sqlalchemy import func
 from sqlmodel import select
 
 from .. import curation
@@ -116,17 +117,38 @@ def sweep_images(limit: int = IMAGES_PER_TICK) -> int:
     return saved
 
 
+REFETCH_S = 2 * 3600          # wait at least this long between fetches of one post's comments
+REFETCH_WINDOW_S = 7 * 86400  # only posts this young are refetched
+REFETCH_GROWTH = 3            # comments gained since the last fetch before it is worth fetching again
+
+
+def _due(s, limit: int) -> list[CRPost]:
+    """Picked posts whose comments were never fetched, then young ones whose stored tree is empty or behind."""
+    now = time.time()
+    picked = select(CRPick.post_id)
+    rows = list(s.exec(select(CRPost).where(CRPost.id.in_(picked), CRPost.id.not_in(select(CRComments.post_id)))
+                       .order_by(CRPost.id.desc()).limit(limit)).all())
+    if len(rows) < limit:
+        stale = s.exec(select(CRPost).join(CRComments, CRComments.post_id == CRPost.id).where(
+            CRPost.id.in_(picked), CRPost.comments > 0, CRPost.published_at >= now - REFETCH_WINDOW_S,
+            CRComments.checked_at < now - REFETCH_S, CRComments.fetched_at < now - REFETCH_S,
+            (func.coalesce(func.json_array_length(CRComments.tree), 0) == 0)
+            | (CRPost.comments >= CRComments.count + REFETCH_GROWTH))
+            .order_by(CRPost.comments.desc()).limit(limit - len(rows))).all()
+        rows += list(stale)
+    return rows
+
+
 def sweep_comments(limit: int = COMMENTS_PER_TICK) -> int:
-    """Fetch comments once for picked posts that have none stored, so opening a post works offline."""
+    """Fetch comments for picked posts so opening a post works offline and cards can show top replies.
+    Posts whose first fetch came back empty, or that gained comments since, are fetched again (with backoff)."""
     with session() as s:
-        have = select(CRComments.post_id)
-        rows = s.exec(select(CRPost).where(CRPost.id.in_(select(CRPick.post_id)), CRPost.id.not_in(have))
-                      .order_by(CRPost.id.desc()).limit(limit * 3)).all()
+        rows = _due(s, limit * 3)
         # Child threads (forced on for child profiles) also get a kid-checked copy, so cards can show a top reply.
         kid = set(s.exec(select(CRPick.post_id).join(CRThread, CRThread.id == CRPick.thread_id).where(
             CRPick.post_id.in_([p.id for p in rows] or [0]), CRThread.child_friendly == True)).all())  # noqa: E712
         todo = [{'id': p.id, 'url': p.url, 'external_id': p.external_id, 'community': p.community,
-                 'meta': p.meta or {}, 'platform': p.platform} for p in rows]
+                 'meta': p.meta or {}, 'platform': p.platform, 'comments': p.comments} for p in rows]
     done = 0
     for data in todo:
         adapter = ADAPTERS.get(data['platform'])
@@ -137,17 +159,20 @@ def sweep_comments(limit: int = COMMENTS_PER_TICK) -> int:
             done += 1
             try:
                 tree = adapter.comments(data) or []
-            except Exception as e:  # noqa: BLE001 — retried on open; an empty row stops endless retries here
+            except Exception as e:  # noqa: BLE001 — retried later with backoff, and on open
                 log.debug('Common Room comments for %s failed: %s', data['url'], e)
         kid_tree = None
         if tree and data['id'] in kid:
             from .kids import filter_comments
             kid_tree = filter_comments(tree)
+        now = time.time()
         with session() as s:
             s.connection().exec_driver_sql('BEGIN IMMEDIATE')
-            if not s.get(CRComments, data['id']):
-                s.add(CRComments(post_id=data['id'], tree=tree, kid=kid_tree,
-                                 fetched_at=time.time() if tree else 0.0))
+            row = s.get(CRComments, data['id']) or CRComments(post_id=data['id'])
+            row.checked_at = now
+            if tree:  # a failed or empty refetch never wipes a tree we already have
+                row.tree, row.kid, row.fetched_at, row.count = tree, kid_tree, now, data['comments']
+            s.add(row)
             s.commit()
     return done
 

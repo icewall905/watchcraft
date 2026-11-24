@@ -115,11 +115,12 @@ _cuts: list = [0.0, {}]
 
 
 def _velocity_cuts(s) -> dict:
-    """Per-platform rising/hot cut-offs from posts fetched in the last two days (cached for ten minutes)."""
+    """Per-platform rising/hot cut-offs from posts published in the last two days (cached for ten minutes).
+    Older posts re-fetched lately would drag the cut-offs to near zero."""
     now = time.time()
     if now - _cuts[0] > CUTS_TTL_S:
         rows = s.exec(select(CRPost.platform, CRPost.meta, CRPost.score, CRPost.comments, CRPost.published_at)
-                      .where(CRPost.fetched_at >= now - CUTS_WINDOW_S).order_by(CRPost.id.desc()).limit(5000)).all()
+                      .where(CRPost.published_at >= now - CUTS_WINDOW_S).order_by(CRPost.id.desc()).limit(5000)).all()
         _cuts[:] = [now, social.thresholds((r[0], social.velocity(r[1], r[2], r[3], r[4], now)) for r in rows)]
     return _cuts[1]
 
@@ -135,7 +136,7 @@ def _socialize(s, rows: list, out: list[dict], child: bool) -> list[dict]:
     for o in out:
         p = by_post[o['post_id']]
         o['velocity'] = round(social.velocity(p.meta, p.score, p.comments, p.published_at, now), 2)
-        o['badges'] = social.badges(p.platform, o['velocity'], p.published_at, now, cuts)
+        o['badges'] = social.badges(p.platform, o['velocity'], p.published_at, now, cuts, p.score, p.comments)
     for c in s.exec(select(CRComments).where(CRComments.post_id.in_(ids))).all():
         tree = c.kid if child else c.tree
         for o in out:
@@ -436,8 +437,11 @@ POOL_MAX = 400
 
 
 def _heat(o: dict, cuts: dict) -> float:
-    """How hot a post is for its own platform (1.0 = at the hot cut-off); 0 for feeds without numbers."""
+    """How hot a post is for its own platform (1.0 = at the hot cut-off); 0 for feeds without numbers and for
+    posts below the badge floors."""
     hot = cuts.get(o['platform'], (0.0, 0.0))[1]
+    if not {'hot', 'rising'} & set(o.get('badges') or ()):
+        return 0.0
     return min(3.0, o.get('velocity', 0) / hot) if hot else 0.0
 
 
@@ -658,6 +662,7 @@ def comments(post_id: int, pid: int = Depends(require_room)):
         cached = s.get(CRComments, post_id)
         data = {'url': post.url, 'external_id': post.external_id, 'community': post.community, 'meta': post.meta or {},
                 'platform': post.platform}
+        post_comments = post.comments
         fresh = cached and time.time() - cached.fetched_at < COMMENTS_TTL
         if fresh and (not child or cached.kid is not None):
             return {'comments': cached.kid if child else cached.tree, 'url': post.url}
@@ -673,7 +678,9 @@ def comments(post_id: int, pid: int = Depends(require_room)):
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
         row = s.get(CRComments, post_id) or CRComments(post_id=post_id)
         if not fresh:
-            row.tree, row.fetched_at, row.kid = tree, time.time(), None
+            row.checked_at = time.time()
+        if not fresh and (tree or not row.tree):
+            row.tree, row.fetched_at, row.kid, row.count = tree, time.time(), None, post_comments
         if kid is not None:
             row.kid = kid
         s.add(row)
