@@ -19,6 +19,19 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Commons new-count on unopened threads (`2740136`, 2026-11-24)
+
+- Deployed on top of prod's `b0e5277` (board tags; not in this checkout): only the 3 files of `56c728a..2740136`
+  (`backend/bt/commonroom/api.py`, its test, `frontend/src/lib/hub/overview/loaders.ts`), whose prod copies matched
+  `56c728a` before rsync. A thread never opened counts only the last day as new; the overview chip no longer falls
+  back to the all-time pick count. No schema change.
+- All four application services run `watchcraft:release-2740136` (`sha256:001b85c005a8…`); public health 200,
+  Compose and environment hashes unchanged, no tracebacks.
+- Code-only backup at `/root/compose/watchcraft-backups/20261124-newcount-2740136` (`rollback.sh` → `release-b0e5277`).
+- Pruned to the newest two deploy backups (`newcount-2740136`, `boardtags-b0e5277`): removed `20261124-articles-b31e0f8`,
+  `20261124-capture-6185807` and tags `release-b31e0f8`, `release-e4519d3`. `picks-before.json` moved to
+  `20261124-boardtags-b0e5277/picks-before-6185807.json`.
+
 ## Deployment record — Commons scraps headline-only picks, summaries for every pick (`6185807`, 2026-11-24)
 
 - Deployed `b31e0f8..6185807`: a pick must hold the post itself (own picture or clip, playable YouTube link, article
