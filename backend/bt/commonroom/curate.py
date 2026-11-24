@@ -9,6 +9,7 @@ embeddings say they are close to its interests, so every fetch can feed several 
 import logging
 import math
 import time
+from typing import NamedTuple
 
 from sqlalchemy import or_
 from sqlmodel import select
@@ -31,9 +32,30 @@ CROSS_WINDOW_S = 3 * 86400
 CROSS_MIN = 0.45       # embedding relevance a borrowed post needs before it is judged
 BATCH = 15
 EMBED_BATCH = 32
+KINDS = ('humor', 'showcase', 'question', 'discussion', 'news', 'deepdive', 'oddity')
+WILD_FUN = 80          # a delightful post may be this fun ...
+WILD_SLACK = 20        # ... and this far under the threshold and still be kept as a wildcard
 SCHEMA = {'type': 'object', 'properties': {'scores': {'type': 'array', 'items': {'type': 'object', 'properties': {
-    'n': {'type': 'integer'}, 'score': {'type': 'integer', 'minimum': 0, 'maximum': 100}, 'why': {'type': 'string'}},
-    'required': ['n', 'score', 'why']}}}, 'required': ['scores']}
+    'n': {'type': 'integer'}, 'score': {'type': 'integer', 'minimum': 0, 'maximum': 100},
+    'fun': {'type': 'integer', 'minimum': 0, 'maximum': 100}, 'kind': {'type': 'string', 'enum': list(KINDS)},
+    'why': {'type': 'string'}},
+    'required': ['n', 'score', 'fun', 'kind', 'why']}}}, 'required': ['scores']}
+
+
+class Verdict(NamedTuple):
+    score: int
+    why: str
+    fun: int = 0
+    kind: str = ''
+
+
+def keeps(v: Verdict, threshold: int, wild: bool) -> tuple[bool, bool]:
+    """(kept, wildcard). Wildcards are loosely on-topic posts kept because they are a delight."""
+    if v.score >= threshold:
+        return True, False
+    if wild and v.fun >= WILD_FUN and v.score >= threshold - WILD_SLACK:
+        return True, True
+    return False, False
 
 
 def _pool(s, thread: CRThread) -> list[CRPost]:
@@ -156,17 +178,25 @@ def _system(thread: CRThread) -> str:
         rules.append(f'Owner instructions: {thread.instructions.strip()}')
     if thread.avoid.strip():
         rules.append(f'Never keep posts about: {thread.avoid.strip()}')
-    rules.append('Score each numbered post 0-100 for how much the owner would want to see it in this thread. '
-                 'High: clearly on-topic, substantive, novel, useful or delightful, worth opening. '
-                 'Low: off-topic, low-effort, reposts, rage bait, self-promotion or ads, help requests nobody '
-                 'else would learn from, or only loosely related. "why" is one short line (max 15 words) telling '
-                 'the owner why it fits, written to them.')
+    rules.append('This feed replaces browsing Reddit: it should be fun to scroll, not only informative. '
+                 'Score each numbered post 0-100 for how much the owner would want to see it in this thread. '
+                 'High: clearly on-topic and worth opening: substantive, novel, useful, funny or delightful. '
+                 'Low: off-topic, reposts, rage bait, self-promotion or ads, help requests nobody else would '
+                 'learn from, or only loosely related. A short post is fine when it is genuinely funny, clever '
+                 'or charming. '
+                 '"fun" is 0-100 for how entertaining it is to come across: funny, surprising, playful, weird, '
+                 'a lively discussion or a cool thing someone made; dry news and plain questions score low. '
+                 '"kind" is the one that fits best: humor (jokes, memes, banter), showcase (something someone '
+                 'built or made), question (asking for help or opinions), discussion (debate, hot take, '
+                 'open conversation), news (announcement or report), deepdive (long article, analysis, '
+                 'tutorial), oddity (strange, surprising or obscure find). '
+                 '"why" is one short line (max 15 words) telling the owner why it fits, written to them.')
     if thread.child_friendly:
         rules.append('This thread is read by a child: score 0 anything not suitable for a 10-12 year old.')
     return ' '.join(rules)
 
 
-def _judge(thread: CRThread, lessons: str, batch: list[CRPost]) -> dict[int, tuple[int, str]] | None:
+def _judge(thread: CRThread, lessons: str, batch: list[CRPost]) -> dict[int, Verdict] | None:
     items = [{'type': 'post', 'title': p.title, 'publisher': f'{p.platform} {p.community}'.strip(),
               'summary': p.body[:600], 'url': p.link_url or p.url,
               **({'body': p.body[:2000]} if len(p.body) > 600 else {})} for p in batch]
@@ -186,11 +216,17 @@ def _judge(thread: CRThread, lessons: str, batch: list[CRPost]) -> dict[int, tup
                 score = max(0, min(100, int(row.get('score'))))
             except (TypeError, ValueError):
                 continue
-            out[batch[n - 1].id] = (score, ' '.join(str(row.get('why') or '').split())[:200])
+            try:
+                fun = max(0, min(100, int(row.get('fun') or 0)))
+            except (TypeError, ValueError):
+                fun = 0
+            kind = str(row.get('kind') or '').strip().lower()
+            out[batch[n - 1].id] = Verdict(score, ' '.join(str(row.get('why') or '').split())[:200], fun,
+                                           kind if kind in KINDS else '')
     return out
 
 
-def _settle(thread: CRThread, lease: str, decided: dict[int, tuple[str, int, str]], posts: dict[int, CRPost],
+def _settle(thread: CRThread, lease: str, decided: dict[int, tuple[str, Verdict, bool]], posts: dict[int, CRPost],
             missed: set[int] = frozenset()):
     now = time.time()
     with session() as s:
@@ -212,13 +248,14 @@ def _settle(thread: CRThread, lease: str, decided: dict[int, tuple[str, int, str
         picked = set(s.exec(select(CRPick.post_id).where(CRPick.thread_id == thread.id,
                                                          CRPick.post_id.in_(list(decided)))).all())
         new_keeps = []
-        for pid, (status, score, why) in decided.items():
+        for pid, (status, v, wild) in decided.items():
             c = have.get(pid) or CRCandidate(thread_id=thread.id, post_id=pid)
             c.status = status
             s.add(c)
             if status == 'kept' and pid not in picked:
                 new_keeps.append(pid)
-                s.add(CRPick(profile_id=thread.profile_id, thread_id=thread.id, post_id=pid, score=score, why=why,
+                s.add(CRPick(profile_id=thread.profile_id, thread_id=thread.id, post_id=pid, score=v.score,
+                             why=v.why, fun=v.fun, kind=v.kind, wildcard=wild,
                              published_at=posts[pid].published_at, picked_at=now))
         _count_kept(s, thread.id, new_keeps)
         s.commit()
@@ -252,13 +289,14 @@ def run(thread: CRThread, lease: str) -> dict:
         languages = set(store.allowed_languages(s, thread.profile_id))
     show_nsfw = bool(get_settings()['commonroom'].get('show_nsfw')) and not child and not thread.child_friendly
     words = [w.strip().lower() for w in (thread.avoid or '').replace('\n', ',').split(',') if len(w.strip()) > 2]
-    decided: dict[int, tuple[str, int, str]] = {}
+    decided: dict[int, tuple[str, Verdict, bool]] = {}
+    no = Verdict(0, '')
     keep = []
     for p in posts:
         if (p.nsfw and not show_nsfw) or ((child or thread.child_friendly) and p.spoiler) \
                 or _blocked(p, blocks) or (words and _avoided(p, words)) \
                 or (languages and p.language and p.language not in languages):
-            decided[p.id] = ('rejected', 0, '')
+            decided[p.id] = ('rejected', no, False)
         else:
             keep.append(p)
     borrowed = {p.id for p in cross}
@@ -271,7 +309,8 @@ def run(thread: CRThread, lease: str) -> dict:
     ranked = [(p, rel) for p, rel in _rank(thread, keep) if p.id not in borrowed or rel >= CROSS_MIN]
     ranked = ranked[:JUDGE_MAX_MORE if thread.want_more else JUDGE_MAX]
     threshold = THRESHOLD.get(thread.strictness, 60)
-    scores: dict[int, tuple[int, str]] = {}
+    wild = not (child or thread.child_friendly)
+    scores: dict[int, Verdict] = {}
     missed: set[int] = set()
     if ai.enabled():
         for start in range(0, len(ranked), BATCH):
@@ -280,16 +319,17 @@ def run(thread: CRThread, lease: str) -> dict:
                 scores.update(got)
                 missed.update(p.id for p, _ in ranked[start:start + BATCH] if p.id not in got)
     else:
-        scores = {p.id: (int(round(rel * 100)), '') for p, rel in ranked}
-    kept = [pid for pid, (score, _) in scores.items() if score >= threshold]
+        scores = {p.id: Verdict(int(round(rel * 100)), '') for p, rel in ranked}
+    kept = [pid for pid, v in scores.items() if keeps(v, threshold, wild)[0]]
     if child or thread.child_friendly:
         allowed, failed = kids.check_posts(kept)
         for pid in kept:
             if pid in failed:
-                scores[pid] = (0, '')
+                scores[pid] = no
             elif pid not in allowed:
                 scores.pop(pid)  # the safety model gave no answer: judge again next run
-    for pid, (score, why) in scores.items():
-        decided[pid] = ('kept' if score >= threshold else 'rejected', score, why)
+    for pid, v in scores.items():
+        ok, wildcard = keeps(v, threshold, wild)
+        decided[pid] = ('kept' if ok else 'rejected', v, wildcard)
     _settle(thread, lease, decided, {p.id: p for p in posts + cross}, missed)
     return {'pool': len(posts), 'judged': len(scores), 'kept': sum(1 for d in decided.values() if d[0] == 'kept')}

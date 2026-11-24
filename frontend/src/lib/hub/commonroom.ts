@@ -11,14 +11,20 @@ export interface SourceHunt { id: number; status: 'queued' | 'running' | 'done' 
 export interface ThreadSources { sources: ThreadSource[]; hunt: SourceHunt | null }
 export interface Media { kind: 'image' | 'video'; url: string; thumb?: string; poster?: string }
 export type Verdict = 'up' | 'down' | '';
+export type Kind = 'humor' | 'showcase' | 'question' | 'discussion' | 'news' | 'deepdive' | 'oddity';
+export type Mode = 'today' | 'hot' | 'new' | 'top' | 'saved';
+export type Badge = 'hot' | 'rising' | 'fresh';
+export interface TopComment { author: string; body: string; score: number }
+export interface Elsewhere { platform: string; community: string; url: string; comments: number }
 export interface Post {
  pick_id: number; post_id: number; thread_id: number; thread_name: string; platform: string; community: string; author: string; title: string; excerpt: string;
  url: string; link_url: string; domain: string; media: Media[]; score: number | null; comments: number | null; published_at: number | null;
  why: string; relevance: number; saved: boolean; verdict: Verdict; nsfw: boolean; spoiler: boolean;
+ fun?: number; kind?: Kind | ''; wildcard?: boolean; top?: TopComment[]; elsewhere?: Elsewhere[]; velocity?: number; badges?: Badge[];
 }
 export type PostDetail = Post & { body: string };
 export interface Comment { id: string; author: string; body: string; score: number | null; published_at: number | null; children: Comment[] }
-export interface FeedPage { posts: Post[]; next_cursor: string; has_more: boolean; building: boolean }
+export interface FeedPage { posts: Post[]; next_cursor: string; has_more: boolean; building: boolean; mode?: Mode | 'deep'; end?: boolean }
 export interface Block { id: number; kind: 'community' | 'author' | 'domain'; value: string }
 export type ThreadInput = {name: string; interests: string; instructions?: string; avoid?: string; strictness?: Strictness};
 const base = '/hub/commonroom';
@@ -37,7 +43,7 @@ export const crApi = {
  removeSource: (id: number, link: number) => request<unknown>(`${base}/threads/${id}/sources/${link}`, {method: 'DELETE', toast: false}),
  learned: (id: number) => request<{lessons: string[]; up: number; down: number}>(`${base}/threads/${id}/learned`, {toast: false}),
  visit: (thread: 'all' | number) => request<{boundary: number}>(`${base}/visit`, {method: 'POST', body: {thread}, toast: false}),
- feed: (p: {thread: 'all' | number; section: 'new' | 'deep'; boundary?: number; cursor?: string}, signal?: AbortSignal) => request<FeedPage>(`${base}/feed${qs(p)}`, {signal, toast: false}),
+ feed: (p: {thread: 'all' | number; section?: 'new' | 'deep'; mode?: Mode | 'deep'; kind?: Kind; boundary?: number; cursor?: string}, signal?: AbortSignal) => request<FeedPage>(`${base}/feed${qs(p)}`, {signal, toast: false}),
  post: (id: number) => request<PostDetail>(`${base}/posts/${id}`, {toast: false}),
  comments: (id: number) => request<{comments: Comment[]; url: string}>(`${base}/posts/${id}/comments`, {toast: false}),
  seen: (pick_ids: number[], keepalive = false) => request<unknown>(`${base}/seen`, {method: 'POST', body: {pick_ids}, toast: false, keepalive}),

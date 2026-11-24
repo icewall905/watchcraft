@@ -235,6 +235,30 @@ def test_music_dislike_can_teach_alone_but_a_single_favourite_cannot(model):
         assert s.exec(select(Teaching.text).where(Teaching.origin == 'music')).all() == ['Less screamo']
 
 
+
+def test_commons_votes_become_teachings_with_kind_and_cursor(model):
+    from bt.commonroom.models import CRFeedback, CRPick, CRThread
+    p = pid()
+    with session() as s:
+        th = CRThread(profile_id=p, name='Homelab')
+        s.add(th)
+        s.flush()
+        s.add_all([CRPick(profile_id=p, thread_id=th.id, post_id=7, kind='humor'),
+                   CRFeedback(profile_id=p, thread_id=th.id, post_id=7, verdict='up', title='Rack cat', note='more cats'),
+                   CRFeedback(profile_id=p, thread_id=th.id, post_id=8, verdict='down', title='Ad', community='r/x')])
+        s.commit()
+    model.collect = {'teachings': [{'text': 'Enjoys funny homelab pets', 'polarity': 1, 'reason': 'Upvoted, noted',
+                                    'evidence_ids': [1]},
+                                   {'text': 'Dislikes r/x', 'polarity': -1, 'reason': 'One vote', 'evidence_ids': [2]}]}
+    with session() as s:
+        assert collect.collect_commons(s, p) == 1
+        s.commit()
+        row = s.exec(select(Teaching).where(Teaching.origin == 'commonroom')).one()
+        assert row.section == 'commonroom' and row.signals[0]['ref_id'] == 7
+        assert collect.collect_commons(s, p) == 0  # cursor moved on
+    assert '"kind": "humor"' in model.calls[-1][1]
+
+
 # ---------- the weave
 
 def seeded(model):

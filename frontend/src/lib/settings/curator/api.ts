@@ -1,10 +1,10 @@
 // Settings → Curator: what the curator knows, what it learned and why (/api/curator).
 import { request } from '$lib/api';
 
-export type Surface = 'video' | 'short' | 'article' | 'news' | 'meme' | 'web' | 'moodboard' | 'music' | 'hub' | 'correction';
+export type Surface = 'video' | 'short' | 'article' | 'news' | 'meme' | 'web' | 'moodboard' | 'music' | 'commonroom' | 'hub' | 'correction';
 export type SignalKind = 'like' | 'love' | 'dislike' | 'save' | 'dismiss' | 'read' | 'seen' | 'overrule_up' | 'overrule_down'
 	| 'typed_up' | 'typed_down' | 'hide_language' | 'fit' | 'not_fit' | 'favorite' | 'less' | 'note';
-export type SectionKey = 'overall' | 'videos' | 'shorts' | 'news' | 'articles' | 'memes' | 'web' | 'moodboards' | 'music';
+export type SectionKey = 'overall' | 'videos' | 'shorts' | 'news' | 'articles' | 'memes' | 'web' | 'moodboards' | 'music' | 'commonroom';
 export type Polarity = 1 | -1;
 
 export type Signal = {
@@ -68,7 +68,8 @@ export const curator = {
 export const SECTIONS: { key: SectionKey; title: string }[] = [
 	{ key: 'overall', title: 'Overall' }, { key: 'videos', title: 'Videos' }, { key: 'shorts', title: 'Shorts' },
 	{ key: 'news', title: 'News' }, { key: 'articles', title: 'Articles' }, { key: 'memes', title: 'Memes' },
-	{ key: 'web', title: 'Web' }, { key: 'moodboards', title: 'Mood boards' }, { key: 'music', title: 'Music' }
+	{ key: 'web', title: 'Web' }, { key: 'moodboards', title: 'Mood boards' }, { key: 'music', title: 'Music' },
+	{ key: 'commonroom', title: 'The Commons' }
 ];
 export const sectionTitle = (key: string) => SECTIONS.find((s) => s.key === key)?.title ?? key;
 
@@ -80,6 +81,7 @@ export const SURFACE: Record<Surface, { icon: string; label: string; one: string
 	meme: { icon: '😂', label: 'Memes', one: 'meme', many: 'memes' },
 	moodboard: { icon: '📌', label: 'Mood boards', one: 'pin', many: 'pins' },
 	music: { icon: '🎵', label: 'Music', one: 'track', many: 'tracks' },
+	commonroom: { icon: '💬', label: 'The Commons', one: 'post', many: 'posts' },
 	web: { icon: '🌐', label: 'Web', one: 'page', many: 'pages' },
 	hub: { icon: '✧', label: 'Today', one: 'item', many: 'items' },
 	correction: { icon: '✍️', label: 'Corrections', one: 'correction', many: 'corrections' }

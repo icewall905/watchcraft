@@ -95,6 +95,7 @@ class CRPost(SQLModel, table=True):
     title: str = ''
     body: str = ''
     link_url: str = ''
+    link_key: str = Field(default='', index=True)  # normalised link_url: the same link discussed elsewhere
     domain: str = ''
     media: list = Field(default_factory=list, sa_column=Column(JSON))
     meta: dict = Field(default_factory=dict, sa_column=Column(JSON))
@@ -135,6 +136,9 @@ class CRPick(SQLModel, table=True):
     post_id: int = Field(index=True)
     score: int = 0
     why: str = ''
+    fun: int = 0                      # judge's 0-100 entertainment score
+    kind: str = ''                    # humor | showcase | question | discussion | news | deepdive | oddity
+    wildcard: bool = False            # kept for being a delight though only loosely on-topic
     published_at: float = Field(default=0, index=True)
     picked_at: float = Field(default_factory=time.time, index=True)
     seen_at: float = 0

@@ -7,10 +7,11 @@ from sqlmodel import Field, SQLModel
 
 from ..hub.models import J, T
 
-SURFACES = ('video', 'short', 'article', 'news', 'meme', 'web', 'moodboard', 'music', 'hub', 'correction')
+SURFACES = ('video', 'short', 'article', 'news', 'meme', 'web', 'moodboard', 'music', 'commonroom', 'hub', 'correction')
 SECTIONS = {
     'overall': 'Overall', 'videos': 'Videos', 'shorts': 'Shorts', 'news': 'News', 'articles': 'Articles',
     'memes': 'Memes', 'web': 'Web & projects', 'moodboards': 'Mood Boards', 'music': 'Music',
+    'commonroom': 'The Commons',
 }
 CONFIDENCE = ('tentative', 'established', 'explicit')
 

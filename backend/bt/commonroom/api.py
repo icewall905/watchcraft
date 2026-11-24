@@ -8,7 +8,7 @@ from sqlmodel import select
 
 from ..access import hub_worker_allowed, is_child, profile_id
 from ..db import session
-from . import expedition, harvest, store
+from . import expedition, harvest, social, store
 from .adapters import ADAPTERS
 from .models import (CRAsset, CRBlock, CRCandidate, CRComments, CRFeedback, CRPick, CRPost, CRSource, CRThread,
                      CRSourcePost, CRThreadSource, CRVisit)
@@ -104,7 +104,74 @@ def _post_json(pick: CRPick, post: CRPost, thread: CRThread, child: bool, verdic
             'excerpt': body[:600] + ('…' if len(body) > 600 else ''), 'url': post.url, 'link_url': post.link_url,
             'domain': post.domain, 'media': _media(post, child), 'score': post.score, 'comments': post.comments,
             'published_at': post.published_at, 'why': pick.why, 'relevance': pick.score, 'saved': pick.saved,
-            'verdict': verdict, 'nsfw': post.nsfw, 'spoiler': post.spoiler}
+            'verdict': verdict, 'nsfw': post.nsfw, 'spoiler': post.spoiler,
+            'fun': pick.fun, 'kind': pick.kind, 'wildcard': pick.wildcard, 'top': [], 'elsewhere': []}
+
+
+ELSEWHERE_MAX = 4
+CUTS_TTL_S = 600
+CUTS_WINDOW_S = 2 * 86400
+_cuts: list = [0.0, {}]
+
+
+def _velocity_cuts(s) -> dict:
+    """Per-platform rising/hot cut-offs from posts fetched in the last two days (cached for ten minutes)."""
+    now = time.time()
+    if now - _cuts[0] > CUTS_TTL_S:
+        rows = s.exec(select(CRPost.platform, CRPost.meta, CRPost.score, CRPost.comments, CRPost.published_at)
+                      .where(CRPost.fetched_at >= now - CUTS_WINDOW_S).order_by(CRPost.id.desc()).limit(5000)).all()
+        _cuts[:] = [now, social.thresholds((r[0], social.velocity(r[1], r[2], r[3], r[4], now)) for r in rows)]
+    return _cuts[1]
+
+
+def _socialize(s, rows: list, out: list[dict], child: bool) -> list[dict]:
+    """Add top comments and other discussions of the same link; fold same-link duplicates on one page into
+    the copy with the most comments. Child profiles get kid-checked comments only and no outside links."""
+    by_post = {post.id: post for _, post, _ in rows}
+    ids = list(by_post)
+    if not ids:
+        return out
+    now, cuts = time.time(), _velocity_cuts(s)
+    for o in out:
+        p = by_post[o['post_id']]
+        o['velocity'] = round(social.velocity(p.meta, p.score, p.comments, p.published_at, now), 2)
+        o['badges'] = social.badges(p.platform, o['velocity'], p.published_at, now, cuts)
+    for c in s.exec(select(CRComments).where(CRComments.post_id.in_(ids))).all():
+        tree = c.kid if child else c.tree
+        for o in out:
+            if o['post_id'] == c.post_id and tree:
+                o['top'] = social.top_comments(tree, by_post[c.post_id].author)
+    if child:
+        return out
+    keys = {p.link_key for p in by_post.values() if p.link_key and p.link_key != '-'}
+    if not keys:
+        return out
+    groups: dict[str, list] = {}
+    for r in s.exec(select(CRPost.id, CRPost.link_key, CRPost.platform, CRPost.community, CRPost.url, CRPost.comments,
+                           CRPost.nsfw).where(CRPost.link_key.in_(list(keys))).limit(400)).all():
+        groups.setdefault(r.link_key, []).append(r)
+    keep, owner = [], {}
+    for o in out:
+        key = by_post[o['post_id']].link_key
+        if key in owner:  # the same link twice on one page: keep the livelier discussion
+            first = owner[key]
+            if o['comments'] > first['comments']:
+                keep[keep.index(first)] = o
+                owner[key] = o
+            continue
+        if key in groups:
+            owner[key] = o
+        keep.append(o)
+    for key, o in owner.items():
+        seen = {o['url']}
+        others = []
+        for r in sorted(groups[key], key=lambda r: -(r.comments or 0)):
+            if r.url in seen or r.nsfw:
+                continue
+            seen.add(r.url)
+            others.append({'platform': r.platform, 'community': r.community, 'url': r.url, 'comments': r.comments})
+        o['elsewhere'] = others[:ELSEWHERE_MAX]
+    return keep
 
 
 # ---------- threads
@@ -360,11 +427,53 @@ def visit(data: VisitIn, pid: int = Depends(require_room)):
         return {'boundary': v.boundary, 'visit_at': v.visit_at}
 
 
+MODES = ('today', 'hot', 'new', 'deep', 'top', 'saved')
+TODAY_N = 15
+TODAY_WINDOW_S = 36 * 3600
+HOT_WINDOW_S = 3 * 86400
+TOP_WINDOW_S = 7 * 86400
+POOL_MAX = 400
+
+
+def _heat(o: dict, cuts: dict) -> float:
+    """How hot a post is for its own platform (1.0 = at the hot cut-off); 0 for feeds without numbers."""
+    hot = cuts.get(o['platform'], (0.0, 0.0))[1]
+    return min(3.0, o.get('velocity', 0) / hot) if hot else 0.0
+
+
+def _ranked(s, pid: int, q, mode: str, child: bool, verdicts_for) -> list[dict]:
+    """today/hot: rank a bounded recent pool in Python, where liveliness (which moves) can count."""
+    now = time.time()
+    window = TODAY_WINDOW_S if mode == 'today' else HOT_WINDOW_S
+    rows = s.exec(q.where(CRPick.published_at >= now - window).order_by(CRPick.published_at.desc())
+                  .limit(POOL_MAX)).all()
+    if mode == 'today' and len(rows) < TODAY_N:  # a quiet day: reach back a week
+        rows = s.exec(q.where(CRPick.published_at >= now - TOP_WINDOW_S).order_by(CRPick.published_at.desc())
+                      .limit(POOL_MAX)).all()
+    verdicts = verdicts_for([p.id for _, p, _ in rows])
+    rows = [r for r in rows if not r[0].hidden]
+    out = _socialize(s, rows, [_post_json(pick, post, t, child, verdicts.get(post.id, '')) for pick, post, t in rows],
+                     child)
+    cuts = _velocity_cuts(s)
+    if mode == 'hot':
+        key = lambda o: _heat(o, cuts) * 50 + o['relevance'] * 0.3 + o['fun'] * 0.2  # noqa: E731
+    else:  # today: the best of the day, with a nudge for what is buzzing and for fun
+        key = lambda o: o['relevance'] + o['fun'] * 0.5 + _heat(o, cuts) * 15  # noqa: E731
+    out.sort(key=key, reverse=True)
+    return out
+
+
 @router.get('/feed')
-def feed(thread: str = 'all', section: str = 'new', boundary: float | None = None, cursor: str = '',
-         pid: int = Depends(require_room)):
-    if section not in ('new', 'deep'):
-        raise HTTPException(400, 'section must be new or deep')
+def feed(thread: str = 'all', section: str = '', mode: str = '', kind: str = '', boundary: float | None = None,
+         cursor: str = '', pid: int = Depends(require_room)):
+    """One page of the wall. `mode` picks the view; `section` (new|deep) is the older name for new/deep."""
+    from .curate import KINDS
+    mode = mode or section or 'new'
+    if mode not in MODES:
+        raise HTTPException(400, 'mode must be one of ' + ', '.join(MODES))
+    if kind and kind not in KINDS:
+        raise HTTPException(400, 'unknown kind')
+    section = mode
     try:
         offset = max(0, int(cursor or 0))
     except ValueError:
@@ -380,14 +489,35 @@ def feed(thread: str = 'all', section: str = 'new', boundary: float | None = Non
             q = q.where(CRPick.thread_id == int(scope))
         else:
             q = q.where(CRThread.enabled == True)  # noqa: E712
-        if section == 'new':
+        if kind:
+            q = q.where(CRPick.kind == kind)
+
+        def verdicts_for(ids):
+            return dict(s.exec(select(CRFeedback.post_id, CRFeedback.verdict).where(
+                CRFeedback.profile_id == pid, CRFeedback.post_id.in_(ids or [0]))).all())
+        if mode in ('today', 'hot'):
+            ranked = _ranked(s, pid, q, mode, child, verdicts_for)
+            if mode == 'today':
+                page = social.mix(ranked[:TODAY_N])
+                return {'posts': page, 'next_cursor': '', 'has_more': False, 'building': False, 'mode': mode,
+                        'end': True}
+            page = social.mix(ranked[offset:offset + PAGE])
+            more = len(ranked) > offset + PAGE
+            return {'posts': page, 'next_cursor': str(offset + PAGE) if more else '', 'has_more': more,
+                    'building': False, 'mode': mode, 'end': not more}
+        if mode == 'saved':
+            q = q.where(CRPick.saved == True).order_by(CRPick.id.desc())  # noqa: E712
+        elif mode == 'top':
+            q = q.where(CRPick.published_at >= visit_at - TOP_WINDOW_S) \
+                .order_by((CRPick.score + CRPick.fun * 0.5).desc(), CRPick.id.desc())
+        elif section == 'new':
             q = q.where(CRPick.picked_at > edge, CRPick.picked_at <= visit_at) \
                 .order_by(CRPick.published_at.desc(), CRPick.id.desc())
         else:
             # Stable for the whole visit: the pool known at the visit start ranked first (unseen before seen),
             # then everything found while scrolling, appended in discovery order.
             age_days = (visit_at - CRPick.published_at) / 86400.0
-            rank = CRPick.score - age_days * 2  # only fields fixed for the visit keep offsets stable
+            rank = CRPick.score + CRPick.fun * 0.3 - age_days * 2  # only fields fixed for the visit keep offsets stable
             later = CRPick.picked_at > visit_at
             seen = (CRPick.seen_at > 0) & (CRPick.seen_at < visit_at)
             q = q.where((CRPick.picked_at <= edge) | later) \
@@ -395,10 +525,12 @@ def feed(thread: str = 'all', section: str = 'new', boundary: float | None = Non
         rows = s.exec(q.offset(offset).limit(PAGE + 1)).all()
         more = len(rows) > PAGE
         rows = rows[:PAGE]
-        verdicts = dict(s.exec(select(CRFeedback.post_id, CRFeedback.verdict).where(
-            CRFeedback.profile_id == pid, CRFeedback.post_id.in_([p.id for _, p, _ in rows] or [0]))).all())
-        posts = [_post_json(pick, post, t, child, verdicts.get(post.id, '')) for pick, post, t in rows
-                 if not (pick.hidden and verdicts.get(post.id) != 'down')]
+        verdicts = verdicts_for([p.id for _, p, _ in rows])
+        shown = [r for r in rows if not (r[0].hidden and verdicts.get(r[1].id) != 'down')]
+        posts = _socialize(s, shown, [_post_json(pick, post, t, child, verdicts.get(post.id, ''))
+                                      for pick, post, t in shown], child)
+        if mode in ('deep', 'top'):
+            posts = social.mix(posts)
         building = False
         if section == 'deep' and not more:
             # Running dry: ask the curators for older posts; the page polls while they work. A thread that
@@ -425,7 +557,7 @@ def feed(thread: str = 'all', section: str = 'new', boundary: float | None = Non
             for tid in dry:  # every source walked to its end: send an expedition for new places
                 building = expedition.request(tid, 'dry') or building
         return {'posts': posts, 'next_cursor': str(offset + len(rows)) if more else '', 'has_more': more,
-                'building': building}
+                'building': building, 'mode': mode, 'end': not more and not building}
 
 
 class SeenIn(BaseModel):
@@ -513,8 +645,8 @@ def get_post(post_id: int, pid: int = Depends(require_room)):
         verdict = s.exec(select(CRFeedback.verdict).where(CRFeedback.profile_id == pid, CRFeedback.post_id == post_id)).first() or ''
         from .kids import BODY_SEEN
         child = _child(s, pid)
-        return {**_post_json(pick, post, thread, child, verdict),
-                'body': post.body[:BODY_SEEN] if child else post.body}
+        one = _socialize(s, [(pick, post, thread)], [_post_json(pick, post, thread, child, verdict)], child)[0]
+        return {**one, 'body': post.body[:BODY_SEEN] if child else post.body}
 
 
 @router.get('/posts/{post_id}/comments')

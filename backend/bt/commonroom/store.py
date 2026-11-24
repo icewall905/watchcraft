@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 from sqlmodel import select
 
 from ..db import session
+from . import social
 from .models import CRCandidate, CRPost, CRSource, CRSourcePost
 
 FIELDS = ('community', 'external_id', 'author', 'title', 'body', 'link_url', 'score', 'comments', 'nsfw', 'spoiler')
@@ -52,6 +53,7 @@ def _clean(d: dict) -> dict | None:
     return {'url': url, 'platform': str(d.get('platform') or ''), 'community': str(d.get('community') or '')[:200],
             'external_id': str(d.get('external_id') or '')[:200], 'author': str(d.get('author') or '')[:200],
             'title': title or body.split('\n', 1)[0][:300], 'body': body, 'link_url': link, 'domain': _domain(link),
+            'link_key': social.link_key(link),
             'media': media, 'meta': d.get('meta') if isinstance(d.get('meta'), dict) else {},
             'score': int(d.get('score') or 0), 'comments': int(d.get('comments') or 0),
             'published_at': published or time.time(), 'nsfw': bool(d.get('nsfw')), 'spoiler': bool(d.get('spoiler')),
@@ -73,11 +75,14 @@ def upsert_posts(posts: list[dict], source_id: int | None = None, thread_id: int
             if post:
                 post.score, post.comments = r['score'] or post.score, r['comments'] or post.comments
                 post.fetched_at = time.time()
+                post.meta = social.sample(post.meta, post.score, post.comments, post.fetched_at)
                 post.language = post.language or r['language']
+                post.link_key = post.link_key or r['link_key']
                 if r['media'] and (not post.media or (_thumb(post.media) and not _thumb(r['media']))):
                     post.media = r['media']
             else:
                 post = CRPost(**r)
+                post.meta = social.sample(post.meta, post.score, post.comments, time.time())
                 known[r['url']] = post
             s.add(post)
         s.flush()
@@ -96,6 +101,24 @@ def upsert_posts(posts: list[dict], source_id: int | None = None, thread_id: int
                     s.add(CRCandidate(thread_id=thread_id, post_id=i))
         s.commit()
     return ids
+
+
+def backfill_link_keys(limit: int = 500) -> int:
+    """Fill link_key for posts stored before it existed."""
+    with session() as s:
+        rows = s.exec(select(CRPost.id, CRPost.link_url).where(CRPost.link_key == '', CRPost.link_url != '')
+                      .limit(limit)).all()
+    if not rows:
+        return 0
+    with session() as s:
+        s.connection().exec_driver_sql('BEGIN IMMEDIATE')
+        for pid, url in rows:
+            post = s.get(CRPost, pid)
+            if post:
+                post.link_key = social.link_key(url) or '-'  # '-': cannot be keyed, never matched
+                s.add(post)
+        s.commit()
+    return len(rows)
 
 
 def backfill_languages(limit: int = 500) -> int:

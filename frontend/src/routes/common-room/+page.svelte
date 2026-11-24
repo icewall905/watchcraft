@@ -4,14 +4,21 @@
  import { goto } from '$app/navigation';
  import { session } from '$lib/stores/session.svelte';
  import CommonsSwitch from '$lib/commonroom/CommonsSwitch.svelte';
- import { crApi, type Thread, type PlatformInfo, type Post } from '$lib/hub/commonroom';
+ import { crApi, type Thread, type PlatformInfo, type Post, type Mode, type Kind } from '$lib/hub/commonroom';
+ import { KINDS, MODES } from '$lib/commonroom/util';
  import PostCard from '$lib/commonroom/PostCard.svelte';
  import PostView from '$lib/commonroom/PostView.svelte';
  import ThreadEditor from '$lib/commonroom/ThreadEditor.svelte';
  let threads = $state<Thread[]>([]), platforms = $state<PlatformInfo[]>([]), child = $state(false), selected = $state<'all' | number>('all');
  let newPosts = $state<Post[]>([]), deepPosts = $state<Post[]>([]), section = $state<'new' | 'deep'>('new'), cursor = $state(''), hasMore = $state(false), building = $state(false);
  let loaded = $state(false), loading = $state(false), error = $state(''), boundary = $state(0), editing = $state<Thread | 'new' | null>(null), open = $state<Post | null>(null), running = $state(false);
- let wallWidth = $state(0);
+ let wallWidth = $state(0), ended = $state(false);
+ // The view (Today, Hot, …) is a per-viewer convenience; storage can be missing in private windows.
+ const MODE_KEY = 'commons.mode';
+ const readMode = (): Mode => { try { const m = localStorage.getItem(MODE_KEY); return MODES.some((x) => x.key === m) ? m as Mode : 'today'; } catch { return 'today'; } };
+ let mode = $state<Mode>(readMode()), kind = $state<Kind | ''>('');
+ function setMode(m: Mode) { if (m === mode) return; mode = m; try { localStorage.setItem(MODE_KEY, m); } catch { /* ignore */ } void start(selected); }
+ function setKind(k: Kind | '') { kind = kind === k ? '' : k; void start(selected); }
  const COL_PX = 384, GAP_PX = 14; // 24rem columns
  const cols = $derived(Math.max(1, Math.min(4, Math.floor((wallWidth + GAP_PX) / (COL_PX + GAP_PX)))));
  let sentinel = $state<HTMLDivElement>();
@@ -23,7 +30,7 @@
  const allNew = $derived(threads.reduce((n, t) => n + (t.new_count || 0), 0));
  const shown = $derived(newPosts.length + deepPosts.length);
  const activeStatus = (s?: string) => s === 'queued' || s === 'running' || s === 'collecting';
- const gathering = $derived(!shown && !loading && loaded && !hasMore && (selected === 'all' ? threads.some((t) => activeStatus(t.last_status) || !t.last_run) : !current?.last_run || activeStatus(current.last_status)));
+ const gathering = $derived(mode !== 'saved' && !kind && !shown && !loading && loaded && !hasMore && (selected === 'all' ? threads.some((t) => activeStatus(t.last_status) || !t.last_run) : !current?.last_run || activeStatus(current.last_status)));
  const statusText = $derived((selected === 'all' ? threads.find((t) => activeStatus(t.last_status))?.last_status : current?.last_status) || '');
 
  async function loadThreads() {
@@ -32,12 +39,15 @@
  }
  async function start(thread: 'all' | number) {
   controller?.abort(); controller = null; const token = ++generation;
-  newPosts = []; deepPosts = []; section = 'new'; cursor = ''; hasMore = false; building = false; error = ''; loading = false; selected = thread; loaded = false;
-  try {
-   const v = await crApi.visit(thread);
-   if (token !== generation) return;
-   boundary = v.boundary;
-  } catch (e) { if (token === generation) { error = msg(e); loaded = true; } return; }
+  newPosts = []; deepPosts = []; section = mode === 'new' ? 'new' : 'deep'; cursor = ''; hasMore = false; building = false; error = ''; loading = false; selected = thread; loaded = false; ended = false;
+  // Only the New view starts a visit: browsing Today or Hot must not use up what is new.
+  if (mode === 'new') {
+   try {
+    const v = await crApi.visit(thread);
+    if (token !== generation) return;
+    boundary = v.boundary;
+   } catch (e) { if (token === generation) { error = msg(e); loaded = true; } return; }
+  }
   hasMore = true; await more(token);
   if (token === generation) loaded = true;
  }
@@ -47,12 +57,14 @@
   loading = true; controller = new AbortController(); const signal = controller.signal, owner = stamp();
   try {
    for (let guard = 0; guard < 6; guard++) {
-    const page = await crApi.feed({thread: selected, section, boundary, cursor: cursor || undefined}, signal);
+    const view = mode === 'new' ? {section, boundary} : {mode};
+    const page = await crApi.feed({thread: selected, ...view, kind: kind || undefined, cursor: cursor || undefined}, signal);
     if (token !== generation || owner !== stamp()) return;
     const have = new Set([...newPosts, ...deepPosts].map((p) => p.pick_id));
     const fresh = page.posts.filter((p) => !have.has(p.pick_id));
     if (section === 'new') newPosts = [...newPosts, ...fresh]; else deepPosts = [...deepPosts, ...fresh];
-    building = page.building; cursor = page.next_cursor || cursor; hasMore = page.has_more;
+    building = page.building; cursor = page.next_cursor || cursor; hasMore = page.has_more; ended = !!page.end;
+    if (mode !== 'new') break;
     if (page.has_more) { if (fresh.length || section === 'deep') break; continue; }
     if (section === 'new') { section = 'deep'; cursor = ''; hasMore = true; building = false; if (deepPosts.length) break; continue; }
     break;
@@ -164,6 +176,20 @@
   {/each}
   <button type="button" class="chip add" onclick={() => { editing = 'new'; }}>+ Thread</button>
  </nav>
+ {#if threads.length}
+ <div class="views">
+  <div class="modes" role="tablist" aria-label="View">
+   {#each MODES as m (m.key)}
+    <button type="button" role="tab" class="mode" class:on={mode === m.key} aria-selected={mode === m.key} title={m.hint} onclick={() => setMode(m.key)}>{m.label}</button>
+   {/each}
+  </div>
+  <nav class="kinds" aria-label="Kind of post">
+   {#each KINDS as k (k.key)}
+    <button type="button" class="kind" class:on={kind === k.key} aria-pressed={kind === k.key} onclick={() => setKind(k.key)}>{k.icon} {k.label}</button>
+   {/each}
+  </nav>
+ </div>
+ {/if}
  {/if}
  {#if error}<p class="err" role="alert">{error} <button class="btn sm" onclick={() => start(selected)}>Retry</button></p>{/if}
 
@@ -179,14 +205,24 @@
    {@render wall(newPosts)}
   {/if}
   {#if section === 'deep'}
-   {#if shown || !gathering}<div class="divider" role="separator"><span>You're caught up — deeper picks below</span></div>{/if}
+   {#if mode === 'new' && (shown || !gathering)}<div class="divider" role="separator"><span>You're caught up — deeper picks below</span></div>{/if}
    {@render wall(deepPosts)}
+  {/if}
+  {#if mode === 'today' && ended && shown}
+   <section class="endcard">
+    <h2>That's today.</h2>
+    <p class="muted">{shown} picks across your threads. Come back tomorrow, or keep going.</p>
+    <div class="acts"><button class="btn primary" onclick={() => setMode('hot')}>🔥 What's hot</button><button class="btn" onclick={() => setMode('new')}>Everything new</button></div>
+   </section>
+  {/if}
+  {#if loaded && !loading && !shown && !gathering && !error}
+   <section class="empty">{#if mode === 'saved'}<h2>Nothing saved yet</h2><p class="muted">Star a post with ☆ to keep it here.</p>{:else if kind}<h2>No {KINDS.find((k) => k.key === kind)?.label.toLowerCase()} here yet</h2><p class="muted">Posts curated before kinds existed have none; new picks will.</p>{:else}<h2>Nothing here yet</h2>{/if}</section>
   {/if}
   {#if gathering}
    <section class="empty"><h2>Your curator is gathering posts…</h2><p class="muted">{statusText ? `Status: ${statusText}` : 'This can take a few minutes.'}{#if current?.error} · {current.error}{/if}</p></section>
   {:else if loading}<p class="muted center">Loading…</p>
   {:else if section === 'deep' && !hasMore && building}<p class="muted center">Finding more posts, and new places to find them…</p>
-  {:else if section === 'deep' && !hasMore && shown}<p class="muted center">That's everything for now.</p>{/if}
+  {:else if section === 'deep' && !hasMore && shown && mode !== 'today'}<p class="muted center">That's everything for now.</p>{/if}
   {#if hasMore && !loading}
    <div bind:this={sentinel} class="sentinel"></div>
    <p class="center"><button class="btn" onclick={() => more()}>Load more</button></p>
@@ -221,4 +257,13 @@
  .empty h2{margin:0}.empty p{margin:0;max-width:34rem}
  .center{text-align:center}.muted{color:var(--muted)}.err{color:var(--bad)}
  .sentinel{height:1px}
+ .views{display:grid;gap:.6rem}
+ .modes{display:flex;gap:.2rem;padding:.25rem;border-radius:var(--r-pill);background:var(--surface);border:1px solid var(--line);width:max-content;max-width:100%;overflow-x:auto}
+ .mode{flex:none;padding:.4rem 1rem;border-radius:var(--r-pill);border:0;background:none;color:var(--muted);font:inherit;font-weight:600;cursor:pointer}
+ .mode.on{background:var(--ai);color:#fff}
+ .kinds{display:flex;gap:.4rem;overflow-x:auto;padding-bottom:.2rem;scrollbar-width:thin}
+ .kind{flex:none;padding:.25rem .7rem;border-radius:var(--r-pill);border:1px solid var(--line);background:none;color:var(--text);font:inherit;font-size:.82rem;cursor:pointer}
+ .kind.on{border-color:var(--accent);background:color-mix(in srgb, var(--accent) 18%, transparent)}
+ .endcard{padding:2rem 1rem;text-align:center;border-radius:var(--r-md);background:linear-gradient(135deg, rgba(157,134,255,.16), transparent);border:1px solid var(--line);display:grid;gap:.6rem;justify-items:center}
+ .endcard h2,.endcard p{margin:0}
 </style>

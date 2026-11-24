@@ -4,7 +4,7 @@ import math
 
 from sqlmodel import Session, select
 
-from .models import CRBlock, CRFeedback, CRPostVector
+from .models import CRBlock, CRFeedback, CRPick, CRPostVector
 
 DOWN, UP = 25, 15
 
@@ -14,12 +14,16 @@ def lessons(s: Session, thread_id: int) -> list[str]:
     for verdict, limit in (('down', DOWN), ('up', UP)):
         rows += s.exec(select(CRFeedback).where(CRFeedback.thread_id == thread_id, CRFeedback.verdict == verdict)
                        .order_by(CRFeedback.created_at.desc()).limit(limit)).all()
+    kinds = dict(s.exec(select(CRPick.post_id, CRPick.kind).where(
+        CRPick.thread_id == thread_id, CRPick.post_id.in_([f.post_id for f in rows]))).all()) if rows else {}
     out = []
     for f in rows:
         title = ' '.join((f.title or '').split())[:160] or 'untitled post'
+        kind = kinds.get(f.post_id) or ''
         why = ', '.join(str(r)[:40] for r in (f.reasons or [])[:5])
         note = ' '.join((f.note or '').split())[:300]
         out.append(f'{"👍" if f.verdict == "up" else "👎"} "{title}"' + (f' in {f.community}' if f.community else '') +
+                   (f' ({kind})' if kind else '') +
                    (f' — {why}' if why else '') + (f' — owner says: {note}' if note else ''))
     return out
 

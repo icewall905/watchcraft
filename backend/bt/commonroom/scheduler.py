@@ -129,6 +129,7 @@ async def scheduler():
         try:
             from . import store
             await asyncio.to_thread(store.backfill_languages)
+            await asyncio.to_thread(store.backfill_link_keys)
         except Exception:
             log.exception('Common Room language backfill failed')
         try:

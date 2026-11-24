@@ -15,7 +15,7 @@ from .. import curation
 from ..config import DATA_DIR
 from ..db import session
 from .adapters import ADAPTERS
-from .models import CRComments, CRPick, CRPost
+from .models import CRComments, CRPick, CRPost, CRThread
 
 log = logging.getLogger(__name__)
 MEDIA_DIR = DATA_DIR / 'commonroom-media'
@@ -122,6 +122,9 @@ def sweep_comments(limit: int = COMMENTS_PER_TICK) -> int:
         have = select(CRComments.post_id)
         rows = s.exec(select(CRPost).where(CRPost.id.in_(select(CRPick.post_id)), CRPost.id.not_in(have))
                       .order_by(CRPost.id.desc()).limit(limit * 3)).all()
+        # Child threads (forced on for child profiles) also get a kid-checked copy, so cards can show a top reply.
+        kid = set(s.exec(select(CRPick.post_id).join(CRThread, CRThread.id == CRPick.thread_id).where(
+            CRPick.post_id.in_([p.id for p in rows] or [0]), CRThread.child_friendly == True)).all())  # noqa: E712
         todo = [{'id': p.id, 'url': p.url, 'external_id': p.external_id, 'community': p.community,
                  'meta': p.meta or {}, 'platform': p.platform} for p in rows]
     done = 0
@@ -136,10 +139,15 @@ def sweep_comments(limit: int = COMMENTS_PER_TICK) -> int:
                 tree = adapter.comments(data) or []
             except Exception as e:  # noqa: BLE001 — retried on open; an empty row stops endless retries here
                 log.debug('Common Room comments for %s failed: %s', data['url'], e)
+        kid_tree = None
+        if tree and data['id'] in kid:
+            from .kids import filter_comments
+            kid_tree = filter_comments(tree)
         with session() as s:
             s.connection().exec_driver_sql('BEGIN IMMEDIATE')
             if not s.get(CRComments, data['id']):
-                s.add(CRComments(post_id=data['id'], tree=tree, fetched_at=time.time() if tree else 0.0))
+                s.add(CRComments(post_id=data['id'], tree=tree, kid=kid_tree,
+                                 fetched_at=time.time() if tree else 0.0))
             s.commit()
     return done
 

@@ -1,0 +1,197 @@
+"""The Commons fun redesign: fun/kind judging, wildcards, top comments, elsewhere, velocity, mix, modes."""
+import time
+
+from sqlmodel import select
+
+from test_curation import client  # noqa: F401
+from test_commonroom import fake_platform, run_all, thread  # noqa: F401
+from bt.commonroom import curate
+from bt.commonroom.curate import Verdict, keeps
+from bt.commonroom.models import CRPick, CRThread
+from bt.db import session
+
+
+def test_keep_rule_lets_delightful_near_misses_in_as_wildcards():
+    assert keeps(Verdict(70, '', 0), 60, True) == (True, False)
+    assert keeps(Verdict(45, '', 85), 60, True) == (True, True)
+    assert keeps(Verdict(39, '', 99), 60, True) == (False, False)   # too far off-topic
+    assert keeps(Verdict(55, '', 79), 60, True) == (False, False)   # not fun enough
+    assert keeps(Verdict(45, '', 85), 60, False) == (False, False)  # wildcards off
+
+
+def _judged(client, monkeypatch, child_friendly=False):
+    monkeypatch.setattr(curate.ai, 'enabled', lambda: True)
+    rows = [{'n': 1, 'score': 90, 'fun': 10, 'kind': 'news', 'why': 'On topic'},
+            {'n': 2, 'score': 50, 'fun': 90, 'kind': 'humor', 'why': 'Too good to skip'},
+            {'n': 3, 'score': 30, 'fun': 95, 'kind': 'BOGUS', 'why': 'Funny but off-topic'}]
+    monkeypatch.setattr(curate.ai, '_call', lambda system, user, schema, **k: {'scores': rows})
+    t = thread(client, strictness='balanced')
+    with session() as s:
+        thr = s.get(CRThread, t['id'])
+        thr.discovered_at, thr.want_more, thr.child_friendly = time.time(), False, child_friendly
+        s.add(thr)
+        s.commit()
+    run_all()
+    with session() as s:
+        return sorted(s.exec(select(CRPick)).all(), key=lambda p: -p.score)
+
+
+def test_judge_stores_fun_kind_and_wildcard(client, monkeypatch):
+    picks = _judged(client, monkeypatch)
+    assert [(p.score, p.fun, p.kind, p.wildcard) for p in picks] == [(90, 10, 'news', False),
+                                                                     (50, 90, 'humor', True)]
+
+
+def test_child_friendly_thread_keeps_no_wildcards(client, monkeypatch):
+    monkeypatch.setattr(curate.kids, 'check_posts', lambda ids: (set(ids), set()))
+    picks = _judged(client, monkeypatch, child_friendly=True)
+    assert [p.score for p in picks] == [90]
+
+
+def test_prompt_asks_for_fun_and_kind():
+    schema_item = curate.SCHEMA['properties']['scores']['items']
+    assert {'fun', 'kind'} <= set(schema_item['required'])
+    assert set(schema_item['properties']['kind']['enum']) == set(curate.KINDS)
+
+
+# ---------- phase 2: the conversation
+
+from bt.commonroom import social, store  # noqa: E402
+from bt.commonroom.models import CRComments  # noqa: E402
+
+
+def test_link_key_normalises_tracking_www_and_slash():
+    a = social.link_key('http://www.Example.com/story/?utm_source=x&id=3')
+    assert a == social.link_key('https://example.com/story?id=3')
+    assert social.link_key('') == ''
+
+
+def test_top_comments_skip_op_removed_and_bots_and_prefer_readable():
+    tree = [{'author': 'op', 'body': 'thanks all', 'score': 999, 'children': []},
+            {'author': 'x', 'body': '[deleted]', 'score': 500, 'children': []},
+            {'author': 'AutoModerator', 'body': 'Rules reminder', 'score': 400, 'children': []},
+            {'author': 'wall', 'body': 'w' * 1000, 'score': 100, 'children': []},
+            {'author': 'wit', 'body': 'This is the best thing I have read all week', 'score': 90,
+             'children': [{'author': 'deep', 'body': 'nested reply wins nothing', 'score': 9999, 'children': []}]},
+            {'author': 'meh', 'body': 'ok sure fine whatever then', 'score': 1, 'children': []}]
+    top = social.top_comments(tree, op='OP')
+    assert [c['author'] for c in top] == ['wit', 'wall']
+    assert top[1]['body'].endswith('…') and len(top[1]['body']) == social.TOP_CHARS + 1
+
+
+def _pick(t, url, link='', comments=0, platform='fake', author='alice', **kw):
+    [pid] = store.upsert_posts([{'platform': platform, 'community': 'c/one', 'url': url, 'title': url,
+                                 'link_url': link, 'author': author, 'comments': comments,
+                                 'published_at': time.time() - 60}])
+    with session() as s:
+        s.add(CRPick(profile_id=1, thread_id=t['id'], post_id=pid, score=80, picked_at=time.time() - 30,
+                     published_at=time.time() - 60, **kw))
+        s.commit()
+    return pid
+
+
+def _feed(client, **params):
+    r = client.get('/api/hub/commonroom/feed', params={'boundary': 0, **params})
+    assert r.status_code == 200, r.text
+    return r.json()['posts']
+
+
+def test_feed_shows_top_comments_and_folds_same_link(client):
+    t = thread(client)
+    a = _pick(t, 'https://fake.example/a', 'https://www.news.example/story/', comments=5)
+    _pick(t, 'https://fake.example/b', 'https://news.example/story?utm_medium=x', comments=50)
+    store.upsert_posts([{'platform': 'hn', 'community': 'HN', 'url': 'https://hn.example/1', 'title': 'Story',
+                         'link_url': 'https://news.example/story', 'comments': 212}])
+    with session() as s:
+        s.add(CRComments(post_id=a, tree=[{'author': 'bob', 'body': 'Great find', 'score': 3}], fetched_at=time.time()))
+        s.commit()
+    posts = _feed(client)
+    assert len(posts) == 1  # one card for the link: the livelier discussion
+    card = posts[0]
+    assert card['url'] == 'https://fake.example/b'
+    assert [e['url'] for e in card['elsewhere']] == ['https://hn.example/1', 'https://fake.example/a']
+    assert card['top'] == []
+    c = client.get(f"/api/hub/commonroom/posts/{a}").json()
+    assert c['top'][0]['author'] == 'bob' and len(c['elsewhere']) == 2
+
+
+# ---------- phase 3: liveliness
+
+def test_samples_and_velocity_prefer_recent_growth():
+    now = 100_000.0
+    m = social.sample({}, 10, 1, now - 3600)
+    m = social.sample(m, 10, 1, now - 3500)       # unchanged and close: kept as one sample
+    assert len(m['hist']) == 1
+    m = social.sample(m, 110, 21, now)
+    assert len(m['hist']) == 2
+    # 100 score + 2 x 20 comments in one hour
+    assert social.velocity(m, 110, 21, now - 86400, now) == 140
+    # no history: lifetime rate, at least one hour
+    assert social.velocity({}, 10, 0, now - 60, now) == 10
+    assert social.velocity({}, 0, 0, now - 60, now) == 0
+    assert social.sample({}, 0, 0, now) == {}  # feeds without numbers record nothing
+
+
+def test_badges_are_relative_to_each_platform():
+    rows = [('reddit', float(v)) for v in range(1, 101)] + [('hn', float(v) / 10) for v in range(1, 101)] + \
+           [('tiny', 50.0)] * 5
+    cuts = social.thresholds(rows)
+    assert 'tiny' not in cuts  # too few peers to judge
+    now = 1e6
+    assert social.badges('reddit', 99, 0, now, cuts) == ['hot']
+    assert social.badges('reddit', 85, 0, now, cuts) == ['rising']
+    assert social.badges('hn', 9.9, 0, now, cuts) == ['hot']   # small numbers, but hot for HN
+    assert social.badges('reddit', 9.9, now - 60, now, cuts) == ['fresh']
+
+
+def test_feed_reports_velocity_and_badges(client):
+    t = thread(client)
+    _pick(t, 'https://fake.example/v', comments=10)
+    [card] = _feed(client)
+    assert card['velocity'] > 0 and 'fresh' in card['badges']
+
+
+# ---------- phase 4: mix
+
+def test_mix_breaks_kind_runs_caps_communities_spreads_wildcards():
+    posts = [{'id': i, 'kind': 'news', 'community': 'r/a', 'wildcard': False} for i in range(6)] + \
+            [{'id': 10 + i, 'kind': 'humor', 'community': f'r/{i}', 'wildcard': True} for i in range(2)] + \
+            [{'id': 20 + i, 'kind': 'question', 'community': f'r/q{i}', 'wildcard': False} for i in range(6)]
+    out = social.mix(posts)
+    assert sorted(p['id'] for p in out) == sorted(p['id'] for p in posts)  # nothing dropped
+    kinds = [p['kind'] for p in out]
+    head = kinds[:12]
+    assert not any(head[i] == head[i + 1] == head[i + 2] for i in range(len(head) - 2))
+    assert sum(1 for p in out[:9] if p['community'] == 'r/a') <= social.COMMUNITY_CAP
+    # Wildcards spread out when the page has enough else to show between them.
+    kinds = ['news', 'question', 'showcase', 'deepdive']
+    page = [{'id': 0, 'kind': 'humor', 'community': 'x', 'wildcard': True},
+            {'id': 1, 'kind': 'oddity', 'community': 'y', 'wildcard': True}] + \
+           [{'id': 2 + i, 'kind': kinds[i % 4], 'community': f'c{i}', 'wildcard': False} for i in range(10)]
+    wild = [n for n, p in enumerate(social.mix(page)) if p['wildcard']]
+    assert wild[0] == 0 and wild[1] - wild[0] >= social.WILD_GAP
+
+
+# ---------- phase 5: browse modes
+
+def test_feed_modes_kind_filter_and_section_alias(client):
+    t = thread(client)
+    a = _pick(t, 'https://fake.example/m1', comments=1, kind='humor', fun=90)
+    b = _pick(t, 'https://fake.example/m2', comments=1, kind='news', fun=0, saved=True)
+    with session() as s:  # an old pick: out of Today's day and Top's week
+        old = s.exec(select(CRPick).where(CRPick.post_id == b)).one()
+        old.published_at = time.time() - 10 * 86400
+        s.add(old)
+        s.commit()
+    ids = lambda posts: [p['post_id'] for p in posts]  # noqa: E731
+    r = client.get('/api/hub/commonroom/feed', params={'mode': 'today'}).json()
+    assert ids(r['posts']) == [a] and r['end'] is True and r['has_more'] is False
+    assert ids(_feed(client, mode='saved')) == [b]
+    assert ids(_feed(client, mode='top')) == [a]
+    assert set(ids(_feed(client, mode='hot'))) == {a}
+    assert ids(_feed(client, mode='new', kind='news')) == [b]
+    assert set(ids(_feed(client, section='new'))) == {a, b}  # older clients
+    assert client.get('/api/hub/commonroom/feed', params={'mode': 'nope'}).status_code == 400
+    assert client.get('/api/hub/commonroom/feed', params={'kind': 'nope'}).status_code == 400
+    card = _feed(client, mode='saved')[0]
+    assert card['kind'] == 'news' and card['saved'] is True and card['fun'] == 0

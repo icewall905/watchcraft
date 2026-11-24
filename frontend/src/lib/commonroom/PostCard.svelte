@@ -4,6 +4,9 @@
 	import Feedback from './Feedback.svelte';
 	import { authSrc } from '$lib/hub/BoardImage.svelte';
 	import Reasons from './Reasons.svelte';
+	import TopReplies from './cards/TopReplies.svelte';
+	import ElsewhereChips from './cards/ElsewhereChips.svelte';
+	import CardBadges from './cards/CardBadges.svelte';
 	import { ago, compact, platformOf } from './util';
 	let { post, onOpen, onGone }: { post: Post; onOpen: (p: Post) => void; onGone?: (p: Post) => void } = $props();
 	const plat = $derived(platformOf(post.platform));
@@ -13,6 +16,16 @@
 	const blurred = $derived((post.nsfw || post.spoiler) && !revealed);
 	const first = $derived(post.media[0]);
 	let broken = $state(false); // the picture could not be loaded: show the post without a frame
+	const top = $derived(post.top ?? []);
+	// Each kind of post gets its own shape, so the wall has texture instead of one repeated card.
+	const variant = $derived.by(() => {
+		if (first && !broken && !blurred) return 'media';
+		if (post.kind === 'question') return 'question';
+		if ((post.kind === 'discussion' || post.kind === 'humor') && top.length) return 'take';
+		if (post.link_url && post.domain) return 'link';
+		return 'text';
+	});
+	const open = () => onOpen(post);
 	function down() {
 		gone = true;
 		void crApi.pick(post.pick_id, {hidden: true}).catch(() => {});
@@ -24,7 +37,7 @@
 		<Reasons {post} verdict="down" onDone={() => onGone?.(post)} />
 	</article>
 {:else}
-	<article class="card" data-pick={post.pick_id} data-seen={post.pick_id}>
+	<article class="card v-{variant}" class:wild={post.wildcard} class:hot={post.badges?.includes('hot')} data-pick={post.pick_id} data-seen={post.pick_id} data-variant={variant}>
 		<header class="meta">
 			<span class="plat" title={plat.label}>{plat.icon} {plat.label}</span>
 			{#if post.community}<span class="comm">{post.community}</span>{/if}
@@ -32,6 +45,7 @@
 			{#if post.published_at}<span class="muted">· {ago(post.published_at)}</span>{/if}
 			{#if post.nsfw}<span class="tag">NSFW</span>{/if}{#if post.spoiler}<span class="tag">Spoiler</span>{/if}
 		</header>
+		<CardBadges {post} />
 		<h3><a href={post.url} onclick={(e) => { if (e.metaKey || e.ctrlKey || e.shiftKey) return; e.preventDefault(); onOpen(post); }}>{post.title}</a></h3>
 		{#if blurred}
 			<button type="button" class="reveal" onclick={() => { revealed = true; }}>{post.nsfw ? 'NSFW' : 'Spoiler'} content hidden. Click to show.</button>
@@ -50,7 +64,15 @@
 				</div>
 			{/if}
 		{/if}
+		{#if variant === 'question'}
+			<TopReplies {top} label="Top answer" big onOpen={open} />
+		{:else if variant === 'take'}
+			<TopReplies {top} big max={2} onOpen={open} />
+		{:else}
+			<TopReplies {top} onOpen={open} />
+		{/if}
 		{#if post.domain && post.link_url}<a class="domain" href={post.link_url} target="_blank" rel="noopener noreferrer">↗ {post.domain}</a>{/if}
+		<ElsewhereChips list={post.elsewhere ?? []} />
 		{#if post.why}<p class="why">✨ {post.why}</p>{/if}
 		<footer>
 			<span class="stats muted small">{#if post.score != null}▲ {compact(post.score)}{/if}{#if post.comments != null}<button type="button" class="link" onclick={() => onOpen(post)}>💬 {compact(post.comments)}</button>{/if}</span>
@@ -82,4 +104,17 @@
 	footer{display:grid;gap:.4rem}
 	.stats{display:flex;gap:.8rem;align-items:center}
 	.link{background:none;border:0;padding:0;color:inherit;font:inherit;cursor:pointer;text-decoration:underline}
+	/* Variants: same parts, different emphasis. */
+	.v-media .media{order:-1;margin:-.9rem -1rem 0;border-radius:0}
+	.v-media .media img{max-height:34rem}
+	.v-media .excerpt{-webkit-line-clamp:2;line-clamp:2}
+	.v-question h3{font-size:1.2rem;font-weight:700;padding-left:.9rem;border-left:4px solid var(--info)}
+	.v-question h3::before{content:'❝ ';color:var(--info)}
+	.v-question .excerpt{-webkit-line-clamp:3;line-clamp:3}
+	.v-take .excerpt{-webkit-line-clamp:2;line-clamp:2}
+	.v-take h3{font-size:1.1rem}
+	.v-link .domain{display:inline-flex;align-self:start;padding:.2rem .6rem;border-radius:var(--r-pill);background:var(--surface-hi);font-weight:600}
+	.v-text h3{font-size:1.08rem}
+	.wild{border-color:rgba(157,134,255,.55)}
+	.hot{box-shadow:0 0 0 1px #ff8a4c55, 0 6px 24px -12px #ff8a4c}
 </style>

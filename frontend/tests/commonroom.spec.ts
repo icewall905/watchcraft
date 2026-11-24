@@ -4,6 +4,11 @@ import { freshPage } from './helpers';
 const thread = { id: 1, name: 'Retro computing', interests: 'Amiga', instructions: '', avoid: '', strictness: 'balanced', child_friendly: false, enabled: true, last_run: 1700000000, last_status: 'ok', error: '', new_count: 2, pick_count: 6, source_count: 2 };
 const post = (id: number, title: string, extra: Record<string, unknown> = {}) => ({ pick_id: id, post_id: id + 100, thread_id: 1, thread_name: 'Retro computing', platform: 'lemmy', community: 'c/retro', author: 'ann', title, excerpt: `About ${title}`, url: `https://example.org/p/${id}`, link_url: '', domain: '', media: [], score: 12, comments: 3, published_at: Math.floor(Date.now() / 1000) - 3600, why: 'Matches Amiga', relevance: 0.9, saved: false, verdict: '', nsfw: false, spoiler: false, ...extra });
 
+// Most specs here test the New → Deep flow; the default view is Today (see commons-fun.spec.ts).
+test.beforeEach(async ({ page }) => {
+	await page.addInitScript(() => { try { localStorage.setItem('commons.mode', 'new'); } catch { /* opaque origin */ } });
+});
+
 async function setup(page: Page) {
 	const calls: { method: string; path: string; query: URLSearchParams; body: any }[] = [];
 	await page.route('**/api/hub/commonroom/**', async (route) => {

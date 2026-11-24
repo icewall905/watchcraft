@@ -17,3 +17,17 @@ export function ago(ts: number | null | undefined, now = Date.now()): string {
 }
 export const compact = (n: number | null | undefined) => n == null ? '' : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
 export const REASONS = ['off-topic', 'low effort', 'seen it', 'too basic', 'more like this'];
+export const KINDS: {key: import('$lib/hub/commonroom').Kind; label: string; icon: string}[] = [
+ {key: 'humor', label: 'Humor', icon: '😂'}, {key: 'showcase', label: 'Showcase', icon: '🛠'}, {key: 'question', label: 'Questions', icon: '❓'},
+ {key: 'discussion', label: 'Discussion', icon: '💬'}, {key: 'news', label: 'News', icon: '📰'}, {key: 'deepdive', label: 'Deep dives', icon: '🔍'},
+ {key: 'oddity', label: 'Oddities', icon: '🦄'}
+];
+export const kindOf = (k: string | undefined) => KINDS.find((x) => x.key === k);
+export const MODES: {key: import('$lib/hub/commonroom').Mode; label: string; hint: string}[] = [
+ {key: 'today', label: 'Today', hint: 'The best of the day, in one short read'}, {key: 'hot', label: 'Hot', hint: 'Buzzing right now'},
+ {key: 'new', label: 'New', hint: 'Everything since your last visit, then deeper picks'}, {key: 'top', label: 'Top', hint: 'Best of the week'},
+ {key: 'saved', label: 'Saved', hint: 'Posts you starred'}
+];
+export const BADGES: Record<string, {label: string; icon: string}> = {
+ hot: {label: 'Hot', icon: '🔥'}, rising: {label: 'Rising', icon: '📈'}, fresh: {label: 'Fresh', icon: '🌱'}
+};

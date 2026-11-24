@@ -105,6 +105,9 @@ def init_db() -> None:
         if 'language' not in {c['name'] for c in inspect(connection).get_columns('crpost')}:
             connection.exec_driver_sql("ALTER TABLE crpost ADD COLUMN language VARCHAR NOT NULL DEFAULT ''")
             connection.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_crpost_language ON crpost (language)')
+        if 'link_key' not in {c['name'] for c in inspect(connection).get_columns('crpost')}:
+            connection.exec_driver_sql("ALTER TABLE crpost ADD COLUMN link_key VARCHAR NOT NULL DEFAULT ''")
+            connection.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_crpost_link_key ON crpost (link_key)')
         for table, columns in (
                 ('crthread', (('search_terms', "JSON NOT NULL DEFAULT '[]'"),)),
                 ('crsource', (('exhausted_at', 'FLOAT NOT NULL DEFAULT 0'), ('status', "VARCHAR NOT NULL DEFAULT 'ok'"),
@@ -113,6 +116,8 @@ def init_db() -> None:
                 ('crthreadsource', (('fit', 'INTEGER NOT NULL DEFAULT 0'), ('tried', 'INTEGER NOT NULL DEFAULT 0'),
                                     ('kept', 'INTEGER NOT NULL DEFAULT 0'))),
                 ('crcandidate', (('misses', 'INTEGER NOT NULL DEFAULT 0'),)),
+                ('crpick', (('fun', 'INTEGER NOT NULL DEFAULT 0'), ('kind', "VARCHAR NOT NULL DEFAULT ''"),
+                            ('wildcard', 'BOOLEAN NOT NULL DEFAULT 0'))),
                 ('moodboardbrief', (('absorbed', 'INTEGER NOT NULL DEFAULT 0'),)),
                 ('moodverdict', (('rating', 'JSON'),))):
             have = {c['name'] for c in inspect(connection).get_columns(table)}

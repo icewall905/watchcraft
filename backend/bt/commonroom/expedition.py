@@ -401,7 +401,7 @@ def hunt_sources(hid, lease) -> int:
         got = curate._judge(thread, '', sample)
         if not got:
             return None
-        return sum(1 for score, _ in got.values() if score >= threshold), len(got)
+        return sum(1 for v in got.values() if v.score >= threshold), len(got)
 
     def link(sid: int, fit: int, n: int):
         nonlocal saved
