@@ -67,15 +67,17 @@ def _queues(s: Session, pid: Optional[int]) -> list[dict]:
     return out
 
 
-def status_payload(s: Session, pid: Optional[int] = None) -> dict:
+def status_payload(s: Session, pid: Optional[int] = None, queues: bool = True) -> dict:
     st = get_settings(s)["throttle"]
-    return {
+    out = {
         "state": get_agent_state(s),
         "downloader": get_kv("downloader_state", {"state": "offline"}, s),
         "control": get_agent_control(s),
         "budget": {**yt_request_counts(s), "max_hour": st["max_per_hour"], "max_day": st["max_per_day"]},
-        "queues": _queues(s, pid),
     }
+    if queues:  # every candidate of every playlist: too costly for the once-a-second stream
+        out["queues"] = _queues(s, pid)
+    return out
 
 
 @router.get("/agent/status")
@@ -120,8 +122,7 @@ async def agent_stream(request: Request, after_id: int = 0):
                                                   _event_scope(s, own)).order_by(AgentEvent.id).limit(100)).all()
             st = None
             if with_state:
-                st = status_payload(s)
-                st.pop("queues")
+                st = status_payload(s, queues=False)
             return (evs[-1].id if evs else last_id), evs, st
 
     async def gen():

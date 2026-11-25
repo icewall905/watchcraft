@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from datetime import timedelta
 
 from sqlalchemy import event, inspect
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, func, select
 
 from .config import DB_PATH, DEFAULT_SETTINGS
 from .models import AgentEvent, PlaybackTarget, Profile, Setting, YtRequest, now
@@ -356,9 +356,10 @@ def log_yt_request(kind: str, origin: str = "worker", ok: bool = True, detail: s
 def yt_request_counts(s: Session | None = None) -> dict:
     def _count(sess):
         t = now()
-        hour = sess.exec(select(YtRequest).where(YtRequest.origin == "worker", YtRequest.ts >= t - timedelta(hours=1))).all()
-        day = sess.exec(select(YtRequest).where(YtRequest.origin == "worker", YtRequest.ts >= t - timedelta(days=1))).all()
-        return {"hour": len(hour), "day": len(day)}
+        def since(delta):
+            return sess.exec(select(func.count()).select_from(YtRequest).where(
+                YtRequest.origin == "worker", YtRequest.ts >= t - delta)).one()
+        return {"hour": since(timedelta(hours=1)), "day": since(timedelta(days=1))}
     if s is not None:
         return _count(s)
     with session() as sess:
