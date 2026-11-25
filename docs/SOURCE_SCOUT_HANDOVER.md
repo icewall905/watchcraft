@@ -19,6 +19,22 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — SQLite lock holders, agent stream CPU, Scroll Done (`0ac119f`, `f2343b7`, 2026-11-25)
+
+- `0ac119f` (B-073): taste learning (`prefs.collect`) commits before its model call — it held the write lock
+  43–131 s nightly; board hash sweep hashes images before writing; idle Watcher workers skip `BEGIN IMMEDIATE`
+  when nothing is due. The `bt.db.locks` log now times from lock acquisition and reports the wait separately, so
+  writers that waited 30 s and rolled back no longer look like holders. `docker kill -s USR1 wc-api` dumps all
+  thread stacks to the API log.
+- `806deba`: the once-a-second agent SSE poll no longer builds per-playlist candidate stats it discarded, and counts
+  the YouTube budget in SQL; it was the top non-LLM stack in API samples while the API ran at 200% CPU.
+- `f2343b7`: The Scroll has a ✓ Done button (marks seen: leaves the feed, no rating).
+- No `database is locked` in the 10 minutes after `0ac119f`; API 40–110% CPU in that window (before: ~200%).
+- Tests: backend 1719 passed, 6 skipped, 1 failed (`test_shared_polling`, venv-only). `shorts.spec.ts` 30 passed,
+  1 failed (repeat-visits cache test, part of B-077).
+- Backups `20261125-locks-0ac119f` (→ `release-440e71d`) and `20261125-done-f2343b7` (→ `release-0ac119f`).
+  Removed `20261124-clean-440e71d`, `20261124-playlistbtn-a3f4872`, tags `release-a3f4872`, `release-131753d`.
+
 ## Deployment record — Clean tree at `440e71d` (2026-11-24)
 
 - `b0e5277` (board pin tags and disputes) had been deployed from another checkout and never pushed; its 13 files were
