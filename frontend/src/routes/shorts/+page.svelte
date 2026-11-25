@@ -344,6 +344,43 @@
 		reset();
 		await loadFeeds();
 	}
+	/** Take a clip out of the list and keep playing from the same place. */
+	async function drop(item: typeof current & {}, feed: number | undefined, profile: number, epoch: number) {
+		const retainedId = current?.video.id, wasCurrent = retainedId === item.video.id;
+		items = items.filter(i => i.video.id !== item.video.id);
+		if (!wasCurrent)
+			index = Math.max(0, items.findIndex(i => i.video.id === retainedId));
+		if (wasCurrent) {
+			stop();
+			index = Math.min(index, Math.max(0, items.length - 1));
+			if (!items.length && nextOffset !== null)
+				await load(true);
+			if (alive && selected?.id === feed && profile === session.version && epoch === selectionEpoch)
+				void play(index);
+		}
+	}
+	/** Done: no taste signal, the clip just leaves this feed so the curator fills the slot. */
+	async function done() {
+		const item = current, feed = selected?.id, profile = session.version, epoch = selectionEpoch;
+		if (!item || busy)
+			return;
+		busy = true;
+		try {
+			await api.markSeen(item.video.id);
+			if (!alive || selected?.id !== feed || profile !== session.version || epoch !== selectionEpoch)
+				return;
+			await drop(item, feed, profile, epoch);
+			toast.success('Done — cleared from this feed');
+		}
+		catch {
+			if (alive && selected?.id === feed && epoch === selectionEpoch)
+				toast.error('Could not save that.');
+		}
+		finally {
+			if (alive && selected?.id === feed && profile === session.version && epoch === selectionEpoch)
+				busy = false;
+		}
+	}
 	async function rate(rating: 1 | -1) {
 		const item = current, feed = selected?.id, profile = session.version, epoch = selectionEpoch;
 		if (!item || busy)
@@ -359,18 +396,7 @@
 					void go(1);
 			}
 			else {
-				const retainedId = current?.video.id, wasCurrent = retainedId === item.video.id;
-				items = items.filter(i => i.video.id !== item.video.id);
-				if (!wasCurrent)
-					index = Math.max(0, items.findIndex(i => i.video.id === retainedId));
-				if (wasCurrent) {
-					stop();
-					index = Math.min(index, Math.max(0, items.length - 1));
-					if (!items.length && nextOffset !== null)
-						await load(true);
-					if (alive && selected?.id === feed && profile === session.version && epoch === selectionEpoch)
-						void play(index);
-				}
+				await drop(item, feed, profile, epoch);
 				toast.success('Noted — fewer like this');
 			}
 		}
@@ -573,6 +599,7 @@
 		<div class="acts">
 			<button class="btn round" aria-label="More like this" disabled={busy} use:focusable={{group:'shorts',onSelect:()=>rate(1)}}>👍</button>
 			<button class="btn round" aria-label="Not for me" disabled={busy} use:focusable={{group:'shorts',onSelect:()=>rate(-1)}}>👎</button>
+			<button class="btn round" aria-label="Done, clear this clip" title="Done — clear it without liking or disliking" disabled={busy} use:focusable={{group:'shorts',onSelect:done}}>✓</button>
 			<button class="btn round" aria-label="Next clip" disabled={nextOffset === null && index >= items.length - 1} use:focusable={{group:'shorts',onSelect:()=>go(1)}}>⌄</button>
 		</div>
 		<div class="transport" role="group" aria-label="Playback controls">

@@ -564,3 +564,19 @@ test('desktop keeps the sidebar beside The Scroll; phones stay full screen', asy
  await page.setViewportSize({ width: 390, height: 844 });
  expect((await page.getByRole('region', { name: 'Video feed' }).boundingBox())!.x).toBe(0);
 });
+test('Done clears the clip without any rating and plays the next one', async ({ page }) => {
+	await fixture(page);
+	const seen: string[] = [];
+	let rated = 0;
+	await page.route('**/api/history/seen', async r => { seen.push(r.request().postDataJSON().video_id); await r.fulfill({ json: { ok: true, dismissed: 1 } }); });
+	await page.route('**/api/feedback', r => { rated++; return r.fulfill({ json: { ok: true } }); });
+	await freshPage(page, '/shorts');
+	await page.getByRole('button', { name: /Science clips/ }).click();
+	await page.locator('video').click();
+	await page.getByRole('button', { name: 'Done, clear this clip' }).click();
+	await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
+	expect(seen).toEqual(['short000001']);
+	expect(rated).toBe(0);
+	await page.locator('video').click();
+	await expect(page.getByRole('button', { name: 'Previous clip' })).toBeDisabled();
+});
