@@ -71,17 +71,30 @@ def _caller() -> str:
         return "?"
 
 
+def _takes_lock(statement: str) -> bool:
+    head = statement.lstrip()[:15].upper()
+    return head.startswith(_WRITES) or head.startswith("BEGIN IMMEDIATE")
+
+
 @event.listens_for(engine, "before_cursor_execute")
 def _note_first_write(conn, _cursor, statement, _params, _context, _many):
-    if "write_since" not in conn.info and statement.lstrip()[:7].upper().startswith(_WRITES):
-        conn.info["write_since"] = (time.monotonic(), statement.split(None, 3)[:3], _caller())
+    if "write_since" not in conn.info and "write_asked" not in conn.info and _takes_lock(statement):
+        conn.info["write_asked"] = (time.monotonic(), statement.split(None, 3)[:3], _caller())
+
+
+@event.listens_for(engine, "after_cursor_execute")
+def _note_lock_taken(conn, *_):
+    # The lock is ours only once the first write returns; time spent before that was waiting.
+    if (asked := conn.info.pop("write_asked", None)) is not None:
+        conn.info["write_since"] = (time.monotonic(), *asked)
 
 
 def _write_ended(conn, how: str) -> None:
+    conn.info.pop("write_asked", None)
     since = conn.info.pop("write_since", None)
     if since and (held := time.monotonic() - since[0]) >= SLOW_WRITE_S:
-        _lock_log.warning("write lock held %.1fs until %s by pid %s: first %s from %s",
-                          held, how, os.getpid(), " ".join(since[1]), since[2])
+        _lock_log.warning("write lock held %.1fs (after waiting %.1fs) until %s by pid %s: first %s from %s",
+                          held, since[0] - since[1], how, os.getpid(), " ".join(since[2]), since[3])
 
 
 event.listen(engine, "commit", lambda conn: _write_ended(conn, "commit"))

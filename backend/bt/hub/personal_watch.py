@@ -422,11 +422,16 @@ def observe(watch, report):
 def check_one():
     now = time.time()
     claim = uuid4().hex
+    due = (select(PersonalWatch).where(PersonalWatch.enabled == True,  # noqa: E712
+                                       PersonalWatch.next_check <= now, PersonalWatch.lease_until <= now)
+           .order_by(PersonalWatch.next_check).limit(1))
+    with session() as s:
+        # Four idle workers poll every few seconds; only take the write lock when a check is due.
+        if not s.exec(due).first():
+            return False
     with session() as s:
         s.connection().exec_driver_sql('BEGIN IMMEDIATE')
-        watch = s.exec(select(PersonalWatch).where(PersonalWatch.enabled == True,  # noqa: E712
-                                                   PersonalWatch.next_check <= now, PersonalWatch.lease_until <= now)
-                       .order_by(PersonalWatch.next_check).limit(1)).first()
+        watch = s.exec(due).first()
         if not watch:
             return False
         if not hub_allowed(s, watch.profile_id):

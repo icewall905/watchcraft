@@ -158,9 +158,16 @@ def hash_sweep(limit: int = 50) -> int:
         rows = s.exec(select(MoodAsset.pin_id, MoodPin.board_id).where(
             MoodAsset.pin_id == MoodPin.id, MoodAsset.pin_id.not_in(select(MoodHash.pin_id)))
             .order_by(MoodAsset.pin_id.desc()).limit(limit)).all()
+        # Hash every picture before the first write: decoding images inside a write
+        # transaction kept the database locked for everyone else.
+        hashes = []
         for pin_id, board_id in rows:
             asset = s.get(MoodAsset, pin_id)
-            s.merge(MoodHash(pin_id=pin_id, board_id=board_id, dhash=dhash(asset.data) if asset else 0))
+            hashes.append(MoodHash(pin_id=pin_id, board_id=board_id, dhash=dhash(asset.data) if asset else 0))
+    # A fresh transaction: upgrading the old read snapshot fails if anyone wrote meanwhile.
+    with session() as s:
+        for row in hashes:
+            s.merge(row)
         s.exec(delete(MoodVerdict).where(MoodVerdict.pin_id == None,  # noqa: E711
                                          MoodVerdict.created_at < time.time() - VERDICT_DAYS * 86400))
         s.commit()

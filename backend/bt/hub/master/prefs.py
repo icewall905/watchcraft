@@ -245,6 +245,8 @@ def collect(s: Session, pid: int, at: float | None = None) -> dict:
     from . import judge
     from ...knowledge import teachings
     tombstones = teachings.rejected(s, pid)
+    # The model call below can take minutes; never hold SQLite's write lock across it.
+    s.commit()
     if evidence and hub_ai.enabled() and not judge.video_busy():
         payload = json.dumps(evidence, ensure_ascii=False)
         refused = teachings.rejected_block(tombstones)

@@ -748,3 +748,32 @@ def test_long_write_transactions_are_logged_with_their_origin(monkeypatch, caplo
     held = [r.getMessage() for r in caplog.records if r.name == "bt.db.locks"]
     assert len(held) == 1 and "until commit" in held[0]
     assert "INTO setting" in held[0] and "test_downloader.py" in held[0]
+
+
+def test_lock_log_counts_waiting_apart_from_holding(monkeypatch, caplog):
+    import logging
+    import threading
+    import time as _time
+    from sqlalchemy import text
+    from bt import db
+    monkeypatch.setattr(db, "SLOW_WRITE_S", 0.3)
+    holding, release = threading.Event(), threading.Event()
+
+    def holder():
+        with session() as s:
+            s.exec(text("BEGIN IMMEDIATE"))
+            holding.set()
+            release.wait(5)
+            _time.sleep(0.5)
+            s.commit()
+
+    t = threading.Thread(target=holder)
+    with caplog.at_level(logging.WARNING, logger="bt.db.locks"):
+        t.start()
+        holding.wait(5)
+        release.set()
+        save_setting("lock_waiter", {"x": 1})  # waits ~0.5 s, then holds briefly
+        t.join()
+    held = [r.getMessage() for r in caplog.records if r.name == "bt.db.locks"]
+    assert len(held) == 1, held  # only the holder; the waiter's wait is not "holding"
+    assert "BEGIN IMMEDIATE" in held[0] and "test_downloader.py" in held[0]

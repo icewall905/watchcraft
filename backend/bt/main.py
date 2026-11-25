@@ -1,7 +1,9 @@
 """FastAPI app: API under /api, SPA (static build) everywhere else."""
 from contextlib import asynccontextmanager, suppress
 import asyncio
+import faulthandler
 import os
+import signal
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -63,6 +65,9 @@ async def lifespan(_app):
                 continue
             with suppress(asyncio.CancelledError):
                 await running
+
+# `docker kill -s USR1 wc-api` prints every thread's stack to the log: finds what is busy or holding a lock.
+faulthandler.register(signal.SIGUSR1, all_threads=True)
 
 app = FastAPI(title="The Hub", docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=lifespan,
               dependencies=[Depends(parental.gate)])
