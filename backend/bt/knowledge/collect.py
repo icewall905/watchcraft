@@ -169,10 +169,11 @@ def collect_commons(s: Session, pid: int) -> int:
     by_id = {}
     for n, f in enumerate(rows, 1):
         up = f.verdict == 'up'
+        meh = ['boring (on-topic but dull)'] if f.verdict == 'meh' else []
         by_id[n] = {'id': n, 'vote': 'up' if up else 'down', 'thread': names.get(f.thread_id, '')[:80],
                     'title': ' '.join((f.title or '').split())[:160], 'community': (f.community or '')[:80],
                     'kind': kinds.get((f.thread_id, f.post_id), ''),
-                    'reasons': [str(r)[:40] for r in (f.reasons or [])[:5]],
+                    'reasons': meh + [str(r)[:40] for r in (f.reasons or [])[:5]],
                     'note': ' '.join((f.note or '').split())[:300],
                     'signal': {'key': f'crpost:{f.post_id}', 'kind': 'like' if up else 'dislike',
                                'surface': 'commonroom', 'ref_type': 'post', 'ref_id': f.post_id,

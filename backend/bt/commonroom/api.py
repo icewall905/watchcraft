@@ -11,8 +11,8 @@ from ..access import hub_worker_allowed, is_child, profile_id
 from ..db import session
 from . import expedition, harvest, social, store
 from .adapters import ADAPTERS
-from .models import (CRAsset, CRBlock, CRCandidate, CRComments, CRFeedback, CRPick, CRPost, CRSource, CRThread,
-                     CRSourcePost, CRThreadSource, CRVisit)
+from .models import (CRAsset, CRBlock, CRCandidate, CRComments, CREvent, CRFeedback, CRPick, CRPost, CRSource,
+                     CRThread, CRSourcePost, CRThreadSource, CRVisit)
 
 router = APIRouter(prefix='/hub/commonroom', tags=['Common Room'])
 PAGE = 30
@@ -21,7 +21,10 @@ MAX_SOURCES = 60
 COMMENTS_TTL = 15 * 60      # an empty stored tree is fetched live again after this
 COMMENTS_REFRESH_S = 120    # a manual refresh is honoured once the stored copy is this old
 FIRST_VISIT_S = 24 * 3600
-REASONS = {'off-topic', 'low effort', 'seen it', 'too basic', 'more like this', 'too advanced', 'clickbait', 'repost'}
+REASONS = {'off-topic', 'low effort', 'seen it', 'too basic', 'more like this', 'too advanced', 'clickbait', 'repost',
+           'boring', 'funny', 'great discussion', 'learned something'}
+EVENT_KINDS = {'open', 'dwell', 'out', 'play', 'comments', 'article'}
+DWELL_MAX_MS = 30 * 60 * 1000   # one post view counts at most this long
 
 
 def require_room(pid: int = Depends(profile_id)) -> int:
@@ -275,12 +278,34 @@ def run_thread(tid: int, pid: int = Depends(require_room)):
 
 @router.get('/threads/{tid}/learned')
 def learned(tid: int, pid: int = Depends(require_room)):
-    from . import teach
+    from . import joy, teach
     with session() as s:
         _owned(s, pid, tid)
         counts = dict(s.exec(select(CRFeedback.verdict, func.count()).where(CRFeedback.thread_id == tid)
                              .group_by(CRFeedback.verdict)).all())
-        return {'lessons': teach.lessons(s, tid), 'up': counts.get('up', 0), 'down': counts.get('down', 0)}
+        week = time.time() - 7 * 86400
+        shown = s.exec(select(func.count()).select_from(CRPick).where(
+            CRPick.thread_id == tid, CRPick.picked_at >= week, CRPick.seen_at > 0)).one()
+        liked = s.exec(select(func.count()).select_from(CRPick).where(
+            CRPick.thread_id == tid, CRPick.picked_at >= week, CRPick.seen_at > 0, CRPick.engaged >= joy.LIKED)).one()
+        memo, pri = joy.memo(pid, s=s), joy.priors(pid, s=s)
+        return {'lessons': teach.lessons(s, tid), 'up': counts.get('up', 0), 'down': counts.get('down', 0),
+                'meh': counts.get('meh', 0), 'taste': memo.get('rules') or [], 'taste_at': memo.get('at') or None,
+                'owner_note': memo.get('owner') or '', 'kinds': pri.get('kind') or {},
+                'hit_rate': round(liked / shown, 3) if shown else None, 'shown_week': shown,
+                'hit_rate_all': pri.get('hit_rate')}
+
+
+class TasteIn(BaseModel):
+    note: str = Field(default='', max_length=1500)
+
+
+@router.put('/taste')
+def put_taste(data: TasteIn, pid: int = Depends(require_room)):
+    """The owner's own words about what they enjoy; the judge reads them before the learned memo."""
+    from . import joy
+    joy.set_owner_note(pid, data.note)
+    return {'ok': True}
 
 
 # ---------- sources
@@ -291,7 +316,8 @@ class SourceIn(BaseModel):
 
 
 class SourceEdit(BaseModel):
-    enabled: bool
+    enabled: bool | None = None
+    throttle: int | None = Field(default=None, ge=0, le=0)   # only "undo": the sweep sets throttles
 
 
 def _source_json(link: CRThreadSource, src: CRSource) -> dict:
@@ -299,7 +325,8 @@ def _source_json(link: CRThreadSource, src: CRSource) -> dict:
             'label': src.label or expedition.describe(src.platform, src.locator), 'origin': link.origin,
             'enabled': link.enabled, 'error': src.error, 'last_ok': src.last_ok or None, 'status': src.status,
             'fit': link.fit, 'tried': link.tried, 'kept': link.kept, 'hits': src.hits,
-            'url': _source_url(src)}
+            'shown': link.shown, 'liked': link.liked, 'skipped': link.skipped,
+            'throttle': link.throttle, 'throttle_why': link.throttle_why, 'url': _source_url(src)}
 
 
 def _source_url(src: CRSource) -> str:
@@ -380,8 +407,12 @@ def _link(s, pid: int, tid: int, lid: int) -> CRThreadSource:
 @router.patch('/threads/{tid}/sources/{lid}')
 def edit_source(tid: int, lid: int, data: SourceEdit, pid: int = Depends(require_room)):
     with session() as s:
+        from .joy import OWNER_KEPT
         link = _link(s, pid, tid, lid)
-        link.enabled = data.enabled
+        if data.enabled is not None:
+            link.enabled = data.enabled
+        if data.throttle == 0:  # the owner keeps this source at full strength; the sweep leaves it alone
+            link.throttle, link.throttle_why = 0, OWNER_KEPT
         s.add(link)
         s.commit()
         s.refresh(link)
@@ -473,10 +504,16 @@ def _ranked(s, pid: int, q, mode: str, child: bool, verdicts_for) -> list[dict]:
     out = _socialize(s, rows, [_post_json(pick, post, t, child, verdicts.get(post.id, '')) for pick, post, t in rows],
                      child)
     cuts = _velocity_cuts(s)
+    from . import joy
+    pri = joy.priors(pid, s=s)
+
+    def liked(o: dict) -> float:  # what this owner has enjoyed before: kind, community, platform
+        return joy.bonus(pri, kind=o.get('kind') or '', community=o.get('community') or '',
+                         platform=o.get('platform') or '')
     if mode == 'hot':
-        key = lambda o: _heat(o, cuts) * 50 + o['relevance'] * 0.3 + o['fun'] * 0.2 + _talk(o)  # noqa: E731
-    else:  # today: the best of the day, with a nudge for what is buzzing, being discussed and fun
-        key = lambda o: o['relevance'] + o['fun'] * 0.5 + _heat(o, cuts) * 15 + _talk(o)  # noqa: E731
+        key = lambda o: _heat(o, cuts) * 50 + o['relevance'] * 0.3 + o['fun'] * 0.2 + _talk(o) + liked(o)  # noqa: E731
+    else:  # today: the most enjoyable of the day: fun weighs as much as relevance, plus buzz, talk and taste
+        key = lambda o: o['relevance'] + o['fun'] + _heat(o, cuts) * 15 + _talk(o) + 2 * liked(o)  # noqa: E731
     out.sort(key=key, reverse=True)
     return out
 
@@ -528,7 +565,7 @@ def feed(thread: str = 'all', section: str = '', mode: str = '', kind: str = '',
         elif mode == 'top':
             q = q.where(CRPick.published_at >= visit_at - TOP_WINDOW_S,
                         (CRPost.comments > 0) | (CRPost.score >= TOP_MIN_SCORE)) \
-                .order_by((CRPick.score + CRPick.fun * 0.5).desc(), CRPick.id.desc())
+                .order_by((CRPick.score + CRPick.fun).desc(), CRPick.id.desc())
         elif section == 'new':
             q = q.where(CRPick.picked_at > edge, CRPick.picked_at <= visit_at) \
                 .order_by(CRPick.published_at.desc(), CRPick.id.desc())
@@ -536,7 +573,7 @@ def feed(thread: str = 'all', section: str = '', mode: str = '', kind: str = '',
             # Stable for the whole visit: the pool known at the visit start ranked first (unseen before seen),
             # then everything found while scrolling, appended in discovery order.
             age_days = (visit_at - CRPick.published_at) / 86400.0
-            rank = CRPick.score + CRPick.fun * 0.3 - age_days * 2  # only fields fixed for the visit keep offsets stable
+            rank = CRPick.score + CRPick.fun * 0.6 - age_days * 2  # only fields fixed for the visit keep offsets stable
             later = CRPick.picked_at > visit_at
             seen = (CRPick.seen_at > 0) & (CRPick.seen_at < visit_at)
             q = q.where((CRPick.picked_at <= edge) | later) \
@@ -545,7 +582,7 @@ def feed(thread: str = 'all', section: str = '', mode: str = '', kind: str = '',
         more = len(rows) > PAGE
         rows = rows[:PAGE]
         verdicts = verdicts_for([p.id for _, p, _ in rows])
-        shown = [r for r in rows if not (r[0].hidden and verdicts.get(r[1].id) != 'down')]
+        shown = [r for r in rows if not (r[0].hidden and verdicts.get(r[1].id) not in ('down', 'meh'))]
         posts = _socialize(s, shown, [_post_json(pick, post, t, child, verdicts.get(post.id, ''))
                                       for pick, post, t in shown], child)
         if mode in ('deep', 'top'):
@@ -600,8 +637,51 @@ def _pick(s, pid: int, pick_id: int) -> CRPick:
     return pick
 
 
+class EventIn(BaseModel):
+    pick_id: int
+    kind: str = Field(max_length=20)
+    value: float = 0
+
+
+class EventsIn(BaseModel):
+    events: list[EventIn] = Field(max_length=50)
+
+
+@router.post('/events')
+def events(data: EventsIn, pid: int = Depends(require_room)):
+    """What the owner did with picks beyond votes (opens, dwell, links, plays, comments, full articles): the
+    joy sweep turns these into an engagement score per pick."""
+    rows = [e for e in data.events if e.kind in EVENT_KINDS]
+    if not rows:
+        return {'ok': True, 'stored': 0}
+    now = time.time()
+    with session() as s:
+        s.connection().exec_driver_sql('BEGIN IMMEDIATE')
+        picks = {k.id: k for k in s.exec(select(CRPick).where(CRPick.profile_id == pid,
+                                                             CRPick.id.in_({e.pick_id for e in rows}))).all()}
+        stored = 0
+        for e in rows:
+            pick = picks.get(e.pick_id)
+            if not pick:
+                continue
+            value = max(0.0, min(float(e.value or 0), DWELL_MAX_MS)) if e.kind == 'dwell' else 1.0
+            if e.kind == 'dwell' and value < 500:
+                continue
+            s.add(CREvent(profile_id=pid, pick_id=pick.id, kind=e.kind, value=value, created_at=now))
+            if e.kind == 'open' and not pick.opened_at:
+                pick.opened_at = now
+            if e.kind == 'dwell':
+                pick.dwell_ms = min(10 * DWELL_MAX_MS, (pick.dwell_ms or 0) + int(value))
+            if not pick.seen_at:
+                pick.seen_at = now
+            s.add(pick)
+            stored += 1
+        s.commit()
+    return {'ok': True, 'stored': stored}
+
+
 class FeedbackIn(BaseModel):
-    verdict: str = Field(pattern='^(up|down|)$')
+    verdict: str = Field(pattern='^(up|down|meh|)$')
     reasons: list[str] = Field(default_factory=list, max_length=8)
     note: str = Field(default='', max_length=300)
 
@@ -624,7 +704,7 @@ def feedback(pick_id: int, data: FeedbackIn, pid: int = Depends(require_room)):
             f.reasons = [r for r in data.reasons if r in REASONS]
             f.title, f.community, f.created_at = (post.title if post else '')[:300], (post.community if post else ''), now
             s.add(f)
-        pick.hidden = data.verdict == 'down'
+        pick.hidden = data.verdict in ('down', 'meh')
         pick.hidden_at = now if pick.hidden else 0
         s.add(pick)
         s.commit()

@@ -20,9 +20,9 @@ def _post(**kw):
 
 def test_replies_give_a_modest_boost_over_the_keep_line():
     assert [talk_bonus(n) for n in (0, 1, 3, 15, 5000)] == [0, 2, 4, 8, 8]
-    assert keeps(Verdict(57, ''), 60, True) == (False, False)
-    assert keeps(Verdict(57, ''), 60, True, comments=3) == (True, False)
-    assert keeps(Verdict(40, ''), 60, True, comments=500) == (False, False)  # a boost, not a free pass
+    assert keeps(Verdict(57, '', 60), 60, True) == (False, False)
+    assert keeps(Verdict(57, '', 60), 60, True, comments=3) == (True, False)
+    assert keeps(Verdict(40, '', 60), 60, True, comments=500) == (False, False)  # a boost, not a free pass
 
 
 def test_aggregators_and_promo_accounts_are_recognised():
@@ -61,7 +61,7 @@ def test_capped_posts_are_rejected_before_the_judge(client, monkeypatch):  # noq
         thr = s.get(CRThread, t['id'])
     judged = []
     monkeypatch.setattr(curate.ai, 'enabled', lambda: True)
-    monkeypatch.setattr(curate, '_judge', lambda th, lessons, batch: judged.extend(p.id for p in batch) or {})
+    monkeypatch.setattr(curate, '_judge', lambda th, lessons, batch, *a: judged.extend(p.id for p in batch) or {})
     monkeypatch.setattr(curate, '_settle', lambda *a, **k: None)
     curate.run(thr, '')
     assert quiet not in judged and {talked, normal} <= set(judged)

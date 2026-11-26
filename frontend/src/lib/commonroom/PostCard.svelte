@@ -1,6 +1,5 @@
 <script lang="ts">
 	import type { Post } from '$lib/hub/commonroom';
-	import { crApi } from '$lib/hub/commonroom';
 	import Feedback from './Feedback.svelte';
 	import { authSrc } from '$lib/hub/BoardImage.svelte';
 	import Reasons from './Reasons.svelte';
@@ -13,7 +12,9 @@
 	const plat = $derived(platformOf(post.platform));
 	let revealed = $state(false);
 	// svelte-ignore state_referenced_locally
-	let gone = $state(post.verdict === 'down');
+	let gone = $state(post.verdict === 'down' || post.verdict === 'meh');
+	// svelte-ignore state_referenced_locally
+	let goneAs = $state<'down' | 'meh'>(post.verdict === 'meh' ? 'meh' : 'down');
 	const blurred = $derived((post.nsfw || post.spoiler) && !revealed);
 	const first = $derived(post.media[0]);
 	let broken = $state(false); // the picture could not be loaded: show the post without a frame
@@ -28,15 +29,14 @@
 		return 'text';
 	});
 	const open = () => onOpen(post);
-	function down() {
-		gone = true;
-		void crApi.pick(post.pick_id, {hidden: true}).catch(() => {});
+	function down(v: 'down' | 'meh') {  // the feedback call already hid the pick on the server
+		goneAs = v; gone = true;
 	}
 </script>
 {#if gone}
 	<article class="card gone" data-pick={post.pick_id}>
-		<p class="muted small">Hidden. Tell your curator why? <button type="button" class="link" onclick={() => onGone?.(post)}>Dismiss</button></p>
-		<Reasons {post} verdict="down" onDone={() => onGone?.(post)} />
+		<p class="muted small">{goneAs === 'meh' ? 'Hidden as boring. Anything else?' : 'Hidden. Tell your curator why?'} <button type="button" class="link" onclick={() => onGone?.(post)}>Dismiss</button></p>
+		<Reasons {post} verdict={goneAs} onDone={() => onGone?.(post)} />
 	</article>
 {:else}
 	<article class="card v-{variant}" class:wild={post.wildcard} class:hot={post.badges?.includes('hot')} data-pick={post.pick_id} data-seen={post.pick_id} data-variant={variant}>

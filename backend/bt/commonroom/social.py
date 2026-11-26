@@ -180,3 +180,32 @@ def mix(posts: list[dict]) -> list[dict]:
         per_comm[p.get('community') or ''] = per_comm.get(p.get('community') or '', 0) + 1
         out.append(p)
     return out
+
+
+POP_PEERS = 20         # a community needs this many recent posts before its percentiles mean anything
+
+
+def crowd(score: int, comments: int) -> float:
+    """How much a post's own community engaged with it: votes plus replies (a reply weighs three votes)."""
+    return max(0, score or 0) + 3 * max(0, comments or 0)
+
+
+def percentile(value: float, peers: list[float]) -> float | None:
+    """Share of peers this value beats (0..1); None for small or silent communities (feeds without numbers)."""
+    if len(peers) < POP_PEERS or not any(peers):
+        return None
+    return sum(1 for p in peers if p < value) / len(peers)
+
+
+def popularity_text(pct: float | None, community: str) -> str:
+    """Judge-facing line for clearly popular or ignored posts; '' in the unremarkable middle."""
+    if pct is None:
+        return ''
+    where = community or 'its community'
+    if pct >= 0.95:
+        return f'top 5% of {where} lately'
+    if pct >= 0.8:
+        return f'top 20% of {where} lately'
+    if pct <= 0.2:
+        return f'bottom 20% of {where} lately: few people cared'
+    return ''

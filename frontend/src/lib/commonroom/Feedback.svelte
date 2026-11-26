@@ -1,16 +1,16 @@
 <script lang="ts">
 	import { crApi, type Post, type Verdict } from '$lib/hub/commonroom';
 	import Reasons from './Reasons.svelte';
-	let { post, onDown, onHide }: { post: Post; onDown?: () => void; onHide?: () => void } = $props();
+	let { post, onDown, onHide }: { post: Post; onDown?: (v: 'down' | 'meh') => void; onHide?: () => void } = $props();
 	// svelte-ignore state_referenced_locally
 	let verdict = $state<Verdict>(post.verdict), saved = $state(post.saved), panel = $state(false), menu = $state(false), msg = $state('');
-	async function vote(v: 'up' | 'down') {
+	async function vote(v: 'up' | 'down' | 'meh') {
 		const next: Verdict = verdict === v ? '' : v;
 		const prev = verdict; verdict = next; msg = '';
 		try { await crApi.feedback(post.pick_id, {verdict: next, reasons: [], note: ''}); }
 		catch { verdict = prev; msg = 'Could not save feedback.'; return; }
 		post.verdict = next;
-		if (next === 'down') onDown?.();
+		if (next === 'down' || next === 'meh') onDown?.(next);
 		else panel = next === 'up';
 	}
 	async function save() {
@@ -25,6 +25,7 @@
 <div class="fb">
 	<div class="bar">
 		<button type="button" class="act" class:on={verdict === 'up'} aria-pressed={verdict === 'up'} aria-label="Good pick" onclick={() => vote('up')}>👍</button>
+		<button type="button" class="act" class:on={verdict === 'meh'} aria-pressed={verdict === 'meh'} aria-label="On topic but boring" title="On topic, but boring" onclick={() => vote('meh')}>😐</button>
 		<button type="button" class="act" class:on={verdict === 'down'} aria-pressed={verdict === 'down'} aria-label="Bad pick" onclick={() => vote('down')}>👎</button>
 		<button type="button" class="act" class:on={saved} aria-pressed={saved} aria-label={saved ? 'Unsave' : 'Save'} onclick={save}>{saved ? '★' : '☆'}</button>
 		<span class="gap"></span>

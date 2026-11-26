@@ -8,6 +8,7 @@
  import { KINDS, MODES } from '$lib/commonroom/util';
  import PostCard from '$lib/commonroom/PostCard.svelte';
  import PostView from '$lib/commonroom/PostView.svelte';
+ import { trackLinks } from '$lib/commonroom/track';
  import ThreadEditor from '$lib/commonroom/ThreadEditor.svelte';
  let threads = $state<Thread[]>([]), platforms = $state<PlatformInfo[]>([]), child = $state(false), selected = $state<'all' | number>('all');
  let newPosts = $state<Post[]>([]), deepPosts = $state<Post[]>([]), section = $state<'new' | 'deep'>('new'), cursor = $state(''), hasMore = $state(false), building = $state(false);
@@ -152,7 +153,8 @@
 {#snippet wall(list: Post[])}
  <!-- Desktop: posts dealt left to right into columns that each stack tightly (no holes under short cards);
       new pages append to the same columns, so nothing already on screen moves. -->
- <div class="feed" style:--cols={cols}>
+ <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+ <div class="feed" style:--cols={cols} onclick={trackLinks}>
   {#each Array.from({ length: cols }, (_, c) => list.filter((_, i) => i % cols === c)) as column, c (c)}
    <div class="col">{#each column as p (p.pick_id)}<div class="item" use:seen={p.pick_id}><PostCard post={p} onOpen={(x) => { open = x; }} onGone={gone} /></div>{/each}</div>
   {/each}

@@ -40,7 +40,7 @@ def _data(items: list[dict]) -> str:
                                 'source': d.get('publisher') or '', 'url': (d.get('url') or '')[:500],
                                 'summary': (d.get('summary') or '')[:600],
                                 **({'body': str(d['body'])[:3000]} if d.get('body') else {}),
-                                **{k: str(d[k])[:500] for k in ('provider', 'coverage', 'linked_article', 'comments') if d.get(k)}}, ensure_ascii=False))
+                                **{k: str(d[k])[:500] for k in ('provider', 'coverage', 'linked_article', 'comments', 'popularity') if d.get(k)}}, ensure_ascii=False))
     return '<data>\n' + _esc('\n'.join(rows)) + '\n</data>'
 
 

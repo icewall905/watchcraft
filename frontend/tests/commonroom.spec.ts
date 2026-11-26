@@ -273,3 +273,61 @@ test('a thread badge opens New from Today and clears once visited', async ({ pag
 	await expect(chip.locator('.badge')).toHaveCount(0);
 	expect(await page.evaluate(() => localStorage.getItem('commons.mode'))).toBe('today');
 });
+
+test('meh hides the card as boring and offers boring-first reasons', async ({ page }) => {
+	const calls = await setup(page);
+	await freshPage(page, '/common-room');
+	const card = page.locator('article', { hasText: 'Fresh Amiga find' }).first();
+	await card.getByRole('button', { name: 'On topic but boring' }).click();
+	await expect(page.getByText('Hidden as boring. Anything else?')).toBeVisible();
+	await expect(page.getByRole('button', { name: 'boring', exact: true })).toHaveAttribute('aria-pressed', 'true');
+	expect(calls.find((c) => c.path === '/picks/1/feedback')?.body).toMatchObject({ verdict: 'meh' });
+	expect(calls.some((c) => c.path === '/picks/1' && c.method === 'PUT')).toBe(false);  // one call hides it
+});
+
+test('opening and reading a post records open, links and dwell', async ({ page }) => {
+	const calls = await setup(page);
+	await freshPage(page, '/common-room');
+	await page.getByRole('link', { name: 'Fresh Amiga find' }).click();
+	const dialog = page.getByRole('dialog');
+	await expect(dialog.getByText('Full body text')).toBeVisible();
+	await page.waitForTimeout(800);
+	const popup = page.waitForEvent('popup');
+	await dialog.getByRole('link', { name: 'Open original ↗' }).click();
+	await (await popup).close();
+	await page.keyboard.press('Escape');
+	await expect.poll(() => calls.filter((c) => c.path === '/events').flatMap((c) => c.body.events.map((e: { kind: string }) => e.kind)).sort(), { timeout: 8000 })
+		.toEqual(['dwell', 'open', 'out']);
+	const ev = calls.filter((c) => c.path === '/events').flatMap((c) => c.body.events);
+	expect(ev.every((e: { pick_id: number }) => e.pick_id === 1)).toBe(true);
+	expect(ev.find((e: { kind: string }) => e.kind === 'dwell').value).toBeGreaterThan(500);
+});
+
+test('Edit sub: a slowed source shows why and can be undone; taste note saves', async ({ page }) => {
+	const calls = await setup(page);
+	const src = { id: 7, source_id: 70, platform: 'lemmy', locator: 'retro@lemmy.world', label: 'retro@lemmy.world', origin: 'ai', enabled: true, error: '', last_ok: null, status: 'ok', fit: 7, tried: 8, kept: 3, hits: 40, url: '', shown: 20, liked: 1, skipped: 15, throttle: 2, throttle_why: 'you skipped 15 of the last 20 posts' };
+	await page.route('**/api/hub/commonroom/threads/1/**', async (route) => {
+		const req = route.request(), path = new URL(req.url()).pathname;
+		calls.push({ method: req.method(), path, query: new URLSearchParams(), body: req.method() === 'GET' ? {} : req.postDataJSON() });
+		if (path.endsWith('/sources')) return route.fulfill({ json: { sources: [src], hunt: null } });
+		if (path.endsWith('/sources/7')) return route.fulfill({ json: { ...src, throttle: 0, throttle_why: 'kept by you' } });
+		if (path.endsWith('/learned')) return route.fulfill({ json: { lessons: [], up: 3, down: 1, meh: 2, taste: ['Loves build logs with photos'], kinds: { showcase: 0.3, news: -0.2 }, hit_rate: 0.42, shown_week: 12, owner_note: '' } });
+		return route.fulfill({ json: { ok: true } });
+	});
+	await freshPage(page, '/common-room');
+	await page.getByRole('button', { name: 'Retro computing' }).click();
+	await page.getByRole('button', { name: 'Edit sub' }).click();
+	const dialog = page.getByRole('dialog');
+	await expect(dialog.getByText('liked 1 · skipped 15')).toBeVisible();
+	await expect(dialog.getByText('slowed ×4')).toBeVisible();
+	await expect(dialog.getByText('Loves build logs with photos')).toBeVisible();
+	await expect(dialog.getByText('42%')).toBeVisible();
+	await expect(dialog.getByText(/loves showcase · skips news/)).toBeVisible();
+	await dialog.getByRole('button', { name: 'Keep retro@lemmy.world at full strength' }).click();
+	await expect(dialog.getByText('slowed ×4')).toHaveCount(0);
+	expect(calls.find((c) => c.path.endsWith('/sources/7'))?.body).toEqual({ throttle: 0 });
+	await dialog.getByRole('textbox', { name: /what makes a post fun/ }).fill('snarky threads');
+	await dialog.getByRole('button', { name: 'Save', exact: true }).click();
+	await expect(dialog.getByRole('button', { name: 'Saved' })).toBeVisible();
+	expect(calls.find((c) => c.path === '/taste')?.body).toEqual({ note: 'snarky threads' });
+});

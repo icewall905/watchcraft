@@ -16,7 +16,9 @@ export function ago(ts: number | null | undefined, now = Date.now()): string {
  return `${Math.round(d / 86400 / 365)}y`;
 }
 export const compact = (n: number | null | undefined) => n == null ? '' : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-export const REASONS = ['off-topic', 'low effort', 'seen it', 'too basic', 'more like this'];
+export const REASONS_UP = ['funny', 'great discussion', 'learned something', 'more like this'];
+export const REASONS_DOWN = ['boring', 'off-topic', 'low effort', 'seen it', 'too basic', 'clickbait'];
+export const REASONS = REASONS_DOWN;
 export const KINDS: {key: import('$lib/hub/commonroom').Kind; label: string; icon: string}[] = [
  {key: 'humor', label: 'Humor', icon: '😂'}, {key: 'showcase', label: 'Showcase', icon: '🛠'}, {key: 'question', label: 'Questions', icon: '❓'},
  {key: 'discussion', label: 'Discussion', icon: '💬'}, {key: 'news', label: 'News', icon: '📰'}, {key: 'deepdive', label: 'Deep dives', icon: '🔍'},

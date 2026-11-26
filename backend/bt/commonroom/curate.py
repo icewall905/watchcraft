@@ -18,7 +18,7 @@ from sqlmodel import select
 from .. import access
 from ..db import get_settings, session
 from ..hub import ai, semantic
-from . import kids, store, teach
+from . import joy, kids, social, store, teach
 from .models import (CRBlock, CRCandidate, CRPick, CRPost, CRPostVector, CRSource, CRSourcePost, CRThread,
                      CRThreadSource)
 
@@ -37,6 +37,13 @@ KINDS = ('humor', 'showcase', 'question', 'discussion', 'news', 'deepdive', 'odd
 WILD_FUN = 80          # a delightful post may be this fun ...
 WILD_SLACK = 20        # ... and this far under the threshold and still be kept as a wildcard
 TALK_BONUS_MAX = 8     # a post people are already discussing gets up to this much help over the keep line
+REL_WEIGHT, FUN_WEIGHT = 0.6, 0.4   # the keep line weighs relevance and fun: on-topic alone is not enough
+REL_FLOOR = 10         # ... but a regular keep is at most this far under the threshold on relevance
+DULL_FUN = 35          # a post this unfun is dull ...
+DULL_MARGIN = 15       # ... and is kept only this far over the threshold on relevance ...
+DULL_TALK = 10         # ... or with a real conversation going
+POP_WINDOW_S = 14 * 86400
+NEUTRAL_FUN = 50       # fun assumed when no judge is configured
 # Aggregator-like sources that bring listings, not conversations: kept only once someone replies to them.
 AGGREGATOR_DOMAINS = ('awesome.ecosyste.ms', 'ossalt.com', 'rss.feedspot.com')
 AGGREGATOR_URL_BITS = ('infiniterss.php',)   # feed-title scrapers that wrap someone else's headline
@@ -79,12 +86,27 @@ def capped(p) -> bool:
     return aggregator(p) and not (p.comments or 0) and (p.score or 0) <= 1
 
 
-def keeps(v: Verdict, threshold: int, wild: bool, comments: int = 0) -> tuple[bool, bool]:
-    """(kept, wildcard). Wildcards are loosely on-topic posts kept because they are a delight. Posts with
-    replies get a small bonus (talk_bonus) over the line."""
-    if v.score + talk_bonus(comments) >= threshold:
+def joy_score(v: Verdict, comments: int = 0, bonus: float = 0.0) -> float:
+    """Relevance and fun together, plus help for a live conversation and what the owner has enjoyed before."""
+    return REL_WEIGHT * v.score + FUN_WEIGHT * v.fun + talk_bonus(comments) + bonus
+
+
+def dull(v: Verdict, threshold: int, comments: int = 0) -> bool:
+    """On-topic but nobody would stop scrolling for it: kept only when very relevant or much discussed."""
+    return v.fun < DULL_FUN and v.score < threshold + DULL_MARGIN and (comments or 0) < DULL_TALK
+
+
+def keeps(v: Verdict, threshold: int, wild: bool, comments: int = 0, bonus: float = 0.0,
+          penalty: int = 0) -> tuple[bool, bool]:
+    """(kept, wildcard). A post must clear the line on relevance and fun together (joy_score), be close to
+    on-topic and not be dull. `bonus` comes from learned priors (joy.bonus); `penalty` from throttled sources.
+    Wildcards are loosely on-topic posts kept because they are a delight."""
+    line = threshold + penalty
+    good = joy_score(v, comments, bonus) >= line or v.score >= line + DULL_MARGIN \
+        or (v.score >= line and (comments or 0) >= DULL_TALK)   # fun enough, very relevant, or a real conversation
+    if v.score >= line - REL_FLOOR and good and not dull(v, line, comments):
         return True, False
-    if wild and v.fun >= WILD_FUN and v.score >= threshold - WILD_SLACK:
+    if wild and v.fun >= WILD_FUN and v.score >= line - WILD_SLACK:
         return True, True
     return False, False
 
@@ -175,8 +197,31 @@ def _vectors(posts: list[CRPost]) -> dict[int, list[float]]:
     return out
 
 
-def _rank(thread: CRThread, posts: list[CRPost]) -> list[tuple[CRPost, float]]:
-    """Relevance 0..1 before the judge: embeddings when configured, else engagement and freshness."""
+def _popularity(s, posts: list[CRPost], now: float) -> dict[int, float]:
+    """post_id → percentile of its crowd engagement among recent posts of the same community."""
+    keys = {(p.platform, p.community) for p in posts if p.community}
+    if not keys:
+        return {}
+    peers: dict[tuple[str, str], list[float]] = {}
+    for platform, community, score, comments in s.exec(
+            select(CRPost.platform, CRPost.community, CRPost.score, CRPost.comments)
+            .where(CRPost.community.in_({c for _, c in keys}), CRPost.published_at >= now - POP_WINDOW_S)
+            .order_by(CRPost.id.desc()).limit(20000)).all():
+        if (platform, community) in keys:
+            peers.setdefault((platform, community), []).append(social.crowd(score, comments))
+    out = {}
+    for p in posts:
+        pct = social.percentile(social.crowd(p.score, p.comments), peers.get((p.platform, p.community), []))
+        if pct is not None:
+            out[p.id] = pct
+    return out
+
+
+def _rank(thread: CRThread, posts: list[CRPost], pop: dict[int, float] | None = None,
+          lift: dict[int, float] | None = None) -> list[tuple[CRPost, float]]:
+    """Likely-to-be-enjoyed 0..1 before the judge: embeddings (sub goal + owner taste) when configured, else
+    freshness and engagement; the crowd's verdict within its own community (`pop`) and learned lifts for the
+    post's community and sources (`lift`) spend the judge's budget on posts likely to be fun."""
     vecs = _vectors(posts)
     goal = taste = None
     if vecs:
@@ -185,18 +230,22 @@ def _rank(thread: CRThread, posts: list[CRPost]) -> list[tuple[CRPost, float]]:
         except ValueError:
             goal = None
         with session() as s:
-            taste = teach.taste(s, thread.id, semantic.config()['model'])
+            taste = teach.taste(s, thread.id, semantic.config()['model'], thread.profile_id)
     now = time.time()
     out = []
     for p in posts:
         fresh = math.exp(-max(0.0, now - p.published_at) / (7 * 86400))
         # Feeds and scraped pages carry no votes: give them a neutral middle instead of zero.
-        buzz = 0.35 if not p.score and not p.comments else min(1.0, math.log1p(max(0, p.score) + 3 * max(0, p.comments)) / 8)
+        buzz = 0.35 if not p.score and not p.comments else min(1.0, math.log1p(social.crowd(p.score, p.comments)) / 8)
+        if pop and p.id in pop:  # the community's own verdict beats an absolute count
+            buzz = 0.5 * buzz + 0.5 * pop[p.id]
         base = 0.6 * fresh + 0.4 * buzz
         v = vecs.get(p.id)
         if v and goal:
             sim = teach.cosine(v, goal) + (0.5 * teach.cosine(v, taste) if taste else 0.0)
             base = 0.75 * sim + 0.25 * base
+        if lift:
+            base += max(-0.1, min(0.1, lift.get(p.id, 0.0)))
         out.append((p, base))
     out.sort(key=lambda t: t[1], reverse=True)
     return out
@@ -217,9 +266,14 @@ def _system(thread: CRThread) -> str:
                  'or charming. Score 25 or less: SEO filler, promo and hosting/affiliate posts, "top N tools" or '
                  '"alternatives to X" listings, directory or awesome-list entries, and stubs that only repeat a '
                  'headline or link to somewhere else with nothing of their own. '
-                 '"fun" is 0-100 for how entertaining it is to come across: funny, surprising, playful, weird, '
-                 'a lively discussion or a cool thing someone made; dry news and plain questions score low. '
+                 '"fun" is 0-100 for whether a bored person scrolling would stop, click and enjoy it: funny, '
+                 'surprising, playful, weird, a lively or opinionated discussion, a cool thing someone built with '
+                 'pictures, a great story. Dry announcements, changelogs, press releases, routine version bumps '
+                 'and plain help questions score low (under 35) however on-topic they are. Being relevant is not '
+                 'enough: a relevant but dull post is not worth keeping unless it is big news for the owner. '
                  '"comments", when given, is how many replies the post already has: a real conversation adds fun. '
+                 '"popularity", when given, is how the post did with its own community compared with its other '
+                 'recent posts: the crowd is a strong hint for fun, but not for relevance. '
                  '"kind" is the one that fits best: humor (jokes, memes, banter), showcase (something someone '
                  'built or made), question (asking for help or opinions), discussion (debate, hot take, '
                  'open conversation), news (announcement or report), deepdive (long article, analysis, '
@@ -230,10 +284,13 @@ def _system(thread: CRThread) -> str:
     return ' '.join(rules)
 
 
-def _judge(thread: CRThread, lessons: str, batch: list[CRPost]) -> dict[int, Verdict] | None:
+def _judge(thread: CRThread, lessons: str, batch: list[CRPost], pop: dict[int, float] | None = None) -> dict[int, Verdict] | None:
+    pop = pop or {}
     items = [{'type': 'post', 'title': p.title, 'publisher': f'{p.platform} {p.community}'.strip(),
               'summary': p.body[:600], 'url': p.link_url or p.url,
               **({'comments': p.comments} if getattr(p, 'comments', 0) else {}),
+              **({'popularity': social.popularity_text(pop.get(p.id), p.community)}
+                 if social.popularity_text(pop.get(p.id), p.community) else {}),
               **({'body': p.body[:kids.BODY_SEEN]} if len(p.body) > 600 else {})} for p in batch]
     user = ai._data(items)
     if lessons:
@@ -322,6 +379,15 @@ def run(thread: CRThread, lease: str) -> dict:
         lessons = teach.prompt(s, thread)
         child = access.is_child(s, thread.profile_id)
         languages = set(store.allowed_languages(s, thread.profile_id))
+        pri = joy.priors(thread.profile_id, s=s)
+        throttled = joy.throttles(s, thread.id)
+        everyone = posts + cross
+        pop = _popularity(s, everyone, time.time())
+        own = set(s.exec(select(CRThreadSource.source_id).where(CRThreadSource.thread_id == thread.id)).all())
+        brought: dict[int, list[int]] = {}
+        for sid, post_id in s.exec(select(CRSourcePost.source_id, CRSourcePost.post_id).where(
+                CRSourcePost.post_id.in_([p.id for p in everyone] or [0]))).all():
+            brought.setdefault(post_id, []).append(sid)
     show_nsfw = bool(get_settings()['commonroom'].get('show_nsfw')) and not child and not thread.child_friendly
     words = [w.strip().lower() for w in (thread.avoid or '').replace('\n', ',').split(',') if len(w.strip()) > 2]
     decided: dict[int, tuple[str, Verdict, bool]] = {}
@@ -341,7 +407,9 @@ def run(thread: CRThread, lease: str) -> dict:
                 or (languages and p.language and p.language not in languages) or capped(p)):
             keep.append(p)
     # Borrowed posts only reach the judge when embeddings rank them close; the rest wait unjudged.
-    ranked = [(p, rel) for p, rel in _rank(thread, keep) if p.id not in borrowed or rel >= CROSS_MIN]
+    lift = {p.id: joy.predict(pri, community=p.community, platform=p.platform, sources=brought.get(p.id, []))
+            for p in keep}
+    ranked = [(p, rel) for p, rel in _rank(thread, keep, pop, lift) if p.id not in borrowed or rel >= CROSS_MIN]
     ranked = ranked[:JUDGE_MAX_MORE if thread.want_more else JUDGE_MAX]
     if ai.enabled():  # teasers from scraped pages and feeds: judge the whole article, under its real headline
         from . import articles
@@ -352,14 +420,22 @@ def run(thread: CRThread, lease: str) -> dict:
     missed: set[int] = set()
     if ai.enabled():
         for start in range(0, len(ranked), BATCH):
-            got = _judge(thread, lessons, [p for p, _ in ranked[start:start + BATCH]])
+            got = _judge(thread, lessons, [p for p, _ in ranked[start:start + BATCH]], pop)
             if got is not None:
                 scores.update(got)
                 missed.update(p.id for p, _ in ranked[start:start + BATCH] if p.id not in got)
     else:
-        scores = {p.id: Verdict(int(round(rel * 100)), '') for p, rel in ranked}
-    talk = {p.id: p.comments for p in posts + cross}
-    kept = [pid for pid, v in scores.items() if keeps(v, threshold, wild, talk.get(pid, 0))[0]]
+        scores = {p.id: Verdict(int(round(rel * 100)), '', NEUTRAL_FUN) for p, rel in ranked}  # no judge: fun unknown
+    talk = {p.id: p.comments for p in everyone}
+    by_id = {p.id: p for p in everyone}
+
+    def verdict(pid: int, v: Verdict) -> tuple[bool, bool]:
+        p = by_id.get(pid)
+        extra = joy.bonus(pri, kind=v.kind, community=p.community if p else '', platform=p.platform if p else '',
+                          sources=brought.get(pid, []))
+        mine = [sid for sid in brought.get(pid, []) if sid in own]
+        return keeps(v, threshold, wild, talk.get(pid, 0), extra, joy.penalty(mine, throttled))
+    kept = [pid for pid, v in scores.items() if verdict(pid, v)[0]]
     if child or thread.child_friendly:
         allowed, failed = kids.check_posts(kept)
         for pid in kept:
@@ -368,10 +444,13 @@ def run(thread: CRThread, lease: str) -> dict:
             elif pid not in allowed:
                 scores.pop(pid)  # the safety model gave no answer: judge again next run
     for pid, v in scores.items():
-        ok, wildcard = keeps(v, threshold, wild, talk.get(pid, 0))
+        ok, wildcard = verdict(pid, v)
         decided[pid] = ('kept' if ok else 'rejected', v, wildcard)
-    _settle(thread, lease, decided, {p.id: p for p in posts + cross}, missed)
-    return {'pool': len(posts), 'judged': len(scores), 'kept': sum(1 for d in decided.values() if d[0] == 'kept')}
+    _settle(thread, lease, decided, by_id, missed)
+    kept_v = [d[1] for d in decided.values() if d[0] == 'kept']
+    return {'pool': len(posts), 'judged': len(scores), 'kept': len(kept_v),
+            'fun': sum(1 for v in kept_v if v.fun >= 60),
+            'dull': sum(1 for pid, v in scores.items() if dull(v, threshold, talk.get(pid, 0)))}
 
 
 # ---------- one-off: fun and kind for picks kept before the judge gave them

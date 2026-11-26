@@ -186,7 +186,18 @@ def _context(t: CRThread) -> str:
         out += f'\nInstructions: {t.instructions[:800]}'
     if t.avoid.strip():
         out += f'\nAvoid: {t.avoid[:400]}'
+    liked = enjoyed(t.profile_id) if getattr(t, 'profile_id', None) else []
+    if liked:
+        out += ('\nCommunities the owner enjoys most (find more places with this spirit, not only this topic): '
+                + ', '.join(liked))
     return out
+
+
+def enjoyed(pid: int, n: int = 8) -> list[str]:
+    """Communities with the clearest positive enjoyment lift for this owner (joy priors)."""
+    from . import joy
+    lifts = (joy.priors(pid).get('community') or {})
+    return [c for c, v in sorted(lifts.items(), key=lambda kv: -kv[1]) if v >= 0.05][:n]
 
 
 def _named(t: CRThread, child: bool, platforms: list) -> tuple[list[tuple[str, str]], list[str]]:
@@ -445,7 +456,9 @@ def hunt_sources(hid, lease) -> int:
         got = curate._judge(thread, '', sample)
         if not got:
             return None
-        return sum(1 for v in got.values() if v.score >= threshold), len(got)
+        talk = {p.id: p.comments for p in sample}
+        # A source fits when its posts would be kept: on-topic and fun, not merely on-topic.
+        return sum(1 for i, v in got.items() if curate.keeps(v, threshold, False, talk.get(i, 0))[0]), len(got)
 
     def link(sid: int, fit: int, n: int):
         nonlocal saved
@@ -504,7 +517,7 @@ def hunt_sources(hid, lease) -> int:
             say('rejected', f'{label}: the judge did not answer.')
             return 'error'
         fit, n = verdict
-        need = max(2, math.ceil(n * (0.5 if strict else 0.4)))
+        need = max(2, math.ceil(n * (0.4 if strict else 0.3)))
         if n < 3 or fit < need:
             say('rejected', f'{label}: only {fit} of {n} sample posts fit.')
             tried.append(f'{label}: off-topic ({fit}/{n} fit)')

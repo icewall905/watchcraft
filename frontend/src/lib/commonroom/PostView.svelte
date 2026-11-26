@@ -9,6 +9,7 @@
 	import InlineVideo from './cards/InlineVideo.svelte';
 	import YouTube from './cards/YouTube.svelte';
 	import { ago, compact, platformOf, youtubeId } from './util';
+	import { track, trackLinks } from './track';
 	let { post, onClose, onGone }: { post: Post; onClose: () => void; onGone?: (p: Post) => void } = $props();
 	let detail = $state<PostDetail | null>(null), comments = $state<Comment[] | null>(null), cUrl = $state(''), err = $state(''), cErr = $state(''), cLoading = $state(false);
 	let fetchedAt = $state(0), supported = $state(true), discussion = $state(''), sort = $state<'best' | 'new'>('best');
@@ -30,8 +31,42 @@
 		detail = null; comments = null; cErr = ''; shown = 0; broken = {}; full = false;
 		crApi.post(id).then((d) => { if (live) detail = d; }, (e) => { if (live) err = e instanceof Error ? e.message : 'Could not load post.'; });
 		loadComments(id, false, () => live);
-		return () => { live = false; };
+		// Time actually spent reading: counted only while the page is visible.
+		const pick = post.pick_id;
+		let since = document.visibilityState === 'visible' ? Date.now() : 0, spent = 0;
+		const vis = () => {
+			if (document.visibilityState === 'visible') since = Date.now();
+			else if (since) { spent += Date.now() - since; since = 0; }
+		};
+		track(pick, 'open');
+		document.addEventListener('visibilitychange', vis);
+		return () => {
+			live = false;
+			document.removeEventListener('visibilitychange', vis);
+			if (since) spent += Date.now() - since;
+			track(pick, 'dwell', spent);
+		};
 	});
+	// Reading the comments: the section stayed on screen for a few seconds, or a comment control was used.
+	let talkEl = $state<HTMLElement | null>(null);
+	$effect(() => {
+		const el = talkEl, pick = post.pick_id;
+		if (!el || typeof IntersectionObserver === 'undefined') return;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const io = new IntersectionObserver(([e]) => {
+			clearTimeout(timer);
+			if (e?.isIntersecting && comments?.length) timer = setTimeout(() => track(pick, 'comments'), 5000);
+		}, {threshold: 0.3});
+		io.observe(el);
+		return () => { clearTimeout(timer); io.disconnect(); };
+	});
+	function clicks(e: MouseEvent) {
+		trackLinks(e);
+		const el = e.target as Element | null;
+		if (el?.closest('.yt .play')) track(post.pick_id, 'play');
+		else if (el?.closest('.talk button')) track(post.pick_id, 'comments');
+		else if (el?.closest('button.more, details.art > summary')) track(post.pick_id, 'article');
+	}
 	async function loadComments(id = post.post_id, refresh = false, alive: () => boolean = () => true) {
 		cLoading = true; cErr = '';
 		try {
@@ -43,7 +78,8 @@
 	}
 </script>
 <Modal portal title={post.title} size="drawer" {onClose}>
-	<div class="pv">
+	<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+	<div class="pv" data-pick={post.pick_id} onclick={clicks} ontimeupdatecapture={(e) => { const v = e.target as HTMLMediaElement; if (!v.muted && v.currentTime > 8) track(post.pick_id, 'play'); }}>
 		<div class="byline">
 			<span class="plat">{plat.icon} {plat.label}</span>
 			{#if post.community}<span class="comm">{post.community}</span>{/if}
@@ -120,7 +156,7 @@
 			{#if discussion}<a class="go ghost" href={discussion} target="_blank" rel="noopener noreferrer">Discussion on {where} ↗</a>{/if}
 		</div>
 
-		<section aria-label="Comments" class="talk">
+		<section aria-label="Comments" class="talk" bind:this={talkEl}>
 			<div class="thead">
 				<h3>Comments{#if comments?.length} <span class="n">{compact(Math.max(count(comments), view.comments ?? 0))}</span>{/if}</h3>
 				{#if comments && comments.length > 1}

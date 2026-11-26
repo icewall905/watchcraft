@@ -128,11 +128,15 @@ def init_db() -> None:
                               ('notes', "VARCHAR NOT NULL DEFAULT ''"), ('created_by_thread', 'INTEGER NOT NULL DEFAULT 0'),
                               ('hits', 'INTEGER NOT NULL DEFAULT 0'), ('kept', 'INTEGER NOT NULL DEFAULT 0'))),
                 ('crthreadsource', (('fit', 'INTEGER NOT NULL DEFAULT 0'), ('tried', 'INTEGER NOT NULL DEFAULT 0'),
-                                    ('kept', 'INTEGER NOT NULL DEFAULT 0'))),
+                                    ('kept', 'INTEGER NOT NULL DEFAULT 0'), ('shown', 'INTEGER NOT NULL DEFAULT 0'),
+                                    ('liked', 'INTEGER NOT NULL DEFAULT 0'), ('skipped', 'INTEGER NOT NULL DEFAULT 0'),
+                                    ('throttle', 'INTEGER NOT NULL DEFAULT 0'),
+                                    ('throttle_why', "VARCHAR NOT NULL DEFAULT ''"))),
                 ('crcandidate', (('misses', 'INTEGER NOT NULL DEFAULT 0'),)),
                 ('crcomments', (('count', 'INTEGER NOT NULL DEFAULT 0'), ('checked_at', 'FLOAT NOT NULL DEFAULT 0'))),
                 ('crpick', (('fun', 'INTEGER NOT NULL DEFAULT 0'), ('kind', "VARCHAR NOT NULL DEFAULT ''"),
-                            ('wildcard', 'BOOLEAN NOT NULL DEFAULT 0'))),
+                            ('wildcard', 'BOOLEAN NOT NULL DEFAULT 0'), ('opened_at', 'FLOAT NOT NULL DEFAULT 0'),
+                            ('dwell_ms', 'INTEGER NOT NULL DEFAULT 0'), ('engaged', 'FLOAT NOT NULL DEFAULT 0'))),
                 ('moodboardbrief', (('absorbed', 'INTEGER NOT NULL DEFAULT 0'),)),
                 ('moodverdict', (('rating', 'JSON'),))):
             have = {c['name'] for c in inspect(connection).get_columns(table)}

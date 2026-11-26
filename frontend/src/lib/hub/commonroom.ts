@@ -6,11 +6,13 @@ export interface Thread {
  last_run: number | null; last_status: string; error: string; new_count: number; pick_count: number; source_count: number;
 }
 export interface PlatformInfo { key: string; label: string; example: string; sorts: string[] }
-export interface ThreadSource { id: number; source_id: number; platform: string; locator: string; label: string; origin: 'user' | 'ai'; enabled: boolean; error: string; last_ok: number | null; status?: 'ok' | 'broken' | 'disabled'; fit?: number; tried?: number; kept?: number; hits?: number; url?: string }
+export interface ThreadSource { id: number; source_id: number; platform: string; locator: string; label: string; origin: 'user' | 'ai'; enabled: boolean; error: string; last_ok: number | null; status?: 'ok' | 'broken' | 'disabled'; fit?: number; tried?: number; kept?: number; hits?: number; url?: string; shown?: number; liked?: number; skipped?: number; throttle?: number; throttle_why?: string }
 export interface SourceHunt { id: number; status: 'queued' | 'running' | 'done' | 'failed'; reason: string; found: number; error: string; log: {at: number; step: string; message: string}[]; created_at: number; finished_at: number }
 export interface ThreadSources { sources: ThreadSource[]; hunt: SourceHunt | null }
 export interface Media { kind: 'image' | 'video'; url: string; thumb?: string; poster?: string; src?: string; w?: number; h?: number }
-export type Verdict = 'up' | 'down' | '';
+export type Verdict = 'up' | 'down' | 'meh' | '';
+export type EventKind = 'open' | 'dwell' | 'out' | 'play' | 'comments' | 'article';
+export interface Learned { lessons: string[]; up: number; down: number; meh?: number; taste?: string[]; taste_at?: number | null; owner_note?: string; kinds?: Record<string, number>; hit_rate?: number | null; shown_week?: number; hit_rate_all?: number | null }
 export type Kind = 'humor' | 'showcase' | 'question' | 'discussion' | 'news' | 'deepdive' | 'oddity';
 export type Mode = 'today' | 'hot' | 'new' | 'top' | 'saved';
 export type Badge = 'hot' | 'rising' | 'fresh';
@@ -40,8 +42,11 @@ export const crApi = {
  findSources: (id: number) => request<ThreadSources>(`${base}/threads/${id}/find-sources`, {method: 'POST', toast: false}),
  addSource: (id: number, body: {platform: string; locator: string}) => request<ThreadSource>(`${base}/threads/${id}/sources`, {method: 'POST', body, toast: false}),
  setSource: (id: number, link: number, enabled: boolean) => request<ThreadSource>(`${base}/threads/${id}/sources/${link}`, {method: 'PATCH', body: {enabled}, toast: false}),
+ unthrottle: (id: number, link: number) => request<ThreadSource>(`${base}/threads/${id}/sources/${link}`, {method: 'PATCH', body: {throttle: 0}, toast: false}),
  removeSource: (id: number, link: number) => request<unknown>(`${base}/threads/${id}/sources/${link}`, {method: 'DELETE', toast: false}),
- learned: (id: number) => request<{lessons: string[]; up: number; down: number}>(`${base}/threads/${id}/learned`, {toast: false}),
+ learned: (id: number) => request<Learned>(`${base}/threads/${id}/learned`, {toast: false}),
+ setTaste: (note: string) => request<{ok: boolean}>(`${base}/taste`, {method: 'PUT', body: {note}, toast: false}),
+ events: (events: {pick_id: number; kind: EventKind; value?: number}[], keepalive = false) => request<unknown>(`${base}/events`, {method: 'POST', body: {events}, toast: false, keepalive}),
  visit: (thread: 'all' | number) => request<{boundary: number}>(`${base}/visit`, {method: 'POST', body: {thread}, toast: false}),
  feed: (p: {thread: 'all' | number; section?: 'new' | 'deep'; mode?: Mode | 'deep'; kind?: Kind; boundary?: number; cursor?: string}, signal?: AbortSignal) => request<FeedPage>(`${base}/feed${qs(p)}`, {signal, toast: false}),
  post: (id: number) => request<PostDetail>(`${base}/posts/${id}`, {toast: false}),

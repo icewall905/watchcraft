@@ -66,6 +66,11 @@ class CRThreadSource(SQLModel, table=True):
     fit: int = 0                      # expedition sample: posts that fit ...
     tried: int = 0                    # ... of posts judged
     kept: int = 0                     # posts this thread kept from the source
+    shown: int = 0                    # picks from this source the owner saw (last 30 days, joy sweep)
+    liked: int = 0                    # ... of which the owner enjoyed
+    skipped: int = 0                  # ... skipped, found dull or voted down
+    throttle: int = 0                 # 0..3: polled less and held to a higher bar while the owner skips it
+    throttle_why: str = ''
     created_at: float = Field(default_factory=time.time)
 
 
@@ -145,6 +150,9 @@ class CRPick(SQLModel, table=True):
     saved: bool = False
     hidden: bool = False
     hidden_at: float = 0
+    opened_at: float = 0              # first time the owner opened the post view
+    dwell_ms: int = 0                 # time spent in the post view, summed
+    engaged: float = 0                # joy.engagement, -1..1, refreshed by the joy sweep
 
 
 class CRFeedback(SQLModel, table=True):
@@ -158,6 +166,16 @@ class CRFeedback(SQLModel, table=True):
     note: str = ''
     title: str = ''
     community: str = ''
+    created_at: float = Field(default_factory=time.time, index=True)
+
+
+class CREvent(SQLModel, table=True):
+    """What the owner did with a pick beyond voting: open, dwell (ms), out (link), play, comments, article."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    profile_id: int = Field(index=True)
+    pick_id: int = Field(index=True)
+    kind: str = ''
+    value: float = 0
     created_at: float = Field(default_factory=time.time, index=True)
 
 

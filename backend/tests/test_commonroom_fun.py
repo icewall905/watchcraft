@@ -12,17 +12,20 @@ from bt.db import session
 
 
 def test_keep_rule_lets_delightful_near_misses_in_as_wildcards():
-    assert keeps(Verdict(70, '', 0), 60, True) == (True, False)
+    assert keeps(Verdict(75, '', 0), 60, True) == (True, False)     # very relevant: kept however dry
     assert keeps(Verdict(45, '', 85), 60, True) == (True, True)
     assert keeps(Verdict(39, '', 99), 60, True) == (False, False)   # too far off-topic
-    assert keeps(Verdict(55, '', 79), 60, True) == (False, False)   # not fun enough
+    assert keeps(Verdict(55, '', 79), 60, True) == (True, False)    # close to on-topic and fun: a regular keep
+    assert keeps(Verdict(45, '', 79), 60, True) == (False, False)   # off-topic and not fun enough for a wildcard
+    assert keeps(Verdict(70, '', 20), 60, True) == (False, False)   # on-topic but dull
+    assert keeps(Verdict(70, '', 20), 60, True, comments=12) == (True, False)  # ... unless people talk about it
     assert keeps(Verdict(45, '', 85), 60, False) == (False, False)  # wildcards off
 
 
 def _judged(client, monkeypatch, child_friendly=False):
     monkeypatch.setattr(curate.ai, 'enabled', lambda: True)
     rows = [{'n': 1, 'score': 90, 'fun': 10, 'kind': 'news', 'why': 'On topic'},
-            {'n': 2, 'score': 50, 'fun': 90, 'kind': 'humor', 'why': 'Too good to skip'},
+            {'n': 2, 'score': 45, 'fun': 90, 'kind': 'humor', 'why': 'Too good to skip'},
             {'n': 3, 'score': 30, 'fun': 95, 'kind': 'BOGUS', 'why': 'Funny but off-topic'}]
     monkeypatch.setattr(curate.ai, '_call', lambda system, user, schema, **k: {'scores': rows})
     t = thread(client, strictness='balanced')
@@ -39,7 +42,7 @@ def _judged(client, monkeypatch, child_friendly=False):
 def test_judge_stores_fun_kind_and_wildcard(client, monkeypatch):
     picks = _judged(client, monkeypatch)
     assert [(p.score, p.fun, p.kind, p.wildcard) for p in picks] == [(90, 10, 'news', False),
-                                                                     (50, 90, 'humor', True)]
+                                                                     (45, 90, 'humor', True)]
 
 
 def test_child_friendly_thread_keeps_no_wildcards(client, monkeypatch):

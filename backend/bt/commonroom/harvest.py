@@ -112,6 +112,14 @@ def _sources(thread_id: int) -> list[CRSource]:
         return list(rows)
 
 
+def poll_gap(source_id: int) -> float:
+    """FRESH_S, doubled per throttle level when every sub following the source is skipping its posts."""
+    with session() as s:
+        levels = s.exec(select(CRThreadSource.throttle).where(CRThreadSource.source_id == source_id,
+                                                              CRThreadSource.enabled == True)).all()  # noqa: E712
+    return FRESH_S * 2 ** min(levels or [0])
+
+
 def fresh(src: CRSource) -> int:
     adapter = ADAPTERS.get(src.platform)
     if not adapter:
@@ -122,7 +130,7 @@ def fresh(src: CRSource) -> int:
         _fail(src, 'fresh', e)
         return 0
     ids = store.upsert_posts(page.posts, source_id=src.id)
-    _record(src.id, True, hits=len(ids), next_poll=time.time() + FRESH_S)
+    _record(src.id, True, hits=len(ids), next_poll=time.time() + poll_gap(src.id))
     return len(ids)
 
 

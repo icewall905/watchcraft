@@ -72,7 +72,8 @@ def run_thread(thread: CRThread, lease: str) -> dict:
         finish(thread.id, lease, 'error', str(e) or type(e).__name__)
         return {}
     status = (f'Kept {stats["kept"]} of {stats["judged"]} posts judged from {stats["sources"]} sources'
-              f' ({stats["fresh"] + stats["backfill"] + stats["search"]} fetched).')
+              f' ({stats["fresh"] + stats["backfill"] + stats["search"]} fetched)'
+              + (f'; {stats.get("dull", 0)} on-topic but dull' if stats.get('dull') else '') + '.')
     # Keep backfilling while a backfill run still finds keepers and older pages remain.
     dry = harvest.exhausted(thread.id)
     more = want_more and stats['kept'] < 5 and not dry and stats['backfill'] > 0
@@ -148,6 +149,11 @@ async def scheduler():
             await asyncio.to_thread(curate.rejudge)
         except Exception:
             log.exception('Common Room re-judge failed')
+        try:
+            from . import joy
+            await asyncio.to_thread(joy.sweep)
+        except Exception:
+            log.exception('Common Room enjoyment sweep failed')
         try:
             await asyncio.to_thread(prune)
         except Exception:
