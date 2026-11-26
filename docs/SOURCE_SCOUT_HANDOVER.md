@@ -19,6 +19,22 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Deployment record — Commons learns what is fun (`92643e2`, 2026-11-26)
+
+- Deployed `f2343b7..92643e2`: fun-aware keep rule (relevance and fun together; dull posts need relevance ≥ line+15
+  or 10+ replies), engagement per pick from opens/dwell/links/plays/comments/skips (`/events`), hourly joy sweep
+  (priors per kind/community/platform/source, per-source shown/liked/skipped, throttle with Undo), daily taste memo
+  plus owner note for the judge, community-relative popularity in the judge input, Meh button. Additive schema:
+  `crevent` table, `crpick.opened_at/dwell_ms/engaged`, `crthreadsource.shown/liked/skipped/throttle/throttle_why`.
+- All prod copies of changed files matched `f2343b7` before sync. All four application services run
+  `watchcraft:release-92643e2` (`sha256:51ac0a633d4b…`), zero restarts; local and public health 200, Compose and
+  environment hashes unchanged, no tracebacks. First sweep wrote priors for profiles 2 and 3 and a 12-rule taste memo
+  for profile 2; no source throttled. Hit rate starts near 0 (history has no opens; seen-but-untouched counts as a skip).
+- Tests: backend 1729 passed, 6 skipped, 1 failed (`test_shared_polling`, venv-only); Commons/Today browser specs 43 passed.
+- Backup `20261126-joy-92643e2`: online SQLite snapshot (`VACUUM INTO`, 52 s, `quick_check` ok), previous source,
+  `new-files.txt`, `rollback.sh` (→ `release-f2343b7`, removes the three new files; old code ignores the new columns).
+  Pruned `20261125-locks-0ac119f` and tag `release-440e71d`; kept `20261125-done-f2343b7`.
+
 ## Deployment record — SQLite lock holders, agent stream CPU, Scroll Done (`0ac119f`, `f2343b7`, 2026-11-25)
 
 - `0ac119f` (B-073): taste learning (`prefs.collect`) commits before its model call — it held the write lock
