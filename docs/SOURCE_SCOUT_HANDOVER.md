@@ -19,6 +19,18 @@
   are untouched. Items themselves remain. Backup `/root/compose/watchcraft-backups/20261113-hide-textmemes`
   (online DB, quick_check ok); `removed-discoveries.json` holds the rows for re-insert.
 
+## Data change — Commons picks refreshed under the fun rule (2026-11-26, user-requested)
+
+- Existing picks kept their old scores, so the feed looked unchanged after `92643e2`. `cr_refresh.py` (in backup
+  `20261126-joy-92643e2/`) took the last 7 days of picks (2107), never touching saved picks or picks with feedback:
+  an instant pass hid 531 that fail the new keep rule on their stored score/fun, then the new judge (taste memo,
+  popularity) re-scored the other 1452 and hid 1073 more; 5 batches got no model answer and stayed as they were. No
+  hidden pick had relevance ≥ 75. Every sub was queued to run with backfill.
+- Visible last 7 days: Homelab 148 (avg fun 64), Local AI 48, Damnthatinterresting 249 (avg fun 73), Cats 1 (+9 new
+  picks right after). The first runs afterwards kept 59 new posts.
+- Undo: every pick this hid has `hidden_at = 1795681016.0`; `commonroom-picks-before-refresh-20261126.json` holds
+  score/fun/kind/wildcard/hidden for all 2107 picks.
+
 ## Deployment record — Commons learns what is fun (`92643e2`, 2026-11-26)
 
 - Deployed `f2343b7..92643e2`: fun-aware keep rule (relevance and fun together; dull posts need relevance ≥ line+15
