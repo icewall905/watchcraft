@@ -31,6 +31,20 @@
 - Undo: every pick this hid has `hidden_at = 1795681016.0`; `commonroom-picks-before-refresh-20261126.json` holds
   score/fun/kind/wildcard/hidden for all 2107 picks.
 
+## Deployment record — The Scroll picker in the app shell (`8bbbd3e`, 2026-11-27)
+
+- Deployed `7693bf8..8bbbd3e` (frontend only): `3335388` rebased onto origin. Feed picker and empty-feed view render in
+  the app shell; a playing feed goes full-screen on phones only (desktop keeps the sidebar). Player keeps origin's
+  tap-to-show controls (transport, Done) under a glass toolbar (All feeds, feed + counter, Mute, X).
+- All prod copies of changed files matched `7693bf8` before sync. All four application services run
+  `watchcraft:release-8bbbd3e` (`sha256:cd52c56fbb68…`), zero restarts; local and public health 200, Compose and
+  environment hashes unchanged, no tracebacks. No `android/` change, no app release.
+- Tests: Scroll specs 32 passed; tv/navigation pass alone (B-105: tv drawer tests fail after `shorts.spec.ts` because of
+  a leftover PIN-locked profile).
+- Backup `20261127-scroll-8bbbd3e`: previous source, `new-files.txt`, `rollback.sh` (→ `release-7693bf8`); no new DB copy
+  (no backend change; `20261127-save-7693bf8` has today's snapshot). Pruned `20261125-done-f2343b7` and tag
+  `release-f2343b7` (`PRUNE-MANIFEST-20261127T185355Z.txt`). Backups live on `/mnt/nvme_data` (89% used).
+
 ## Deployment record — Save to playlist, hand-picked lists (`7693bf8`, 2026-11-27)
 
 - Deployed `92643e2..7693bf8`: new category kind `manual` (hand-picked list). "Save to playlist" on watch info, search
