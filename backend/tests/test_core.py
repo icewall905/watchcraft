@@ -645,3 +645,23 @@ def test_player_autoplay_and_preview_settings():
     assert player['preview_limit_s'] == 15
     assert player['scroll_autoplay_next'] is False
     assert player['autoplay_next'] is True
+
+
+def test_manual_list_is_saved_to_but_never_curated(monkeypatch):
+    from bt import ytdl
+    c = client()
+    kid = c.post("/api/profiles", json={"name": "Saver", "emoji": "📌"}).json()
+    h = {"X-Profile-Id": str(kid["id"])}
+    lst = c.post("/api/categories", json={"name": "Watch later", "kind": "manual"}, headers=h).json()
+    assert lst["kind"] == "manual"
+    with session() as s:
+        s.add(Video(id="manualvid01", title="Saved one", fetched_at=now()))
+        s.commit()
+    monkeypatch.setattr(ytdl, "video_info", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no fetch")))
+    assert c.post("/api/candidates", json={"video_id": "manualvid01", "category_id": lst["id"]}, headers=h).json()["ok"]
+    home = c.get("/api/feed/home", headers=h).json()
+    row = next(r for r in home if r.get("category_id") == lst["id"])
+    assert row["items"][0]["video"]["title"] == "Saved one"
+    with session() as s:
+        assert all(n.cat.id != lst["id"] for n in data.category_needs(s, lst["id"]))
+    assert c.delete(f"/api/profiles/{kid['id']}").json()["ok"]

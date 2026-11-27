@@ -348,7 +348,7 @@ def category_needs(s: Session, focus_id: Optional[int] = None) -> list[Need]:
     weight = priority × deficit, boosted by time since last worked (so categories rotate)."""
     out = []
     t = now()
-    for cat in s.exec(select(Category).where(Category.enabled == True)).all():  # noqa: E712
+    for cat in s.exec(select(Category).where(Category.enabled == True, Category.kind != "manual")).all():  # noqa: E712
         counts = status_counts(s, cat.id)
         pending = counts.get("found", 0) + counts.get("enriched", 0)
         deficit = category_refill_deficit(s, cat, t, pending)

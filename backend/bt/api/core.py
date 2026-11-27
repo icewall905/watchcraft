@@ -325,7 +325,7 @@ def _404():
 # ---------- categories
 
 class CategoryIn(BaseModel):
-    kind: Literal["playlist", "shorts"] = "playlist"
+    kind: Literal["playlist", "shorts", "manual"] = "playlist"
     name: str
     emoji: str = "✨"
     color: str = "#7c5cff"
@@ -685,7 +685,7 @@ def home_feed(per_row: int = 20, pid: int = Depends(profile_id), s: Session = De
              "position_s": h.position_s, "category_id": h.category_id}
             for h, v in hist]})
     # Categories
-    for c in s.exec(select(Category).where(Category.profile_id == pid, Category.kind == "playlist", Category.enabled == True)  # noqa: E712
+    for c in s.exec(select(Category).where(Category.profile_id == pid, col(Category.kind).in_(("playlist", "manual")), Category.enabled == True)  # noqa: E712
                     .order_by(Category.position, Category.id)).all():
         # The query above already filtered by profile, so the ownership lookup would be redundant.
         rows.append({"kind": "category", "category_id": c.id, "title": c.name, "emoji": c.emoji, "color": c.color,

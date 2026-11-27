@@ -1060,7 +1060,7 @@
 						<button class="btn" use:focusable={{ group: 'i-fb', scroll: 'nearest', onSelect: () => quickFeedback(2, 'Loved') }}>❤️ Love</button>
 						<button class="btn" use:focusable={{ group: 'i-fb', scroll: 'nearest', onSelect: () => feedback(-1) }}>👎 Not for us</button>
 						<button class="btn" use:focusable={{ group: 'i-fb', scroll: 'nearest', onSelect: () => feedback() }}>📝 Feedback</button>
-						<button class="btn" use:focusable={{ group: 'i-fb', scroll: 'nearest', onSelect: () => dialogs.openAddTo(id, title) }}>＋ Add to playlist</button>
+						<button class="btn" use:focusable={{ group: 'i-fb', scroll: 'nearest', onSelect: () => dialogs.openAddTo(id, title) }}>＋ Save to playlist</button>
 						{#key detail.id}
 							<OfflineButton videoId={id} status={detail.download?.status ?? null} progress={detail.download?.progress ?? 0} group="i-fb" size="normal" />
 						{/key}

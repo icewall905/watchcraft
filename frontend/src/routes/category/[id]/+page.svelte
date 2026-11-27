@@ -22,6 +22,7 @@
 	let tab = $state<Tab>((page.url.searchParams.get('tab') as Tab) || 'accepted');
 	let items = $state<Candidate[] | null>(null);
 	let notFound = $state(false);
+	const manual = $derived(cat?.kind === 'manual');
 
 	let alive = true;
 	let loadSeq = 0;
@@ -115,6 +116,16 @@
 		}
 	}
 
+	async function removeFromList(c: Candidate) {
+		try {
+			await api.dismissCandidate(c.id);
+			items = (items ?? []).filter((x) => x.id !== c.id);
+			toast.success(`Removed from ${cat?.name ?? 'this list'}`);
+		} catch {
+			toast.error('Could not remove it.');
+		}
+	}
+
 	function rateVideo(c: Candidate) {
 		dialogs.openFeedback({
 			videoId: c.video.id, categoryId: id, title: isVideo(c.video) ? c.video.title : undefined,
@@ -145,6 +156,12 @@
 			<div class="ht">
 				<h1>{cat?.name ?? '…'}</h1>
 				{#if cat?.brief}<p class="brief muted">{cat.brief}</p>{/if}
+				{#if manual}
+				<div class="hstack small muted">
+					<span>Hand-picked list</span>
+					{#if cat?.created_at}<span>Created {timeAgo(cat.created_at)}</span>{/if}
+				</div>
+				{:else}
 				<div class="hstack small muted">
 					<span>Target {cat?.target_queue ?? '–'} videos</span>
 					<span>Accept at {cat?.threshold ?? '–'}+</span>
@@ -152,10 +169,11 @@
 					{#if cat?.created_at}<span>Created {timeAgo(cat.created_at)}</span>{/if}
 					{#if cat?.last_worked_at}<span>Last searched {timeAgo(cat.last_worked_at)}</span>{/if}
 				</div>
+				{/if}
 			</div>
 			<div class="acts">
-				<button class="btn primary" use:focusable={{ group: 'cat-acts', id: 'find-more', onSelect: findMore }}>✦ Find more now</button>
-				<a class="btn" href="/settings?tab=categories&edit={id}" use:focusable={{ group: 'cat-acts', id: 'edit-cat' }}>Edit playlist</a>
+				{#if !manual}<button class="btn primary" use:focusable={{ group: 'cat-acts', id: 'find-more', onSelect: findMore }}>✦ Find more now</button>{/if}
+				<a class="btn" href="/settings?tab=categories&edit={id}" use:focusable={{ group: 'cat-acts', id: 'edit-cat' }}>{manual ? 'Edit list' : 'Edit playlist'}</a>
 			</div>
 		</header>
 
@@ -166,6 +184,7 @@
 			</div>
 		{/if}
 
+		{#if !manual}
 		<div class="tabs" role="tablist">
 			{#each TABS as t}
 				<button
@@ -179,6 +198,7 @@
 				</button>
 			{/each}
 		</div>
+		{/if}
 
 		{#if items === null}
 			<div class="grid-cards">{#each Array(8) as _}<div class="skeleton" style="aspect-ratio:16/10"></div>{/each}</div>
@@ -186,7 +206,8 @@
 			<div class="empty">
 				<span class="big-emoji">{tab === 'accepted' ? '🔭' : tab === 'pending' ? '📭' : '🧹'}</span>
 				<p>
-					{#if tab === 'accepted'}Nothing picked yet. Press "Find more now" to send the AI looking.
+					{#if manual}Nothing saved yet. Use "Save to playlist" on any video.
+					{:else if tab === 'accepted'}Nothing picked yet. Press "Find more now" to send the AI looking.
 					{:else if tab === 'pending'}Nothing waiting for review.
 					{:else}Nothing rejected so far.{/if}
 				</p>
@@ -205,9 +226,16 @@
 							color={cat?.color}
 						>
 							{#snippet actions()}
+								{#if manual}
+								<button class="btn why" use:focusable={{ group: `cand-acts-${c.id}`, onSelect: () => removeFromList(c) }}>Remove</button>
+								{:else}
 								<button class="btn why" use:focusable={{ group: `cand-acts-${c.id}`, onSelect: () => dialogs.openCandidate(c.id) }}>
 									{c.status === 'rejected' ? 'Why rejected?' : c.status === 'accepted' ? 'Why picked?' : 'Details'}
 								</button>
+								{/if}
+								{#if c.status === 'accepted' && !manual}
+									<button class="btn why" use:focusable={{ group: `cand-acts-${c.id}`, onSelect: () => dialogs.openAddTo(c.video.id, isVideo(c.video) ? c.video.title : undefined) }}>Save to playlist</button>
+								{/if}
 								{#if c.status === 'accepted'}<OfflineButton videoId={c.video.id} offline={isVideo(c.video) && !!c.video.offline} status={isVideo(c.video) ? (c.video.download_status ?? null) : null} group="cand-acts-{c.id}" />{/if}
 									{#if c.status === 'accepted' || c.status === 'found' || c.status === 'enriched'}
 										<button class="btn why" use:focusable={{ group: `cand-acts-${c.id}`, onSelect: () => markSeen(c) }}>
@@ -224,7 +252,7 @@
 											Don't like channel
 										</button>
 									{/if}
-								{#if c.source === 'manual'}<span class="chip small-chip">Added by you</span>{/if}
+								{#if c.source === 'manual' && !manual}<span class="chip small-chip">Added by you</span>{/if}
 							{/snippet}
 						</VideoCard>
 						{#if c.status === 'rejected' && (c.red_flags?.length || c.reasons?.length)}

@@ -51,7 +51,7 @@ def memory_run():
 
 
 def _queues(s: Session, pid: Optional[int]) -> list[dict]:
-    q = select(Category)
+    q = select(Category).where(Category.kind != "manual")
     if pid:
         q = q.where(Category.profile_id == pid)
     out = []

@@ -63,7 +63,7 @@ export interface CategoryStats {
 }
 
 export interface Category {
-	kind?: 'playlist' | 'shorts';
+	kind?: 'playlist' | 'shorts' | 'manual';
 	id: number;
 	profile_id: number;
 	name: string;
