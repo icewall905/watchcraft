@@ -31,6 +31,21 @@
 - Undo: every pick this hid has `hidden_at = 1795681016.0`; `commonroom-picks-before-refresh-20261126.json` holds
   score/fun/kind/wildcard/hidden for all 2107 picks.
 
+## Deployment record — Save to playlist, hand-picked lists (`7693bf8`, 2026-11-27)
+
+- Deployed `92643e2..7693bf8`: new category kind `manual` (hand-picked list). "Save to playlist" on watch info, search
+  results and curated cards opens a dialog that picks or creates a list (curated playlists listed below it). Curator,
+  shelf snapshot and agent queues skip `manual`; Home shows manual lists as rows. No schema change (`kind` is a string).
+- All prod copies of changed files matched `92643e2` before sync. All four application services run
+  `watchcraft:release-7693bf8` (`sha256:ede5a1147bc2…`), zero restarts; local and public health 200, Compose and
+  environment hashes unchanged, no tracebacks; served bundle has the new dialog. No `android/` change, no app release.
+- Tests: backend 1642 passed, 6 skipped, 1 failed (`test_collections_topics_briefing_fallback`, fails on clean HEAD too);
+  browser specs (save-to-playlist, category, seen) 10 passed.
+- Backup `20261127-save-7693bf8`: online SQLite snapshot (`VACUUM INTO`, 45 s, `quick_check` ok), previous source,
+  `new-files.txt`, `rollback.sh` (→ `release-92643e2`). Rollback note: older images treat `kind='manual'` rows as curated
+  playlists; set `enabled=0` for them first. Pruned dailies 21, 23–26 Nov and tag `release-0ac119f`
+  (`PRUNE-MANIFEST-20261127T154537Z.txt`).
+
 ## Deployment record — Commons learns what is fun (`92643e2`, 2026-11-26)
 
 - Deployed `f2343b7..92643e2`: fun-aware keep rule (relevance and fun together; dull posts need relevance ≥ line+15
