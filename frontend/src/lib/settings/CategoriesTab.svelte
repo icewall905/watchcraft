@@ -11,9 +11,11 @@
 
 	const playlists = $derived(session.categories.filter((c) => c.kind !== 'shorts'));
 	const editParam = $derived(page.url.searchParams.get('edit'));
-	const isNew = $derived(page.url.searchParams.get('new') === '1');
+	const newParam = $derived(page.url.searchParams.get('new'));
+	const isNew = $derived(newParam === '1' || newParam === 'manual');
 	let preset = $state<Partial<CategoryInput> | null>(null);
 	const editing = $derived(editParam ? (playlists.find((c) => c.id === Number(editParam)) ?? null) : null);
+	const formKind = $derived<'playlist' | 'manual'>(newParam === 'manual' || editing?.kind === 'manual' ? 'manual' : 'playlist');
 
 	function open(q: string) {
 		goto(`/settings?tab=categories${q}`, { noScroll: false });
@@ -59,8 +61,8 @@
 </script>
 
 {#if isNew || editing}
-	<Section title={editing ? `Edit ${editing.emoji} ${editing.name}` : 'New playlist'} intro="A playlist is a standing request to the AI curator. It searches slowly in the background, reads each video's transcript and top comments, and keeps only what fits your brief.">
-		{#if isNew && !preset}
+	<Section title={editing ? `Edit ${editing.emoji} ${editing.name}` : formKind === 'manual' ? 'New list' : 'New playlist'} intro={formKind === 'manual' ? 'A list is hand-picked: save videos to it with "Save to playlist". The AI never adds or removes anything.' : "A playlist is a standing request to the AI curator. It searches slowly in the background, reads each video's transcript and top comments, and keeps only what fits your brief."}>
+		{#if isNew && !preset && formKind !== 'manual'}
 			<div class="presets">
 				<span class="small faint">Start from an example</span>
 				<div class="hstack">
@@ -71,13 +73,16 @@
 			</div>
 		{/if}
 		{#key preset}
-			<CategoryForm category={editing} {preset} onDone={done} />
+			<CategoryForm category={editing} {preset} kind={formKind} onDone={done} />
 		{/key}
 	</Section>
 {:else}
 	<Section title="Playlists" intro="Each playlist becomes a row on Home. Order here is the order on Home.">
 		{#snippet actions()}
-			<button class="btn primary" use:focusable={{ group: 'cat-top', id: 'cat-new', onSelect: () => open('&new=1') }}>＋ New playlist</button>
+			{#if session.allows('playlists_edit')}
+				<button class="btn" use:focusable={{ group: 'cat-top', id: 'cat-new-list', onSelect: () => open('&new=manual') }}>＋ New list</button>
+				<button class="btn primary" use:focusable={{ group: 'cat-top', id: 'cat-new', onSelect: () => open('&new=1') }}>＋ New playlist</button>
+			{/if}
 		{/snippet}
 		{#if playlists.length === 0}
 			<div class="empty">
@@ -91,12 +96,14 @@
 					<span class="e">{c.emoji}</span>
 					<div class="info">
 						<strong><a class="catname" href="/category/{c.id}" use:focusable={{ group: `cat-${c.id}`, id: `cat-view-${c.id}` }}>{c.name}</a></strong>
-						<span class="small muted">{c.stats?.accepted ?? 0} ready, {(c.stats?.found ?? 0) + (c.stats?.enriched ?? 0)} in review, {c.stats?.rejected ?? 0} rejected{c.kid_safe ? ', kid-safe' : ''}{c.created_at ? `, created ${timeAgo(c.created_at)}` : ''}</span>
+						<span class="small muted">{#if c.kind === 'manual'}{c.stats?.accepted ?? 0} saved, hand-picked list{:else}{c.stats?.accepted ?? 0} ready, {(c.stats?.found ?? 0) + (c.stats?.enriched ?? 0)} in review, {c.stats?.rejected ?? 0} rejected{c.kid_safe ? ', kid-safe' : ''}{/if}{c.created_at ? `, created ${timeAgo(c.created_at)}` : ''}</span>
 					</div>
+					{#if session.allows('playlists_edit')}
 					<button class="btn mini" aria-label="Move up" disabled={i === 0} use:focusable={{ group: `cat-${c.id}`, disabled: i === 0, onSelect: () => move(c, -1) }}>▲</button>
 					<button class="btn mini" aria-label="Move down" disabled={i === playlists.length - 1} use:focusable={{ group: `cat-${c.id}`, disabled: i === playlists.length - 1, onSelect: () => move(c, 1) }}>▼</button>
 					<button class="btn mini" use:focusable={{ group: `cat-${c.id}`, onSelect: () => toggle(c) }}>{c.enabled ? 'On' : 'Off'}</button>
 					<button class="btn mini primary" use:focusable={{ group: `cat-${c.id}`, id: `cat-edit-${c.id}`, onSelect: () => open(`&edit=${c.id}`) }}>Edit</button>
+					{/if}
 				</div>
 			{/each}
 		</div>

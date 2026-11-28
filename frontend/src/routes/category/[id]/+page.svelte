@@ -10,6 +10,7 @@
 	import { focusable } from '$lib/nav';
 	import { isVideo, timeAgo } from '$lib/util';
 	import { warmVideo } from '$lib/prefetch';
+	import { fromBackCache, toBackCache } from '$lib/backCache';
 	import type { Candidate, Category } from '$lib/types';
 	import VideoCard from '$lib/components/VideoCard.svelte';
 	import AgentGlyph from '$lib/components/AgentGlyph.svelte';
@@ -21,6 +22,7 @@
 	let tab = $state<Tab>((page.url.searchParams.get('tab') as Tab) || 'accepted');
 	let items = $state<Candidate[] | null>(null);
 	let notFound = $state(false);
+	const manual = $derived(cat?.kind === 'manual');
 
 	let alive = true;
 	let loadSeq = 0;
@@ -28,12 +30,23 @@
 	function clearWarmTimers() {
 		for (const timer of warmTimers.splice(0)) clearTimeout(timer);
 	}
+	const backKey = () => `category|${session.profile?.id ?? ''}|${id}|${tab}`;
+	/** Drop cards locally (seen, blocked, disliked) and keep the Back cache in step. */
+	function dropItems(keep: (c: Candidate) => boolean) {
+		items = (items ?? []).filter(keep);
+		if (cat) toBackCache(backKey(), { cat, items });
+	}
 	async function loadItems() {
 		const seq = ++loadSeq, cid = id, profile = session.version;
 		const current = () => alive && seq === loadSeq && cid === id && profile === session.version;
 		clearWarmTimers();
-		items = null;
 		notFound = false;
+		// Back from a video: show what was there, so the scroll position restores in place (see backCache).
+		const key = backKey();
+		const back = fromBackCache<{ cat: Category; items: Candidate[] }>(key);
+		if (back) ({ cat, items } = back.value);
+		else items = null;
+		if (back?.reuse) return;
 		try {
 			const category = await api.category(cid);
 			if (!current()) return;
@@ -50,6 +63,7 @@
 			const result = await api.categoryFeed(cid, tab, { limit: 80 });
 			if (!current()) return;
 			items = result;
+			toBackCache(key, { cat, items: result });
 		} catch {
 			if (current()) items = [];
 			return;
@@ -81,7 +95,7 @@
 	async function markSeen(c: Candidate) {
 		try {
 			await api.markSeen(c.video.id);
-			items = (items ?? []).filter((x) => x.id !== c.id);
+			dropItems((x) => x.id !== c.id);
 			toast.success("Marked as seen. The AI won't suggest it again.");
 		} catch {
 			toast.error("Could not mark it as seen.");
@@ -95,17 +109,27 @@
 		if (!chId) return;
 		try {
 			await api.blockChannel(chId, name);
-			items = (items ?? []).filter((x) => !isVideo(x.video) || x.video.channel_id !== chId);
+			dropItems((x) => !isVideo(x.video) || x.video.channel_id !== chId);
 			toast.success(`No more from ${name}. The AI will skip that channel.`);
 		} catch {
 			toast.error(`Could not block ${name}.`);
 		}
 	}
 
+	async function removeFromList(c: Candidate) {
+		try {
+			await api.dismissCandidate(c.id);
+			items = (items ?? []).filter((x) => x.id !== c.id);
+			toast.success(`Removed from ${cat?.name ?? 'this list'}`);
+		} catch {
+			toast.error('Could not remove it.');
+		}
+	}
+
 	function rateVideo(c: Candidate) {
 		dialogs.openFeedback({
 			videoId: c.video.id, categoryId: id, title: isVideo(c.video) ? c.video.title : undefined,
-			onDone: (rating) => { if (rating < 0) items = (items ?? []).filter((x) => x.video.id !== c.video.id); }
+			onDone: (rating) => { if (rating < 0) dropItems((x) => x.video.id !== c.video.id); }
 		});
 	}
 
@@ -132,6 +156,12 @@
 			<div class="ht">
 				<h1>{cat?.name ?? '…'}</h1>
 				{#if cat?.brief}<p class="brief muted">{cat.brief}</p>{/if}
+				{#if manual}
+				<div class="hstack small muted">
+					<span>Hand-picked list</span>
+					{#if cat?.created_at}<span>Created {timeAgo(cat.created_at)}</span>{/if}
+				</div>
+				{:else}
 				<div class="hstack small muted">
 					<span>Target {cat?.target_queue ?? '–'} videos</span>
 					<span>Accept at {cat?.threshold ?? '–'}+</span>
@@ -139,10 +169,11 @@
 					{#if cat?.created_at}<span>Created {timeAgo(cat.created_at)}</span>{/if}
 					{#if cat?.last_worked_at}<span>Last searched {timeAgo(cat.last_worked_at)}</span>{/if}
 				</div>
+				{/if}
 			</div>
 			<div class="acts">
-				<button class="btn primary" use:focusable={{ group: 'cat-acts', id: 'find-more', onSelect: findMore }}>✦ Find more now</button>
-				<a class="btn" href="/settings?tab=categories&edit={id}" use:focusable={{ group: 'cat-acts', id: 'edit-cat' }}>Edit playlist</a>
+				{#if !manual}<button class="btn primary" use:focusable={{ group: 'cat-acts', id: 'find-more', onSelect: findMore }}>✦ Find more now</button>{/if}
+				<a class="btn" href="/settings?tab=categories&edit={id}" use:focusable={{ group: 'cat-acts', id: 'edit-cat' }}>{manual ? 'Edit list' : 'Edit playlist'}</a>
 			</div>
 		</header>
 
@@ -153,6 +184,7 @@
 			</div>
 		{/if}
 
+		{#if !manual}
 		<div class="tabs" role="tablist">
 			{#each TABS as t}
 				<button
@@ -166,6 +198,7 @@
 				</button>
 			{/each}
 		</div>
+		{/if}
 
 		{#if items === null}
 			<div class="grid-cards">{#each Array(8) as _}<div class="skeleton" style="aspect-ratio:16/10"></div>{/each}</div>
@@ -173,7 +206,8 @@
 			<div class="empty">
 				<span class="big-emoji">{tab === 'accepted' ? '🔭' : tab === 'pending' ? '📭' : '🧹'}</span>
 				<p>
-					{#if tab === 'accepted'}Nothing picked yet. Press "Find more now" to send the AI looking.
+					{#if manual}Nothing saved yet. Use "Save to playlist" on any video.
+					{:else if tab === 'accepted'}Nothing picked yet. Press "Find more now" to send the AI looking.
 					{:else if tab === 'pending'}Nothing waiting for review.
 					{:else}Nothing rejected so far.{/if}
 				</p>
@@ -190,11 +224,17 @@
 							score={c.score}
 							summary={c.summary}
 							color={cat?.color}
+							actionsGroup="cand-acts-{c.id}"
+							save={!manual}
 						>
 							{#snippet actions()}
+								{#if manual}
+								<button class="btn why" use:focusable={{ group: `cand-acts-${c.id}`, onSelect: () => removeFromList(c) }}>Remove</button>
+								{:else}
 								<button class="btn why" use:focusable={{ group: `cand-acts-${c.id}`, onSelect: () => dialogs.openCandidate(c.id) }}>
 									{c.status === 'rejected' ? 'Why rejected?' : c.status === 'accepted' ? 'Why picked?' : 'Details'}
 								</button>
+								{/if}
 								{#if c.status === 'accepted'}<OfflineButton videoId={c.video.id} offline={isVideo(c.video) && !!c.video.offline} status={isVideo(c.video) ? (c.video.download_status ?? null) : null} group="cand-acts-{c.id}" />{/if}
 									{#if c.status === 'accepted' || c.status === 'found' || c.status === 'enriched'}
 										<button class="btn why" use:focusable={{ group: `cand-acts-${c.id}`, onSelect: () => markSeen(c) }}>
@@ -211,7 +251,7 @@
 											Don't like channel
 										</button>
 									{/if}
-								{#if c.source === 'manual'}<span class="chip small-chip">Added by you</span>{/if}
+								{#if c.source === 'manual' && !manual}<span class="chip small-chip">Added by you</span>{/if}
 							{/snippet}
 						</VideoCard>
 						{#if c.status === 'rejected' && (c.red_flags?.length || c.reasons?.length)}

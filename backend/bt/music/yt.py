@@ -2,7 +2,8 @@
 
 Only official music videos pass: YouTube Music tags each video with a `musicVideoType`, and
 `MUSIC_VIDEO_TYPE_OMV` is its "Official Music Video" class. Covers, lyric uploads, reactions and
-fan edits are `UGC` and art tracks (static audio) are `ATV`; both are dropped.
+fan edits are `UGC` and art tracks (static audio) are `ATV`; both are dropped by normal search/radio.
+The explicit background-mood search also accepts music uploads and art tracks for ambient listening.
 The response parsing is ours; the request plumbing is yt-dlp's.
 """
 from __future__ import annotations
@@ -29,6 +30,7 @@ YTCFG_TTL = 3600
 _ytcfg: tuple[float, dict] | None = None
 VID_RE = re.compile(r'^[A-Za-z0-9_-]{11}$')
 # Labels give away official uploads that are not a music video: lyric videos, visualisers, audio.
+BACKGROUND_REJECT_RE = re.compile(r'\b(lyrics?|cover|karaoke|reaction)\b', re.I)
 NOT_VIDEO_RE = re.compile(r'\b(lyrics?|lyric video|visuali[sz]er|official audio|audio only|cover|karaoke|reaction)\b', re.I)
 
 
@@ -86,8 +88,8 @@ def _artist(byline: list[dict]) -> tuple[str, str]:
     return ''.join(names).strip(), aid
 
 
-def _track(vid: str, title: str, byline: list[dict], length: str = '') -> dict | None:
-    if not vid or not VID_RE.match(vid) or not title or NOT_VIDEO_RE.search(title):
+def _track(vid: str, title: str, byline: list[dict], length: str = '', *, background: bool = False) -> dict | None:
+    if not vid or not VID_RE.match(vid) or not title or (BACKGROUND_REJECT_RE if background else NOT_VIDEO_RE).search(title):
         return None
     artist, aid = _artist(byline)
     tail = [str(r.get('text') or '') for r in byline]
@@ -102,18 +104,26 @@ def _music_type(o: dict) -> str:
     return str(cfg.get('musicVideoType') or '')
 
 
-def parse_search(resp: dict) -> list[dict]:
-    """Official music videos from a YouTube Music search response, in result order."""
+def parse_search(resp: dict, *, background: bool = False) -> list[dict]:
+    """Music results in order; broader music classes only for explicit background mode."""
     out, seen = [], set()
     for r in _walk(resp, 'musicResponsiveListItemRenderer', []):
-        if _music_type(r) != OMV:
+        allowed = {OMV, 'MUSIC_VIDEO_TYPE_UGC', 'MUSIC_VIDEO_TYPE_ATV'} if background else {OMV}
+        if _music_type(r) not in allowed:
             continue
         cols = [c.get('musicResponsiveListItemFlexColumnRenderer', {}).get('text') for c in r.get('flexColumns') or []]
         if len(cols) < 2:
             continue
         vid = ((r.get('playlistItemData') or {}).get('videoId')
                or ((_find(r, 'watchEndpoint') or {}).get('videoId')) or '')
-        t = _track(vid, _text(cols[0]), _runs(cols[1]))
+        byline = _runs(cols[1])
+        # Unfiltered background search includes a result-type prefix (e.g. Song • Artist).
+        # Require the separator so a legitimate artist called Song remains intact.
+        if (background and len(byline) >= 2 and
+                str(byline[0].get('text') or '').strip() in {'Song', 'Video'} and
+                str(byline[1].get('text') or '').strip() == '•'):
+            byline = byline[2:]
+        t = _track(vid, _text(cols[0]), byline, background=background)
         if t and t['video_id'] not in seen:
             seen.add(t['video_id'])
             out.append(t)
@@ -183,6 +193,19 @@ def search(query: str, origin: str = 'user') -> list[dict]:
         return []
     return _cached(('s', q.lower()), lambda: parse_search(
         _call('search', {'query': q, 'params': VIDEOS_PARAMS}, f'music search {q!r}', origin)))
+
+
+def background_search(query: str, origin: str = 'user') -> list[dict]:
+    """Mood-only music search: allow ambient uploads, visualizers and static art tracks.
+
+    Normal music-video search/radio remain official-video-only. This deliberately accepts
+    nonofficial music uploads for background listening; it does not certify their content.
+    """
+    q = re.sub(r'\s+', ' ', query or '').strip()[:200]
+    if not q:
+        return []
+    return _cached(('background', q.lower()), lambda: parse_search(
+        _call('search', {'query': q}, f'background music search {q!r}', origin), background=True))
 
 
 def radio(video_id: str, origin: str = 'user') -> list[dict]:

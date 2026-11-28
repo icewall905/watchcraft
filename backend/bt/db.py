@@ -1,12 +1,16 @@
 """Engine, sessions, settings helpers, agent state/control (shared across processes)."""
 import copy
 import json
+import logging
+import os
 import secrets
+import time
+import traceback
 from contextlib import contextmanager
 from datetime import timedelta
 
 from sqlalchemy import event, inspect
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, func, select
 
 from .config import DB_PATH, DEFAULT_SETTINGS
 from .models import AgentEvent, PlaybackTarget, Profile, Setting, YtRequest, now
@@ -30,6 +34,13 @@ def _migrate_shared_learning_columns(connection) -> None:
     connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_memorycore_profile_type_id ON memorycore (profile_id, content_type, id)")
 
 
+def _migrate_knowledge_columns(connection) -> None:
+    """Additive: the hub learner's one-sentence reason for each lesson."""
+    have = {c["name"] for c in inspect(connection).get_columns("hublesson")}
+    if have and "reason" not in have:
+        connection.exec_driver_sql("ALTER TABLE hublesson ADD COLUMN reason TEXT DEFAULT ''")
+
+
 @event.listens_for(engine, "connect")
 def _pragmas(conn, _):
     cur = conn.cursor()
@@ -40,6 +51,56 @@ def _pragmas(conn, _):
     cur.close()
 
 
+# A write transaction holds SQLite's single write lock until it ends; every other process's
+# writes wait up to busy_timeout (30 s) and then fail with "database is locked". Log any
+# transaction that kept the lock long enough to matter, with where its first write came from.
+SLOW_WRITE_S = float(os.environ.get("BT_SLOW_WRITE_S", "10"))
+_WRITES = ("INSERT", "UPDATE", "DELETE", "REPLACE")
+_lock_log = logging.getLogger("bt.db.locks")
+
+
+def _caller() -> str:
+    """The app frames that started the write: skip this module and library code."""
+    try:
+        frames = [f for f in traceback.extract_stack()[:-3]
+                  if f.filename.endswith(".py") and "site-packages" not in f.filename
+                  and "/lib/python" not in f.filename and f.filename != __file__]
+        return " < ".join(f"{os.path.basename(os.path.dirname(f.filename))}/{os.path.basename(f.filename)}:{f.lineno} {f.name}"
+                          for f in reversed(frames[-3:])) or "?"
+    except Exception:  # noqa: BLE001 — diagnostics must never break a write
+        return "?"
+
+
+def _takes_lock(statement: str) -> bool:
+    head = statement.lstrip()[:15].upper()
+    return head.startswith(_WRITES) or head.startswith("BEGIN IMMEDIATE")
+
+
+@event.listens_for(engine, "before_cursor_execute")
+def _note_first_write(conn, _cursor, statement, _params, _context, _many):
+    if "write_since" not in conn.info and "write_asked" not in conn.info and _takes_lock(statement):
+        conn.info["write_asked"] = (time.monotonic(), statement.split(None, 3)[:3], _caller())
+
+
+@event.listens_for(engine, "after_cursor_execute")
+def _note_lock_taken(conn, *_):
+    # The lock is ours only once the first write returns; time spent before that was waiting.
+    if (asked := conn.info.pop("write_asked", None)) is not None:
+        conn.info["write_since"] = (time.monotonic(), *asked)
+
+
+def _write_ended(conn, how: str) -> None:
+    conn.info.pop("write_asked", None)
+    since = conn.info.pop("write_since", None)
+    if since and (held := time.monotonic() - since[0]) >= SLOW_WRITE_S:
+        _lock_log.warning("write lock held %.1fs (after waiting %.1fs) until %s by pid %s: first %s from %s",
+                          held, since[0] - since[1], how, os.getpid(), " ".join(since[2]), since[3])
+
+
+event.listen(engine, "commit", lambda conn: _write_ended(conn, "commit"))
+event.listen(engine, "rollback", lambda conn: _write_ended(conn, "rollback"))
+
+
 def init_db() -> None:
     # All three services start together. Serialize schema creation and first-run
     # defaults so they cannot create duplicate profiles or settings.
@@ -47,8 +108,63 @@ def init_db() -> None:
         connection.exec_driver_sql("BEGIN IMMEDIATE")
         from . import curation  # noqa: F401  (registers v1 + hub tables)
         from .hub import migrate, models as _hub_models  # noqa: F401
+        from .hub import personal_watch, watcher_push  # noqa: F401
         from .music import models as _music_models  # noqa: F401
+        from .jellyfin import models as _jellyfin_models  # noqa: F401
+        from .knowledge import models as _knowledge_models  # noqa: F401
+        from .commonroom import models as _commonroom_models  # noqa: F401
         SQLModel.metadata.create_all(connection)
+        _migrate_knowledge_columns(connection)
+        if 'language' not in {c['name'] for c in inspect(connection).get_columns('crpost')}:
+            connection.exec_driver_sql("ALTER TABLE crpost ADD COLUMN language VARCHAR NOT NULL DEFAULT ''")
+            connection.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_crpost_language ON crpost (language)')
+        if 'link_key' not in {c['name'] for c in inspect(connection).get_columns('crpost')}:
+            connection.exec_driver_sql("ALTER TABLE crpost ADD COLUMN link_key VARCHAR NOT NULL DEFAULT ''")
+            connection.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_crpost_link_key ON crpost (link_key)')
+        for table, columns in (
+                ('crthread', (('search_terms', "JSON NOT NULL DEFAULT '[]'"),)),
+                ('moodpinnote', (('tags', "JSON NOT NULL DEFAULT '[]'"), ('disputed', "JSON NOT NULL DEFAULT '[]'"))),
+                ('crsource', (('exhausted_at', 'FLOAT NOT NULL DEFAULT 0'), ('status', "VARCHAR NOT NULL DEFAULT 'ok'"),
+                              ('notes', "VARCHAR NOT NULL DEFAULT ''"), ('created_by_thread', 'INTEGER NOT NULL DEFAULT 0'),
+                              ('hits', 'INTEGER NOT NULL DEFAULT 0'), ('kept', 'INTEGER NOT NULL DEFAULT 0'))),
+                ('crthreadsource', (('fit', 'INTEGER NOT NULL DEFAULT 0'), ('tried', 'INTEGER NOT NULL DEFAULT 0'),
+                                    ('kept', 'INTEGER NOT NULL DEFAULT 0'), ('shown', 'INTEGER NOT NULL DEFAULT 0'),
+                                    ('liked', 'INTEGER NOT NULL DEFAULT 0'), ('skipped', 'INTEGER NOT NULL DEFAULT 0'),
+                                    ('throttle', 'INTEGER NOT NULL DEFAULT 0'),
+                                    ('throttle_why', "VARCHAR NOT NULL DEFAULT ''"))),
+                ('crcandidate', (('misses', 'INTEGER NOT NULL DEFAULT 0'),)),
+                ('crcomments', (('count', 'INTEGER NOT NULL DEFAULT 0'), ('checked_at', 'FLOAT NOT NULL DEFAULT 0'))),
+                ('crpick', (('fun', 'INTEGER NOT NULL DEFAULT 0'), ('kind', "VARCHAR NOT NULL DEFAULT ''"),
+                            ('wildcard', 'BOOLEAN NOT NULL DEFAULT 0'), ('opened_at', 'FLOAT NOT NULL DEFAULT 0'),
+                            ('dwell_ms', 'INTEGER NOT NULL DEFAULT 0'), ('engaged', 'FLOAT NOT NULL DEFAULT 0'))),
+                ('moodboardbrief', (('absorbed', 'INTEGER NOT NULL DEFAULT 0'),)),
+                ('moodverdict', (('rating', 'JSON'),))):
+            have = {c['name'] for c in inspect(connection).get_columns(table)}
+            for name, definition in columns:
+                if name not in have:
+                    connection.exec_driver_sql(f'ALTER TABLE {table} ADD COLUMN "{name}" {definition}')
+        board_columns = {c['name'] for c in inspect(connection).get_columns('moodboard')}
+        for name, definition in (('target_images', 'INTEGER NOT NULL DEFAULT 100'),
+                                 ('avoid', "VARCHAR NOT NULL DEFAULT ''"),
+                                 ('seed_searches', "VARCHAR NOT NULL DEFAULT ''"),
+                                 ('media', "VARCHAR NOT NULL DEFAULT 'any'"),
+                                 ('min_width', 'INTEGER NOT NULL DEFAULT 0'),
+                                 ('strictness', "VARCHAR NOT NULL DEFAULT 'strict'"),
+                                 ('child_friendly', 'BOOLEAN NOT NULL DEFAULT 0'),
+                                 ('ai_images', "VARCHAR NOT NULL DEFAULT 'reject'")):
+            if name not in board_columns:
+                connection.exec_driver_sql(f'ALTER TABLE moodboard ADD COLUMN "{name}" {definition}')
+        import_columns = {c['name'] for c in inspect(connection).get_columns('moodimport')}
+        for name, definition in (('full', 'BOOLEAN NOT NULL DEFAULT 0'), ('board_ref', "VARCHAR NOT NULL DEFAULT ''"),
+                                 ('cursor', "VARCHAR NOT NULL DEFAULT ''"), ('exhausted', 'BOOLEAN NOT NULL DEFAULT 0'),
+                                 ('existing', 'INTEGER NOT NULL DEFAULT 0'), ('failures', 'INTEGER NOT NULL DEFAULT 0'),
+                                 ('next_at', 'FLOAT NOT NULL DEFAULT 0'), ('note', "VARCHAR NOT NULL DEFAULT ''")):
+            if name not in import_columns:
+                connection.exec_driver_sql(f'ALTER TABLE moodimport ADD COLUMN "{name}" {definition}')
+        pin_columns = {c['name'] for c in inspect(connection).get_columns('moodpin')}
+        for name in ('ai_flag', 'kid_state', 'kid_reason'):
+            if name not in pin_columns:
+                connection.exec_driver_sql(f"ALTER TABLE moodpin ADD COLUMN {name} VARCHAR NOT NULL DEFAULT ''")
         # Additive shared-learning type columns. Existing rows are videos by default;
         # keep the legacy video_id column unchanged for old feedback and callers.
         _migrate_shared_learning_columns(connection)
@@ -74,6 +190,14 @@ def init_db() -> None:
         if 'role' not in {c['name'] for c in inspect(connection).get_columns('profile')}:
             connection.exec_driver_sql("ALTER TABLE profile ADD COLUMN role VARCHAR NOT NULL DEFAULT 'adult'")
             connection.exec_driver_sql("UPDATE profile SET role = 'admin' WHERE id = (SELECT MIN(id) FROM profile)")
+        if 'parental' not in {c['name'] for c in inspect(connection).get_columns('profile')}:
+            connection.exec_driver_sql("ALTER TABLE profile ADD COLUMN parental JSON NOT NULL DEFAULT '{}'")
+        if 'safety_rails' not in {c['name'] for c in inspect(connection).get_columns('profile')}:
+            connection.exec_driver_sql("ALTER TABLE profile ADD COLUMN safety_rails VARCHAR NOT NULL DEFAULT ''")
+        # Accounts (docs/ACCOUNTS.md): existing profiles stay unowned until an administrator assigns them.
+        if 'account_id' not in {c['name'] for c in inspect(connection).get_columns('profile')}:
+            connection.exec_driver_sql("ALTER TABLE profile ADD COLUMN account_id INTEGER NULL REFERENCES account (id)")
+            connection.exec_driver_sql("CREATE INDEX IF NOT EXISTS ix_profile_account_id ON profile (account_id)")
         # Additive playback pairing columns; existing screens get a pairing code so their
         # receivers can rediscover it on the next heartbeat (notification via the response).
         have = {c['name'] for c in inspect(connection).get_columns('playbacktarget')}
@@ -96,8 +220,11 @@ def init_db() -> None:
                 s.commit()
         migrate.migrate(connection)
         with Session(connection) as s:
-            if not s.exec(select(Profile)).first():
-                s.add(Profile(name="Family", emoji="🏠", color="#7c5cff", role="admin"))
+            from .accounts import is_open
+            # Accounts mode: the first admin is created at sign-in (bootstrap) with its own profile.
+            if not s.exec(select(Profile)).first() and (is_open() or not s.get(Setting, "setup")):
+                if is_open():
+                    s.add(Profile(name="Family", emoji="🏠", color="#7c5cff", role="admin"))
                 s.merge(Setting(key="setup", value={"completed": False}))
                 s.merge(Setting(key="agent", value={"enabled": False}))
                 s.commit()
@@ -233,9 +360,10 @@ def log_yt_request(kind: str, origin: str = "worker", ok: bool = True, detail: s
 def yt_request_counts(s: Session | None = None) -> dict:
     def _count(sess):
         t = now()
-        hour = sess.exec(select(YtRequest).where(YtRequest.origin == "worker", YtRequest.ts >= t - timedelta(hours=1))).all()
-        day = sess.exec(select(YtRequest).where(YtRequest.origin == "worker", YtRequest.ts >= t - timedelta(days=1))).all()
-        return {"hour": len(hour), "day": len(day)}
+        def since(delta):
+            return sess.exec(select(func.count()).select_from(YtRequest).where(
+                YtRequest.origin == "worker", YtRequest.ts >= t - delta)).one()
+        return {"hour": since(timedelta(hours=1)), "day": since(timedelta(days=1))}
     if s is not None:
         return _count(s)
     with session() as sess:

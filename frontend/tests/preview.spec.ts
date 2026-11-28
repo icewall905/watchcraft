@@ -1,8 +1,10 @@
 import { test, expect } from '@playwright/test';
+import { remoteKeys } from './helpers';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import sharp from 'sharp';
+test.beforeEach(async ({ page }) => { await remoteKeys(page); }); // remote-key navigation is TV/opt-in only
 
 // The PWA thumbnail cache otherwise bypasses page.route after a reload.
 // These tests supply deterministic thumbnail bytes; offline.spec covers the worker.
@@ -90,6 +92,35 @@ test('hover preview survives home reloads while hovering the same card', async (
 	expect(after).toBeTruthy();
 	expect(after!.src).toBe(before.src); // no teardown/re-creation under the pointer
 	expect(after!.t).toBeGreaterThan(before.t + 1.1); // kept playing the whole time, never restarted
+});
+
+test('player settings turn previews off or pause them after the limit', async ({ page, request }) => {
+	const base = (await (await request.get('/api/settings')).json()).player;
+	const card = page.locator('.card', { hasText: 'Preview hover clip' });
+	const pv = () => page.evaluate(() => {
+		const v = document.querySelector('video.bt-hover-pv') as HTMLVideoElement | null;
+		return v ? { t: v.currentTime, paused: v.paused } : null;
+	});
+	try {
+		await request.put('/api/settings/player', { data: { ...base, preview_autoplay: false } });
+		await page.goto('/');
+		await page.evaluate(() => localStorage.setItem('bt.profile', '1'));
+		await page.goto('/');
+		await card.hover();
+		await page.waitForTimeout(1500);
+		expect(await pv()).toBeNull();
+
+		await request.put('/api/settings/player', { data: { ...base, preview_autoplay: true, preview_limit_s: 2 } });
+		await page.mouse.move(0, 0);
+		await page.goto('/');
+		await card.hover();
+		await expect.poll(async () => (await pv())?.paused, { timeout: 8000 }).toBe(true);
+		const a = await pv();
+		expect(a!.t).toBeGreaterThan(1.5);
+		expect(a!.t).toBeLessThan(3.5);
+		await page.waitForTimeout(1000);
+		expect((await pv())!.t).toBe(a!.t); // stays paused on the last frame
+	} finally { await request.put('/api/settings/player', { data: base }); }
 });
 
 test('arrow-key focus previews the top pick and thumbnail, and stops when focus moves away', async ({ page }) => {

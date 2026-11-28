@@ -34,12 +34,12 @@
 		return () => clearInterval(t);
 	});
 
-	async function act(a: 'run' | 'pause' | 'resume' | 'duplicate') {
+	async function act(a: 'run' | 'pause' | 'resume' | 'duplicate' | 'clear-error') {
 		busy = true;
 		try {
 			const r = await hub.curatorAction(id, a);
 			if (a === 'duplicate') { toast.success('Duplicated'); goto(`/curators/${r.id}`); return; }
-			toast.success(a === 'run' ? 'Run started' : a === 'pause' ? 'Paused' : 'Resumed');
+			toast.success(a === 'run' ? 'Run started' : a === 'pause' ? 'Paused' : a === 'clear-error' ? 'Problem cleared' : 'Resumed');
 			await load(true);
 		} catch (e) { error = errMsg(e); } finally { busy = false; }
 	}
@@ -53,6 +53,17 @@
 		tab = 'overview';
 	}
 	const active = $derived(c?.last_status === 'queued' || c?.last_status === 'running');
+	const isMeme = $derived(c?.kind === 'watch' && (c?.content_types ?? []).includes('meme'));
+	let finding = $state(false);
+	let found = $state<{ added: { id: number; provider: string; url: string; name: string; memes: number }[]; skipped: { provider: string; url: string; reason: string }[] } | null>(null);
+	async function findSources() {
+		finding = true; found = null; error = '';
+		try {
+			found = await hub.findMemeSources(id);
+			toast.success(found.added.length ? `Added ${found.added.length} source${found.added.length === 1 ? '' : 's'}` : 'No new working sources found');
+			await load(true);
+		} catch (e) { error = errMsg(e); } finally { finding = false; }
+	}
 	async function exportJson() {
 		if (!c) return;
 		try {
@@ -66,7 +77,7 @@
 	const st = $derived(c ? statusOf(c) : 'Active');
 </script>
 
-<svelte:head><title>{c?.name ?? 'Curator'} · WatchCraft</title></svelte:head>
+<svelte:head><title>{c?.name ?? 'Curator'} · The Hub</title></svelte:head>
 
 <div class="page workshop-page">
 	<a class="small muted" href="/curators" use:focusable>← Curators</a>
@@ -85,13 +96,31 @@
 			</div>
 			<div class="acts">
 				<button class="btn primary" disabled={busy || active} use:focusable onclick={() => act('run')}>{c.last_status === 'queued' ? 'Queued…' : c.last_status === 'running' ? 'Running…' : 'Run now'}</button>
+				{#if isMeme}<button class="btn" disabled={finding} use:focusable onclick={findSources}>{finding ? 'Finding sources…' : 'Find sources'}</button>{/if}
 				<button class="btn" disabled={busy} use:focusable onclick={() => act(c!.enabled ? 'pause' : 'resume')}>{c.enabled ? 'Pause' : 'Resume'}</button>
 				<button class="btn ghost" disabled={busy} use:focusable onclick={() => act('duplicate')}>Duplicate</button>
 				<button class="btn ghost" use:focusable onclick={exportJson}>Export JSON</button>
 				<button class="btn ghost danger" use:focusable onclick={() => (confirm = true)}>Delete</button>
 			</div>
 		</header>
-		{#if c.error}<div class="errbox" role="alert">Last run problem: {c.error}</div>{/if}
+		{#if c.error}
+			<div class="errbox" role="alert">
+				<p>Last run problem: {c.error}</p>
+				{#if /reddit/i.test(c.error)}<p class="small"><a href="/settings?tab=commonroom" use:focusable>Add Reddit keys in Settings</a></p>{/if}
+				<div class="hstack">
+					<button class="btn sm" disabled={busy || active} use:focusable onclick={() => act('run')}>Retry now</button>
+					<button class="btn sm ghost" disabled={busy} use:focusable onclick={() => act('clear-error')}>Clear</button>
+				</div>
+			</div>
+		{/if}
+		{#if found}
+			<div class="found" role="status">
+				{#if found.added.length}<p><b>Added:</b> {found.added.map((a) => `${a.name || a.url} (${a.memes} memes)`).join(', ')}. They are used from the next run.</p>
+				{:else}<p>No new working meme sources found.</p>{/if}
+				{#if found.skipped.length}<details><summary class="small muted">{found.skipped.length} suggestion{found.skipped.length === 1 ? '' : 's'} did not answer</summary><ul class="small muted">{#each found.skipped as k}<li>{k.url}: {k.reason}</li>{/each}</ul></details>{/if}
+				<button class="btn sm ghost" use:focusable onclick={() => (found = null)}>Dismiss</button>
+			</div>
+		{/if}
 
 		<div class="tabs" role="tablist">
 			{#each [['overview', 'Overview'], ['runs', `Runs (${c.runs.length})`], ['settings', 'Settings']] as [k, l]}
@@ -163,6 +192,9 @@
 	.st.error { color: var(--bad); border-color: var(--bad); }
 	.st.running { color: var(--info); border-color: var(--info); animation: pulse 1.4s infinite; }
 	.st.paused { color: var(--muted); }
+	.errbox p { margin: 0 0 .5rem; }
+	.found { padding: .8rem 1rem; border-radius: var(--r-md); border: 1px solid var(--line); background: var(--surface); margin-bottom: 1rem; }
+	.found p { margin: 0 0 .5rem; }
 	.errbox { padding: .8rem 1rem; border-radius: var(--r-md); border: 1px solid rgba(255,92,122,.45); background: rgba(255,92,122,.1); color: var(--bad); margin-bottom: 1rem; }
 	.tabs { display: flex; gap: .4rem; border-bottom: 1px solid var(--line); margin: 1rem 0 1.4rem; overflow-x: auto; }
 	.tab { min-height: 2.75rem; padding: .5rem 1.1rem; background: none; border: 0; border-bottom: 3px solid transparent; color: var(--muted); font-weight: 650; cursor: pointer; white-space: nowrap; }

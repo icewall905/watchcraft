@@ -242,3 +242,37 @@ def test_overlapping_categories_do_not_duplicate_ready_pending_or_failure_totals
         result=shelf.snapshot(s,pid)
         assert result['ready']==result['failed']==result['pending']==1
         assert all(c['ready']==c['failed']==c['pending']==1 for c in result['categories'])
+
+
+def test_settled_failures_stop_pinning_an_underfilled_list_at_full(monkeypatch, tmp_path):
+    """B-082: old evicted copies (never re-queued) once filled the headroom forever, so the curator
+    reported "All queues are full" while the list held far fewer playable videos than its target."""
+    monkeypatch.setattr(downloader, "MEDIA_DIR", tmp_path)
+    pid = _profile_id()
+    t = now()
+    old = t - timedelta(days=20)
+    with session() as s:
+        category = Category(profile_id=pid, name="Evicted backlog", target_queue=10,
+                            last_worked_at=t - timedelta(hours=2))
+        s.add(category); s.commit(); s.refresh(category)
+        for n in range(4):
+            _add_item(s, category, f"live-{n}", published_at=old, path=_file(tmp_path, f"live-{n}"))
+        for n in range(12):
+            video_id = f"evicted-{n}"
+            s.add(Video(id=video_id, channel_id=f"creator-{n}", published_at=old))
+            s.add(Candidate(category_id=category.id, video_id=video_id, status="accepted",
+                            created_at=old, judged_at=old))
+            s.add(Download(video_id=video_id, status="evicted"))
+        s.commit()
+        # 16 accepted >= ceiling 15, but only 4 playable: refill the 6 missing.
+        assert data.terminal_failures(s, category, t) == 12
+        assert data.category_refill_deficit(s, category, t) == 6
+        assert any(row.cat.id == category.id and row.deficit == 6 for row in data.category_needs(s))
+
+        # Recent failures still hold their slots, so a broken source stays bounded.
+        for n in range(12):
+            candidate = s.exec(select(Candidate).where(Candidate.video_id == f"evicted-{n}")).one()
+            candidate.judged_at = t - timedelta(hours=1)
+            s.add(candidate)
+        s.commit()
+        assert data.category_refill_deficit(s, category, t) == 0

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { hub } from '$lib/hub/api';
 	import { focusable } from '$lib/nav';
+	import { session } from '$lib/stores/session.svelte';
 	import type { EditionEntry } from '$lib/hub/types';
 	let { entry, onchanged }: { entry: EditionEntry; onchanged: (action: 'promote' | 'demote') => void } = $props();
 	let busy = $state(false);
@@ -13,11 +14,13 @@
 	}
 </script>
 
+{#if !session.isChild}
 <span class="actions" aria-label="Adjust this recommendation">
 	<button class="action" disabled={busy} aria-label={`Keep ${entry.item.title}`} use:focusable onclick={() => set('promote')}>Keep</button>
 	<button class="action" disabled={busy} aria-label={`Set aside ${entry.item.title}`} use:focusable onclick={() => set('demote')}>Set aside</button>
 	{#if message}<span class="message" role="status">{message}</span>{/if}
 </span>
+{/if}
 
 <style>
 	.actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .15rem; }

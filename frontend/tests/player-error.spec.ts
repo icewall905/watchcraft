@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test';
-import { freshPage } from './helpers';
+import { freshPage, remoteKeys } from './helpers';
+test.beforeEach(async ({ page }) => { await remoteKeys(page); }); // remote-key navigation is TV/opt-in only
 
 test('opening the player directly handles an absent previous URL', async ({ page }) => {
 	const errors: string[] = [];
 	page.on('pageerror', e => errors.push(e.message));
-	await page.route(/\/api\/video\/zzzzzzzzzzz.*/, r => r.fulfill({ status: 503, contentType: 'application/json', body: '{"detail":"Unavailable test video"}' }));
+	await page.route(/\/api\/video\/zzzzzzzzzzz.*/, r => r.fulfill({ status: 404, contentType: 'application/json', body: '{"detail":"Unavailable test video"}' }));
 	await page.goto('/watch/zzzzzzzzzzz');
 	await expect(page.getByRole('heading', { name: "Can't play this video" })).toBeVisible();
 	expect(errors).toEqual([]);
@@ -12,7 +13,7 @@ test('opening the player directly handles an absent previous URL', async ({ page
 
 // A video that cannot load shows an error card; Back and "Go back" must leave the player (no loop).
 test('player error card: back leaves the player', async ({ page }) => {
-	await page.route(/\/api\/video\/zzzzzzzzzzz.*/, (r) => r.fulfill({ status: 503, contentType: 'application/json', body: '{"detail":"YouTube blocked the request"}' }));
+	await page.route(/\/api\/video\/zzzzzzzzzzz.*/, (r) => r.fulfill({ status: 404, contentType: 'application/json', body: '{"detail":"This video is unavailable"}' }));
 	await freshPage(page, '/');
 	for (const how of ['Backspace', 'button'] as const) {
 		await page.goto('/watch/zzzzzzzzzzz');

@@ -10,6 +10,7 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import { warmVideo } from '$lib/prefetch';
 	import { preview } from '$lib/preview';
+	import { fromBackCache, toBackCache } from '$lib/backCache';
 	import type { HomeRow, Video } from '$lib/types';
 	import Row from '$lib/components/Row.svelte';
 	import VideoCard from '$lib/components/VideoCard.svelte';
@@ -19,7 +20,10 @@
 	import LookingPlaceholder from '$lib/components/LookingPlaceholder.svelte';
 	import AgentGlyph from '$lib/components/AgentGlyph.svelte';
 
-	let rows = $state<HomeRow[] | null>(null);
+	// Back from a video shows the rows the user left (see backCache), so the scroll position restores in place.
+	const cacheKey = `home|${session.profile?.id ?? ''}`;
+	const back = fromBackCache<HomeRow[]>(cacheKey);
+	let rows = $state<HomeRow[] | null>(back?.value ?? null);
 	let failed = $state(false);
 	let heroEl = $state<HTMLElement | null>(null);
 	// The hero buttons sit low in the hero, so a plain scroll-into-view would leave the top pick itself hidden.
@@ -37,6 +41,7 @@
 			if (version !== feedVersion || sequence !== loadSequence) return;
 			rows = result;
 			failed = false;
+			toBackCache(cacheKey, result);
 			warmLikely();
 		} catch {
 			if (version !== feedVersion || sequence !== loadSequence) return;
@@ -73,6 +78,7 @@
 		feedVersion++;
 		rows = (rows ?? []).map((r) =>
 			({ ...r, items: r.items.filter((it) => !it.video || !pred(it.video)) }));
+		toBackCache(cacheKey, rows);
 	}
 
 	async function markSeen(v: Video) {
@@ -104,7 +110,7 @@
 	}
 
 	onMount(() => {
-		load();
+		if (!back?.reuse) load();
 		let t: ReturnType<typeof setTimeout> | null = null;
 		const off = agent.onEvent((e) => {
 			if (e.kind !== 'accept') return;
@@ -179,8 +185,8 @@
 					<h1>Tell the AI what you like to watch</h1>
 					<p class="muted lead">Create a playlist like "Science for kids" or "Woodworking". The curator searches YouTube slowly in the background, reads transcripts and comments, and only keeps videos that fit.</p>
 					<div class="hstack">
-						<a class="btn primary big" href="/settings?tab=categories&new=1" use:focusable={{ group: 'hero', autofocus: true }}>Create a playlist</a>
-						<a class="btn big" href="/search" use:focusable={{ group: 'hero' }}>Search instead</a>
+						{#if session.allows('playlists_edit')}<a class="btn primary big" href="/settings?tab=categories&new=1" use:focusable={{ group: 'hero', autofocus: true }}>Create a playlist</a>{/if}
+						{#if session.allows('yt_search')}<a class="btn big" href="/search" use:focusable={{ group: 'hero' }}>Search instead</a>{/if}
 					</div>
 				{:else}
 					<h1>Your curator is on it</h1>
@@ -197,6 +203,10 @@
 				<li><span class="g"><AgentGlyph state="judging" size="1.6rem" /></span><div><strong>Keeps only what fits</strong><span>Scores each video against your brief and explains why.</span></div></li>
 			</ol>
 		</section>
+	{/if}
+
+	{#if session.allows('playlists_edit') && !noCategories}
+		<div class="page screen-tools"><a class="btn" href="/settings?tab=categories&new=1" use:focusable={{ group: 'screen-tools', id: 'new-playlist' }}>＋ New playlist</a></div>
 	{/if}
 
 	{#if session.profile?.prefs?.scouts_home_position !== 'bottom'}<TodayCard /><ScoutsShelf />{/if}
@@ -218,6 +228,7 @@
 							id="cw-{v.id}"
 							href="/watch/{v.id}{it.category_id ? `?c=${it.category_id}` : ''}"
 							progress={v.duration_s ? (it.position_s ?? 0) / v.duration_s : 0}
+							actionsGroup="cw-acts-{v.id}"
 						>
 							{#snippet actions()}
 								<OfflineButton videoId={v.id} offline={!!v.offline} status={v.download_status ?? null} group="cw-acts-{v.id}" />
@@ -255,6 +266,7 @@
 								score={it.score}
 								summary={it.summary}
 								color={row.color}
+								actionsGroup="row-acts-{v.id}"
 							>
 								{#snippet actions()}
 									<OfflineButton videoId={v.id} offline={!!v.offline} status={v.download_status ?? null} group="row-acts-{v.id}" />
@@ -512,4 +524,5 @@
 	:global(html[data-scheme='light']) .how li {
 		background: var(--surface);
 	}
+	.screen-tools { display: flex; justify-content: flex-end; margin-top: .75rem; }
 </style>

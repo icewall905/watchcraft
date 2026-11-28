@@ -1,0 +1,7 @@
+<resources>
+    <style name="AppTheme" parent="BaseAppTheme">
+        <item name="android:windowSplashScreenBackground">#110E26</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/ic_badge</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

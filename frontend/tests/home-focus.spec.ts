@@ -11,6 +11,8 @@ test('home: focus stays where the user put it', async ({ page, request }) => {
 	}
 	for (let run = 0; run < 3; run++) {
 		await freshPage(page, '/');
+		await page.evaluate(() => localStorage.setItem('wc.remoteKeys', 'on'));  // arrows move focus only with remote keys (TV mode or on)
+		await page.reload();
 		await expect(page.getByRole('link', { name: '▶ Play', exact: true })).toBeFocused(); // body text also contains "Play"
 		await page.keyboard.press('ArrowUp');
 		const where = await focused(page);

@@ -2,6 +2,7 @@
 import { toast } from './stores/toast.svelte';
 import { thumbnailPreference } from './stores/thumbnailPreference.svelte';
 import type {
+	ParentalFeature,
 	AgentEvent,
 	AgentStatus,
 	CandidateDetail,
@@ -34,10 +35,45 @@ import type {
 	AgentControl,
 	DownloadItem,
 	DownloadsResponse,
-	DownloaderState
+	DownloaderState,
+	Account,
+	AuthStatus,
+	AuthDevice,
+	InviteInfo,
+	DeviceStart,
+	AdminAccount
 } from './types';
 
 export const PROFILE_KEY = 'bt.profile';
+export const ACCOUNT_KEY = 'wc.account';
+
+/** Active account (public id) of this tab. Null in open mode. */
+export function currentAccountId(): string | null {
+	try {
+		return sessionStorage.getItem(ACCOUNT_KEY);
+	} catch {
+		return null;
+	}
+}
+export function setCurrentAccountId(id: string | null) {
+	try {
+		if (id) sessionStorage.setItem(ACCOUNT_KEY, id);
+		else sessionStorage.removeItem(ACCOUNT_KEY);
+	} catch {
+		/* ignore */
+	}
+}
+/** localStorage key holding the last profile chosen for an account (legacy key in open mode). */
+export const profileKey = (account: string | null = currentAccountId()) => (account ? `${PROFILE_KEY}.${account}` : PROFILE_KEY);
+/** Non-httponly cookie the server reads for media tags that cannot send headers. */
+export function setProfileCookie(account: string | null, pid: number | string) {
+	if (!account || typeof document === 'undefined') return;
+	document.cookie = `wc_profile_${account}=${pid}; path=/; max-age=34560000; samesite=lax`;
+}
+export function accountHeaders(): Record<string, string> {
+	const a = currentAccountId();
+	return a ? { 'X-Account': a } : {};
+}
 
 export class ApiError extends Error {
 	constructor(
@@ -58,7 +94,7 @@ export function onUnauthorized(fn: () => void) {
 
 export function currentProfileId(): string | null {
 	try {
-		return localStorage.getItem(PROFILE_KEY);
+		return localStorage.getItem(profileKey());
 	} catch {
 		return null;
 	}
@@ -67,7 +103,7 @@ export function currentProfileId(): string | null {
 /** Profile header for raw fetches that bypass `request()` (media, manifests): the backend scopes those by profile. */
 export function profileHeaders(): Record<string, string> {
 	const pid = currentProfileId();
-	return pid ? { 'X-Profile-Id': pid } : {};
+	return { ...accountHeaders(), ...(pid ? { 'X-Profile-Id': pid } : {}) };
 }
 
 interface ReqOpts {
@@ -94,7 +130,7 @@ function detailOf(body: unknown, fallback: string): string {
 }
 
 export async function request<T>(path: string, opts: ReqOpts = {}): Promise<T> {
-	const headers: Record<string, string> = { Accept: 'application/json', ...(opts.headers ?? {}) };
+	const headers: Record<string, string> = { Accept: 'application/json', ...accountHeaders(), ...(opts.headers ?? {}) };
 	const pid = opts.profileId === undefined ? currentProfileId() : opts.profileId;
 	if (pid && !headers['X-Profile-Id']) headers['X-Profile-Id'] = pid;
 	let body: BodyInit | undefined = opts.raw;
@@ -114,7 +150,7 @@ export async function request<T>(path: string, opts: ReqOpts = {}): Promise<T> {
 		});
 	} catch (e) {
 		if ((e as Error).name === 'AbortError') throw e;
-		if (opts.toast !== false) toast.error('Cannot reach the WatchCraft server. Check that it is running.');
+		if (opts.toast !== false) toast.error('Cannot reach the Hub server. Check that it is running.');
 		throw new ApiError(0, 'network error');
 	}
 	const ct = res.headers.get('content-type') ?? '';
@@ -149,9 +185,29 @@ export const api = {
 		method: 'POST', raw: audio, headers: { 'Content-Type': audio.type || 'audio/webm' }, signal, toast: false
 	}),
 	// auth
-	authStatus: () => get<{ required: boolean; authenticated: boolean }>('/auth/status', { toast: false }),
-	login: (password: string) => post<{ ok: boolean }>('/auth/login', { password }, { toast: false }),
-	logout: () => post<{ ok: boolean }>('/auth/logout'),
+	authStatus: () => get<AuthStatus>('/auth/status', { toast: false }),
+	login: (username: string, password: string, device_label?: string) =>
+		post<{ public_id: string; account: Account }>('/auth/login', { username, password, device_label }, { toast: false }),
+	bootstrap: (username: string, password: string) => post<{ public_id: string; account: Account }>('/auth/bootstrap', { username, password }, { toast: false }),
+	switchAccount: (public_id: string) => post<{ ok?: boolean }>('/auth/switch', { public_id }, { toast: false }),
+	logout: (o: { public_id?: string; all?: boolean } = {}) => post<AuthStatus>('/auth/logout', o, { toast: false }),
+	changePassword: (current: string, next: string) => post<{ ok?: boolean }>('/auth/password', { current, new: next }, { toast: false }),
+	devices: () => get<AuthDevice[]>('/auth/devices'),
+	revokeDevice: (public_id: string) => del<{ ok?: boolean }>(`/auth/devices/${encodeURIComponent(public_id)}`),
+	invite: (token: string) => get<InviteInfo>(`/auth/invite/${encodeURIComponent(token)}`, { toast: false }),
+	register: (b: { token: string; password: string; username?: string; device_label?: string }) =>
+		post<{ public_id: string; account: Account }>('/auth/register', b, { toast: false }),
+	deviceStart: (device_label?: string) => post<DeviceStart>('/auth/device/start', { device_label }, { toast: false }),
+	devicePoll: (poll: string) => post<{ status: 'pending' | 'approved'; public_id?: string; account?: Account }>('/auth/device/poll', { poll }, { toast: false }),
+	deviceApprove: (code: string) => post<{ username: string }>('/auth/device/approve', { code }, { toast: false }),
+	adminAccounts: () => get<AdminAccount[]>('/admin/accounts'),
+	createAccount: (b: { username?: string; role: 'admin' | 'user' }) => post<{ account: AdminAccount; link: string }>('/admin/accounts', b, { toast: false }),
+	updateAccount: (id: number, b: { role?: 'admin' | 'user'; disabled?: boolean }) => patch<AdminAccount>(`/admin/accounts/${id}`, b),
+	deleteAccount: (id: number) => del<{ ok?: boolean }>(`/admin/accounts/${id}`),
+	resetAccount: (id: number) => post<{ link: string }>(`/admin/accounts/${id}/reset`),
+	signOutAccount: (id: number) => del<{ ok?: boolean }>(`/admin/accounts/${id}/sessions`),
+	unownedProfiles: () => get<Profile[]>('/admin/profiles/unowned'),
+	assignProfile: (pid: number, account_id: number) => post<{ ok?: boolean }>(`/admin/profiles/${pid}/assign`, { account_id }),
 	health: () => get<{ ok: boolean }>('/health', { toast: false }),
 
 	// profiles
@@ -161,6 +217,11 @@ export const api = {
 	unlockProfile: (id: number, pin: string) => post<{ ok: boolean }>(`/profiles/${id}/unlock`, { pin }, { toast: false }),
 	lockProfile: (id: number) => post<{ ok: boolean }>(`/profiles/${id}/lock`),
 	deleteProfile: (id: number) => del<{ ok: boolean }>(`/profiles/${id}`),
+	setSafetyRails: (id: number, rails: string) => put<Profile>(`/profiles/${id}/safety-rails`, { rails }),
+	setChildRails: (id: number, rails: string) => put<{ id: number; safety_rails: string }>(`/admin/profiles/${id}/safety-rails`, { rails }),
+	parentalFeatures: () => get<ParentalFeature[]>('/parental/features'),
+	setParental: (id: number, controls: Record<string, boolean>) => put<Profile>(`/profiles/${id}/parental`, { controls }),
+	setChildParental: (id: number, controls: Record<string, boolean>) => put<{ id: number; controls: Record<string, boolean> }>(`/admin/profiles/${id}/parental`, { controls }),
 
 	// categories
 	categories: () => get<Category[]>('/categories'),
@@ -277,6 +338,7 @@ export const api = {
 	agentPlaying: (seconds = 90) => request<AgentControl>(`/agent/playing${q({ seconds })}`, { method: 'POST', toast: false }),
 	candidate: (id: number) => get<CandidateDetail>(`/agent/candidates/${id}`),
 	llmModels: (body: { base_url?: string; api_key?: string }) => post<{ ok: boolean; models: string[]; error?: string }>('/agent/llm-models', body, { toast: false }),
+	llmRoutes: () => get<{ tasks: { key: string; section: string; label: string; default: 'worker' | 'judge' }[] }>('/agent/llm-routes', { toast: false }),
 	llmTest: (body: { base_url?: string; model?: string; api_key?: string; role?: 'judge' | 'worker' | 'embed' }) => post<LlmTestResult>('/agent/llm-test', body, { toast: false }),
 	proxyProviders: () => get<{ providers: ProxyProvider[] }>('/proxy/providers', { toast: false }),
 	proxyTest: (url: string) => post<ProxyTestResult>('/proxy/test', { url }, { toast: false })

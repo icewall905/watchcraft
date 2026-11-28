@@ -1,6 +1,6 @@
 # Security review
 
-Scope: the WatchCraft server as deployed (`wc-api`, `wc-worker`, `wc-downloader` behind a
+Scope: the Hub server as deployed (`wc-api`, `wc-worker`, `wc-downloader` behind a
 reverse proxy). This is a household appliance on a private network, optionally exposed at
 `https://wc.tdgs.org`. It is not multi-tenant and does not defend against a hostile
 administrator — an administrator can already read the database.
@@ -13,7 +13,7 @@ so a claim can be checked rather than trusted.
 | Boundary | Crossing | Enforced by |
 |---|---|---|
 | Internet → server | every fetched URL | `bt/curation.py` |
-| Browser → API | session cookie, `X-Profile-Id` | `bt/auth.py`, `bt/access.py` |
+| Browser → API | session cookie, `X-Account`, `X-Profile-Id` | `bt/auth.py`, `bt/access.py` |
 | Profile → profile | every row read or written | `owned()` / `profile_id` dependency |
 | Child profile → Hub | discovery, research, memes | `require_hub` |
 | Retrieved content → prompt | curator and research prompts | `bt/hub/ai.py` |
@@ -21,14 +21,19 @@ so a claim can be checked rather than trusted.
 
 ## Authentication and authorization
 
-- **Shared passphrase** (`BT_PASSWORD`) is optional. When set, `AuthMiddleware` rejects every
-  `/api/*` path except `/api/health`, `/api/auth/login` and `/api/auth/status` with 401. The
-  session is a signed cookie (`itsdangerous`, `SECRET`), `httponly`, `samesite=lax`, one year.
-  When unset, the API is open — the deployment relies on the network boundary. This is a
-  deliberate appliance trade-off, not an oversight.
-- **Profiles** carry a role: `admin`, `adult` or `child`. `require_admin` gates shared settings,
-  credentials, proxy/AI tests, worker controls, profile roles and profile creation/deletion.
-  The last administrator cannot be deleted or demoted (`validate_household`).
+- **Accounts** (`BT_AUTH=accounts`, the default; details in `docs/ACCOUNTS.md`). `AuthMiddleware`
+  rejects every `/api/*` path except the sign-in exemptions with 401. Each signed-in account on a
+  client is a server-side session row; the cookie carries a random token and only its SHA-256 is
+  stored. Cookies are `httponly`, `samesite=lax`. Sessions end on sign-out, revoke, disable/delete,
+  password reset or long disuse. Passwords are hashed; invite and reset links are random, single use and
+  valid 14 days; TV/device codes live 10 minutes. Login attempts are throttled (429).
+- **Profile scoping is server-enforced.** An account owns its profiles; `X-Profile-Id` is validated
+  against the signed-in account (403 otherwise) and admins cannot select other accounts' profiles.
+- **Admin is an account role.** `require_admin` gates server settings, credentials, proxy/AI tests,
+  worker controls and accounts administration. The last enabled admin cannot be deleted, disabled or
+  demoted. Profiles carry `adult` or `child` (legacy `admin` counts as adult).
+- **`BT_AUTH=open`** disables sign-in entirely (tests, local development). It must never be used on a
+  reachable server.
 - **Profile PINs** are optional per profile, PBKDF2-SHA256 with 260k iterations and a random
   salt, stored as a hash. Five wrong attempts lock the profile for 30 seconds. A signed cookie
   records the unlock and is invalidated when the PIN changes (`version`).
@@ -83,6 +88,9 @@ Covered by `tests/test_curation.py::test_private_network_and_entity_rejection`.
 | Registered screens | 10 | `api/playback.py` |
 | Profiles paired per screen | 20 | `api/playback.py` |
 | Wrong profile PINs | 5, then 30 s lockout | `profile_pins.py` |
+| Wrong sign-in attempts | throttled, then 429 (per process, in memory) | `bt/auth.py` |
+| Invite/reset links | 14 days, single use | `bt/accounts.py` |
+| TV device codes | 10 minutes | `api/accounts.py` |
 | Curators per profile | capped | `hub/api.py` |
 | Concurrent agents | 1–8, configurable | `hub/slots.py` |
 
@@ -112,6 +120,31 @@ above. Two are different:
   challenge. The route requires the exact NVD hostname and a valid CVE path, verifies the returned
   record ID, and keeps the API source URL with the extracted description.
 
+### The browser sidecar (source curators)
+
+Since 2026-11-18 one headless Chromium runs, for the Mood Board source curator and the Common Room source
+expedition (and their recipes marked `via: browser`) only, in its own container
+(`browser/`, compose services `browser` and `egress`):
+
+- **No data, no secrets.** The `browser` container has no volume and no `.env`; it is read-only with a tmpfs
+  `/tmp`, all capabilities dropped and `no-new-privileges`. A fresh browser is launched for every page.
+- **No direct route out.** It sits only on the internal networks `browser-ctl` (to `bt-api`) and
+  `browser-egress` (to the proxy). Chromium is started with the proxy for all requests, loopback included
+  (`<-loopback>`), QUIC off and WebRTC limited to proxied traffic; only http(s), data and blob requests leave
+  the page.
+- **Public-only egress.** `egress` (Squid, `browser/egress/squid.conf`) is the only container with an outside
+  network. It allows ports 80/443 and refuses private, loopback, link-local, CGNAT, multicast, documentation and
+  Docker ranges after resolving the name, so redirects, subresources and DNS rebinding to the LAN are denied.
+  Verified on the production host: the Proxmox UI, the Hub container, `*.nip.io` names pointing at the LAN,
+  `localhost`, the proxy itself and the cloud metadata address all return 403; direct connections from the
+  browser container fail.
+- **Residual:** the browser container can open a plain TCP connection to `bt-api` on `browser-ctl` (that is how
+  the API reaches it). Page JavaScript cannot, because all Chromium traffic goes through the proxy, which refuses
+  private addresses.
+
+`hub/browser.py` sends only lexically public URLs and treats returned HTML as untrusted. The rescue tool
+`render` above is still disabled; it could move to this sidecar after its own review.
+
 The model chooses which tool to try next, but it can only name a tool that exists. It never
 supplies a command, a URL to fetch, or a shell string, so a hostile page cannot turn the choice
 into execution. Adding a script runner later would break that property and needs its own
@@ -119,13 +152,13 @@ sandbox review.
 
 ## Known limits
 
-- **No CSRF token.** The session cookie is `samesite=lax`, which blocks cross-site form posts
+- **No CSRF token.** Session cookies are `samesite=lax`, which blocks cross-site form posts
   but not every cross-site request. A hostile page on the same site could act as the user.
   Acceptable for a single-household appliance; not acceptable if this ever becomes multi-tenant.
-- **No rate limit on login.** `POST /api/auth/login` compares with `hmac.compare_digest` but
-  does not throttle. The passphrase is the only defence.
-- **The API is open when `BT_PASSWORD` is unset.** Anyone who can reach the port has full
-  access, including administrator actions.
+- **Login throttling is per api process, in memory.** It resets on restart and is not shared
+  between processes.
+- **`BT_AUTH=open` must never be used in production.** It removes sign-in; anyone who can reach
+  the port has full access, including administrator actions.
 - **Notification webhooks can reach the LAN.** That is the point (Home Assistant), but it means
   an administrator can make the server POST to any internal address.
 - **Browser rendering is disabled on every host.** JavaScript-only pages without an API, feed

@@ -1,8 +1,9 @@
-"""Versioned, additive migrations for WatchCraft Hub. Runs inside init_db's BEGIN IMMEDIATE.
+"""Versioned, additive migrations for The Hub. Runs inside init_db's BEGIN IMMEDIATE.
 
 v1 → v2: add curator columns, create Source per v1 curator, move v1 discoveries into
 canonical ContentItem + CuratorDiscovery + ItemState. The v1 discovery table is kept.
-v2 → v3: repack stored vectors from JSON text to float32 BLOB."""
+v2 → v3: repack stored vectors from JSON text to float32 BLOB.
+v4 → v5: raise article collectors still on a small per-run budget to the 500-item default."""
 import array
 import json
 import time
@@ -13,7 +14,7 @@ from sqlmodel import Session, select
 from ..models import Setting
 from .models import Curator, CuratorSource, ItemVerdict, Source
 
-VERSION = 4
+VERSION = 5
 
 
 JSON_DEFAULTS = {'queries': '[]', 'keywords': '[]', 'exclusions': '[]', 'content_types': '[]', 'alert_keywords': '[]',
@@ -37,9 +38,24 @@ def _add_missing_columns(conn) -> None:
             conn.exec_driver_sql('UPDATE curator SET created_at = ? WHERE created_at IS NULL', (time.time(),))
 
 
+def _kidsafe_rules(conn) -> None:
+    """Per-child safety rails: verdicts gain a `rules` key in the primary key. Rebuild the table,
+    keeping every existing verdict as a default-rules verdict, so children see no gap."""
+    names = inspect(conn).get_table_names()
+    if 'kidsafeverdict' not in names or 'rules' in {c['name'] for c in inspect(conn).get_columns('kidsafeverdict')}:
+        return
+    from .models import KidSafeVerdict
+    conn.exec_driver_sql('ALTER TABLE kidsafeverdict RENAME TO kidsafeverdict_old')
+    KidSafeVerdict.__table__.create(conn)
+    conn.exec_driver_sql("INSERT INTO kidsafeverdict (item_id, rules, safe, image_checked, reason, version, judged_at) "
+                         "SELECT item_id, '', safe, image_checked, reason, version, judged_at FROM kidsafeverdict_old")
+    conn.exec_driver_sql('DROP TABLE kidsafeverdict_old')
+
+
 def migrate(conn) -> None:
     from .engine import canonical_url, ensure_fts
     _add_missing_columns(conn)
+    _kidsafe_rules(conn)
     ensure_fts(conn)
     conn.exec_driver_sql('CREATE INDEX IF NOT EXISTS ix_agentevent_profile_kind_id ON agentevent (profile_id, kind, id)')
     with Session(conn) as s:
@@ -51,6 +67,8 @@ def migrate(conn) -> None:
             _v2(conn, canonical_url)
         if version < 3:
             _v3(conn)
+        if version < 5:
+            _v5(conn)
         s.merge(Setting(key='watchcraft_schema_version', value={'version': VERSION, 'migrated_at': time.time()}))
         s.commit()
 
@@ -114,6 +132,15 @@ def _v3(conn) -> None:
                 continue
             conn.exec_driver_sql('UPDATE itemvector SET vector = ?, dim = ? WHERE item_id = ? AND model = ?',
                                  (blob, len(vec), item_id, model))
+
+
+def _v5(conn) -> None:
+    """Article collectors below 500 per run move to 500; larger hand-set budgets and
+    non-article curators (memes, video, untyped) keep theirs."""
+    conn.exec_driver_sql(
+        "UPDATE curator SET max_per_run = 500 WHERE kind = 'watch' AND max_per_run < 500 AND "
+        "(content_types LIKE '%\"news\"%' "
+        "OR content_types LIKE '%\"article\"%')")
 
 
 __all__ = ['migrate', 'VERSION', 'json']

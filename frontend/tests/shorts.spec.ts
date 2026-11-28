@@ -2,10 +2,15 @@ import { expect, test, type Page } from '@playwright/test';
 import { freshPage, resetBackend } from './helpers';
 const feeds = [{ id: 5, name: 'Science clips', emoji: '🔬', kind: 'shorts', enabled: true, ready_count: 2, pending_count: 3, error_count: 1 }, { id: 6, name: 'Cooking clips', emoji: '🍳', kind: 'shorts', enabled: false, ready_count: 1, pending_count: 0, error_count: 0 }];
 const item = (id: string, cat = 5) => ({ id: 1, category_id: cat, status: 'accepted', score: 90, summary: 'A local clip', video: { id, title: id, channel_name: 'Fixture', duration_s: 30, is_short: true, offline: true } });
-async function fixture(page: Page) {
+async function fixture(page: Page, autoplayBlocked = false) {
  await page.route('**/api/video/*/subtitles', r => r.fulfill({ json: { enabled: true, status: 'ready', progress: 100, error: '', track: { url: `/api/video/${r.request().url().split('/').at(-2)}/subtitles/generated.vtt` } } }));
  await page.route('**/api/video/*/subtitles/generated.vtt', r => r.fulfill({ contentType: 'text/vtt', body: 'WEBVTT\n\n00:00:00.000 --> 00:00:30.000\nAlways readable subtitles\n' }));
-	await page.addInitScript(() => { HTMLMediaElement.prototype.play = async function () { }; HTMLMediaElement.prototype.load = function () { }; });
+	await page.addInitScript(blocked => {
+		HTMLMediaElement.prototype.play = async function () {
+			if (blocked) throw new Error('Autoplay blocked');
+		};
+		HTMLMediaElement.prototype.load = function () { };
+	}, autoplayBlocked);
 	await page.route('**/api/shorts/feeds', r => r.fulfill({ json: feeds }));
 	await page.route(/\/api\/shorts\?/, r => { const url = new URL(r.request().url()); const cat = Number(url.searchParams.get('category_id')); return r.fulfill({ json: { items: cat === 5 ? [item('short000001'), item('short000002')] : [item('short000003', 6)], next_offset: null } }); });
 	await page.route('**/api/history', r => r.fulfill({ json: { ok: true } }));
@@ -25,7 +30,8 @@ test('empty profile can switch to its populated profile and start a feed with on
  await page.screenshot({ path: '/tmp/watchcraft-shorts-profile-picker.png', fullPage: true });
  await play.click();
  await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');
- await page.getByRole('button', { name: '← Feeds' }).click();
+ await page.locator('video').click();
+ await page.getByRole('button', { name: 'All feeds', exact: true }).click();
  await page.getByRole('group', { name: 'Choose Feeds profile' }).getByRole('button', { name: first.name, exact: false }).click();
  await expect(page.getByText(`No feeds for ${first.name} yet.`)).toBeVisible();
  await expect(page.getByRole('button', { name: /Science clips/ })).toHaveCount(0);
@@ -101,28 +107,83 @@ test('opens a feed picker, selects isolated local files and clears playback on r
 	await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');
 	await page.keyboard.press('ArrowDown');
 	await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
-	await page.getByRole('button', { name: '← Feeds' }).click();
+	await page.locator('video').click();
+	await page.getByRole('button', { name: 'All feeds', exact: true }).click();
 	await expect(page.locator('video')).toHaveCount(0);
 	await page.getByRole('button', { name: /Cooking clips/ }).click();
 	await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000003/file');
 	expect(forbidden).toEqual([]);
 });
-test('the description stays hidden until the screen is tapped and hides again on the next clip', async ({ page }) => {
+test('the description and controls hide together on idle and return on tap', async ({ page }) => {
 	await fixture(page);
 	await freshPage(page, '/shorts');
 	await page.getByRole('button', { name: /Science clips/ }).click();
-	const first = page.getByRole('heading', { name: 'short000001' });
-	await expect(first).toBeHidden();
-	await page.locator('video').click();
-	await expect(first).toBeVisible();
-	await expect(page.getByText('A local clip')).toBeVisible();
-	await page.locator('video').click();
-	await expect(first).toBeHidden();
-	await page.locator('video').click();
-	await page.keyboard.press('ArrowDown');
-	await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
-	await expect(page.getByRole('heading', { name: 'short000002' })).toBeHidden();
+	const video = page.locator('video');
+	await expect(video).toHaveAttribute('src', '/api/video/short000001/file');
+	const title = page.getByRole('heading', { name: 'short000001' });
+	const controls = page.getByRole('group', { name: 'Playback controls' });
+	const next = page.getByRole('button', { name: 'Next clip' });
+	await expect(title).toBeHidden();
+	await expect(next).toBeHidden();
+	await video.click();
+	await expect(title).toBeVisible();
+	await expect(controls).toBeVisible();
+	await expect(next).toBeVisible();
+	await expect(title).toBeHidden({ timeout: 6000 });
+	await expect(controls).toBeHidden();
+	await expect(next).toBeHidden();
+	await expect(page.getByLabel('Subtitles')).toHaveText('Always readable subtitles');
+	await video.click();
+	await expect(controls).toBeVisible();
+	await next.click();
+	await expect(video).toHaveAttribute('src', '/api/video/short000002/file');
+	await expect(controls).toBeHidden();
 });
+
+test('CC toggles subtitles and keeps the choice across clips', async ({ page }) => {
+	await fixture(page);
+	await freshPage(page, '/shorts');
+	await page.getByRole('button', { name: /Science clips/ }).click();
+	const video = page.locator('video');
+	const subtitles = page.getByLabel('Subtitles');
+	const cc = page.getByRole('button', { name: 'Closed captions' });
+	await expect(subtitles).toHaveText('Always readable subtitles');
+	await video.click();
+	await expect(cc).toHaveAttribute('aria-pressed', 'true');
+	await cc.click();
+	await expect(subtitles).toBeHidden();
+	await page.getByRole('button', { name: 'Next clip' }).click();
+	await expect(video).toHaveAttribute('src', '/api/video/short000002/file');
+	await video.click();
+	await expect(cc).toHaveAttribute('aria-pressed', 'false');
+	await expect(subtitles).toBeHidden();
+	await cc.click();
+	await expect(subtitles).toHaveText('Always readable subtitles');
+});
+
+for (const autoplay of [false, true]) {
+	test(`clip end respects The Scroll autoplay set to ${autoplay}`, async ({ page, request }) => {
+		const settings = await (await request.get('/api/settings')).json();
+		await page.route('**/api/settings', route => route.fulfill({
+			json: { ...settings, player: { ...settings.player, scroll_autoplay_next: autoplay } }
+		}));
+		await fixture(page);
+		await freshPage(page, '/shorts');
+		await page.getByRole('button', { name: /Science clips/ }).click();
+		const video = page.locator('video');
+		await expect(video).toHaveAttribute('src', '/api/video/short000001/file');
+		const saved = page.waitForRequest(req => req.method() === 'POST' && req.url().endsWith('/api/history'));
+		await video.dispatchEvent('ended');
+		await saved;
+		await expect(video).toHaveAttribute('src', `/api/video/short00000${autoplay ? 2 : 1}/file`);
+		if (!autoplay) {
+			await video.click();
+			await page.getByRole('button', { name: 'Next clip' }).click();
+			await expect(video).toHaveAttribute('src', '/api/video/short000002/file');
+		}
+	});
+}
+
 test('empty or failed local availability never falls back to streaming', async ({ page }) => {
 	await fixture(page);
 	await page.route(/\/api\/shorts\?/, r => r.fulfill({ json: { items: [], next_offset: null } }));
@@ -147,7 +208,7 @@ test('late feed response cannot open playback after returning to feed picker', a
 	await page.route(/\/api\/shorts\?/, async (r) => { await gate; await r.fulfill({ json: { items: [item('short000001')], next_offset: null } }); });
 	await freshPage(page, '/shorts');
 	await page.getByRole('button', { name: /Science clips/ }).click();
-	await page.getByRole('button', { name: '← Feeds' }).click();
+	await page.getByRole('button', { name: 'All feeds', exact: true }).click();
 	release();
 	await expect(page.getByRole('heading', { name: 'Choose a feed' })).toBeVisible();
 	await expect(page.locator('video')).toHaveCount(0);
@@ -159,12 +220,13 @@ test('a delayed dislike preserves the clip selected after swiping', async ({ pag
 	await page.route('**/api/feedback', async (r) => { await gate; await r.fulfill({ json: { ok: true } }); });
 	await freshPage(page, '/shorts');
 	await page.getByRole('button', { name: /Science clips/ }).click();
+	await page.locator('video').click();
 	await page.getByRole('button', { name: 'Not for me' }).click();
 	await page.keyboard.press('ArrowDown');
 	await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
 	release();
-	await expect(page.getByRole('button', { name: 'Not for me' })).toBeEnabled();
 	await page.locator('video').click();
+	await expect(page.getByRole('button', { name: 'Not for me' })).toBeEnabled();
 	await expect(page.getByRole('heading', { name: 'short000002' })).toBeVisible();
 	await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
 });
@@ -225,14 +287,15 @@ test('repeat visits show cached feeds during a slow refresh and keep them on fai
  await fixture(page);
  await freshPage(page, '/shorts');
  await expect(page.getByRole('button', { name: /Science clips/ })).toBeVisible();
- await page.getByRole('link', { name: 'Leave Feeds', exact: true }).click();
+ const screen = page.getByRole('link', { name: 'The Screen', exact: true }).first();
+ await expect(async () => { await screen.click(); await expect(page).toHaveURL(/\/tv$/, { timeout: 1000 }); }).toPass();
  let release!: () => void;
  const gate = new Promise<void>(resolve => release = resolve);
  await page.route('**/api/shorts/feeds', async route => {
   await gate;
   await route.fulfill({ status: 503, json: { detail: 'Feeds temporarily unavailable' } });
  });
- await page.getByRole('link', { name: 'Feeds', exact: true }).first().click();
+ await page.getByRole('link', { name: 'The Scroll', exact: true }).first().click();
  await expect(page.getByRole('button', { name: /Science clips/ })).toBeVisible();
  await expect(page.getByText('Loading feeds…', { exact: true })).toHaveCount(0);
  release();
@@ -311,44 +374,53 @@ test('main navigation remains available while the initial feed request is pendin
  });
  await freshPage(page, '/shorts');
  await expect(page.getByText('Loading feeds…', { exact: true })).toBeVisible();
- const back = page.getByRole('link', { name: '← Back to WatchCraft', exact: true });
+ const back = page.getByRole('link', { name: 'The Screen', exact: true }).first();
  await expect(back).toBeVisible();
  await back.click();
- await expect(page).toHaveURL('/');
+ await expect(page).toHaveURL(/\/tv$/);
  release();
 });
 
 test('main navigation remains available over blocked playback and playback errors', async ({ page }) => {
- await fixture(page);
- await page.addInitScript(() => { HTMLMediaElement.prototype.play = async function () { throw new Error('Autoplay blocked'); }; });
- await freshPage(page, '/shorts');
- await page.getByRole('button', { name: /Science clips/ }).click();
- await expect(page.getByRole('button', { name: '▶ Tap to play', exact: true })).toBeVisible();
- const back = page.getByRole('link', { name: '← Back to WatchCraft', exact: true });
- await expect(back).toBeVisible();
- await page.locator('video').dispatchEvent('error');
- await expect(page.getByRole('alert')).toBeVisible();
- await back.click();
- await expect(page).toHaveURL('/');
+ await fixture(page, true);
+ let release!: () => void;
+ const pending = new Promise<void>(resolve => release = resolve);
+ await page.route('**/api/video/*/file', async route => {
+  await pending;
+  await route.abort();
+ });
+ try {
+  await freshPage(page, '/shorts');
+  await page.getByRole('button', { name: /Science clips/ }).click();
+  await expect(page.getByRole('button', { name: '▶ Tap to play', exact: true })).toBeVisible();
+  const back = page.getByRole('link', { name: 'Back to The Hub', exact: true });
+  await expect(back).toBeVisible();
+  await page.locator('video').dispatchEvent('error');
+  await expect(page.getByRole('alert')).toBeVisible();
+  await back.click();
+  await expect(page).toHaveURL('/');
+ } finally {
+  release();
+ }
 });
 
-test('phone navigation leaves empty availability and does not overlap the picker', async ({ page }) => {
+test('phone picker and empty feeds stay in the app shell', async ({ page }) => {
  await page.setViewportSize({ width: 390, height: 600 });
  await fixture(page);
  await page.route(/\/api\/shorts\?/, route => route.fulfill({ json: { items: [], next_offset: null } }));
  await freshPage(page, '/shorts');
- const navigation = page.getByRole('navigation', { name: 'Feeds navigation', exact: true });
  const heading = page.getByRole('heading', { name: 'Choose a feed', exact: true });
  await expect(heading).toBeVisible();
- const navBounds = await navigation.boundingBox(), headingBounds = await heading.boundingBox();
- expect(headingBounds!.y).toBeGreaterThanOrEqual(navBounds!.y + navBounds!.height);
+ await expect(page.getByRole('navigation', { name: 'Feeds navigation', exact: true })).toHaveCount(0);
  await page.screenshot({ path: '/tmp/watchcraft-shorts-navigation-phone.png', fullPage: true });
  await page.getByRole('button', { name: /Science clips/ }).click();
  await expect(page.getByText('No local clips ready yet.', { exact: true })).toBeVisible();
- await page.getByRole('button', { name: '← Feeds', exact: true }).click();
+ await expect(page.locator('video')).toHaveCount(0);
+ await page.getByRole('button', { name: 'All feeds', exact: true }).click();
  await page.getByRole('button', { name: /Science clips/ }).click();
- await page.getByRole('link', { name: '← Back to WatchCraft', exact: true }).click();
- await expect(page).toHaveURL('/');
+ await expect(page.getByText('No local clips ready yet.', { exact: true })).toBeVisible();
+ await page.getByRole('link', { name: 'The Screen', exact: true }).first().click();
+ await expect(page).toHaveURL(/\/tv$/);
 });
 
 test('first visit shows profile-owned category choices before slow availability counts', async ({ page, request }) => {
@@ -389,7 +461,8 @@ test('provisional choices allow playback and authoritative empty feeds remove th
  await page.getByRole('button', { name: /Science clips/ }).click();
  await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');
  release();
- await page.getByRole('button', { name: '← Feeds', exact: true }).click();
+ await page.locator('video').click();
+ await page.getByRole('button', { name: 'All feeds', exact: true }).click();
  await expect(page.getByText(/No feeds for/)).toBeVisible();
  await expect(page.getByRole('button', { name: /Science clips/ })).toHaveCount(0);
 });
@@ -408,6 +481,7 @@ test('captions gate playback, remain visible and start muted', async ({ page }) 
  await expect(page.getByLabel('Subtitles')).toHaveText('Always readable subtitles');
  expect(await page.locator('video').evaluate((v: HTMLVideoElement) => v.muted)).toBe(true);
  await page.screenshot({ path: '/tmp/watchcraft-reel-captions.png' });
+ await page.locator('video').click();
  await page.getByRole('button', { name: 'Unmute', exact: true }).click();
  expect(await page.locator('video').evaluate((v: HTMLVideoElement) => v.muted)).toBe(false);
  await expect(page.getByLabel('Subtitles')).toHaveText('Always readable subtitles');
@@ -428,7 +502,7 @@ test('unreadable captions block video and retry can recover', async ({ page }) =
  await page.getByRole('button', { name: /Science clips/ }).click();
  await expect(page.getByRole('alert')).toContainText('no readable subtitles');
  await expect(page.locator('video')).not.toHaveAttribute('src');
- await expect(page.getByRole('link', { name: '← Back to WatchCraft' })).toBeVisible();
+ await expect(page.getByRole('link', { name: 'Back to The Hub' })).toBeVisible();
  broken = false;
  await page.getByRole('button', { name: 'Retry captions' }).click();
  await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000001/file');
@@ -448,7 +522,8 @@ test('late caption response cannot play a skipped clip or leak back into picker'
  await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
  release();
  await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
- await page.getByRole('button', { name: '← Feeds' }).click();
+ await page.locator('video').click();
+ await page.getByRole('button', { name: 'All feeds', exact: true }).click();
  await expect(page.locator('video')).toHaveCount(0);
  await expect(page.getByLabel('Subtitles')).toHaveCount(0);
 });
@@ -462,4 +537,49 @@ test('disabled transcription explains blocking and still permits skipping', asyn
  await expect(page.locator('video')).not.toHaveAttribute('src');
  await page.getByRole('button', { name: 'Skip to next clip' }).click();
  await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
+});
+
+test('sound stays on for the next clip once unmuted', async ({ page }) => {
+ await fixture(page);
+ await freshPage(page, '/shorts');
+ await page.getByRole('button', { name: /Science clips/ }).click();
+ const video = page.locator('video');
+ await expect(video).toHaveAttribute('src', '/api/video/short000001/file');
+ await page.getByRole('button', { name: 'Unmute', exact: true }).click();
+ await page.keyboard.press('ArrowDown');
+ await expect(video).toHaveAttribute('src', '/api/video/short000002/file');
+ await expect(page.getByRole('button', { name: 'Mute', exact: true })).toBeVisible();
+ expect(await video.evaluate((v: HTMLVideoElement) => v.muted)).toBe(false);
+});
+
+test('desktop keeps the sidebar beside The Scroll; phones stay full screen', async ({ page }) => {
+ await page.setViewportSize({ width: 1280, height: 800 });
+ await fixture(page);
+ await freshPage(page, '/shorts');
+ await page.getByRole('button', { name: /Science clips/ }).click();
+ await expect(page.locator('video')).toBeVisible();
+ const toggle = page.getByRole('button', { name: /(Collapse|Expand) sidebar/ });
+ await expect(toggle).toBeVisible();
+ const feed = await page.getByRole('region', { name: 'Video feed' }).boundingBox();
+ const side = await page.locator('.sidebar').boundingBox();
+ expect(feed!.x).toBeGreaterThanOrEqual(side!.x + side!.width - 1);
+ await page.screenshot({ path: '/tmp/watchcraft-scroll-desktop.png' });
+ await page.setViewportSize({ width: 390, height: 844 });
+ expect((await page.getByRole('region', { name: 'Video feed' }).boundingBox())!.x).toBe(0);
+});
+test('Done clears the clip without any rating and plays the next one', async ({ page }) => {
+	await fixture(page);
+	const seen: string[] = [];
+	let rated = 0;
+	await page.route('**/api/history/seen', async r => { seen.push(r.request().postDataJSON().video_id); await r.fulfill({ json: { ok: true, dismissed: 1 } }); });
+	await page.route('**/api/feedback', r => { rated++; return r.fulfill({ json: { ok: true } }); });
+	await freshPage(page, '/shorts');
+	await page.getByRole('button', { name: /Science clips/ }).click();
+	await page.locator('video').click();
+	await page.getByRole('button', { name: 'Done, clear this clip' }).click();
+	await expect(page.locator('video')).toHaveAttribute('src', '/api/video/short000002/file');
+	expect(seen).toEqual(['short000001']);
+	expect(rated).toBe(0);
+	await page.locator('video').click();
+	await expect(page.getByRole('button', { name: 'Previous clip' })).toBeDisabled();
 });

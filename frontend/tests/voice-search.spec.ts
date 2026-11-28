@@ -1,8 +1,10 @@
 import { test, expect } from '@playwright/test';
+import { remoteKeys } from './helpers';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+test.beforeEach(async ({ page }) => { await remoteKeys(page); }); // remote-key navigation is TV/opt-in only
 
 const fixtureDir = mkdtempSync(join(tmpdir(), 'wc-voice-browser-'));
 const recording = join(fixtureDir, 'microphone.wav');

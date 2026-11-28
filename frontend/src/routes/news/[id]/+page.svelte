@@ -23,7 +23,7 @@
 	});
 </script>
 
-<svelte:head><title>{title || 'Story'} · WatchCraft</title></svelte:head>
+<svelte:head><title>{title || 'Story'} · The Hub</title></svelte:head>
 <div class="page reading-page">
 	<a class="back" href="/news" use:focusable>← News</a>
 	{#if loading}<div class="skeleton" aria-busy="true"></div>

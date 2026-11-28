@@ -31,6 +31,7 @@
 		forward: 'M13 6l7 6-7 6zM4 6l7 6-7 6z',
 		chart: 'M3 20h18M6.5 20v-6M11.5 20V8M16.5 20v-10M21 20V4',
 		tv: 'M3 7h18v11H3zM8 3l4 4 4-4M8 21h8',
+		screen: 'M2 4h20M4 4v11h16V4M12 15v4M8 21l4-2 4 2',
 		compass: 'M12 3a9 9 0 1 1 0 18 9 9 0 0 1 0-18zM15.5 8.5l-2 5-5 2 2-5z',
 		news: 'M5 4h12v16H7a2 2 0 0 1-2-2zM17 8h3v10a2 2 0 0 1-2 2M8 8h6M8 12h6M8 16h4',
 		book: 'M5 4h13v16H7a2 2 0 0 1-2-2zM5 18a2 2 0 0 1 2-2h11M9 8h6',
@@ -49,7 +50,9 @@
 		grid: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
 		list: 'M8 6h12M8 12h12M8 18h12M4 6v.01M4 12v.01M4 18v.01',
 		menu: 'M4 6h16M4 12h16M4 18h16',
-		sidebar: 'M4 5h16v14H4zM9 5v14'
+		sidebar: 'M4 5h16v14H4zM9 5v14',
+		expand: 'M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5',
+		shrink: 'M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5'
 	};
 	const filled = new Set(['play', 'pause', 'next', 'prev', 'agent', 'rewind', 'forward']);
 </script>

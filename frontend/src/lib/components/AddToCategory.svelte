@@ -5,30 +5,73 @@
 	import { toast } from '$lib/stores/toast.svelte';
 	import { focusable } from '$lib/nav';
 	import Modal from './Modal.svelte';
+	import TextField from './form/TextField.svelte';
 
 	const t = $derived(dialogs.addTo!);
 	const close = () => (dialogs.addTo = null);
+	const lists = $derived(session.categories.filter(c => c.kind === 'manual'));
+	const curated = $derived(session.categories.filter(c => (c.kind ?? 'playlist') === 'playlist'));
+	const canEdit = $derived(session.allows('playlists_edit'));
+	let newName = $state('');
+	let busy = $state(false);
 
 	async function add(cid: number) {
-		const c = session.categoryById(cid);
-		await api.addCandidate(t.videoId, cid);
-		toast.success(`Added to ${c?.emoji ?? ''} ${c?.name ?? 'playlist'}`);
-		close();
+		if (busy) return;
+		busy = true;
+		try {
+			const c = session.categoryById(cid);
+			await api.addCandidate(t.videoId, cid);
+			toast.success(`Saved to ${c?.emoji ?? ''} ${c?.name ?? 'playlist'}`);
+			close();
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function createAndAdd() {
+		const name = newName.trim();
+		if (!name) return toast.warn('Give the list a name.');
+		if (busy) return;
+		busy = true;
+		try {
+			const c = await api.createCategory({ kind: 'manual', name, emoji: '📌', brief: '' });
+			await session.loadCategories();
+			await api.addCandidate(t.videoId, c.id);
+			toast.success(`Saved to ${c.emoji} ${c.name}`);
+			close();
+		} finally {
+			busy = false;
+		}
 	}
 </script>
 
-<Modal title="Add to playlist" subtitle={t.title} size="sm" onClose={close}>
-	{#if session.categories.filter(c => c.kind !== 'shorts').length}
+<Modal title="Save to playlist" subtitle={t.title} size="sm" onClose={close}>
+	<div class="list">
+		{#each lists as c, i (c.id)}
+			<button class="opt" style:--cat={c.color} disabled={busy} use:focusable={{ autofocus: i === 0, onSelect: () => add(c.id) }}>
+				<span class="e">{c.emoji}</span>
+				<span>{c.name}</span>
+			</button>
+		{/each}
+		{#if canEdit}
+			<div class="new">
+				<div class="grow"><TextField label="New list" placeholder="e.g. Watch later" bind:value={newName} autofocus={!lists.length} onsubmit={createAndAdd} id="save-new-list" /></div>
+				<button class="btn primary" disabled={busy} use:focusable={{ onSelect: createAndAdd }}>Create &amp; save</button>
+			</div>
+		{:else if !lists.length}
+			<p class="muted">You have no lists yet.</p>
+		{/if}
+	</div>
+	{#if curated.length}
+		<p class="small faint sect">Or add to a curated playlist (the AI learns from it)</p>
 		<div class="list">
-			{#each session.categories.filter(c => c.kind !== 'shorts') as c, i (c.id)}
-				<button class="opt" style:--cat={c.color} use:focusable={{ autofocus: i === 0, onSelect: () => add(c.id) }}>
+			{#each curated as c (c.id)}
+				<button class="opt" style:--cat={c.color} disabled={busy} use:focusable={{ onSelect: () => add(c.id) }}>
 					<span class="e">{c.emoji}</span>
 					<span>{c.name}</span>
 				</button>
 			{/each}
 		</div>
-	{:else}
-		<p class="muted">You have no playlists yet. Create one under Settings, Playlists.</p>
 	{/if}
 </Modal>
 
@@ -50,6 +93,17 @@
 		cursor: pointer;
 		font-weight: 600;
 		text-align: left;
+	}
+	.new {
+		display: flex;
+		align-items: flex-end;
+		gap: 0.5rem;
+	}
+	.grow {
+		flex: 1;
+	}
+	.sect {
+		margin: 1rem 0 0.45rem;
 	}
 	.e {
 		font-size: 1.3rem;

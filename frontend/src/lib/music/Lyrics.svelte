@@ -42,17 +42,24 @@
 	let pollTimer: number | undefined;
 	let pollFails = 0;
 	let seq = 0;
+	// A first lookup for a new song can time out or fail while the server is still searching; without a
+	// retry the overlay stayed blank until lyrics were toggled off and on (which remounted it).
+	const RETRY_MS = [2000, 5000, 10000, 20000];
+	let retryTimer: number | undefined;
+	let retries = 0;
 
-	async function load(videoId: string) {
-		const my = ++seq;
+	async function load(videoId: string, retry = false) {
+		const my = retry ? seq : ++seq;
+		if (!retry) retries = 0;
 		window.clearTimeout(pollTimer);
+		window.clearTimeout(retryTimer);
 		listening = false;
 		listenNote = '';
 		const hit = cache.get(videoId);
 		data = hit ?? null;
 		offset = hit?.offset_ms ?? 0;
 		rate = hit?.rate || 1;
-		if (inflight.has(videoId)) {
+		if (inflight.has(videoId) && !retry) {
 			listening = true; // still listening from before: keep following it
 			listenNote = 'Listening…';
 			poll(videoId, my);
@@ -62,17 +69,24 @@
 			return;
 		}
 		loading = true;
+		let failed = false;
 		try {
 			const r = await music.lyrics(videoId);
 			if (my !== seq) return;
-			cache.set(videoId, r);
-			data = r;
+			if (r.status === 'error') failed = true;
+			else cache.set(videoId, r);
+			data = r.status === 'error' && data ? data : r;
 			offset = r.offset_ms;
 			rate = r.rate || 1;
 		} catch {
-			if (my === seq) data = null;
+			if (my === seq) failed = true;
 		} finally {
-			if (my === seq) loading = false;
+			if (my === seq) {
+				if (failed && retries < RETRY_MS.length) {
+					// Keep saying "Finding the lyrics…" and ask again shortly.
+					retryTimer = window.setTimeout(() => { if (my === seq) void load(videoId, true); }, RETRY_MS[retries++]);
+				} else loading = false;
+			}
 		}
 	}
 	$effect(() => {
@@ -199,11 +213,12 @@
 		cancelAnimationFrame(raf);
 		window.clearTimeout(pollTimer);
 		window.clearTimeout(saveTimer);
+		window.clearTimeout(retryTimer);
 	});
 </script>
 
 <div class="lyrics" class:big aria-live="off">
-	{#if loading && !data}
+	{#if loading && (!data || data.status === 'error')}
 		<p class="note">Finding the lyrics…</p>
 	{:else if timed.length}
 		<div class="lines">

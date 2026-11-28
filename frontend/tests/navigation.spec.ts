@@ -5,14 +5,15 @@ test('desktop sidebar: sections, links, active state, compact toggle', async ({ 
 	await freshPage(page, '/stats');
 	const nav = page.getByRole('navigation', { name: 'Main', exact: true });
 	for (const h of ['Watch', 'Explore', 'Research', 'Workshop']) await expect(nav.getByRole('button', { name: h, exact: true })).toBeVisible();
-	await expect(nav.getByRole('link', { name: 'Today' })).toHaveAttribute('href', '/today');
-	await expect(nav.getByRole('link', { name: 'News' })).toHaveAttribute('href', '/news');
-	await expect(nav.getByRole('link', { name: 'Research' })).toHaveAttribute('href', '/research');
+	await expect(nav.getByRole('link', { name: 'The Front Page' })).toHaveAttribute('href', '/today');
+	await expect(nav.getByRole('link', { name: 'The Wire' })).toHaveAttribute('href', '/news');
+	await expect(nav.getByRole('link', { name: 'The Boards' })).toHaveAttribute('href', '/boards');
+	await expect(nav.getByRole('link', { name: 'The Study' })).toHaveAttribute('href', '/research');
 	await expect(nav.getByRole('link', { name: 'Statistics' })).toHaveAttribute('aria-current', 'page');
-	await expect(nav.getByRole('link', { name: 'TV' })).not.toHaveAttribute('aria-current', 'page');
+	await expect(nav.getByRole('link', { name: 'The Screen' })).not.toHaveAttribute('aria-current', 'page');
 	await expect(page.getByText('Watching the Internet for you.')).toBeVisible();
 	await nav.getByRole('button', { name: 'Explore', exact: true }).click();
-	await expect(nav.getByRole('link', { name: 'News' })).toHaveCount(0);
+	await expect(nav.getByRole('link', { name: 'The Wire' })).toHaveCount(0);
 	await page.getByRole('button', { name: 'Collapse sidebar' }).click();
 	await expect(page.getByText('Watching the Internet for you.')).toHaveCount(0);
 	await page.reload();
@@ -22,7 +23,7 @@ test('desktop sidebar: sections, links, active state, compact toggle', async ({ 
 test('TV is active on / and /tv', async ({ page }) => {
 	for (const url of ['/', '/tv']) {
 		await freshPage(page, url);
-		await expect(page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'TV' })).toHaveAttribute('aria-current', 'page');
+		await expect(page.getByRole('navigation', { name: 'Main', exact: true }).getByRole('link', { name: 'The Screen' })).toHaveAttribute('aria-current', 'page');
 	}
 });
 
@@ -31,10 +32,10 @@ test('tv mode drawer lists only TV entries; /tv?mode=tv switches mode', async ({
 	await expect(page.getByRole('button', { name: 'Open navigation' })).toBeVisible();
 	await page.getByRole('button', { name: 'Open navigation' }).click();
 	const nav = page.getByRole('navigation', { name: 'Main', exact: true });
-	await expect(nav.getByRole('link')).toHaveText(['TV Home', 'Video search', 'Subscriptions', 'Music Videos', 'Playlists', 'Hub', 'Settings']);
-	await nav.getByRole('link', { name: 'Music Videos' }).click();
+	await expect(nav.getByRole('link')).toHaveText(['TV Home', 'Video search', 'Subscriptions', 'The Jukebox', 'The Marquee', 'Playlists', 'Today', 'Settings']);
+	await nav.getByRole('link', { name: 'The Jukebox' }).click();
 	await expect(page).toHaveURL(/\/music$/);
-	await expect(nav.getByRole('link', { name: 'News' })).toHaveCount(0);
+	await expect(nav.getByRole('link', { name: 'The Wire' })).toHaveCount(0);
 });
 
 test('mobile viewport shows bottom bar and More sheet', async ({ page }) => {
@@ -42,13 +43,14 @@ test('mobile viewport shows bottom bar and More sheet', async ({ page }) => {
 	await freshPage(page, '/');
 	const bar = page.getByRole('navigation', { name: 'Primary' });
 	await expect(bar).toBeVisible();
-	await expect(bar.getByRole('link')).toHaveText(['TV', 'Today', 'Library', 'Alerts']);
+	await expect(bar.getByRole('link')).toHaveText(['The Screen', 'The Front Page', 'The Stacks', 'Alerts']);
 	await expect(page.getByRole('navigation', { name: 'Main', exact: true })).toHaveCount(0);
 	await bar.getByRole('button', { name: 'More' }).click();
 	const sheet = page.getByRole('dialog', { name: 'More navigation' });
-	await expect(sheet.getByRole('link', { name: 'News' })).toBeVisible();
+	await expect(sheet.getByRole('link', { name: 'The Wire' })).toBeVisible();
+	await expect(sheet.getByRole('link', { name: 'The Boards' })).toHaveAttribute('href', '/boards');
 	await expect(sheet.getByRole('link', { name: 'Settings' })).toBeVisible();
-	await expect(sheet.getByRole('link', { name: 'Find' })).toBeVisible();
+	await expect(sheet.getByRole('link', { name: 'Find', exact: true })).toBeVisible();
 });
 
 test('Ctrl+K opens palette, Enter searches, Esc closes', async ({ page }) => {

@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
-import { expectFocus, focused, freshPage, moveUntil, resetBackend } from './helpers';
+import { expectFocus, focused, freshPage, moveUntil, resetBackend, remoteKeys } from './helpers';
 import { mkdirSync } from 'node:fs';
+test.beforeEach(async ({ page }) => { await remoteKeys(page); }); // remote-key navigation is TV/opt-in only
 
 // Keyboard-only smoke test: everything below uses arrow keys, Enter, Backspace and the on-screen keyboard.
 mkdirSync('screenshots', { recursive: true });

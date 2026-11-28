@@ -6,6 +6,7 @@
 	import { fmtDuration, fmtCount, timeAgo } from '$lib/util';
 	import { warmVideo } from '$lib/prefetch';
 	import type { Video } from '$lib/types';
+	import { dialogs } from '$lib/stores/dialogs.svelte';
 
 	interface Props {
 		video: Video | { id: string; title?: string };
@@ -22,8 +23,13 @@
 		onSelect?: () => void;
 		actions?: Snippet;
 		badge?: Snippet;
+		/** Show the "Save to playlist" action (default on: every video can go to a hand-picked list). */
+		save?: boolean;
+		/** Nav group for the action strip; pass the one the `actions` buttons use so Left/Right moves between them. */
+		actionsGroup?: string;
 	}
-	let { video, href, score = null, summary = '', progress = 0, color, group, id, autofocus, size = 'row', onSelect, actions, badge }: Props = $props();
+	let { video, href, score = null, summary = '', progress = 0, color, group, id, autofocus, size = 'row', onSelect, actions, badge, save = true, actionsGroup }: Props = $props();
+	const actsGroup = $derived(actionsGroup ?? `card-acts-${group ?? ''}-${(video as { id: string }).id}`);
 	const v = $derived(video as Partial<Video> & { id: string });
 	const link = $derived(href ?? `/watch/${v.id}`);
 	let broken = $state(false);
@@ -71,9 +77,12 @@
 		{#if progress > 0.01}<span class="prog"><span style:width="{Math.min(100, progress * 100)}%"></span></span>{/if}
 		{#if summary}<div class="sum"><p>{summary}</p></div>{/if}
 	</div>
-	{#if actions}
+	{#if actions || save}
 		<!-- Small hover actions under the thumbnail; invisible and unclickable until the card is hovered/focused. -->
-		<div class="actions" bind:this={actionsEl}>{@render actions()}</div>
+		<div class="actions" bind:this={actionsEl}>
+			{#if actions}{@render actions()}{/if}
+			{#if save}<button class="btn why" use:focusable={{ group: actsGroup, onSelect: () => dialogs.openAddTo(v.id, v.title) }}>＋ Save to playlist</button>{/if}
+		</div>
 	{/if}
 	<div class="meta">
 		<h3 class="title">{v.title || 'Untitled video'}</h3>

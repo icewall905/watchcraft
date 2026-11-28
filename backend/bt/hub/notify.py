@@ -47,7 +47,7 @@ def _post(url: str, payload: dict) -> str:
 
 def _mail(cfg: dict, payload: dict) -> str:
     msg = EmailMessage()
-    msg['Subject'] = f"[WatchCraft] {payload['severity']}: {payload['title']}"[:200]
+    msg['Subject'] = f"[The Hub] {payload['severity']}: {payload['title']}"[:200]
     msg['From'] = cfg.get('email_user') or cfg['email_to']
     msg['To'] = cfg['email_to']
     body = payload['reason'] or payload['title']
@@ -112,6 +112,6 @@ def test(cfg: dict | None = None) -> dict:
     cfg = cfg if cfg is not None else get_settings().get('notify', {})
     if not any(channels(cfg).values()):
         raise ValueError('Configure a webhook, Home Assistant webhook or email address first.')
-    alert = Alert(id=0, profile_id=0, item_id=0, severity='info', title='WatchCraft test notification',
+    alert = Alert(id=0, profile_id=0, item_id=0, severity='info', title='The Hub test notification',
                   reason='This is a test. Real alerts follow the same path.')
     return deliver(alert, None, cfg)

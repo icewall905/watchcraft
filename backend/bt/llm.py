@@ -18,7 +18,20 @@ import httpx
 
 log = logging.getLogger("bt.llm")
 
-_lock = threading.Lock()  # concurrency 1 (shared GPU)
+_lock = threading.Lock()  # concurrency 1 per server (single-slot GPU); this one guards the judge's endpoint
+_endpoint_locks: dict[str, threading.Lock] = {}
+_locks_guard = threading.Lock()
+
+
+def _lock_for(base_url: str) -> threading.Lock:
+    """One lock per inference server: a worker or vision model on its own GPU must not queue behind the judge.
+
+    A worker without its own endpoint shares the judge's URL and therefore its lock."""
+    base = (base_url or "").strip().rstrip("/")
+    if base == (_cfg().get("base_url") or "").strip().rstrip("/"):
+        return _lock
+    with _locks_guard:
+        return _endpoint_locks.setdefault(base, threading.Lock())
 _schema_unsupported: set[str] = set()  # base_urls that rejected response_format=json_schema
 
 
@@ -106,13 +119,15 @@ ROLES = ("judge", "worker")
 
 
 def _cfg(role: str = "judge") -> dict:
-    """Settings for one role.
+    """Settings for one role ("judge" / "worker"), or for a task key from TASKS routed to one of them.
 
     The judge does the thinking: verdicts, planning, review, reports. The worker does the grunt
     work: screening, summaries, imports. A worker that is not configured falls back to the judge's
     model, endpoint and key, so a single-model setup behaves exactly as before.
     """
     from .db import get_settings
+    if role in TASKS:  # callers name the kind of request; the household's routing picks the endpoint
+        role = role_for(role)
     cfg = dict(get_settings()["llm"])
     if role == "worker":
         judge_base = cfg["base_url"].strip().rstrip("/")
@@ -127,6 +142,57 @@ def _cfg(role: str = "judge") -> dict:
 
 
 _served: dict[str, tuple[float, str]] = {}
+
+
+# Where each kind of request goes. Anything not set in settings llm.routes uses its default here:
+# the worker, except the judgement calls where the bigger judge model is clearly better.
+# key: (section, label, default role)
+TASKS: dict[str, tuple[str, str, str]] = {
+    "video_verdict": ("Videos", "Accept or reject each candidate video", "judge"),
+    "video_plan": ("Videos", "Plan new video searches", "worker"),
+    "video_screen": ("Videos", "Screen search results before judging", "worker"),
+    "video_lessons": ("Videos", "Learn lessons from your feedback", "worker"),
+    "memory_compact": ("Videos", "Compact family memory", "worker"),
+    "memory_audit": ("Videos", "Audit memory changes for lost meaning", "judge"),
+    "knowledge_review": ("Videos", "Review learned inferences", "judge"),
+    "playlist_brief": ("Videos", "Write a brief from an imported playlist", "worker"),
+    "category_autofill": ("Videos", "Auto-fill category settings", "worker"),
+    "hub_rank": ("Hub", "Rank new feed items for curators", "worker"),
+    "hub_summaries": ("Hub", "Summarise items", "worker"),
+    "hub_reports": ("Hub", "Research reports, briefings and Front Page write-ups", "worker"),
+    "curator_setup": ("Hub", "Set up a curator from your request", "worker"),
+    "meme_explain": ("Hub", "Explain a meme", "worker"),
+    "meme_sources": ("Hub", "Suggest meme communities (Find sources)", "worker"),
+    "page_rescue": ("Hub", "Rescue pages that will not load", "worker"),
+    "watcher_setup": ("Hub", "Plan recurring Watcher checks", "judge"),
+    "watcher_check": ("Hub", "Verify Watcher search findings", "judge"),
+    "article_cleanup": ("Hub", "Clean up article text", "worker"),
+    "frontpage_screen": ("Hub", "Front Page first pass over new items", "worker"),
+    "frontpage_review": ("Hub", "Front Page re-check of uncertain picks", "judge"),
+    "taste_learning": ("Hub", "Learn reading taste from reactions", "worker"),
+    "kid_checks": ("Hub", "Kid-safety checks (Hub, Common Room, shared pins)", "worker"),
+    "board_queries": ("Boards", "Plan image searches", "worker"),
+    "board_vision": ("Boards", "Vision check of candidate images", "worker"),
+    "board_sources": ("Boards", "Research image sources (Find sources)", "worker"),
+    "board_brief": ("Boards", "Write each board's curator brief from what it learned", "judge"),
+    "board_chat": ("Boards", "Board preferences chat", "judge"),
+    "commonroom_curate": ("Common Room", "Pick threads worth reading", "worker"),
+    "commonroom_discover": ("Common Room", "Source expedition (Find sources)", "worker"),
+    "music_dj": ("Music", "DJ picks and mixes", "worker"),
+    "knowledge_collect": ("Knowledge", "Turn reviews into teachings", "worker"),
+    "knowledge_merge": ("Knowledge", "Merge teachings into knowledge", "worker"),
+    "knowledge_chat": ("Knowledge", "Knowledge chat", "judge"),
+}
+ROLES = ("worker", "judge")
+
+
+def role_for(task: str) -> str:
+    """The endpoint role for one kind of request: the household's choice, else the task's default."""
+    default = TASKS[task][2]  # KeyError on an unknown task: every call site must be registered
+    from .db import get_settings
+    routes = get_settings()["llm"].get("routes")
+    choice = routes.get(task) if isinstance(routes, dict) else None
+    return choice if choice in ROLES else default
 
 
 def served_model(base_url: str, api_key: str = "", ttl: float = 600) -> str:
@@ -169,9 +235,10 @@ class LlmTruncated(LlmError):
     """Completion hit max_tokens before producing usable content (e.g. a thinking model ran out)."""
 
 
-def _acquire(abort: Callable[[], None] | None) -> None:
+def _acquire(abort: Callable[[], None] | None, lock: threading.Lock | None = None) -> None:
     """Take the GPU-concurrency lock; abortable while waiting."""
-    while not _lock.acquire(timeout=0.5):
+    lock = lock or _lock
+    while not lock.acquire(timeout=0.5):
         if abort:
             abort()
 
@@ -189,17 +256,18 @@ def _post(cfg: dict, body: dict, abort: Callable[[], None] | None = None) -> htt
     # Only video-curator calls carry this context; do not label unrelated Hub
     # or interactive inference as a video-curation measurement.
     from .agent import timing
+    lock = _lock_for(cfg["base_url"])
     if timing.current_trace():
         with timing.span("model_wait"):
-            _acquire(abort)
+            _acquire(abort, lock)
     else:
-        _acquire(abort)
+        _acquire(abort, lock)
     if abort is None:
         try:
             with httpx.Client(timeout=timeout) as c:
                 return c.post(url, json=body, headers=headers)
         finally:
-            _lock.release()
+            lock.release()
 
     box: dict = {}
     ready = threading.Event()
@@ -222,13 +290,13 @@ def _post(cfg: dict, body: dict, abort: Callable[[], None] | None = None) -> htt
             try:
                 loop.close()
             finally:
-                _lock.release()
+                lock.release()
 
     th = threading.Thread(target=run, daemon=True, name="llm-request")
     try:
         th.start()
     except BaseException:
-        _lock.release()
+        lock.release()
         raise
     ready.wait()
     try:

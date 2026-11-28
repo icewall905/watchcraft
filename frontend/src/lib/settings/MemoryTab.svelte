@@ -119,6 +119,8 @@
 	const RATING: Record<number, string> = { [-1]: '👎', 0: '📝', 1: '👍', 2: '❤️' };
 </script>
 
+<a class="curator-banner" href="/settings?tab=curator" use:focusable>Learning from videos and articles now feeds your Curator knowledge →</a>
+
 <Section title="Nightly memory consolidation" intro="Turn learned preferences into a compact, stable core before the next day. Original rules and previous core versions are retained.">
 	<div class="stack">
 		<Toggle label="Enable nightly consolidation" hint="Runs once nightly within four hours of the scheduled time. Waits while the curator is paused, disabled, or the model is unavailable. Manual runs work independently of this toggle." bind:checked={config.value.enabled} />
@@ -226,6 +228,7 @@
 </Section>
 
 <style>
+	.curator-banner { display: block; margin-bottom: 1.5rem; padding: 0.75rem 1rem; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: var(--surface-2); color: var(--text); text-decoration: none; font-weight: 600; }
 	.core-memory { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 0.85rem; max-height: 32rem; overflow: auto; padding: 1rem; border: 1px solid var(--line); border-radius: var(--r-md); background: rgba(0,0,0,0.15); margin-top: 0.8rem; }
 	.add {
 		display: grid;

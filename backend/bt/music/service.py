@@ -1,9 +1,11 @@
 """Music section logic: track store, favorites, mixes, suggestions and the DJ's next picks."""
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
 import re
+import unicodedata
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -21,6 +23,7 @@ MIX_SIZE = 40
 MAX_MIX_TRACKS = 300
 MAX_MIXES = 60
 CURATOR_STALE_S = 24 * 3600
+MOOD_RETRY_S = 86400
 BUILD_TIMEOUT_S = 10 * 60  # a build this old died with its thread or process
 FOR_YOU_TTL = 2 * 3600
 COLD_START = ('party anthems', 'dance hits', 'feel good pop')
@@ -73,13 +76,41 @@ def fav_sets(s: Session, pid: int) -> tuple[set[str], set[str]]:
     return {r.ref for r in rows if r.kind == 'track'}, {r.ref for r in rows if r.kind == 'artist'}
 
 
+def taste(s: Session, pid: int) -> tuple[set[str], set[str]]:
+    """What the profile taught us to avoid: disliked video ids, and artists it wants less of."""
+    rows = s.exec(select(MusicFavorite).where(MusicFavorite.profile_id == pid,
+                                              MusicFavorite.kind.in_(['dislike', 'less']))).all()
+    return {r.ref for r in rows if r.kind == 'dislike'}, {r.ref for r in rows if r.kind == 'less'}
+
+
+def _folded(text: str) -> str:
+    """norm() with accents folded, for matching what a guest typed ("beyonce" → Beyoncé)."""
+    return norm(''.join(c for c in unicodedata.normalize('NFKD', text or '') if not unicodedata.combining(c)))
+
+
+def is_less(artist: str, less: set[str]) -> bool:
+    """True when any of the credited artists is one the profile wants less of ("Dua Lipa, DaBaby")."""
+    a = f' {norm(artist)} '
+    return any(k and f' {k} ' in a for k in less)
+
+
+def prune(tracks: list[dict], disliked: set[str], less: set[str], drop_less: bool = False) -> list[dict]:
+    """Drop disliked songs; push (or drop) artists the profile wants less of to the back."""
+    keep = [t for t in tracks if t['video_id'] not in disliked]
+    if drop_less:
+        return [t for t in keep if not is_less(t.get('artist', ''), less)]
+    return sorted(keep, key=lambda t: is_less(t.get('artist', ''), less))
+
+
 def decorate(s: Session, pid: int, tracks: list[dict]) -> list[dict]:
     """Add the profile's favourite flags. Also records the tracks, so later ids resolve."""
     store(s, tracks)
     s.commit()
     ft, fa = fav_sets(s, pid)
+    disliked, less = taste(s, pid)
     saved = offline.offline_status(s, [t['video_id'] for t in tracks])
     return [{**t, 'fav': t['video_id'] in ft, 'fav_artist': norm(t.get('artist', '')) in fa,
+             'disliked': t['video_id'] in disliked, 'less_artist': is_less(t.get('artist', ''), less),
              'offline': saved.get(t['video_id']) == 'done'} for t in tracks]
 
 
@@ -95,9 +126,15 @@ def artist_tracks(s: Session, pid: int, name: str) -> list[dict]:
 
 # ---------- favorites
 
+OPPOSITE = {'track': 'dislike', 'dislike': 'track', 'artist': 'less', 'less': 'artist'}
+
+
 def set_favorite(s: Session, pid: int, kind: str, on: bool, track: dict | None = None, artist: str = '',
                  artist_id: str = '') -> None:
-    if kind == 'track':
+    """Favourite or teach-away a song (`track` / `dislike`) or an artist (`artist` / `less`)."""
+    if kind not in OPPOSITE:
+        raise ValueError('unknown kind')
+    if kind in ('track', 'dislike'):
         if not track or not yt.VID_RE.match(track.get('video_id') or ''):
             raise ValueError('track needs a video id')
         store(s, [track], trusted=False)
@@ -110,9 +147,13 @@ def set_favorite(s: Session, pid: int, kind: str, on: bool, track: dict | None =
     row = s.get(MusicFavorite, (pid, kind, ref))
     if on and not row:
         s.add(MusicFavorite(profile_id=pid, kind=kind, ref=ref, name=name, artist_id=artist_id, thumbnail=thumb))
+        if other := s.get(MusicFavorite, (pid, OPPOSITE[kind], ref)):  # loving undoes a dislike and back
+            s.delete(other)
     elif not on and row:
         s.delete(row)
     s.commit()
+    if on and kind == 'dislike':
+        offline.forget(s, pid, ref)
     with _lock:
         _for_you.pop(pid, None)
 
@@ -125,7 +166,8 @@ def favorites(s: Session, pid: int) -> dict:
     tracks = [{**known[r.ref], 'fav': True, 'fav_artist': norm(known[r.ref]['artist']) in fa}
               for r in rows if r.kind == 'track' and r.ref in known]
     artists = [{'name': r.name, 'artist_id': r.artist_id, 'key': r.ref} for r in rows if r.kind == 'artist']
-    return {'tracks': tracks, 'artists': artists}
+    return {'tracks': tracks, 'artists': artists, 'disliked': [r.ref for r in rows if r.kind == 'dislike'],
+            'less': [{'name': r.name, 'artist_id': r.artist_id, 'key': r.ref} for r in rows if r.kind == 'less']}
 
 
 # ---------- plays
@@ -156,11 +198,22 @@ def mix_dict(s: Session, m: MusicMix, pid: int, with_tracks: bool = False) -> di
            'count': len(links), 'created_at': m.created_at, 'refreshed_at': m.refreshed_at,
            'last_played_at': m.last_played_at,
            'covers': [f'https://i.ytimg.com/vi/{lk.video_id}/mqdefault.jpg' for lk in links[:4]]}
+    if m.kind == 'mood':
+        states = offline.offline_status(s, [lk.video_id for lk in links])
+        local = offline.saved_ids(s, [lk.video_id for lk in links])
+        saved = len(local)
+        wanted = set(offline.wanted_ids(s))
+        blocked = sum(lk.video_id not in wanted and lk.video_id not in local for lk in links)
+        failed = sum(states.get(lk.video_id) == 'error' for lk in links)
+        out['offline'] = {'saved': saved, 'total': len(links), 'failed': failed, 'blocked': blocked,
+                          'state': 'ready' if links and saved == len(links) else
+                          'partial' if saved else 'preparing'}
     if with_tracks:
         known = tracks_by_id(s, [lk.video_id for lk in links])
         reasons = {lk.video_id: lk.reason for lk in links}
         tracks = decorate(s, pid, [known[lk.video_id] for lk in links if lk.video_id in known])
-        out['tracks'] = [{**t, 'reason': reasons.get(t['video_id'], '')} for t in tracks]
+        out['tracks'] = [{**t, 'reason': reasons.get(t['video_id'], ''),
+                          **({'offline': t['video_id'] in local} if m.kind == 'mood' else {})} for t in tracks]
     return out
 
 
@@ -198,6 +251,26 @@ def claim_build(s: Session, m: MusicMix) -> bool:
     return True
 
 
+def create_mood(s: Session, pid: int, preset: str, description: str = '') -> MusicMix:
+    if preset == 'custom':
+        if not description.strip() or len(description) > 300:
+            raise ValueError('Describe your background mood in 1–300 characters.')
+        name, intent = 'Custom background', description.strip()
+    elif preset in dj.MOODS:
+        name, intent = dj.MOODS[preset]['name'], dj.MOODS[preset]['description']
+    else:
+        raise ValueError('Choose a background mood.')
+    # Presets are prepared ahead of visits; repeated requests reuse the same durable mix.
+    with _lock:
+        existing = s.exec(select(MusicMix).where(MusicMix.profile_id == pid, MusicMix.kind == 'mood',
+                         MusicMix.curator == preset,
+                         MusicMix.description == dj.BACKGROUND_INTENT + intent).order_by(MusicMix.id)).first()
+        if existing:
+            return existing
+        return create_mix(s, pid, kind='mood', description=dj.BACKGROUND_INTENT + intent,
+                          curator=preset, name=name)
+
+
 def create_mix(s: Session, pid: int, *, kind: str, seed: dict | None = None, description: str = '',
                curator: str = '', name: str = '', tracks: list[dict] | None = None) -> MusicMix:
     count = s.exec(select(func.count()).select_from(MusicMix).where(MusicMix.profile_id == pid)).one()
@@ -210,6 +283,12 @@ def create_mix(s: Session, pid: int, *, kind: str, seed: dict | None = None, des
         m = MusicMix(profile_id=pid, kind='seed', seed_video_id=seed['video_id'], emoji='📻', status='building',
                      name=(name or f'{seed.get("title") or "Track"} radio')[:80],
                      blurb=f'Built around {seed.get("artist") or "this track"}.')
+    elif kind == 'mood':
+        if curator not in (*dj.MOODS, 'custom') or not description.strip():
+            raise ValueError('Choose a background mood.')
+        m = MusicMix(profile_id=pid, kind='mood', curator=curator, description=description[:500],
+                     emoji=dj.MOODS.get(curator, {}).get('emoji', '🎐'),
+                     status='building', name=(name or 'Background mix')[:80])
     elif kind == 'curator':
         if not description.strip():
             raise ValueError('describe the mix you want')
@@ -319,23 +398,27 @@ def build_mix(mid: int) -> None:
         if not m:
             return
         kind, seed, description, curator = m.kind, m.seed_video_id, m.description, m.curator
+        disliked, less = taste(s, m.profile_id)
     try:
         if kind == 'seed':
-            tracks = yt.radio(seed, origin='worker')[:MIX_SIZE]
+            tracks = prune(yt.radio(seed, origin='worker'), disliked, less)[:MIX_SIZE]
             extra = {}
         else:
-            plan = dj.curate(description, curator)
+            plan = (dj.curate(description, curator, background=True) if kind == 'mood'
+                    else dj.curate(description, curator))
             named = resolve_all(plan['picks'])
             found = []
             for q in plan['queries'][:6]:
                 try:
-                    found.append(yt.search(q, origin='worker')[:12])
+                    find = yt.background_search if kind == 'mood' else yt.search
+                    found.append(find(q, origin='worker')[:12])
                 except Exception as e:  # noqa: BLE001
                     log.info('music curator query %r failed: %s', q, e)
-            tracks = _interleave(named, *found)[:MIX_SIZE]
+            tracks = prune(_interleave(named, *found), disliked, less)[:MIX_SIZE]
             extra = {'name': plan['name'], 'emoji': plan['emoji'], 'blurb': plan['blurb'], 'queries': plan['queries']}
         if not tracks:
-            raise RuntimeError('No official music videos matched. Try different words.')
+            raise RuntimeError('No background music matched. Try a different mood or description.' if kind == 'mood'
+                               else 'No official music videos matched. Try different words.')
     except Exception as e:  # noqa: BLE001
         with session() as s:
             if m := s.get(MusicMix, mid):
@@ -356,6 +439,57 @@ def build_mix(mid: int) -> None:
         m.status, m.error, m.refreshed_at = 'ready', '', time.time()
         s.add(m)
         s.commit()
+        if m.kind == 'mood':
+            offline.queue(s)
+
+
+def maintain_moods() -> bool:
+    """Prepare one preset/build per tick, without requiring a page visit.
+
+    Existing download caps and manual deletion decisions remain authoritative. Prepared
+    selections persist until an explicit refresh; failed curation retries daily.
+    """
+    from ..models import Profile
+    from ..access import hub_allowed
+    with session() as s:
+        for pid in s.exec(select(Profile.id).order_by(Profile.id)).all():
+            if not hub_allowed(s, pid):
+                continue
+            rows = s.exec(select(MusicMix).where(MusicMix.profile_id == pid, MusicMix.kind == 'mood')).all()
+            for preset in dj.MOODS:
+                if not any(m.curator == preset for m in rows):
+                    count = s.exec(select(func.count()).select_from(MusicMix).where(MusicMix.profile_id == pid)).one()
+                    if count < MAX_MIXES:
+                        create_mood(s, pid, preset)
+                        return True
+            for m in sorted(rows, key=lambda row: row.refreshed_at or row.created_at):
+                age = time.time() - (m.build_started or m.created_at)
+                dead = m.status == 'building' and age > BUILD_TIMEOUT_S
+                retry = m.status == 'error' and age > MOOD_RETRY_S
+                if (dead or retry) and claim_build(s, m):
+                    return True
+        # Recover externally removed local files through the normal bounded downloader.
+        from ..models import Download
+        wanted = set(offline.wanted_ids(s))
+        mood_ids = s.exec(select(MusicMixTrack.video_id).join(MusicMix, MusicMix.id == MusicMixTrack.mix_id)
+                         .where(MusicMix.kind == 'mood')).all()
+        saved = offline.saved_ids(s, mood_ids)
+        for row in s.exec(select(Download).where(Download.video_id.in_(mood_ids), Download.status == 'done')).all():
+            if row.video_id in wanted and row.video_id not in saved:
+                row.status = 'evicted'
+                s.add(row)
+        s.commit()
+        offline.queue(s)
+    return False
+
+
+async def mood_scheduler() -> None:
+    while True:
+        try:
+            await asyncio.to_thread(maintain_moods)
+        except Exception:
+            log.exception('Mood background preparation failed')
+        await asyncio.sleep(60)
 
 
 def refresh_mix(s: Session, m: MusicMix) -> None:
@@ -419,7 +553,8 @@ def for_you(s: Session, pid: int, refresh: bool = False) -> dict:
                       .limit(300)).all() if names else []
         by_artist = [track_dict(r) for r in rows if norm(r.artist) in loved_artists
                      or any(norm(n) in norm(r.artist) for n in names)]
-    loved = {t['video_id']: t for t in [*favs['tracks'], *played, *by_artist]}
+    disliked, less = taste(s, pid)
+    loved = {t['video_id']: t for t in prune([*favs['tracks'], *played, *by_artist], disliked, less, drop_less=True)}
     loved_list = random.sample(list(loved.values()), min(16, len(loved)))
 
     seeds = [t['video_id'] for t in random.sample(list(loved.values()), min(3, len(loved)))]
@@ -429,7 +564,7 @@ def for_you(s: Session, pid: int, refresh: bool = False) -> dict:
         lists += list(pool.map(lambda a: _safe(yt.search, a), artists))
         if not lists or not any(lists):
             lists = list(pool.map(lambda q: _safe(yt.search, q), COLD_START))
-    fresh = [t for t in _interleave(*lists) if t['video_id'] not in loved][:16]
+    fresh = prune([t for t in _interleave(*lists) if t['video_id'] not in loved], disliked, less)[:16]
     for t in fresh:
         t['reason'] = 'New for you'
     with _lock:
@@ -444,35 +579,104 @@ def dj_next(s: Session, pid: int, played: list[str], queue: list[str], vibe: str
             n: int = 3) -> dict:
     """The DJ's next `n` tracks plus what it says on the mic. Model first, YouTube Music radio as backup."""
     n = max(1, min(int(n), 8))
-    played = [v for v in played if yt.VID_RE.match(v)][-30:]
-    exclude = set(played) | {v for v in queue if yt.VID_RE.match(v)}
+    disliked, less = taste(s, pid)
+    exclude = set(played) | {v for v in queue if yt.VID_RE.match(v)}  # a skipped dislike is not played again
+    played = [v for v in played if yt.VID_RE.match(v) and v not in disliked][-30:]  # nor does the DJ flow from it
     known = tracks_by_id(s, played)
     history = [known[v] for v in played if v in known]
     favs = favorites(s, pid)
     loved = [f'{t["artist"]} – {t["title"]}' for t in favs['tracks'][:10]] + [a['name'] for a in favs['artists'][:8]]
+    exclude |= disliked
+    asked = f' {_folded(request)} '
+    less = {a['key'] for a in favs['less'] if f' {_folded(a["name"])} ' not in asked}  # a guest request still plays
+    avoid = [a['name'] for a in favs['less'][:10] if a['key'] in less]
+    newest = s.exec(select(MusicFavorite.ref).where(MusicFavorite.profile_id == pid, MusicFavorite.kind == 'dislike')
+                    .order_by(MusicFavorite.created_at.desc()).limit(15)).all()
+    known_bad = tracks_by_id(s, list(newest))
+    avoid += [f'{known_bad[v]["artist"]} – {known_bad[v]["title"]}' for v in newest if v in known_bad]
 
     out: list[dict] = []
     line, source = '', 'radio'
-    plan = dj.pick_next(history, loved, vibe, request, n)
+    plan = dj.pick_next(history, loved, vibe, request, n, avoid)
     if plan:
         source, line = 'ai', plan['line']
-        out = [t for t in resolve_all(plan['picks']) if t['video_id'] not in exclude]
+        out = prune([t for t in resolve_all(plan['picks']) if t['video_id'] not in exclude], disliked, less, True)
         uniq: dict[str, dict] = {}
         for t in out:
             uniq.setdefault(t['video_id'], t)
         out = list(uniq.values())[:n]
     if len(out) < n:
-        out += _radio_picks(s, pid, history, favs, exclude | {t['video_id'] for t in out}, vibe, request, n - len(out))
+        out += _radio_picks(s, pid, history, favs, exclude | {t['video_id'] for t in out}, vibe, request, n - len(out),
+                            less)
     if not out:
         return {'line': "The crates are empty right now — try a request!", 'tracks': [], 'source': source}
     if not line:
         line = dj.fallback_line(out[0], request)
-    spawn(yt.prepare, out[0]['video_id'])
-    return {'line': line, 'tracks': decorate(s, pid, out), 'source': source}
+    tracks = decorate(s, pid, out)  # also stores the tracks, so the lyrics lookup knows their names
+    ids = [t['video_id'] for t in out]
+    offline.save_dj(s, pid, ids)  # the downloader stores DJ picks like a mix: replays come from disk
+    spawn(prewarm, pid, ids)
+    return {'line': line, 'tracks': tracks, 'source': source}
+
+
+SYNC_TRIED_KEY = 'music_prewarm_synced'
+SYNC_RETRY_S = 30 * 86400
+SYNC_TRIED_KEEP = 3000
+
+
+def _first_sync_try(video_id: str) -> bool:
+    """True once per song per SYNC_RETRY_S: the background auto-sync is never retried song after song.
+    Kept in the database, so a failed fit is not tried again on every pick or after a restart."""
+    from ..db import save_setting
+    from ..models import Setting
+    with _lock, session() as s:
+        row = s.get(Setting, SYNC_TRIED_KEY)
+        tried = dict((row.value or {}) if row else {})
+        now = time.time()
+        if now - tried.get(video_id, 0) < SYNC_RETRY_S:
+            return False
+        tried[video_id] = now
+        if len(tried) > SYNC_TRIED_KEEP:
+            tried = dict(sorted(tried.items(), key=lambda kv: kv[1])[-SYNC_TRIED_KEEP:])
+        save_setting(SYNC_TRIED_KEY, tried, s)
+        return True
+
+
+def prewarm(pid: int, ids: list[str]) -> None:
+    """Get the DJ's picks ready before their turn: the stream, the lyrics, and their timing.
+
+    Every pick gets its lyrics looked up. The next song also gets the app's ear when speech-to-text is
+    on: timed lyrics are auto-synced to the video, a song without them is transcribed for karaoke."""
+    if not ids:
+        return
+    yt.prepare(ids[0])
+    from . import lyrics, sync
+    from .. import subtitle_jobs
+    rows = {}
+    for v in ids:
+        try:
+            with session() as s:
+                row = lyrics.get(s, v)
+                rows[v] = (row.status, row.synced, row.offset_source)
+        except Exception as e:  # noqa: BLE001 - lyrics still load when the song plays
+            log.info('music lyrics prewarm %s failed: %s', v, e)
+    first = rows.get(ids[0])
+    try:
+        if not first or not subtitle_jobs.enabled():
+            return
+        status, synced, offset_source = first
+        if status == 'found' and synced:
+            # a manual nudge or an earlier auto-sync already fixed the timing; a failed try is not repeated
+            if not offset_source and _first_sync_try(ids[0]):
+                sync.start(ids[0])
+        elif status == 'missing' and subtitle_jobs.status(ids[0])['status'] not in ('ready', 'queued', 'running', 'failed'):
+            subtitle_jobs.enqueue(ids[0], pid)
+    except Exception as e:  # noqa: BLE001
+        log.info('music subtitle prewarm %s failed: %s', ids[0], e)
 
 
 def _radio_picks(s: Session, pid: int, history: list[dict], favs: dict, exclude: set[str], vibe: str, request: str,
-                 n: int) -> list[dict]:
+                 n: int, less: frozenset[str] | set[str] = frozenset()) -> list[dict]:
     pool: list[dict] = []
     if request:
         pool = [{**t, 'reason': 'Guest request'} for t in _safe(yt.search, request)[:4]]
@@ -485,7 +689,7 @@ def _radio_picks(s: Session, pid: int, history: list[dict], favs: dict, exclude:
         pool += _safe(yt.radio, seed)[1:] if seed else _safe(yt.search, vibe or random.choice(COLD_START))
     last_artist = norm(history[-1]['artist']) if history else ''
     picks: list[dict] = []
-    candidates = [t for t in pool if t['video_id'] not in exclude]
+    candidates = [t for t in pool if t['video_id'] not in exclude and not is_less(t.get('artist', ''), less)]
     keep = 1 if request else 0  # a guest request plays its best match first
     head, rest = candidates[:keep], candidates[keep:keep + 20]
     random.shuffle(rest)
@@ -504,7 +708,7 @@ def delete_profile(s: Session, pid: int) -> None:
     for model in (MusicMix, MusicFavorite, MusicPlay):
         s.exec(delete(model).where(model.profile_id == pid))
     from ..models import Setting
-    s.exec(delete(Setting).where(Setting.key == f'{offline.FOR_YOU_KEY}{pid}'))
+    s.exec(delete(Setting).where(Setting.key.in_([f'{offline.FOR_YOU_KEY}{pid}', f'{offline.DJ_KEY}{pid}'])))
 
 
 def offline_summary(s: Session) -> dict:

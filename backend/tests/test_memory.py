@@ -15,10 +15,13 @@ from bt.models import Category, Lesson, LlmRequest, MemoryCore, Profile, Video
 
 
 @pytest.fixture(autouse=True)
-def fresh():
+def fresh(monkeypatch):
     SQLModel.metadata.drop_all(engine)
     init_db()
     save_setting("memory", {"enabled": False})
+    # These tests cover the per-type core memory that profiles keep until their knowledge is woven
+    # (see test_curator_knowledge.py for the woven path).
+    monkeypatch.setattr("bt.knowledge.weave.weave", lambda pid, collect=True: {"status": "no model"})
     yield
 
 

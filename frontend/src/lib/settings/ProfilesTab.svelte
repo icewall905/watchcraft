@@ -12,9 +12,9 @@
 	}
 </script>
 
-<Section title="Profiles" intro="Each profile has its own playlists, subscriptions, history and AI memory. Administrators manage profile access. Child profiles disable Hub discovery and research; every adult profile must have a PIN when child profiles are enabled.">
+<Section title="Profiles" intro={session.mode === 'accounts' ? "Each profile has its own playlists, subscriptions, history and AI memory. Child profiles are kid-safe. PINs are optional; a profile without one is open to anyone signed in on this device." : "Each profile has its own playlists, subscriptions, history and AI memory. Administrators manage profile access. Child profiles disable Hub discovery and research; every adult profile must have a PIN when child profiles are enabled."}>
 	{#snippet actions()}
-		{#if session.isAdmin}<button class="btn primary" use:focusable={{ group: 'pf-top', onSelect: () => (editing = null) }}>＋ Add person</button>{/if}
+		{#if session.isAdmin || (session.mode === 'accounts' && session.grownUp)}<button class="btn primary" use:focusable={{ group: 'pf-top', onSelect: () => (editing = null) }}>＋ Add person</button>{/if}
 	{/snippet}
 	{#if session.profiles.some(p => p.role === 'admin' && !p.pin_required)}<p class="small muted">An administrator profile without a PIN is open to anyone. Set its PIN to protect shared settings.</p>{/if}
 	<div class="list">
@@ -23,13 +23,13 @@
 				<Avatar emoji={p.emoji} color={p.color} size="3rem" />
 				<div class="grow">
 					<strong>{p.name}{p.pin_required ? ' 🔒' : ''}</strong>
-					<span class="small muted">{p.role === 'admin' ? 'Administrator' : p.role === 'child' ? 'Child · Hub disabled' : 'Adult'}</span>
+					<span class="small muted">{p.role === 'admin' ? 'Administrator' : p.role === 'child' ? 'Child · Kid-safe discovery' : 'Adult'}</span>
 					{#if p.id === session.profileId}<span class="small" style="color:var(--accent)">Watching now</span>{/if}
 				</div>
 				{#if p.id !== session.profileId}
 					<button class="btn mini" use:focusable={{ group: `pf-${p.id}`, onSelect: () => session.switchProfile(p.id) }}>Switch to</button>
 				{/if}
-				{#if session.isAdmin || p.id === session.profileId}<button class="btn mini" use:focusable={{ group: `pf-${p.id}`, onSelect: () => edit(p) }}>Edit</button>{/if}
+				{#if session.isAdmin || session.mode === 'accounts' || p.id === session.profileId}<button class="btn mini" use:focusable={{ group: `pf-${p.id}`, onSelect: () => edit(p) }}>Edit</button>{/if}
 			</div>
 		{/each}
 	</div>

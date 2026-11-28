@@ -1,7 +1,8 @@
 import pytest
 
 from test_curation import client  # noqa: F401  (fixture)
-from bt.music import dj, service, yt
+from bt.music import dj, lyrics, offline, service, sync, yt
+from bt import subtitle_jobs
 
 
 def _t(vid: str, title: str, artist: str, **kw) -> dict:
@@ -15,15 +16,24 @@ RADIO = [SEED, _t('BBBBBBBBBBB', 'Titanium', 'David Guetta'), _t('CCCCCCCCCCC', 
 SEARCH = {'abba': [SEED, RADIO[4]], 'beyonce halo': [RADIO[2]], 'a-ha take on me': [RADIO[3]]}
 
 
+@pytest.fixture(autouse=True)
+def _no_lrclib(monkeypatch):
+    """The DJ prewarms lyrics; this module never reaches LRCLIB (test_music_lyrics fakes it its own way)."""
+    monkeypatch.setattr(lyrics, 'lookup', lambda *a: None)
+
+
 @pytest.fixture
 def music(client, monkeypatch):  # noqa: F811
     calls = []
     monkeypatch.setattr(yt, 'radio', lambda vid, origin='user': (calls.append(('radio', vid)), list(RADIO))[1])
     monkeypatch.setattr(yt, 'search', lambda q, origin='user': (calls.append(('search', q)),
                                                                  list(SEARCH.get(q.lower(), RADIO[1:3])))[1])
+    monkeypatch.setattr(yt, 'background_search', lambda q, origin='user': (calls.append(('search', q)),
+                                                                          list(RADIO[1:3]))[1])
     monkeypatch.setattr(yt, 'prepare', lambda vid: calls.append(('prepare', vid)))
     monkeypatch.setattr(service, 'spawn', lambda fn, *a: fn(*a))
     monkeypatch.setattr(dj.ai, 'enabled', lambda: False)
+    monkeypatch.setattr(subtitle_jobs, 'enabled', lambda cfg=None: False)  # DJ prewarm: no speech-to-text
     service._for_you.clear()
     client.calls = calls
     return client
@@ -295,3 +305,480 @@ def test_listing_refreshes_one_stale_curator_mix_at_a_time(music):
     music.calls.clear()
     music.get('/api/music/mixes')
     assert len([c for c in music.calls if c == ('search', 'abba')]) == 1
+
+
+# ---------- teaching the picks: dislike a song, less of an artist
+
+def test_dislike_and_less_round_trip_and_cancel_their_opposites(music):
+    music.post('/api/music/favorites', json={'kind': 'track', 'track': SEED})
+    music.post('/api/music/favorites', json={'kind': 'artist', 'artist': 'ABBA'})
+    r = music.post('/api/music/favorites', json={'kind': 'dislike', 'track': SEED}).json()
+    assert r['disliked'] == [SEED['video_id']] and r['tracks'] == []  # a dislike drops the heart
+    r = music.post('/api/music/favorites', json={'kind': 'less', 'artist': 'ABBA'}).json()
+    assert r['less'] == [{'name': 'ABBA', 'artist_id': '', 'key': 'abba'}] and r['artists'] == []
+    hits = music.get('/api/music/search', params={'q': 'abba'}).json()['tracks']
+    assert hits[0]['disliked'] and hits[0]['less_artist'] and not hits[1]['disliked']
+    r = music.post('/api/music/favorites', json={'kind': 'track', 'track': SEED}).json()
+    assert r['disliked'] == [] and [t['video_id'] for t in r['tracks']] == [SEED['video_id']]
+    r = music.post('/api/music/favorites', json={'kind': 'less', 'artist': 'ABBA', 'on': False}).json()
+    assert r['less'] == []
+
+
+def test_dj_never_picks_disliked_songs_or_less_artists(music):
+    music.post('/api/music/favorites', json={'kind': 'dislike', 'track': RADIO[1]})
+    music.post('/api/music/favorites', json={'kind': 'less', 'artist': 'ABBA'})
+    music.get('/api/music/search', params={'q': 'abba'})  # stores SEED so the DJ plays its radio
+    for _ in range(4):
+        r = music.post('/api/music/dj', json={'played': [SEED['video_id']], 'n': 3}).json()
+        assert {t['video_id'] for t in r['tracks']} == {'CCCCCCCCCCC', 'DDDDDDDDDDD'}
+
+
+def test_dj_less_artist_matches_featured_credits_but_a_request_still_plays(music):
+    music.post('/api/music/favorites', json={'kind': 'less', 'artist': 'Beyoncé'})
+    assert service.is_less('Beyoncé, Jay-Z', {'beyonc'}) and not service.is_less('Beyonce2', {'beyonce'})
+    r = music.post('/api/music/dj', json={'request': 'beyonce halo', 'n': 1}).json()
+    assert r['tracks'][0]['video_id'] == 'CCCCCCCCCCC'
+
+
+def test_dj_tells_the_model_what_the_crowd_dislikes(music, monkeypatch):
+    seen = {}
+    monkeypatch.setattr(dj.ai, 'enabled', lambda: True)
+
+    def call(system, user, *a, **kw):
+        seen['system'], seen['user'] = system, user
+        return {'line': 'Go!', 'picks': [{'artist': 'ABBA', 'title': 'Dancing Queen', 'why': 'x'},
+                                         {'artist': 'a-ha', 'title': 'Take On Me', 'why': 'y'}]}
+    monkeypatch.setattr(dj.ai, '_call', call)
+    music.post('/api/music/favorites', json={'kind': 'less', 'artist': 'ABBA'})
+    music.post('/api/music/favorites', json={'kind': 'dislike', 'track': RADIO[1]})
+    r = music.post('/api/music/dj', json={'n': 2}).json()
+    assert 'crowd_dislikes' in seen['user'] and 'ABBA' in seen['user'] and 'Titanium' in seen['user']
+    assert 'crowd_dislikes' in seen['system']
+    assert all(t['artist'] != 'ABBA' and t['video_id'] != 'BBBBBBBBBBB' for t in r['tracks'])
+
+
+def test_radio_for_you_and_mixes_learn_from_dislikes(music):
+    music.post('/api/music/favorites', json={'kind': 'track', 'track': RADIO[3]})
+    music.post('/api/music/favorites', json={'kind': 'dislike', 'track': RADIO[2]})
+    music.post('/api/music/favorites', json={'kind': 'less', 'artist': 'David Guetta'})
+    radio = [t['video_id'] for t in music.get(f'/api/music/radio/{SEED["video_id"]}').json()['tracks']]
+    assert radio[0] == SEED['video_id'] and 'CCCCCCCCCCC' not in radio and radio[-1] == 'BBBBBBBBBBB'
+    fy = music.get('/api/music/for-you').json()
+    assert 'CCCCCCCCCCC' not in [t['video_id'] for t in fy['fresh'] + fy['loved']]
+    m = music.post('/api/music/mixes', json={'kind': 'seed', 'seed': SEED}).json()
+    got = [t['video_id'] for t in music.get(f'/api/music/mixes/{m["id"]}').json()['tracks']]
+    assert 'CCCCCCCCCCC' not in got and got[-1] == 'BBBBBBBBBBB'
+
+
+def test_bad_taste_kind_is_rejected(music):
+    assert music.post('/api/music/favorites', json={'kind': 'hate', 'artist': 'ABBA'}).status_code == 422
+
+
+# ---------- the DJ's picks are stored offline and their lyrics made ready
+
+def test_dj_picks_join_the_offline_set_newest_first(music):
+    from bt.db import session
+    first = [t['video_id'] for t in music.post('/api/music/dj', json={'n': 1}).json()['tracks']]
+    second = [t['video_id'] for t in music.post('/api/music/dj', json={'n': 1, 'queue': first}).json()['tracks']]
+    with session() as s:
+        wanted = offline.wanted_ids(s)
+        assert wanted[:2] == second + first and all(offline.is_wanted(s, v) for v in first + second)
+
+
+def test_prewarm_looks_up_lyrics_and_syncs_or_transcribes_the_next_song(music, monkeypatch):
+    from bt.db import session
+    from bt.music.models import MusicLyrics
+    looked, synced, queued = [], [], []
+    timed = {'source': 'lrclib', 'source_id': 1, 'synced': True, 'lines': [{'t': 0, 'text': 'hi'}], 'plain': 'hi',
+             'duration': 200}
+    monkeypatch.setattr(lyrics, 'lookup', lambda artist, title, d: (looked.append(title), timed if title == 'Halo' else None)[1])
+    monkeypatch.setattr(subtitle_jobs, 'enabled', lambda cfg=None: True)
+    monkeypatch.setattr(subtitle_jobs, 'enqueue', lambda vid, pid, *a, **kw: queued.append(vid))
+    monkeypatch.setattr(sync, 'start', lambda vid: synced.append(vid) or {})
+    music.get('/api/music/search', params={'q': 'x'})  # stores Titanium and Halo
+    service.prewarm(1, ['CCCCCCCCCCC', 'BBBBBBBBBBB'])
+    assert looked == ['Halo', 'Titanium'] and synced == ['CCCCCCCCCCC'] and queued == []
+    service.prewarm(1, ['CCCCCCCCCCC'])  # the first try failed (no offset saved): not tried on every pick
+    assert synced == ['CCCCCCCCCCC']
+    service.prewarm(1, ['BBBBBBBBBBB'])
+    assert queued == ['BBBBBBBBBBB']
+    with session() as s:  # once the timing is fixed it is left alone
+        row = s.get(MusicLyrics, 'CCCCCCCCCCC')
+        row.offset_source = 'auto'
+        s.add(row)
+        s.commit()
+    service.prewarm(1, ['CCCCCCCCCCC'])
+    assert synced == ['CCCCCCCCCCC']
+
+
+def test_a_disliked_dj_pick_leaves_the_offline_set_and_the_flow(music, monkeypatch):
+    from bt.db import session
+    music.get('/api/music/search', params={'q': 'abba'})
+    first = music.post('/api/music/dj', json={'n': 1}).json()['tracks'][0]
+    music.post('/api/music/favorites', json={'kind': 'dislike', 'track': first})
+    with session() as s:
+        assert first['video_id'] not in offline.wanted_ids(s) and not offline.is_wanted(s, first['video_id'])
+    seeds = []
+    monkeypatch.setattr(yt, 'radio', lambda vid, origin='user': (seeds.append(vid), list(RADIO))[1])
+    music.post('/api/music/dj', json={'played': [SEED['video_id'], first['video_id']], 'n': 1})
+    assert seeds == [SEED['video_id']]  # the radio seeds from the last song not disliked
+
+
+# ---------- playlist imports
+
+def test_youtube_import_validates_host_before_fetch(music, monkeypatch):
+    from bt.music import imports
+    fetched = []
+    monkeypatch.setattr(imports.ytdl, '_extract', lambda *a, **kw: fetched.append(a))
+    for reference in ['https://evil.example/playlist?list=PLabcdefghij',
+                      'https://youtube.com.evil.example/?list=PLabcdefghij',
+                      'https://youtube.com/watch?v=AAAAAAAAAAA',
+                      'https://user@youtube.com/?list=PLabcdefghij']:
+        assert music.post('/api/music/import', json={'source': 'youtube', 'reference': reference}).status_code == 400
+    assert not fetched
+
+
+def test_youtube_import_keeps_order_deduplicates_and_owns_mix(music, monkeypatch):
+    from bt.music import imports
+    calls = []
+    def extract(url, *args, **kw):
+        calls.append((url, kw))
+        return {'title': 'My playlist', 'entries': [{'id': 'AAAAAAAAAAA', 'title': 'Audio track'}, None,
+                {'id': 'BBBBBBBBBBB', 'title': 'Music video'}, {'id': 'AAAAAAAAAAA', 'title': 'Duplicate'}]}
+    monkeypatch.setattr(imports.ytdl, '_extract', extract)
+    r = music.post('/api/music/import', json={'source': 'youtube', 'reference':
+                   'https://music.youtube.com/playlist?list=PLabcdefghij&untrusted=ignored'}).json()
+    assert (r['imported'], r['skipped'], r['duplicates'], r['limited']) == (2, 1, 1, False)
+    assert [t['video_id'] for t in r['mix']['tracks']] == ['AAAAAAAAAAA', 'BBBBBBBBBBB']
+    assert r['mix']['name'] == 'My playlist' and r['mix']['kind'] == 'manual'
+    assert calls[0][0] == 'https://www.youtube.com/playlist?list=PLabcdefghij'
+    assert calls[0][1]['playlistend'] == 301
+    pid2 = music.post('/api/profiles', json={'name': 'Guest', 'role': 'adult'}).json()['id']
+    assert music.get(f'/api/music/mixes/{r["mix"]["id"]}', headers={'X-Profile-Id': str(pid2)}).status_code == 404
+
+
+def test_music_assistant_requires_server_configuration_and_playlist_uri(music, monkeypatch):
+    monkeypatch.delenv('MUSIC_ASSISTANT_URL', raising=False)
+    monkeypatch.delenv('MUSIC_ASSISTANT_TOKEN', raising=False)
+    assert music.get('/api/music/import/status').json()['music_assistant_configured'] is False
+    r = music.post('/api/music/import', json={'source': 'music_assistant', 'reference': 'library://playlist/13'})
+    assert r.status_code == 400 and 'not connected' in r.json()['detail']
+    assert music.post('/api/music/import', json={'source': 'music_assistant',
+                      'reference': 'http://arbitrary.example/playlist'}).status_code == 400
+
+
+def test_music_assistant_http_contract_and_matching(music, monkeypatch):
+    from bt.music import imports
+    monkeypatch.setenv('MUSIC_ASSISTANT_URL', 'http://ma.local:8095')
+    monkeypatch.setenv('MUSIC_ASSISTANT_TOKEN', 'secret-test-token')
+    requests = []
+    entries = [{'name': 'Direct', 'artists': [{'name': 'Singer'}], 'provider_mappings':
+                [{'provider_domain': 'ytmusic', 'item_id': 'AAAAAAAAAAA'}]},
+               {'name': 'Halo', 'artists': [{'name': 'Beyoncé'}]},
+               {'name': 'Wrong song', 'artists': [{'name': 'ABBA'}]},
+               {'name': 'Podcast', 'media_type': 'podcast_episode'},
+               {'name': 'Direct again', 'provider': 'ytmusic', 'item_id': 'AAAAAAAAAAA'}]
+    class Client:
+        def __init__(self, **kw):
+            assert kw['follow_redirects'] is False and kw['trust_env'] is False
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def get(self, url):
+            return imports.httpx.Response(200, json={'server_version': '2.11.0'},
+                                          request=imports.httpx.Request('GET', url))
+        def stream(self, method, url, **kw):
+            from contextlib import nullcontext
+            requests.append((url, kw))
+            return nullcontext(imports.httpx.Response(200, json={'items': entries, 'total': 305},
+                                          request=imports.httpx.Request('POST', url)))
+    monkeypatch.setattr(imports.httpx, 'Client', Client)
+    r = music.post('/api/music/import', json={'source': 'music_assistant',
+                   'reference': 'library://playlist/13', 'name': 'Evening'}).json()
+    assert [t['video_id'] for t in r['mix']['tracks']] == ['AAAAAAAAAAA', 'CCCCCCCCCCC']
+    assert (r['skipped'], r['duplicates'], r['limited']) == (2, 1, True)
+    url, request = requests[0]
+    assert url == 'http://ma.local:8095/api'
+    assert request['headers']['Authorization'] == 'Bearer secret-test-token'
+    assert request['json']['args'] == {'item_id': '13', 'provider_instance_id_or_domain': 'library', 'limit': 301, 'offset': 0}
+    assert 'secret-test-token' not in str(r)
+
+
+def test_playlist_import_is_bounded_and_hub_gated(music, monkeypatch):
+    from bt.music import imports
+    monkeypatch.setattr(imports.ytdl, '_extract', lambda *a, **kw: {'entries':
+        [{'id': f'{i:011d}', 'title': 'Track'} for i in range(301)]})
+    r = music.post('/api/music/import', json={'source': 'youtube',
+                   'reference': 'https://youtube.com/playlist?list=PLabcdefghij'}).json()
+    assert r['imported'] == 300 and r['limited'] is True
+    from bt import access
+    monkeypatch.setattr(access, 'hub_allowed', lambda s, pid: False)
+    assert music.post('/api/music/import', json={'source': 'youtube', 'reference': 'x'}).status_code == 403
+
+
+def test_ma_legacy_paging_error_requires_upgrade_without_unbounded_retry(monkeypatch):
+    from bt.music import imports
+    from contextlib import nullcontext
+    monkeypatch.setenv('MUSIC_ASSISTANT_URL', 'http://ma.local:8095')
+    monkeypatch.setenv('MUSIC_ASSISTANT_TOKEN', 'test')
+    requests = []
+    statuses = [400]
+    class Client:
+        def __init__(self, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def get(self, url):
+            return imports.httpx.Response(200, json={'server_version': '2.11.0'},
+                                          request=imports.httpx.Request('GET', url))
+        def stream(self, method, url, **kw):
+            requests.append(kw['json']['args'])
+            status = statuses.pop(0)
+            return nullcontext(imports.httpx.Response(status, content=(
+                b'Invalid argument: unknown limit' if status == 400 else b'[]'),
+                request=imports.httpx.Request('POST', url)))
+    monkeypatch.setattr(imports.httpx, 'Client', Client)
+    with pytest.raises(ValueError, match='2.11 or newer'):
+        imports._ma_tracks('library://playlist/13')
+    assert len(requests) == 1 and 'limit' in requests[0]
+    statuses[:] = [401]
+    requests.clear()
+    with pytest.raises(ValueError, match='Could not read'):
+        imports._ma_tracks('library://playlist/13')
+    assert len(requests) == 1
+
+
+def test_ma_matching_rejects_substring_and_generic_song_names(monkeypatch):
+    from bt.music import imports
+    candidates = [_t('AAAAAAAAAAA', 'Someone (Official Video)', 'Singer'),
+                  _t('BBBBBBBBBBB', 'One More Time', 'Singer')]
+    monkeypatch.setattr(yt, 'search', lambda *a: candidates)
+    assert imports._resolve_ma({'name': 'One', 'artists': [{'name': 'Singer'}]}) is None
+    assert imports._resolve_ma({'name': 'Official Video', 'artists': [{'name': 'Singer'}]}) is None
+    candidates.append(_t('CCCCCCCCCCC', 'Singer - One (Official Music Video)', 'Singer'))
+    assert imports._resolve_ma({'name': 'One', 'artists': [{'name': 'Singer'}]})['video_id'] == 'CCCCCCCCCCC'
+
+
+def test_ma_old_or_unknown_version_does_not_fetch_playlist(monkeypatch):
+    from bt.music import imports
+    monkeypatch.setenv('MUSIC_ASSISTANT_URL', 'http://ma.local:8095')
+    monkeypatch.setenv('MUSIC_ASSISTANT_TOKEN', 'test')
+    version = ['2.10.9']
+    class Client:
+        def __init__(self, **kw): pass
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def get(self, url):
+            assert url.endswith('/info')
+            return imports.httpx.Response(200, json={'server_version': version[0]},
+                                          request=imports.httpx.Request('GET', url))
+        def stream(self, *a, **kw):
+            pytest.fail('must not fetch playlist on unsupported servers')
+    monkeypatch.setattr(imports.httpx, 'Client', Client)
+    for v in ('2.10.9', '', 'unknown'):
+        version[0] = v
+        with pytest.raises(ValueError, match='2.11 or newer'):
+            imports._ma_tracks('library://playlist/13')
+
+@pytest.mark.parametrize('preset', ['mellow', 'spooky', 'romantic', 'zen'])
+def test_background_presets_build_and_refresh(music, preset):
+    assert {m['key'] for m in music.get('/api/music/home').json()['moods']} == set(dj.MOODS)
+    response = music.post('/api/music/moods', json={'preset': preset})
+    assert response.status_code == 200
+    mid = response.json()['id']
+    got = music.get(f'/api/music/mixes/{mid}').json()
+    assert got['kind'] == 'mood' and got['status'] == 'ready' and got['tracks']
+    assert got['name'] == dj.MOODS[preset]['name']
+    assert got['description'].startswith(dj.BACKGROUND_INTENT)
+    assert [q for kind, q in music.calls if kind == 'search'] == dj.MOODS[preset]['queries']
+    music.post(f'/api/music/mixes/{mid}/refresh')
+    assert music.get(f'/api/music/mixes/{mid}').json()['kind'] == 'mood'
+
+
+def test_custom_background_validation_and_ownership(music):
+    for value in ['', '   ']:
+        assert music.post('/api/music/moods', json={'preset': 'custom', 'description': value}).status_code == 400
+    assert music.post('/api/music/moods', json={'preset': 'custom', 'description': 'x' * 301}).status_code == 422
+    assert music.post('/api/music/moods', json={'preset': 'unknown'}).status_code == 422
+    assert music.post('/api/music/mixes', json={'kind': 'mood'}).status_code == 422
+    made = music.post('/api/music/moods', json={'preset': 'custom', 'description': '  Rainy library  '}).json()
+    got = music.get(f'/api/music/mixes/{made["id"]}').json()
+    assert got['description'] == dj.BACKGROUND_INTENT + 'Rainy library'
+    assert [q for kind, q in music.calls if kind == 'search'] == [
+        'Rainy library instrumental ambient', 'Rainy library gentle background music']
+    guest = music.post('/api/profiles', json={'name': 'Guest', 'role': 'adult'}).json()['id']
+    headers = {'X-Profile-Id': str(guest)}
+    for method, suffix in [('get', ''), ('post', '/refresh'), ('delete', '')]:
+        assert getattr(music, method)(f'/api/music/mixes/{made["id"]}{suffix}', headers=headers).status_code == 404
+    assert music.get('/api/music/mixes', headers=headers).json()['mixes'] == []
+
+
+def test_background_build_is_queued(music, monkeypatch):
+    queued = []
+    monkeypatch.setattr(service, 'spawn', lambda fn, *args: queued.append((fn, args)))
+    got = music.post('/api/music/moods', json={'preset': 'zen'}).json()
+    assert got['status'] == 'building' and got['count'] == 0
+    assert queued == [(service.build_mix, (got['id'],))]
+    assert not music.calls
+
+
+def test_background_prompt_and_failure_fallback(monkeypatch):
+    seen = []
+    monkeypatch.setattr(dj.ai, 'enabled', lambda: True)
+    def failing(prompt, *args, **kwargs):
+        seen.append(prompt)
+        raise RuntimeError('offline')
+    monkeypatch.setattr(dj.ai, '_call', failing)
+    result = dj.curate(dj.BACKGROUND_INTENT + dj.MOODS['zen']['description'], 'zen', background=True)
+    assert result['queries'] == dj.MOODS['zen']['queries'] and result['ai'] is False
+    assert 'family-friendly' in seen[0] and 'strong percussion or lyrics' in seen[0]
+    assert 'Disco Dee' not in seen[0] and 'never invent tracks' in seen[0]
+
+
+def test_background_parser_allows_music_uploads_without_weakening_normal_search():
+    def item(vid, title, typ):
+        return _search_item(vid, title, typ, [_run('Ambient Artist'), _run(' • '), _run('4:07')])
+    response = {'contents': [
+        item('AAAAAAAAAAA', 'Gentle Piano', yt.OMV),
+        item('BBBBBBBBBBB', 'Soft Rain Visualizer', 'MUSIC_VIDEO_TYPE_UGC'),
+        item('CCCCCCCCCCC', 'Peaceful (Official Audio)', 'MUSIC_VIDEO_TYPE_ATV'),
+        item('DDDDDDDDDDD', 'Piano Cover', 'MUSIC_VIDEO_TYPE_UGC'),
+        item('EEEEEEEEEEE', 'Relaxing Lyrics', yt.OMV),
+        item('FFFFFFFFFFF', 'Calm Karaoke', 'MUSIC_VIDEO_TYPE_ATV'),
+        item('GGGGGGGGGGG', 'Ambient Reaction', 'MUSIC_VIDEO_TYPE_UGC'),
+        item('HHHHHHHHHHH', 'Unknown Music', 'unknown')]}
+    assert [t['video_id'] for t in yt.parse_search(response)] == ['AAAAAAAAAAA']
+    assert [t['video_id'] for t in yt.parse_search(response, background=True)] == [
+        'AAAAAAAAAAA', 'BBBBBBBBBBB', 'CCCCCCCCCCC']
+
+
+def test_background_search_has_separate_cache_and_broader_music_query(monkeypatch):
+    calls = []
+    response = {'contents': [_search_item('BBBBBBBBBBB', 'Soft Rain Visualizer',
+        'MUSIC_VIDEO_TYPE_UGC', [_run('Ambient Artist')])]}
+    monkeypatch.setattr(yt, '_cache', {})
+    monkeypatch.setattr(yt, '_call', lambda ep, query, detail, origin: (calls.append(query), response)[1])
+    assert yt.search('soft rain') == []
+    assert [t['video_id'] for t in yt.background_search('soft rain')] == ['BBBBBBBBBBB']
+    assert yt.background_search('  SOFT   RAIN  ')[0]['title'] == 'Soft Rain Visualizer'
+    assert len(calls) == 2
+    assert 'params' in calls[0] and calls[1] == {'query': 'soft rain'}
+    assert yt.search('soft rain') == []
+
+
+@pytest.mark.parametrize('label', ['Song', 'Video'])
+def test_background_search_byline_removes_type_prefix_only_with_separator(label):
+    artist = [_run('Ambient Artist', 'UCambient'), _run(' • '), _run('3M views'), _run(' • '), _run('4:07')]
+    response = {'contents': [
+        _search_item('AAAAAAAAAAA', 'Gentle Night', 'MUSIC_VIDEO_TYPE_ATV',
+                     [_run(label), _run(' • '), *artist]),
+        _search_item('BBBBBBBBBBB', 'Calm Piano', yt.OMV, [_run('Song', 'UCsong')])]}
+    tracks = yt.parse_search(response, background=True)
+    assert (tracks[0]['artist'], tracks[0]['artist_id'], tracks[0]['duration_s'], tracks[0]['views']) == (
+        'Ambient Artist', 'UCambient', 247, 3_000_000)
+    # With no bullet after Song, retain the artist rather than swallowing its name.
+    assert tracks[1]['artist'] == 'Song' and tracks[1]['artist_id'] == 'UCsong'
+    # Strict search continues to use its existing byline format.
+    assert [t['video_id'] for t in yt.parse_search(response)] == ['BBBBBBBBBBB']
+
+
+def test_mood_reuses_prepared_mix_and_reports_download_progress(music, tmp_path, monkeypatch):
+    from bt.db import session
+    from bt.models import Download
+    from bt.downloader import service as downloads
+    monkeypatch.setattr(downloads, 'MEDIA_DIR', tmp_path)
+    first = music.post('/api/music/moods', json={'preset': 'mellow'}).json()
+    second = music.post('/api/music/moods', json={'preset': 'mellow'}).json()
+    assert first['id'] == second['id']
+    got = music.get(f'/api/music/mixes/{first["id"]}').json()
+    assert got['offline']['saved'] == 0 and got['offline']['state'] == 'preparing'
+    with session() as s:
+        download = s.get(Download, got['tracks'][0]['video_id'])
+        assert download.status == 'queued'  # proactively queued as soon as curation finishes
+        download.status, download.path = 'done', 'saved.mp4'
+        (tmp_path / 'saved.mp4').write_bytes(b'video fixture')
+        s.add(download)
+        s.commit()
+    got = music.get(f'/api/music/mixes/{first["id"]}').json()
+    assert got['offline']['saved'] == 1
+    assert got['offline']['state'] == ('ready' if len(got['tracks']) == 1 else 'partial')
+
+
+def test_mood_maintenance_prepares_presets_without_page_visit(music):
+    from bt.db import session
+    from bt.music.models import MusicMix
+    from sqlmodel import select
+    for _ in dj.MOODS:
+        assert service.maintain_moods()
+    with session() as s:
+        rows = s.exec(select(MusicMix).where(MusicMix.kind == 'mood')).all()
+        assert {m.curator for m in rows} == set(dj.MOODS)
+    assert not service.maintain_moods()  # no rebuild/download loop while pending
+
+
+def test_old_mood_stays_in_download_set(music):
+    from bt.db import session
+    from bt.music.models import MusicMix
+    made = music.post('/api/music/moods', json={'preset': 'zen'}).json()
+    got = music.get(f'/api/music/mixes/{made["id"]}').json()
+    with session() as s:
+        for n in range(offline.MIXES + 1):
+            s.add(MusicMix(profile_id=1, kind='manual', name=f'new {n}'))
+        s.commit()
+        assert all(t['video_id'] in offline.wanted_ids(s) for t in got['tracks'])
+        assert all(offline.is_wanted(s, t['video_id']) for t in got['tracks'])
+
+
+def test_mood_done_rows_require_readable_nonempty_local_file(music, tmp_path, monkeypatch):
+    from bt.db import session
+    from bt.models import Download
+    from bt.downloader import service as downloads
+    monkeypatch.setattr(downloads, 'MEDIA_DIR', tmp_path)
+    made = music.post('/api/music/moods', json={'preset': 'zen'}).json()
+    got = music.get(f'/api/music/mixes/{made["id"]}').json()
+    vid = got['tracks'][0]['video_id']
+    for path in ('', 'missing.mp4', 'empty.mp4', '../outside.mp4'):
+        (tmp_path / 'empty.mp4').touch()
+        with session() as s:
+            row = s.get(Download, vid)
+            row.status, row.path = 'done', path
+            s.add(row)
+            s.commit()
+        got = music.get(f'/api/music/mixes/{made["id"]}').json()
+        assert got['offline']['saved'] == 0
+        assert all(not t['offline'] for t in got['tracks'])
+
+
+def test_prepared_moods_do_not_replace_their_downloaded_selection(music):
+    from sqlmodel import select
+    from bt.db import session
+    from bt.music.models import MusicMix
+    for _ in dj.MOODS:
+        service.maintain_moods()
+    with session() as s:
+        rows = s.exec(select(MusicMix).where(MusicMix.kind == 'mood')).all()
+        for row in rows:
+            row.refreshed_at = 1
+            s.add(row)
+        s.commit()
+    assert not service.maintain_moods()
+
+
+def test_mood_download_allowance_is_reported_and_missing_files_requeued(music, tmp_path, monkeypatch):
+    from bt.db import session
+    from bt.models import Download
+    from bt.downloader import service as downloads
+    monkeypatch.setattr(downloads, 'MEDIA_DIR', tmp_path)
+    made = music.post('/api/music/moods', json={'preset': 'zen'}).json()
+    got = music.get(f'/api/music/mixes/{made["id"]}').json()
+    vid = got['tracks'][0]['video_id']
+    with session() as s:
+        row = s.get(Download, vid)
+        row.status, row.path = 'done', 'gone.mp4'
+        s.add(row)
+        s.commit()
+    for _ in dj.MOODS:
+        service.maintain_moods()
+    with session() as s:
+        assert s.get(Download, vid).status == 'queued'
+    monkeypatch.setattr(offline, 'wanted_ids', lambda s: [])
+    got = music.get(f'/api/music/mixes/{made["id"]}').json()
+    assert got['offline']['blocked'] == len(got['tracks'])

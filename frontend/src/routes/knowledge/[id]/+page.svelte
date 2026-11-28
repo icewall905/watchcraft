@@ -37,7 +37,7 @@
 	}
 </script>
 
-<svelte:head><title>{t?.name ?? 'Topic'} · WatchCraft</title></svelte:head>
+<svelte:head><title>{t?.name ?? 'Topic'} · The Hub</title></svelte:head>
 
 <div class="page reading-page">
 	<a class="small muted" href="/knowledge" use:focusable>← Knowledge</a>

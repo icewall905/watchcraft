@@ -115,6 +115,14 @@ class NavEngine {
 	private physicallyTyped = new WeakSet<HTMLElement>();
 	private lastMove = 0;
 	private installed = false;
+	/**
+	 * Remote-control behaviour (TV mode): arrows move focus between controls, Enter/Space activate them and
+	 * Backspace means Back (closing dialogs). In desktop mode the keyboard behaves like a normal web page:
+	 * arrows scroll, Backspace only edits text, Escape still closes the top dialog, and component key
+	 * handlers (player, image viewer) keep working.
+	 */
+	remote = true;
+	setRemote(on: boolean) { this.remote = on; }
 
 	/** Called when back is pressed and no scope handles it (router back). */
 	backFallback: () => void = () => history.back();
@@ -127,15 +135,20 @@ class NavEngine {
 		const root = document.documentElement;
 		root.dataset.modality = matchMedia('(hover: none)').matches ? 'pointer' : 'keys';
 		window.addEventListener('keydown', (e) => this.onKeyDown(e), true);
+		// Android app back gesture: close the top dialog first so the page underneath keeps its place.
+		(window as Window & { watchcraftBack?: () => boolean }).watchcraftBack = () => this.closeTop();
 		window.addEventListener(
 			'keyup',
 			(e) => {
-				if ((e.key === ' ' || e.key === 'Enter') && !isTextInput(document.activeElement)) e.preventDefault();
+				if (this.remote && (e.key === ' ' || e.key === 'Enter') && !isTextInput(document.activeElement)) e.preventDefault();
 			},
 			true
 		);
-		window.addEventListener('pointerdown', () => (root.dataset.modality = 'pointer'), true);
-		window.addEventListener('wheel', () => (root.dataset.modality = 'pointer'), { capture: true, passive: true });
+		// Mouse, touch or wheel: the user is browsing by hand, so a pending focus restore must not move the page later.
+		const byHand = () => { root.dataset.modality = 'pointer'; this.pendingRestore = null; };
+		window.addEventListener('pointerdown', byHand, true);
+		window.addEventListener('wheel', byHand, { capture: true, passive: true });
+		window.addEventListener('touchmove', byHand, { capture: true, passive: true });
 		document.addEventListener('focusin', (e) => {
 			const el = e.target as HTMLElement;
 			const entry = this.entries.get(el);
@@ -373,7 +386,11 @@ class NavEngine {
 				const el = this.findById(this.pendingRestore.id, cands);
 				if (el) {
 					this.pendingRestore = null;
-					if (current?.el !== el) this.focus(el);
+					// The browser already restored the scroll position: only scroll when the card is off screen and the
+					// user drives by remote/keys, so a mouse or touch return never moves the page.
+					const r = el.getBoundingClientRect();
+					const onScreen = r.bottom > 0 && r.top < window.innerHeight;
+					if (current?.el !== el) this.focus(el, { scroll: this.modality === 'keys' && !onScreen });
 					return;
 				}
 			}
@@ -468,6 +485,12 @@ class NavEngine {
 				if (zone) return !z || z === zone;
 				return !z || !z.hasAttribute('data-nav-side');
 			});
+			// Inside a zone, chrome is the fallback only: a fixed top bar can sit nearer than a scrolled-off
+			// control above, and that control must still be reachable.
+			if (zone) {
+				const inZone = pool.filter((x) => x.e.el.closest('[data-nav-zone]') === zone);
+				if (inZone.length) pool = inZone;
+			}
 		}
 		if (!pool.length) return false;
 		const cx = r.left + r.width / 2;
@@ -513,6 +536,14 @@ class NavEngine {
 
 	private inBack = false;
 
+	/** Closes the top dialog scope; false when none is open (caller does router back). */
+	closeTop(): boolean {
+		const top = this.scopes[this.scopes.length - 1];
+		if (!top?.onBack) return false;
+		top.onBack();
+		return true;
+	}
+
 	back() {
 		// Re-entrant call (an onBack handler that calls nav.back()): go to the router instead of looping.
 		if (this.inBack) return this.backFallback();
@@ -550,6 +581,7 @@ class NavEngine {
 		const typing = isTextInput(active);
 		if (typing && active && e.key.length === 1 && e.key !== ' ') this.physicallyTyped.add(active);
 		if (!key) return;
+		if (!this.remote && (e.key === 'Backspace' || (key !== 'back' && key !== 'playpause' && typing))) return;
 		document.documentElement.dataset.modality = 'keys';
 		this.lastKeyAt = Date.now();
 
@@ -566,6 +598,7 @@ class NavEngine {
 		for (let i = this.handlers.length - 1; i >= 0; i--) {
 			if (this.handlers[i](key, e)) return consume();
 		}
+		if (!this.remote && key !== 'back') return; // native page behaviour for arrows, Enter and Space
 		switch (key) {
 			case 'up':
 			case 'down':

@@ -6,7 +6,7 @@
 	import { hub } from '$lib/hub/api';
 	import { session } from '$lib/stores/session.svelte';
 	import type { Counts, Collection, Topic } from '$lib/hub/types';
-	import { LEGACY_SECTION_KEYS, SECTIONS, SETTINGS, TV_DRAWER, isHubPath } from '$lib/navigation';
+	import { LEGACY_SECTION_KEYS, SECTIONS, SETTINGS, TV_DRAWER } from '$lib/navigation';
 	import Icon from './Icon.svelte';
 
 	const store = (k: string) => { try { return localStorage.getItem(k); } catch { return null; } };
@@ -22,8 +22,8 @@
 	const path = $derived(page.url.pathname);
 	const search = $derived(page.url.search);
 	const isTv = $derived(deviceMode.mode === 'tv');
-	const sections = $derived(SECTIONS.map(s => ({ ...s, items: s.items.filter(it => session.hubAllowed || !isHubPath(it.href)) })).filter(s => s.items.length));
-	const drawer = $derived(TV_DRAWER.filter(it => session.hubAllowed || !isHubPath(it.href)));
+	const sections = $derived(SECTIONS.map(s => ({ ...s, items: s.items.filter(it => session.canOpen(it.href)) })).filter(s => s.items.length));
+	const drawer = $derived(TV_DRAWER.filter(it => session.canOpen(it.href)));
 
 	$effect(() => {
 		document.documentElement.style.setProperty('--sidebar-width', isTv ? '0rem' : compact ? '4.5rem' : '15rem');
@@ -51,8 +51,8 @@
 		if (!session.hubAllowed) { pinned = []; return; }
 		const pid = session.profileId;
 		const out: typeof pinned = [];
-		try { (await hub.collections() as Collection[]).filter((c) => c.pinned).forEach((c) => out.push({ href: `/library?collection=${c.id}`, label: c.name, icon: 'collection' })); } catch { /* optional */ }
-		try { (await hub.topics() as Topic[]).filter((t) => t.pinned).forEach((t) => out.push({ href: `/knowledge/${t.id}`, label: t.name, icon: 'pin' })); } catch { /* optional */ }
+		if (session.allows('stacks')) try { (await hub.collections() as Collection[]).filter((c) => c.pinned).forEach((c) => out.push({ href: `/library?collection=${c.id}`, label: c.name, icon: 'collection' })); } catch { /* optional */ }
+		if (session.allows('almanac')) try { (await hub.topics() as Topic[]).filter((t) => t.pinned).forEach((t) => out.push({ href: `/knowledge/${t.id}`, label: t.name, icon: 'pin' })); } catch { /* optional */ }
 		if (session.hubAllowed && session.profileId === pid) pinned = out;
 	}
 
@@ -98,9 +98,9 @@
 		<button class="toggle" aria-label={compact ? 'Expand sidebar' : 'Collapse sidebar'} aria-pressed={compact} title={compact ? 'Expand sidebar' : 'Collapse sidebar'} onclick={toggleCompact}>
 			<span aria-hidden="true">{compact ? '>>' : '<<'}</span>
 		</button>
-		<a class="brand" href="/tv" aria-label="WatchCraft">
+		<a class="brand" href="/tv" aria-label="The Hub">
 			<img src="/logo.png" alt="" width="36" height="36" />
-			{#if !compact}<span class="bt"><b>WatchCraft</b><small>Watching the Internet for you.</small></span>{/if}
+			{#if !compact}<span class="bt"><b>The Hub</b><small>Watching the Internet for you.</small></span>{/if}
 		</a>
 		<nav aria-label="Main" data-nav-skip-initial>
 			{#each sections as sec}
@@ -155,7 +155,7 @@
 		<div class="overlay" bind:this={panel} use:navScope={{ onBack: () => close() }}>
 			<button class="backdrop" aria-label="Close navigation" tabindex="-1" onclick={() => close()}></button>
 			<aside id="tv-navigation" class="sidebar tv" aria-label="Navigation drawer">
-				<div class="brand"><img src="/logo.png" alt="" width="40" height="40" /><span class="bt"><b>WatchCraft</b></span></div>
+				<div class="brand"><img src="/logo.png" alt="" width="40" height="40" /><span class="bt"><b>The Hub</b><small>Watching the Internet for you.</small></span></div>
 				<nav aria-label="Main" data-nav-zone="main-navigation" data-nav-skip-initial>
 					{#each drawer as it}
 						{@const on = it.active(path, search)}
@@ -180,6 +180,14 @@
 	.bt { display: grid; line-height: 1.15; }
 	.bt b { font-weight: 800; font-size: 1.15rem; }
 	.bt small { font: 500 .68rem var(--font); color: var(--muted); letter-spacing: .01em; }
+	/* Expanded sidebar and TV drawer: the logo fills the width, title and subtitle sit over its lower part.
+	   The desktop brand slides up beside the collapse toggle, which only covers the logo's empty corner. */
+	.sidebar:not(.compact) .brand { display: grid; justify-items: center; gap: 0; margin: -1.6rem 0 .9rem; padding: 0; text-align: center; }
+	.sidebar.tv .brand { margin-top: -.6rem; }
+	.sidebar:not(.compact) .brand img { width: 100%; height: auto; mask-image: linear-gradient(to bottom, #000 55%, transparent 97%); -webkit-mask-image: linear-gradient(to bottom, #000 55%, transparent 97%); }
+	.sidebar:not(.compact) .bt { position: relative; margin-top: -3.8rem; text-shadow: 0 0 4px var(--bg-1), 0 0 12px var(--bg-1), 0 0 22px var(--bg-1); }
+	.sidebar:not(.compact) .bt b { font-size: 1.6rem; letter-spacing: -.01em; }
+	.sidebar:not(.compact) .bt small { margin-top: .2rem; font-size: .74rem; color: var(--text); }
 	nav { display: grid; gap: .1rem; flex: 1; align-content: start; }
 	section { display: grid; gap: .15rem; margin-bottom: .55rem; }
 	hr { border: 0; border-top: 1px solid var(--line); margin: .3rem .4rem; width: calc(100% - .8rem); }

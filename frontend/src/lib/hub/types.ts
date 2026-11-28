@@ -1,4 +1,4 @@
-// WatchCraft Hub types. Contract: docs/HUB.md.
+// The Hub types. Contract: docs/HUB.md.
 export type ItemState = {
 	saved: boolean; favorite: boolean; read_later: boolean; archived: boolean; dismissed: boolean;
 	read_at: number | null; notes: string; tags: string[]; rating: number;
@@ -18,13 +18,15 @@ export type Verdict = {
 };
 export type CitationRef = { n: number; item_id: number | null; title?: string; url?: string };
 export type EditionEntry = {
-	item_id: number; item: Item; story_id?: number; sources?: number; summary?: string; summary_refs?: CitationRef[];
+	item_id: number; item: Item; story_id?: number; sources?: number; summary?: string; summary_refs?: CitationRef[]; group_key?: string; group_title?: string;
 };
 export type EditionSection =
 	| { key: 'lead' | 'stories' | 'reads' | 'memes'; title: string; entries: EditionEntry[] }
-	| { key: 'research'; title: string; curator_ids: number[]; curators: { id: number; name: string; subject: string; report_at: number | null }[] }
+	| { key: 'research'; title: string; curator_ids: number[]; curators: { id: number; name: string; subject: string; report_at: number | null; excerpt?: string }[] }
+	| { key: 'briefings'; title: string; issue_ids: number[]; issues: { id: number; briefing_id: number; name: string; created_at: number; ai: boolean; excerpt: string }[] }
 	| { key: 'alerts'; title: string; count: number };
 export type TodayEdition = {
+	preparing?: boolean; previous?: boolean;
 	rerun?: { requested_at: number; completed_at: number };
 	day: string; built_at: number; updated_at: number; intro: string; intro_refs: CitationRef[];
 	sections: EditionSection[]; set_aside: number; curated: boolean;
@@ -45,7 +47,7 @@ export type ProviderInfo = {
 	capabilities: string[]; available: boolean; reason: string; description: string;
 };
 export type Registry = { types: TypeInfo[]; providers: ProviderInfo[] };
-export type Counts = { discover_unread: number; alerts_new: number; news_today: number };
+export type Counts = { discover_unread: number; alerts_new: number; news_today: number; boards_shared_new?: number; commonroom?: number };
 export type Collection = { id: number; name: string; description: string; icon: string; color: string; view: string; pinned: boolean; count: number };
 export type Source = {
 	id: number; provider: string; name: string; url: string; enabled: boolean; last_success: number | null;
@@ -113,7 +115,8 @@ export type TopicDetail = Topic & { items: Item[]; recent: Item[]; curators: { i
 export type Briefing = { id: number; name: string; curator_ids: number[]; topic_ids: number[]; frequency: 'manual' | 'daily' | 'weekly'; length: 'concise' | 'detailed'; last_generated: number | null; next_run: number | null };
 export type Issue = { id: number; created_at: number; content: string; item_ids: number[]; ai: boolean };
 export type Alert = { id: number; severity: string; state: string; title: string; reason: string; curator_id: number | null; item: Item; created_at: number; snooze_until?: number | null };
-export type NewsGroup = { key: string; story_id?: number | null; title: string; items: Item[]; latest: number };
+export type NewsGroup = { key: string; story_id?: number | null; title: string; items: Item[]; latest: number; seen?: boolean; new?: boolean;
+	article_count?: number; publisher_count?: number; discussion_count?: number };
 export type SearchResult = Page<Item> & {
 	videos: { id: string; title: string; channel_name: string; thumbnail: string }[];
 	curators: { id: number; name: string; kind: string }[];
@@ -125,10 +128,10 @@ export type SavedSearch = { id: number; name: string; query: string; filters: Re
 
 export type TeamStatus = 'running' | 'waiting' | 'idle' | 'attention' | 'paused';
 export type TeamAgent = {
-	key: string; kind: 'curator' | 'scout' | 'briefing' | 'master'; id: number | null; name: string; icon: string; color: string; mission: string;
+	key: string; kind: 'curator' | 'scout' | 'briefing' | 'master' | 'moodboard'; id: number | null; name: string; icon: string; color: string; mission: string;
 	tone?: ToneName;
 	status: TeamStatus; since: number | null; next_run: number | null; last_run?: number | null; doing?: string | null; query?: string;
-	role?: 'watch' | 'research'; error?: string; enabled?: boolean; found_today?: number; plans?: number;
+	role?: 'watch' | 'research' | 'visual'; pin_count?: number; error?: string; enabled?: boolean; found_today?: number; plans?: number;
 	finds?: { id: number; title: string; found_at: number; url?: string; summary?: string; publisher?: string;
 		type?: string; published_at?: number | null; source_name?: string; reason?: string; score?: number | null }[];
 	timeline?: { id?: number; step: string; message: string; at: number; detail?: string;
@@ -139,7 +142,7 @@ export type TeamAgent = {
 	last?: { status: string; new_items?: number; seen_items?: number; suggestions?: number; query?: string; error?: string; finished_at: number | null; started_at?: number | null; duration_s?: number | null } | null;
 };
 export type TeamEntry = {
-	at: number; agent: string; name: string; icon: string; kind: 'curator_run' | 'scout_run' | 'briefing'; status: string;
+	at: number; agent: string; name: string; icon: string; kind: 'curator_run' | 'scout_run' | 'briefing' | 'moodboard_run'; status: string;
 	new_items?: number; seen_items?: number; errors?: number; query?: string; suggestions?: number; title?: string; briefing_id?: number;
 };
 export type Team = { limit: number; running: number; waiting: number; agents: TeamAgent[]; journal: TeamEntry[] };
@@ -169,3 +172,7 @@ export type MemeExplain = {
 	what_shows: string; why_funny: string; referencing: string; origin: string; why_now: string;
 	uncertain: string; ai?: boolean; at?: number;
 };
+export type OverviewGroup = { key: string; label: string; href: string; count: number; image_item_id: number | null };
+export type OverviewPreview = { item_id: number; title: string; meta: string; summary?: string; has_image: boolean; at: number };
+export type OverviewPage = { waiting: number; new_today: number; groups: OverviewGroup[]; previews: OverviewPreview[] };
+export type TodayOverview = { generated_at: number; pages: Partial<Record<'wire' | 'finds' | 'memes' | 'stacks' | 'almanac' | 'alerts', OverviewPage>> };

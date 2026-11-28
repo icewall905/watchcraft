@@ -197,7 +197,7 @@ def review(rt, pid, proposal, batch_ids, content_type="video"):
          "supporting the existing rule protects it; an unrelated instruction or a new opposing statement does not. Give a brief evidence-grounded reason."},
         {"role": "user", "content": json.dumps(inputs, ensure_ascii=False)}],
         json_schema=ASSESS_SCHEMA, schema_name="lesson_evidence", max_tokens=8000,
-        timeout_s=600, temperature=0.1, abort=rt.check)
+        timeout_s=600, temperature=0.1, abort=rt.check, role='knowledge_review')
     rows = assessed.get("assessments")
     if type(assessed.get("explicit_instruction")) is not bool or not isinstance(rows, list):
         raise ValueError("Invalid lesson evidence review")
@@ -262,7 +262,7 @@ def review(rt, pid, proposal, batch_ids, content_type="video"):
             {"role": "user", "content": json.dumps({**inputs, "classifications": decisions,
                 "supporting_videos": support, "opposing_videos": opposition}, ensure_ascii=False)}],
             json_schema=REVISION_SCHEMA, schema_name="lesson_revision", max_tokens=1500,
-            timeout_s=600, temperature=0.1, abort=rt.check)
+            timeout_s=600, temperature=0.1, abort=rt.check, role='knowledge_review')
         candidate = draft.get("text")
         if not isinstance(candidate, str) or not candidate.strip() or len(candidate) > 500:
             raise ValueError("Invalid proposed rule revision")
@@ -280,7 +280,7 @@ def review(rt, pid, proposal, batch_ids, content_type="video"):
                 "proposed_text": new_text.strip(), "supporting_videos": support,
                 "opposing_videos": opposition}, ensure_ascii=False)}],
             json_schema=AUDIT_SCHEMA, schema_name="lesson_revision_audit", max_tokens=2500,
-            timeout_s=600, temperature=0.1, abort=rt.check)
+            timeout_s=600, temperature=0.1, abort=rt.check, role='knowledge_review')
     revised = eligible and audit.get("ok") is True and new_text.strip() != old_text
     with session() as s:
         s.exec(text("BEGIN IMMEDIATE"))

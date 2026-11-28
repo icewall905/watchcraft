@@ -1,4 +1,4 @@
-// WatchCraft Hub API client (/api/hub). Contract: docs/HUB.md.
+// The Hub API client (/api/hub). Contract: docs/HUB.md.
 import { request } from '$lib/api';
 import type {
 	Alert, Briefing, Collection, Counts, Curator, CuratorDetail, CuratorInput, Issue, Item, ItemDetail, ItemState,
@@ -6,7 +6,8 @@ import type {
 	MemeExplain, MemeFormat, MemeTrend, TodayEdition, Verdict, HubLesson
 } from './types';
 
-export type ShelfInterest = { id: number; name: string; ready: number; target: number; fresh_24h: number; publishers: number; needs_refill: boolean; last_success: number | null; next_run: number };
+export type ShelfInterest = { id: number; name: string; ready: number; target: number; fresh_24h: number; publishers: number; needs_refill: boolean; last_success: number | null; next_run: number;
+	unseen_ready?: number; unseen_target?: number; new_24h?: number; daily_target?: number; state?: 'underserved' | 'ok' | 'saturated'; quiet?: boolean; quiet_reason?: string; coverage_reason?: string };
 export type ShelfCategory = { id: number; name: string; emoji: string; kind: string; ready: number; target: number; fresh_7d: number; creators: number; pending: number; failed?: number; needs_refill: boolean };
 export type ShelfStatus = {
 	as_of: number;
@@ -37,6 +38,9 @@ export const hub = {
 	shareArticle: (id: number) => send<{ path: string | null }>('POST', `/items/${id}/share`),
 	revokeArticleShare: (id: number) => send<{ path: string | null }>('DELETE', `/items/${id}/share`),
 	setState: (id: number, patch: Partial<ItemState> & { read?: boolean }) => send<ItemState>('POST', `/items/${id}/state`, patch),
+	// One story can fold several sources; one request keeps them consistent.
+	setStateMany: (ids: number[], patch: Partial<ItemState> & { read?: boolean }) =>
+		send<{ updated: number }>('POST', '/items/state', { ...patch, item_ids: ids }),
 	articleFeedback: (id: number, body: { rating: -1 | 0 | 1 | 2; chips?: string[]; text?: string }) =>
 		request<{ state: ItemState; feedback: { rating: number; chips: string[]; text: string } }>(
 			`${H}/items/${id}/feedback`, { method: 'POST', body, toast: false }),
@@ -47,7 +51,7 @@ export const hub = {
 			`${H}/items/${id}/curator-feedback`,
 			{ method: 'POST', body: { curator_id, verdict, ...(terms?.length ? { terms } : {}) }, toast: false }),
 	importUrl: (url: string) => send<Item>('POST', '/items/import', { url }),
-	news: (params: Params, signal?: AbortSignal) => get<{ groups: NewsGroup[]; topics: Topic[]; article_count?: number; story_count?: number; supply?: { target: number; window_days: number; available: number; shortfall: number; met: boolean; pending_review: number; as_of: number; ready_count?: number; ready_target?: number; ready_shortfall?: number; candidate_count?: number; candidate_target?: number } }>('/news' + qs(params), signal),
+	news: (params: Params, signal?: AbortSignal) => get<{ groups: NewsGroup[]; topics: Topic[]; mode?: 'foryou' | 'latest'; previous_visit?: number | null; new_count?: number; article_count?: number; story_count?: number; next_cursor?: string | null; total_stories?: number; total_articles?: number; total_capped?: boolean; limit?: number; seed?: string; visit_at?: number; supply?: { target: number; window_days: number; available: number; shortfall: number; met: boolean; pending_review: number; as_of: number; ready_count?: number; ready_target?: number; ready_shortfall?: number; candidate_count?: number; candidate_target?: number } }>('/news' + qs(params), signal),
 
 	captureStatus: () => get<{ counts: Record<string, number>; asset_bytes: number; asset_limit: number; enabled: boolean; asset_max_mb: number; rescue: boolean }>('/capture/status'),
 	setCaptureSettings: (enabled: boolean, asset_max_mb: number, rescue: boolean) =>
@@ -98,13 +102,18 @@ export const hub = {
 	createCurator: (body: CuratorInput) => send<Curator>('POST', '/curators', body),
 	updateCurator: (id: number, body: Partial<CuratorInput>) => send<Curator>('PATCH', `/curators/${id}`, body),
 	deleteCurator: (id: number) => send<{ ok: boolean }>('DELETE', `/curators/${id}`),
-	curatorAction: (id: number, action: 'run' | 'pause' | 'resume' | 'duplicate') => send<Curator>('POST', `/curators/${id}/${action}`),
+	curatorAction: (id: number, action: 'run' | 'pause' | 'resume' | 'duplicate' | 'clear-error') => send<Curator>('POST', `/curators/${id}/${action}`),
+	findMemeSources: (id: number) => send<{ added: { id: number; provider: string; url: string; name: string; memes: number }[]; skipped: { provider: string; url: string; reason: string }[] }>('POST', `/curators/${id}/find-sources`),
 	curatorFollowUp: (id: number) => send<Curator>('POST', `/curators/${id}/follow-up`),
 	templates: () => get<Template[]>('/curators/templates'),
 	draft: (goal: string, kind: 'watch' | 'research' = 'watch') => send<CuratorInput & { ai: boolean; source_suggestions: { provider: string; url: string; name: string }[] }>('POST', '/curators/draft', { goal, kind }),
 	report: (id: number) => send<Curator>('POST', `/curators/${id}/report`),
 	exportCurator: (id: number) => request<Record<string, unknown>>(`${H}/curators/${id}/export`),
 
+	// Sends the profile's article collectors out for more; stories land as the runs finish.
+	newsRefresh: () => send<{ started: number; running: number; recent: number; next_at: number | null }>('POST', '/news/refresh'),
+	newsSeen: (item_ids: number[], visit_at: number, profileId: number, keepalive = false) =>
+		request<{ recorded: number }>(H + '/news/seen', { method: 'POST', body: { item_ids, visit_at }, keepalive, toast: false, profileId: String(profileId) }),
 	topics: (kind?: 'knowledge' | 'news') => get<Topic[]>('/topics' + qs({ kind })),
 	topic: (id: number) => get<TopicDetail>(`/topics/${id}`),
 	createTopic: (body: Partial<Topic>) => send<Topic>('POST', '/topics', body),
@@ -132,8 +141,8 @@ export const hub = {
 	saveSearch: (body: Partial<SavedSearch>) => send<SavedSearch>('POST', '/saved-searches', body),
 	deleteSavedSearch: (id: number) => send<{ ok: boolean }>('DELETE', `/saved-searches/${id}`),
 
-	memeItems: (params: Params, signal?: AbortSignal) => get<Page<Item>>('/memes/items' + qs(params), signal),
-	memeFacets: () => get<{ communities: { key: string; count: number }[]; languages: { key: string; count: number }[]; hidden_languages: string[] }>('/memes/facets'),
+	memeItems: (params: Params, signal?: AbortSignal) => get<Page<Item> & { next_cursor?: string | null; has_more?: boolean }>('/memes/items' + qs(params), signal),
+	memeFacets: () => get<{ communities: { key: string; count: number }[]; languages: { key: string; count: number }[]; hidden_languages: string[]; allowed_languages?: string[] }>('/memes/facets'),
 	memeTrends: (params: Params) => get<{ trends: MemeTrend[] }>('/memes/trends' + qs(params)),
 	memeTrendState: (id: number, body: { followed?: boolean; hidden?: boolean }) => send<{ followed: boolean; hidden: boolean }>('POST', `/memes/trends/${id}/state`, body),
 	memeFormats: (params: Params) => get<{ formats: MemeFormat[]; total: number }>('/memes/formats' + qs(params)),
@@ -141,14 +150,20 @@ export const hub = {
 	memeSimilar: (id: number) => get<{ items: Item[] }>(`/memes/items/${id}/similar`),
 	memeExplain: (id: number, refresh = false) => send<{ ai: boolean; explanation: MemeExplain }>('POST', `/memes/items/${id}/explain`, { refresh }),
 	/** Analyze collected examples and recount trends now instead of on the next scheduler tick. */
+	memeRefresh: () => send<{ started: number; running: number; recent: number; next_at: number | null }>('POST', '/memes/refresh'),
 	memeSweep: () => send<{ analyzed: number; transitions: number; formats: number }>('POST', '/memes/sweep'),
+	/** Languages to show in Meme Radar; [] shows every language. */
+	setMemeLanguages: (languages: string[]) =>
+		send<{ languages: string[]; hidden_languages: string[] }>('PUT', '/memes/languages', { languages }),
 	hideMemeLanguage: (code: string, hidden = true) =>
 		send<{ hidden_languages: string[] }>('POST', `/memes/languages/${encodeURIComponent(code)}/hide`, { hidden }),
 
 	// Master curator: the daily edition and what it left out.
 	rerunToday: () => send<{requested_at: number; completed_at: number}>('POST', '/today/rerun'),
+	regenerateToday: () => send<{ rebuilt: boolean; rerun: { requested_at: number; completed_at: number } | null }>('POST', '/today/regenerate'),
 	today: (signal?: AbortSignal, preview?: { stories: number; reads: number; memes: number }) =>
-		get<TodayEdition>('/today' + (preview ? qs({ preview: true, ...preview }) : ''), signal),
+		get<TodayEdition>('/today' + (preview ? qs({ preview: true, prepared: true, ...preview }) : ''), signal),
+	todayOverview: (signal?: AbortSignal) => get<import('./types').TodayOverview>('/today/overview?prepared=true', signal),
 	setAside: (params: Params) => get<Page<Item>>('/today/set-aside' + qs(params)),
 	overrule: (id: number, action: 'promote' | 'demote' | 'clear') => send<Verdict | null>('POST', `/items/${id}/overrule`, { action }),
 	why: (id: number) => get<{ verdict: Verdict | null; story: { id: number; sources: number } | null }>(`/items/${id}/why`),

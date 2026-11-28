@@ -15,7 +15,8 @@ from sqlmodel import Session, col, select
 from ..db import (get_agent_control, get_agent_state, get_kv, get_session, get_settings, session, update_agent_control,
                   yt_request_counts)
 from ..models import AgentEvent, Candidate, Category, Profile, now
-from ..access import require_admin
+from ..access import own_profile_ids, require_admin
+from sqlalchemy import and_, or_
 from .core import _download_statuses, profile_id
 
 router = APIRouter()
@@ -50,7 +51,7 @@ def memory_run():
 
 
 def _queues(s: Session, pid: Optional[int]) -> list[dict]:
-    q = select(Category)
+    q = select(Category).where(Category.kind != "manual")
     if pid:
         q = q.where(Category.profile_id == pid)
     out = []
@@ -66,15 +67,17 @@ def _queues(s: Session, pid: Optional[int]) -> list[dict]:
     return out
 
 
-def status_payload(s: Session, pid: Optional[int] = None) -> dict:
+def status_payload(s: Session, pid: Optional[int] = None, queues: bool = True) -> dict:
     st = get_settings(s)["throttle"]
-    return {
+    out = {
         "state": get_agent_state(s),
         "downloader": get_kv("downloader_state", {"state": "offline"}, s),
         "control": get_agent_control(s),
         "budget": {**yt_request_counts(s), "max_hour": st["max_per_hour"], "max_day": st["max_per_day"]},
-        "queues": _queues(s, pid),
     }
+    if queues:  # every candidate of every playlist: too costly for the once-a-second stream
+        out["queues"] = _queues(s, pid)
+    return out
 
 
 @router.get("/agent/status")
@@ -82,10 +85,21 @@ def agent_status(pid: int = Depends(profile_id), s: Session = Depends(get_sessio
     return status_payload(s, pid)
 
 
+def _event_scope(s: Session, own):
+    """Accounts mode: the account's own events plus system events tied to no profile or playlist."""
+    if own is None:
+        return True
+    cats = list(s.exec(select(Category.id).where(col(Category.profile_id).in_(own))).all()) if own else []
+    return or_(col(AgentEvent.profile_id).in_(own),
+               and_(AgentEvent.profile_id == None, or_(AgentEvent.category_id == None,  # noqa: E711
+                                                       col(AgentEvent.category_id).in_(cats))))
+
+
 @router.get("/agent/events")
-def agent_events(after_id: int = 0, limit: int = 200, category_id: Optional[int] = None,
+def agent_events(request: Request, after_id: int = 0, limit: int = 200, category_id: Optional[int] = None,
                  s: Session = Depends(get_session)):
-    q = select(AgentEvent).where(AgentEvent.id > after_id, AgentEvent.kind.notin_(['source_scout', 'hub_curator']))
+    q = select(AgentEvent).where(AgentEvent.id > after_id, AgentEvent.kind.notin_(['source_scout', 'hub_curator']),
+                                 _event_scope(s, own_profile_ids(request)))
     if category_id:
         q = q.where(AgentEvent.category_id == category_id)
     if after_id:
@@ -96,17 +110,19 @@ def agent_events(after_id: int = 0, limit: int = 200, category_id: Optional[int]
 @router.get("/agent/stream")
 async def agent_stream(request: Request, after_id: int = 0):
     """SSE: `event: state` (agent_state+control+budget, on change) and `event: agent` (each AgentEvent)."""
+    own = own_profile_ids(request)
+
     def poll(last_id: int, with_state: bool):
         with session() as s:
             if last_id < 0:
                 last = s.exec(select(AgentEvent).where(AgentEvent.kind.notin_(['source_scout', 'hub_curator']))
                               .order_by(col(AgentEvent.id).desc())).first()
                 return max(0, (last.id if last else 0) - 30), [], None
-            evs = s.exec(select(AgentEvent).where(AgentEvent.id > last_id, AgentEvent.kind.notin_(['source_scout', 'hub_curator'])).order_by(AgentEvent.id).limit(100)).all()
+            evs = s.exec(select(AgentEvent).where(AgentEvent.id > last_id, AgentEvent.kind.notin_(['source_scout', 'hub_curator']),
+                                                  _event_scope(s, own)).order_by(AgentEvent.id).limit(100)).all()
             st = None
             if with_state:
-                st = status_payload(s)
-                st.pop("queues")
+                st = status_payload(s, queues=False)
             return (evs[-1].id if evs else last_id), evs, st
 
     async def gen():
@@ -168,12 +184,14 @@ def playing(seconds: int = 90):
 
 
 @router.get("/agent/candidates/{cand_id}")
-def candidate_detail(cand_id: int, s: Session = Depends(get_session)):
+def candidate_detail(cand_id: int, request: Request, s: Session = Depends(get_session)):
     from ..models import Video
     from .core import candidate_out
     c = s.get(Candidate, cand_id)
-    if not c:
-        return {"detail": "not found"}
+    own = own_profile_ids(request)
+    cat = s.get(Category, c.category_id) if c else None
+    if not c or (own is not None and (not cat or cat.profile_id not in own)):
+        raise HTTPException(404, "not found")
     v = s.get(Video, c.video_id)
     st = _download_statuses([c.video_id], s).get(c.video_id)
     out = candidate_out(c, v, offline=st == "done", download_status=st)
@@ -291,6 +309,13 @@ def _raise_with_detail(r: httpx.Response) -> None:
     if detail:
         raise ValueError(f"{r.status_code}: {str(detail)[:300]}")
     r.raise_for_status()
+
+
+@router.get("/agent/llm-routes", dependencies=[Depends(require_admin)])
+def llm_routes():
+    """Every kind of model request, its section, label and default endpoint, for the routing settings."""
+    from ..llm import TASKS
+    return {"tasks": [{"key": k, "section": sec, "label": label, "default": role} for k, (sec, label, role) in TASKS.items()]}
 
 
 @router.post("/agent/llm-test", dependencies=[Depends(require_admin)])

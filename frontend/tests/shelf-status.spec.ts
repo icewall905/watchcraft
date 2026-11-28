@@ -23,6 +23,11 @@ test('Today shows article and video shelf freshness with links and detail', asyn
 	await page.setViewportSize({ width: 390, height: 844 });
 	await freshPage(page, '/today');
 	const panel = page.getByRole('region', { name: 'Your shelf' });
+	// Folded by default: a one-line glance, details on demand.
+	await expect(panel.getByText('74 articles · 46 videos')).toBeVisible();
+	await expect(panel.getByText('12 new in 24 hours · 31 publishers')).toBeHidden();
+	await panel.getByRole('button', { name: 'Your shelf' }).click();
+	await expect(panel.getByRole('button', { name: 'Your shelf' })).toHaveAttribute('aria-expanded', 'true');
 	await expect(panel.getByText('74', { exact: true })).toBeVisible();
 	await expect(panel.getByText('12 new in 24 hours · 31 publishers')).toBeVisible();
 	await expect(panel.getByText('46', { exact: true })).toBeVisible();
@@ -37,12 +42,18 @@ test('Today shows article and video shelf freshness with links and detail', asyn
 	await expect(panel.getByText('🪵 Woodworking')).toBeVisible();
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 	await page.screenshot({ path: '/tmp/wc-shelf-390.png', fullPage: true });
+	await page.setViewportSize({ width: 1440, height: 900 });
+	const box = await panel.boundingBox();
+	const heading = await page.getByRole('heading', { level: 1 }).boundingBox();
+	expect(box!.x).toBeGreaterThan(heading!.x + 400); // sits beside the masthead on wide screens
+	await page.screenshot({ path: '/tmp/wc-shelf-1440.png' });
 });
 
 test('shelf request failure stays local and offers a retry', async ({ page }) => {
 	await mocks(page, 503);
 	await freshPage(page, '/today');
 	await expect(page.getByRole('heading', { name: 'Your shelf' })).toBeVisible();
+	await page.getByRole('button', { name: 'Your shelf' }).click();
 	await expect(page.getByText('The shelf overview is unavailable right now.')).toBeVisible();
 	await expect(page.getByText('Your first edition is taking shape')).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Try again' })).toHaveCount(1);
@@ -71,6 +82,7 @@ test('shelf data clears on profile change and an old delayed response cannot ret
 	try {
 		await freshPage(page, '/today');
 		const panel = page.getByRole('region', { name: 'Your shelf' });
+		await panel.getByRole('button', { name: 'Your shelf' }).click();
 		await expect(panel.getByText('74', { exact: true })).toBeVisible();
 		blockOriginal = true;
 		await page.evaluate(() => window.dispatchEvent(new Event('focus')));

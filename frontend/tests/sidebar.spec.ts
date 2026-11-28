@@ -8,7 +8,7 @@ test('desktop sidebar, device preference, and TV remote drawer', async ({ page }
 	// Workshop (curators, sources, …) starts collapsed unless it holds the current page.
 	await expect(navigation.getByRole('link', { name: 'Curators', exact: true })).toHaveCount(0);
 	await navigation.getByRole('button', { name: 'Workshop', exact: true }).click();
-	for (const name of ['TV', 'Today', 'Discover', 'News', 'Knowledge', 'Library', 'Briefings', 'Alerts', 'Research', 'Curators', 'Sources'])
+	for (const name of ['The Screen', 'The Front Page', 'The Finds', 'The Wire', 'The Almanac', 'The Stacks', 'The Dispatch', 'Alerts', 'The Study', 'Curators', 'Sources'])
 		await expect(navigation.getByRole('link', { name, exact: true })).toBeVisible();
 	const collapse = page.getByRole('button', { name: 'Collapse sidebar', exact: true });
 	await expect(collapse).toHaveText('<<');
@@ -17,7 +17,7 @@ test('desktop sidebar, device preference, and TV remote drawer', async ({ page }
 	const expand = page.getByRole('button', { name: 'Expand sidebar', exact: true });
 	await expect(expand).toHaveText('>>');
 	await expect(page.locator('aside.desktop')).toHaveClass(/compact/);
-	await expect(navigation.getByRole('link', { name: 'News', exact: true })).toBeVisible();
+	await expect(navigation.getByRole('link', { name: 'The Wire', exact: true })).toBeVisible();
 	await expect(navigation.locator('.lbl')).toHaveCount(0);
 	await page.screenshot({ path: '/tmp/wc-sidebar-compact.png' });
 	await page.reload();
@@ -51,8 +51,8 @@ test('desktop sidebar, device preference, and TV remote drawer', async ({ page }
 	await expect(toggle).toHaveCSS('position', 'fixed');
 	await toggle.click();
 	// The TV drawer stays minimal; Today is the landing point for curated reading.
-	await expect(navigation.getByRole('link', { name: 'News' })).toHaveCount(0);
-	await navigation.getByRole('link', { name: 'Hub' }).click();
+	await expect(navigation.getByRole('link', { name: 'The Wire' })).toHaveCount(0);
+	await navigation.getByRole('link', { name: 'Today' }).click();
 	await expect(page).toHaveURL(/\/today$/);
 	await expect(navigation).toHaveCount(0);
 	await page.goto('/settings?tab=appearance');

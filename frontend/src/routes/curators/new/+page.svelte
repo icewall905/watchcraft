@@ -31,7 +31,7 @@
 	});
 
 	async function draft() {
-		if (!goal.trim()) { error = 'Describe what you would like WatchCraft to find.'; return; }
+		if (!goal.trim()) { error = 'Describe what you would like The Hub to find.'; return; }
 		drafting = true; error = '';
 		try {
 			const d = await hub.draft(goal.trim(), 'watch');
@@ -52,13 +52,13 @@
 	}
 </script>
 
-<svelte:head><title>New curator · WatchCraft</title></svelte:head>
+<svelte:head><title>New curator · The Hub</title></svelte:head>
 
 <div class="page narrow workshop-page">
 	<a class="small muted" href="/curators" use:focusable>← Curators</a>
 	{#if !proposal}
-		<h1>What would you like WatchCraft to find?</h1>
-		<p class="muted">Say it the way you would to a research assistant. WatchCraft proposes sources, filters and a schedule. Nothing runs until you approve.</p>
+		<h1>What would you like The Hub to find?</h1>
+		<p class="muted">Say it the way you would to a research assistant. The Hub proposes sources, filters and a schedule. Nothing runs until you approve.</p>
 		<form class="stack" onsubmit={(e) => { e.preventDefault(); draft(); }}>
 			<TextField multiline rows={4} label="Your goal" bind:value={goal} placeholder="Tell me when new open-source AI model releases come out, and security advisories for nginx." autofocus />
 			{#if error}<ErrorBox message={error} />{/if}

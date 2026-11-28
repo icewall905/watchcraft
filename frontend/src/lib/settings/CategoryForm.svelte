@@ -13,8 +13,10 @@
 	import EmojiPicker from '$lib/components/EmojiPicker.svelte';
 	import ColorPicker from '$lib/components/ColorPicker.svelte';
 
-	let { category = null, preset = null, kind = 'playlist', onDone }: { kind?: 'playlist' | 'shorts'; category?: Category | null; preset?: Partial<CategoryInput> | null; onDone: (saved?: Category) => void } = $props();
+	let { category = null, preset = null, kind = 'playlist', onDone }: { kind?: 'playlist' | 'shorts' | 'manual'; category?: Category | null; preset?: Partial<CategoryInput> | null; onDone: (saved?: Category) => void } = $props();
 
+	// Manual lists are hand-picked: no brief, no AI settings.
+	const manual = $derived((category?.kind ?? kind) === 'manual');
 	const DEFAULTS: CategoryInput = defaults();
 	function defaults(): CategoryInput { return {
 		kind,
@@ -74,7 +76,7 @@
 		confirmBrief = false;
 		autofilling = 'brief';
 		try {
-			const result = await api.autofillBrief(f.name.trim(), kind);
+			const result = await api.autofillBrief(f.name.trim(), kind === 'shorts' ? 'shorts' : 'playlist');
 			f.brief = result.brief;
 			briefFromAi = true;
 			toast.success('Brief written. Edit it to taste.');
@@ -96,13 +98,13 @@
 
 	async function save() {
 		if (!f.name.trim()) return toast.warn(`Give the ${kind === 'shorts' ? 'feed' : 'playlist'} a name.`);
-		if (!f.brief.trim() && (category || !playlistUrl.trim())) return toast.warn('Describe what you want in the brief. The AI uses it for every decision.');
+		if (!manual && !f.brief.trim() && (category || !playlistUrl.trim())) return toast.warn('Describe what you want in the brief. The AI uses it for every decision.');
 		busy = true;
 		const body = { ...$state.snapshot(f), name: f.name.trim(), min_duration_s: minMin * (kind === 'shorts' ? 1 : 60), max_duration_s: Math.max(minMin, maxMin) * (kind === 'shorts' ? 1 : 60) };
 		try {
 			const saved = category ? await api.updateCategory(category.id, body) : await api.createCategory({ ...body, playlist_url: playlistUrl.trim() || undefined });
 			await session.loadCategories();
-			toast.success(category ? `Saved ${saved.name}` : `Created ${saved.name}. The AI will start looking soon.`);
+			toast.success(category ? `Saved ${saved.name}` : manual ? `Created ${saved.name}` : `Created ${saved.name}. The AI will start looking soon.`);
 			onDone(saved);
 		} finally {
 			busy = false;
@@ -140,9 +142,10 @@ Simple, fun science for kids 5–9: Mark Rober, cat videos, experiments, space, 
 		<div class="grow"><TextField label="Name" bind:value={f.name} placeholder="e.g. Science for kids" autofocus id="cat-name" /></div>
 	</div>
 
-    {#if !category}
+    {#if !category && !manual}
         <TextField label="Initial playlist URL (optional)" bind:value={playlistUrl} placeholder="https://www.youtube.com/playlist?list=PL…" hint="Import up to 200 starting videos and let AI generate the prompt from all of them. Imported videos skip judging; future replacements use your Keep ready setting. Public playlists work without cookies; private playlists need cookies in Settings → Cookies." id="cat-playlist" />
     {/if}
+	{#if !manual}
 	<div class="autofill-field">
 		<TextField multiline rows={7} label="Brief for the AI" hint={playlistUrl.trim() && !category ? "Optional extra preferences to add to the generated prompt." : "The most important field. Say what you want, what to avoid, and who is watching."} bind:value={f.brief} oninput={() => { briefFromAi = false; confirmBrief = false; }} placeholder={BRIEF_PLACEHOLDER} id="cat-brief" />
 		<button class="btn autofill" disabled={!!autofilling} use:focusable={{ group: 'cat-autofill', onSelect: autofillBrief }} aria-label="Write the brief with AI">{autofilling === 'brief' ? 'Generating…' : confirmBrief ? 'Press again: replaces the brief' : '✨ Autofill with AI'}</button>
@@ -178,9 +181,11 @@ Simple, fun science for kids 5–9: Mark Rober, cat videos, experiments, space, 
 
 	<Slider label="How picky" hint="Minimum AI score (0–100) to accept a video. Higher means fewer but better picks." bind:value={f.threshold} min={30} max={95} step={1} format={(v) => `${v}+`} />
 
+	{/if}
+
 	<div class="two">
-		<Toggle label="Kid-safe" hint="Reject anything the AI considers unsuitable for children, whatever the score." bind:checked={f.kid_safe} />
-		<Toggle label="Enabled" hint={kind === 'shorts' ? "Disabled feeds stop collecting new clips; stored clips stay available." : "Disabled playlists are hidden from Home and the AI ignores them."} bind:checked={f.enabled} />
+		{#if !manual}<Toggle label="Kid-safe" hint="Reject anything the AI considers unsuitable for children, whatever the score." bind:checked={f.kid_safe} />{/if}
+		<Toggle label="Enabled" hint={kind === 'shorts' ? "Disabled feeds stop collecting new clips; stored clips stay available." : manual ? "Disabled lists are hidden from Home." : "Disabled playlists are hidden from Home and the AI ignores them."} bind:checked={f.enabled} />
 	</div>
 
 	<div class="field"><span class="label">Emoji</span><EmojiPicker bind:value={f.emoji} group="cat-emoji" /></div>

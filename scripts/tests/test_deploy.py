@@ -31,7 +31,7 @@ class BackupTests(unittest.TestCase):
         (self.data / '.secret').write_text('signing-secret')
         (self.media / 'video.mp4').write_bytes(b'video')
         self.config = self.root / '.env'
-        self.config.write_text('BT_PASSWORD=original\nBT_PORT=7777\n')
+        self.config.write_text('BT_AUTH=accounts\nBT_PORT=7777\n')
 
     def test_full_backup_roundtrip_and_configuration_preserved(self):
         archive = deploy.backup(self.root / 'backups', self.data, self.media, self.config, True)
@@ -39,7 +39,7 @@ class BackupTests(unittest.TestCase):
         self.assertEqual((self.target_data / 'bt.sqlite3').read_bytes(), b'example database bytes')
         self.assertEqual((self.target_data / '.secret').read_text(), 'signing-secret')
         self.assertEqual((self.target_media / 'video.mp4').read_bytes(), b'video')
-        self.assertEqual(self.config.read_text(), 'BT_PASSWORD=original\nBT_PORT=7777\n')
+        self.assertEqual(self.config.read_text(), 'BT_AUTH=accounts\nBT_PORT=7777\n')
         self.assertTrue(Path(str(archive) + '.configuration.env').is_file())
 
     def test_data_only_backup(self):
@@ -78,7 +78,7 @@ class BackupTests(unittest.TestCase):
 
     def test_local_pin_reset_only_changes_the_selected_profile(self):
         database = self.root / 'bt.sqlite3'
-        with sqlite3.connect(database) as connection:
+        with contextlib.closing(sqlite3.connect(database)) as connection, connection:
             connection.execute('CREATE TABLE profile (id INTEGER PRIMARY KEY, name TEXT)')
             connection.execute('CREATE TABLE setting (key TEXT PRIMARY KEY, value TEXT)')
             connection.execute("INSERT INTO profile VALUES (1, 'Family')")
@@ -86,7 +86,7 @@ class BackupTests(unittest.TestCase):
             connection.execute("INSERT INTO setting VALUES ('profile_pin_1', 'first-hash')")
             connection.execute("INSERT INTO setting VALUES ('profile_pin_2', 'second-hash')")
         deploy.profile_pin(self.root, 2)
-        with sqlite3.connect(database) as connection:
+        with contextlib.closing(sqlite3.connect(database)) as connection, connection:
             self.assertEqual(connection.execute('SELECT key FROM setting').fetchall(), [('profile_pin_1',)])
         with self.assertRaisesRegex(ValueError, 'No profile'):
             deploy.profile_pin(self.root, 999)
@@ -97,7 +97,7 @@ class BackupTests(unittest.TestCase):
 
     def test_parent_pin_recovery_preserves_child_protection(self):
         database = self.root / 'bt.sqlite3'
-        with sqlite3.connect(database) as connection:
+        with contextlib.closing(sqlite3.connect(database)) as connection, connection:
             connection.execute('CREATE TABLE profile (id INTEGER PRIMARY KEY, name TEXT, role TEXT)')
             connection.execute('CREATE TABLE setting (key TEXT PRIMARY KEY, value TEXT)')
             connection.execute("INSERT INTO profile VALUES (1, 'Parent', 'admin'), (2, 'Child', 'child')")
@@ -106,7 +106,7 @@ class BackupTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             deploy.profile_pin(self.root, 1)
         pin = re.search(r'PIN reset to: ([0-9]{8})', output.getvalue()).group(1)
-        with sqlite3.connect(database) as connection:
+        with contextlib.closing(sqlite3.connect(database)) as connection, connection:
             record = json.loads(connection.execute("SELECT value FROM setting WHERE key='profile_pin_1'").fetchone()[0])
             self.assertEqual(record['hash'], hashlib.pbkdf2_hmac('sha256', pin.encode(), bytes.fromhex(record['salt']), 260_000).hex())
 
@@ -141,23 +141,23 @@ exit 0
         return subprocess.run(['bash', str(self.root / 'setup.sh')], input=inputs, text=True, capture_output=True, env={**self.env, **env})
 
     def test_first_run_preserves_special_characters_and_checks_readiness(self):
-        password = "my $pass#word's"
-        result = self.run_setup(f"./app data\n./video $folder\nwrong\n7777\ny\n{password}\n{password}\n")
+        result = self.run_setup("./app data\n./video $folder\nwrong\n7777\n")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn('http://localhost:7777', result.stdout)
         config = (self.root / '.env').read_text()
-        self.assertIn('BT_PASSWORD="my $$pass#word\'s"', config)
+        self.assertIn('BT_AUTH=accounts', config)
+        self.assertNotIn('BT_PASSWORD', config)
         self.assertIn('video $$folder', config)
-        self.assertNotIn(password, result.stdout)
+        self.assertIn('accounts_cli invite', result.stdout)
         self.assertIn('compose up -d --wait --wait-timeout 240', (self.root / 'docker.log').read_text())
         rerun = self.run_setup()
         self.assertEqual(rerun.returncode, 0, rerun.stderr)
         self.assertEqual(config, (self.root / '.env').read_text())
 
-    def test_shared_login_is_optional_and_off_by_default(self):
-        result = self.run_setup('\n\n\n\n')
+    def test_defaults_use_accounts_sign_in(self):
+        result = self.run_setup('\n\n\n')
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn('BT_PASSWORD=""', (self.root / '.env').read_text())
+        self.assertIn('BT_AUTH=accounts', (self.root / '.env').read_text())
         self.assertNotIn('generated password', result.stdout)
 
     def test_startup_failure_does_not_claim_ready(self):

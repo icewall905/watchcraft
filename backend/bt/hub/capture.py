@@ -3,12 +3,13 @@ import json
 import logging
 import subprocess
 import time
+from urllib.parse import urlsplit
 
 from sqlalchemy import func, text, update, or_
 from sqlmodel import select
 
 from .. import curation
-from ..access import hub_allowed
+from ..access import hub_worker_allowed
 from ..db import get_settings, session
 from ..downloader.service import VID_RE
 from ..models import Download, Profile, Video
@@ -29,6 +30,72 @@ DOCUMENT_TYPES = ('application/pdf',)
 VIDEO_TYPES = ('video/mp4', 'video/webm')
 VIDEO_MAX_BYTES = 25_000_000
 VIDEO_MAX_SECONDS = 180
+
+
+def _captured_page_identity(item_type, author, publisher, published_at, page, fetched_url,
+                            *, social_post=False):
+    """Return conservative identity updates from a successfully read HTML page.
+
+    Capture must not turn a social post (including one with a linked article) into
+    the linked publisher's item.  For ordinary items, structured article/news
+    evidence may promote a generic web discovery; existing identity values win.
+    """
+    if social_post or not isinstance(page, dict):
+        return item_type, author, publisher, published_at, False
+    page_type = page.get('type')
+    promoted = item_type == 'web' and page_type in ('article', 'news')
+    new_type = page_type if promoted else item_type
+    new_author = author or (page.get('author') or '')
+    new_published = published_at if published_at is not None else page.get('published_at')
+    new_publisher = publisher or (page.get('publisher') or '')
+    # A hostname is a useful, stable display fallback only once the page has
+    # positively identified itself as an article/news page.
+    if not new_publisher and promoted:
+        host = (urlsplit(fetched_url or '').hostname or '').lower()
+        if host.startswith('www.'):
+            host = host[4:]
+        new_publisher = host
+    return new_type, new_author, new_publisher, new_published, promoted
+
+
+def merge_page_identity(s, item, page_identity, *, social_post=False, source='capture'):
+    """Merge a page's identity into a freshly loaded item; return True when it was promoted.
+
+    Existing type, author, publisher and date win. A generic web item that was
+    checked records the result, so the historical upgrade pass does not refetch it.
+    """
+    page_type, page_author, page_publisher, page_published, _ = page_identity
+    was_type = item.type
+    if not social_post and item.type == 'web' and page_type in ('article', 'news'):
+        item.type = page_type
+    item.author = item.author or page_author
+    item.publisher = item.publisher or page_publisher
+    if item.published_at is None:
+        item.published_at = page_published
+    promoted = was_type == 'web' and item.type in ('article', 'news')
+    if was_type == 'web' and not social_post:
+        item.meta = {**(item.meta or {}), 'article_probe': {
+            'at': time.time(), 'by': source, 'result': item.type if promoted else 'not_article'}}
+    s.add(item)
+    return promoted
+
+
+def promotion_profiles(s, iid):
+    """Adult, hub-allowed profiles that can see an item whose type was just promoted."""
+    pids = set(s.exec(select(CuratorDiscovery.profile_id).where(CuratorDiscovery.item_id == iid)).all())
+    pids.update(s.exec(select(ItemState.profile_id).where(ItemState.item_id == iid)).all())
+    return sorted(pid for pid in pids if (profile := s.get(Profile, pid))
+                  and profile.role in ('adult', 'admin', 'child') and hub_worker_allowed(s, pid))
+
+
+def queue_master(pids, iid):
+    """Queue the normal profile-scoped master pass; it rejudges without touching manual verdicts."""
+    try:
+        from .master import schedule as master
+        for pid in pids:
+            master.mark(pid)
+    except Exception:  # noqa: BLE001 — capture success must survive queue issues
+        log.exception('could not queue master curator after article promotion for %s', iid)
 
 
 def validate_video(data, mime):
@@ -77,24 +144,24 @@ def visible(s, pid, iid):
 
 
 def refill(limit=50):
-    """Backfill without duplicating jobs; child and deleted profiles are excluded."""
+    """Backfill without duplicating jobs; deleted profiles are excluded; child profiles capture in kid-safe mode."""
     with session() as s:
         s.exec(text('BEGIN IMMEDIATE'))
         rows = s.exec(select(CuratorDiscovery.profile_id, CuratorDiscovery.item_id)
                       .join(Profile, Profile.id == CuratorDiscovery.profile_id)
-                      .where(Profile.role.in_(('adult', 'admin')))
+                      .where(Profile.role.in_(('adult', 'admin', 'child')))
                       .where(~select(CaptureJob.item_id).where(CaptureJob.profile_id == CuratorDiscovery.profile_id,
                               CaptureJob.item_id == CuratorDiscovery.item_id).exists())
                       .distinct().order_by(CuratorDiscovery.item_id).limit(limit)).all()
         for pid, iid in rows:
-            if hub_allowed(s, pid): enqueue(s, pid, iid)
+            if hub_worker_allowed(s, pid): enqueue(s, pid, iid)
         states = s.exec(select(ItemState.profile_id, ItemState.item_id)
                         .join(Profile, Profile.id == ItemState.profile_id)
-                        .where(Profile.role.in_(('adult', 'admin')))
+                        .where(Profile.role.in_(('adult', 'admin', 'child')))
                         .where(~select(CaptureJob.item_id).where(CaptureJob.profile_id == ItemState.profile_id,
                                CaptureJob.item_id == ItemState.item_id).exists()).limit(limit)).all()
         for pid, iid in states:
-            if hub_allowed(s, pid) and not s.get(CaptureJob, (pid, iid)): enqueue(s, pid, iid)
+            if hub_worker_allowed(s, pid) and not s.get(CaptureJob, (pid, iid)): enqueue(s, pid, iid)
         s.commit()
 
 
@@ -109,11 +176,94 @@ def _valid_asset(kind, mime, data):
             (mime == 'image/webp' and data.startswith(b'RIFF') and data[8:12] == b'WEBP'))
 
 
+YTDLP_CLIP_HOSTS = ('tiktok.com', 'www.tiktok.com')
+YOUTUBE_CLIP_HOSTS = ('www.youtube.com', 'youtube.com', 'm.youtube.com')
+YTDLP_PROVIDERS = ('tiktok', 'youtube_shorts')  # only these providers' clips may use yt-dlp
+YT_CLIPS_PER_HOUR = 40     # YouTube Shorts saved per hour: clips share the downloader's cookies and address
+YT_CLIP_BLOCK_S = 3600     # after a bot check, clips rest as long as the downloader does
+_yt_clips: list[float] = []
+_yt_clip_block = [0.0]
+
+
+def _youtube_clip_gate() -> None:
+    """Refuse a YouTube clip while YouTube asked us to slow down (downloader backoff or our own bot check)
+    or the hourly clip budget is spent. The capture job fails softly and is retried later."""
+    from datetime import datetime, timezone
+    from ..db import get_agent_state
+    now_t = time.time()
+    until = get_agent_state().get('backoff_until')
+    try:
+        backoff = datetime.fromisoformat(str(until).replace('Z', '+00:00')).timestamp() if until else 0
+    except ValueError:
+        backoff = 0
+    if max(backoff, _yt_clip_block[0]) > now_t:
+        raise ValueError('YouTube asked us to slow down; the clip will be saved later.')
+    _yt_clips[:] = [t for t in _yt_clips if now_t - t < 3600]
+    if len(_yt_clips) >= YT_CLIPS_PER_HOUR:
+        raise ValueError('Hourly YouTube clip budget reached; the clip will be saved later.')
+    _yt_clips.append(now_t)
+
+
+def fetch_ytdlp_clip(url: str) -> bytes:
+    """Download one short clip (TikTok, YouTube Short) through yt-dlp as a single mp4, within the meme limits.
+
+    Only allow-listed hosts: yt-dlp follows its own redirects outside curation.fetch's checks. YouTube goes
+    through the downloader's options (cookies, proxy, PO tokens, H.264 mp4), capped at 720p to fit the size limit."""
+    import re as _re
+    import tempfile
+    import yt_dlp
+    from pathlib import Path
+    parts = urlsplit(url)
+    host = (parts.hostname or '').lower()
+    youtube = host in YOUTUBE_CLIP_HOSTS
+    if parts.scheme != 'https' or not (host in YTDLP_CLIP_HOSTS or youtube):
+        raise ValueError('Clip host is not supported.')
+    if youtube and not _re.fullmatch(r'/shorts/[A-Za-z0-9_-]{11}', parts.path):
+        raise ValueError('Only YouTube Shorts are saved as clips.')
+    with tempfile.TemporaryDirectory(prefix='wc-clip-') as tmp:
+        limits = {'max_filesize': VIDEO_MAX_BYTES,
+                  'match_filter': yt_dlp.utils.match_filter_func(f'duration <=? {VIDEO_MAX_SECONDS}')}
+        if youtube:
+            from .. import ytdl
+            _youtube_clip_gate()
+            # The downloader's own options: PO tokens, cookies, proxy, H.264/AAC mp4 (plays on every TV).
+            # 1280 tall is 720p for a vertical Short (yt-dlp reports the real pixel height).
+            opts = {**ytdl.download_opts(tmp, 1280), **limits, 'outtmpl': f'{tmp}/clip.%(ext)s',
+                    'allowed_extractors': ['^Youtube$'], 'continuedl': False}
+        else:
+            opts = {'quiet': True, 'no_warnings': True, 'noprogress': True, 'noplaylist': True,
+                    'socket_timeout': 30, 'retries': 2,
+                    'allowed_extractors': ['^TikTok$'],  # never the generic extractor, which follows embeds anywhere
+                    'outtmpl': f'{tmp}/clip.%(ext)s', 'format': 'b[ext=mp4][height<=1080]/b[ext=mp4]/bv*[ext=mp4]+ba/b',
+                    'merge_output_format': 'mp4', **limits}
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.download([url])
+        except Exception as e:  # noqa: BLE001
+            if youtube:
+                from .. import ytdl
+                from ..db import log_yt_request
+                err = ytdl.classify(e)
+                if isinstance(err, ytdl.YtBlocked):
+                    _yt_clip_block[0] = time.time() + YT_CLIP_BLOCK_S
+                log_yt_request('download', 'worker', False, f'hub clip {url}: {type(err).__name__}: {str(e)[:300]}')
+            raise ValueError(f'Clip download failed: {str(e)[:160]}') from e
+        clip = Path(tmp) / 'clip.mp4'  # the merged file; a lone video part (audio failed) is not a clip
+        if not clip.is_file():
+            raise ValueError('Clip was too long, too large or unavailable.')
+        if clip.stat().st_size > VIDEO_MAX_BYTES:
+            raise ValueError('Meme video exceeds the 25 MB limit.')
+        if youtube:
+            from ..db import log_yt_request
+            log_yt_request('download', 'worker', True, f'hub clip {url}')
+        return clip.read_bytes()
+
+
 def save_asset(pid, iid, kind, url, data, mime):
     if not _valid_asset(kind, mime, data): raise ValueError('Asset does not match its advertised format.')
     with session() as s:
         s.exec(text('BEGIN IMMEDIATE'))
-        if not hub_allowed(s, pid) or not visible(s, pid, iid):
+        if not hub_worker_allowed(s, pid) or not visible(s, pid, iid):
             raise ValueError('Profile no longer has access to this item.')
         old = s.get(CapturedAsset, (iid, kind))
         used = s.exec(select(func.coalesce(func.sum(CapturedAsset.size), 0))).one()
@@ -171,11 +321,12 @@ def run(pid, iid, lease):
     from .engine import index, _safe_error
     with session() as s:
         job, item = s.get(CaptureJob, (pid, iid)), s.get(ContentItem, iid)
-        if not job or job.lease != lease or not item or not hub_allowed(s, pid) or not visible(s, pid, iid):
+        if not job or job.lease != lease or not item or not hub_worker_allowed(s, pid) or not visible(s, pid, iid):
             return
         url, typ, title, image, body = item.url, item.type, item.title, item.image, item.body
         video_id = str(item.meta.get('video_id', ''))
-        social_post = item.provider in ('mastodon', 'mastodon_trends', 'lemmy') and bool(item.meta.get('social_post', item.provider == 'mastodon'))
+        social_post = (item.provider in ('mastodon', 'mastodon_trends', 'lemmy') and bool(item.meta.get('social_post', item.provider == 'mastodon'))) \
+            or item.provider in (*YTDLP_PROVIDERS, 'reddit_memes')  # the media is the content: no page fetch (YouTube would see our address)
         linked_url = item.meta.get('article_url', '') if item.provider == 'lemmy' and typ in ('news', 'article') else ''
         linked_url = linked_url if isinstance(linked_url, str) and linked_url and linked_url != url else ''
         post_body = item.meta.get('post_body', body) if linked_url else ''
@@ -184,6 +335,7 @@ def run(pid, iid, lease):
         review_only = bool(prior_review and prior_review.backfill and body)
         capture_url = linked_url or url
         meme_media = item.meta.get('media', {}) if typ == 'meme' or social_post else {}
+        clip_via_ytdlp = item.provider in YTDLP_PROVIDERS
         if isinstance(meme_media, dict) and meme_media.get('type') == 'image' and meme_media.get('url'):
             image = meme_media['url']
         # The feed that found this item may carry the whole article even when the page will not.
@@ -192,6 +344,9 @@ def run(pid, iid, lease):
     errors, summary_status = [], 'pending'
     primary_error = ''
     page = None
+    page_identity = None
+    promoted = False
+    promote_profiles = []
     links = []
     has_document = False
     is_pdf = False
@@ -204,7 +359,7 @@ def run(pid, iid, lease):
             pass  # The public API already supplied the post body and attachment metadata.
         elif typ == 'video' and VID_RE.fullmatch(video_id):
             with session() as s:
-                if not hub_allowed(s, pid) or not visible(s, pid, iid): return
+                if not hub_worker_allowed(s, pid) or not visible(s, pid, iid): return
                 video = s.get(Video, video_id)
                 if not video:
                     video = Video(id=video_id)
@@ -243,6 +398,9 @@ def run(pid, iid, lease):
                 truncated = len(body) >= TEXT_LIMIT
                 if not body: raise ValueError('No readable text was found on this page.')
                 image = page.get('image') or image
+                page_identity = _captured_page_identity(
+                    typ, '', '', None, page, final,
+                    social_post=social_post)
     except Exception as e:  # noqa: BLE001
         primary_error = _safe_error(e)
         errors.append(primary_error)
@@ -282,9 +440,13 @@ def run(pid, iid, lease):
         try:
             with session() as s: exists = s.get(CapturedAsset, (iid, 'video')) is not None
             if not exists:
-                data, final, meta = curation.fetch(meme_media['url'], kinds=VIDEO_TYPES,
-                                                   limit=VIDEO_MAX_BYTES, with_metadata=True)
-                save_asset(pid, iid, 'video', final, data, meta['content_type'])
+                if meme_media.get('via') == 'yt-dlp' and clip_via_ytdlp:
+                    data = fetch_ytdlp_clip(meme_media['url'])
+                    save_asset(pid, iid, 'video', meme_media['url'], data, 'video/mp4')
+                else:
+                    data, final, meta = curation.fetch(meme_media['url'], kinds=VIDEO_TYPES,
+                                                       limit=VIDEO_MAX_BYTES, with_metadata=True)
+                    save_asset(pid, iid, 'video', final, data, meta['content_type'])
         except Exception as e:  # noqa: BLE001 — poster and original remain available on failure
             errors.append('Video: ' + _safe_error(e))
     raw_body = body
@@ -298,7 +460,7 @@ def run(pid, iid, lease):
             errors.append('Cleanup: worker review failed; original text retained.')
     summary = ''
     with session() as s:
-        if not hub_allowed(s, pid) or not visible(s, pid, iid): return
+        if not hub_worker_allowed(s, pid) or not visible(s, pid, iid): return
     if body and ai.enabled():
         try:
             summary = full_summary(title, body)
@@ -311,7 +473,7 @@ def run(pid, iid, lease):
     with session() as s:
         s.exec(text('BEGIN IMMEDIATE'))
         job, item = s.get(CaptureJob, (pid, iid)), s.get(ContentItem, iid)
-        if not job or job.lease != lease or not item or not hub_allowed(s, pid) or not visible(s, pid, iid): return
+        if not job or job.lease != lease or not item or not hub_worker_allowed(s, pid) or not visible(s, pid, iid): return
         if page is not None or has_document:
             snapshot = s.get(CapturedPage, iid) or CapturedPage(item_id=iid)
             snapshot.links, snapshot.captured_at = links, time.time()
@@ -322,6 +484,12 @@ def run(pid, iid, lease):
             review.status, review.version = cleanup['status'], article_cleanup.VERSION
             review.removed, review.reviewed_at = cleanup['removed'], time.time()
             s.add(review)
+        if page_identity:
+            # Merge into the freshly loaded row: another scout/profile may have
+            # learned identity while this worker was fetching the page.
+            promoted = merge_page_identity(s, item, page_identity, social_post=social_post)
+            if promoted:
+                promote_profiles = promotion_profiles(s, iid)
         if body:
             item.body = body
             if linked_url: item.meta = {**item.meta, 'post_body': post_body}
@@ -334,17 +502,22 @@ def run(pid, iid, lease):
         else:
             job.status, job.next_run = ('partial' if errors and (body or has_document or typ == 'video') else 'failed') if errors else 'complete', 0
         s.add(job); s.commit()
+    if promoted:
+        # Queue the normal profile-scoped master pass after the item commit.
+        queue_master(promote_profiles, iid)
 
 
 def dispatch():
     """Claim one job across processes; a lost worker's lease becomes due again."""
+    from . import article_upgrade
+    article_upgrade.audit_tick()  # local counts only; independent of the capture switch
     if not get_settings()['local_library'].get('enabled', True): return False
     refill()
     now = time.time()
     if ai.enabled():
         with session() as s:
-            allowed = [p.id for p in s.exec(select(Profile).where(Profile.role.in_(('adult', 'admin')))).all()
-                       if hub_allowed(s, p.id)]
+            allowed = [p.id for p in s.exec(select(Profile).where(Profile.role.in_(('adult', 'admin', 'child')))).all()
+                       if hub_worker_allowed(s, p.id)]
             legacy = s.exec(select(CaptureJob, ContentItem).join(ContentItem, ContentItem.id == CaptureJob.item_id)
                             .where(CaptureJob.profile_id.in_(allowed), or_(
                                    select(CuratorDiscovery.id).where(CuratorDiscovery.profile_id == CaptureJob.profile_id, CuratorDiscovery.item_id == ContentItem.id).exists(),
@@ -353,7 +526,7 @@ def dispatch():
                                    ContentItem.body != '', ~select(ArticleText.item_id).where(ArticleText.item_id == ContentItem.id).exists())
                             .order_by(ContentItem.id.desc()).limit(10)).all()
             for pending, item in legacy:
-                if hub_allowed(s, pending.profile_id) and visible(s, pending.profile_id, item.id) and not s.get(ArticleText, item.id):
+                if hub_worker_allowed(s, pending.profile_id) and visible(s, pending.profile_id, item.id) and not s.get(ArticleText, item.id):
                     s.add(ArticleText(item_id=item.id, raw_body=item.body, backfill=True))
                     enqueue(s, pending.profile_id, item.id, retry=True, cleanup_only=True)
                     pending.next_run = now
@@ -379,8 +552,11 @@ def dispatch():
         job = s.exec(select(CaptureJob).where(((CaptureJob.status == 'queued') & (CaptureJob.next_run <= now)) |
                      ((CaptureJob.status == 'running') & (CaptureJob.lease <= now)))
                      .order_by(CaptureJob.next_run, CaptureJob.updated_at).limit(1)).first()
-        if not job: return False
-        if not hub_allowed(s, job.profile_id) or not visible(s, job.profile_id, job.item_id):
+        if not job:
+            s.rollback()
+            # An idle capture lane may re-check one historical web capture.
+            return article_upgrade.probe_tick()
+        if not hub_worker_allowed(s, job.profile_id) or not visible(s, job.profile_id, job.item_id):
             job.status, job.error = 'failed', 'Profile no longer has access to this item.'
             s.add(job); s.commit(); return False
         job.status, job.lease, job.updated_at = 'running', now + LEASE, now

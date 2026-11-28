@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
-import { resetBackend } from './helpers';
+import { resetBackend, remoteKeys } from './helpers';
+test.beforeEach(async ({ page }) => { await remoteKeys(page); }); // remote-key navigation is TV/opt-in only
 
 // Exercise persistence through the real API; only the external AI reply is simulated.
 test.beforeEach(async ({ request }) => {

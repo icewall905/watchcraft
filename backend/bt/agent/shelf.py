@@ -58,7 +58,7 @@ def snapshot(s: Session, pid: int, now: Optional[datetime | float] = None) -> di
     instant = _instant(now) or datetime.now(timezone.utc)
     fresh_cutoff = instant - timedelta(days=FRESH_DAYS)
     categories = list(s.exec(select(Category).where(
-        Category.profile_id == pid, Category.enabled == True).order_by(  # noqa: E712
+        Category.profile_id == pid, Category.enabled == True, Category.kind != "manual").order_by(  # noqa: E712
             Category.position, Category.id)).all())
     watched = set(s.exec(select(WatchHistory.video_id).where(
         WatchHistory.profile_id == pid, WatchHistory.finished == True)).all())  # noqa: E712

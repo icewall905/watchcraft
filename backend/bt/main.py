@@ -1,17 +1,24 @@
 """FastAPI app: API under /api, SPA (static build) everywhere else."""
 from contextlib import asynccontextmanager, suppress
 import asyncio
+import faulthandler
 import os
+import signal
 
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import auth
-from .hub import api as hub_api, engine as hub_engine, master_api as hub_master_api, sharing as hub_sharing
+from . import auth, parental
+from .hub import api as hub_api, engine as hub_engine, master_api as hub_master_api, sharing as hub_sharing, moodboards, moodboard_imports, board_curator, board_brief, pinterest_live, extension as hub_extension, moodboard_share
+from .hub import frontpage, personal_watch, watcher_push
+from .knowledge import api as knowledge_api
+from .commonroom import api as commonroom_api, expedition as commonroom_expedition, scheduler as commonroom_scheduler
 from .api import agent as agent_api
-from .music import api as music_api
+from .music import api as music_api, service as music_service
+from .jellyfin import api as jellyfin_api
 from .api import core
+from .api import accounts as accounts_api
 from .api import proxy as proxy_api
 from .api import video
 from .api import ytimport
@@ -27,27 +34,61 @@ from .db import init_db
 async def lifespan(_app):
     init_db()
     task = asyncio.create_task(hub_engine.scheduler())
+    fronts = asyncio.create_task(frontpage.scheduler())
+    watches = asyncio.create_task(personal_watch.scheduler())
+    watch_push = asyncio.create_task(watcher_push.scheduler())
+    boards = asyncio.create_task(moodboards.scheduler())
+    moods = asyncio.create_task(music_service.mood_scheduler())
+    imports = asyncio.create_task(moodboard_imports.scheduler())
+    hunts = asyncio.create_task(board_curator.scheduler())
+    room = asyncio.create_task(commonroom_scheduler.scheduler())
+    room_hunts = asyncio.create_task(commonroom_expedition.scheduler())
     subs = (asyncio.create_task(subtitle_jobs.worker())
             if os.environ.get('BT_SUBTITLE_WORKER', '1').lower() in ('1', 'true', 'yes') else None)
     try:
         yield
     finally:
         task.cancel()
+        fronts.cancel()
+        watches.cancel()
+        watch_push.cancel()
+        boards.cancel()
+        moods.cancel()
+        imports.cancel()
+        hunts.cancel()
+        room.cancel()
+        room_hunts.cancel()
         if subs:
             subs.cancel()
-        for running in (task, subs):
+        for running in (task, fronts, watches, watch_push, boards, moods, imports, hunts, room, room_hunts, subs):
             if running is None:
                 continue
             with suppress(asyncio.CancelledError):
                 await running
 
-app = FastAPI(title="WatchCraft", docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=lifespan)
+# `docker kill -s USR1 wc-api` prints every thread's stack to the log: finds what is busy or holding a lock.
+faulthandler.register(signal.SIGUSR1, all_threads=True)
+
+app = FastAPI(title="The Hub", docs_url="/api/docs", openapi_url="/api/openapi.json", lifespan=lifespan,
+              dependencies=[Depends(parental.gate)])
 
 app.add_middleware(auth.AuthMiddleware)
 app.include_router(auth.router, prefix="/api")
 app.include_router(core.router, prefix="/api")
+app.include_router(accounts_api.router, prefix="/api")
 app.include_router(hub_api.router, prefix="/api")
+app.include_router(personal_watch.router, prefix="/api")
+app.include_router(board_brief.router, prefix="/api")  # before moodboards: /learned is not a board id
+app.include_router(moodboards.router, prefix="/api")
+app.include_router(commonroom_api.router, prefix="/api")
+app.include_router(hub_extension.router, prefix="/api")
+app.include_router(pinterest_live.router, prefix="/api")
+app.include_router(moodboard_imports.router, prefix="/api")
+app.include_router(board_curator.router, prefix="/api")
+app.include_router(moodboard_share.router, prefix="/api")
+app.include_router(moodboard_share.public_router, prefix="/api")
 app.include_router(hub_master_api.router, prefix="/api")
+app.include_router(knowledge_api.router, prefix="/api")
 app.include_router(hub_sharing.router, prefix="/api")
 app.include_router(hub_sharing.public_router)
 app.include_router(proxy_api.router, prefix="/api")
@@ -60,6 +101,7 @@ app.include_router(subtitle_api.router, prefix="/api")
 
 app.include_router(agent_api.router, prefix="/api")
 app.include_router(music_api.router, prefix="/api")
+app.include_router(jellyfin_api.router, prefix="/api")
 
 @app.get("/api/health")
 def health():
@@ -77,4 +119,7 @@ if STATIC_DIR.exists():
         if path and f.is_file() and STATIC_DIR.resolve() in f.parents:
             headers = {"Cache-Control": "no-cache"} if path in ("sw.js", "service-worker.js", "manifest.webmanifest") else {}
             return FileResponse(f, headers=headers)
-        return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-cache"})
+        headers = {"Cache-Control": "no-cache"}
+        if path.startswith("s/"):  # Public Mood Board links: the token is in the path.
+            headers.update({"X-Robots-Tag": "noindex, nofollow, noarchive", "Referrer-Policy": "no-referrer"})
+        return FileResponse(STATIC_DIR / "index.html", headers=headers)

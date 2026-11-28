@@ -60,7 +60,7 @@ def test_instance_query_and_public_timeline(monkeypatch):
     calls = []
     monkeypatch.setattr('bt.hub.providers.curation.fetch', lambda url, **kwargs: calls.append(url) or b'[]')
     mastodon('https://social.example', 'linux meme')
-    assert calls == [f'https://social.example/api/v1/timelines/tag/{tag}?limit=30' for tag in ('linuxmeme', 'linux', 'meme')]
+    assert calls == [f'https://social.example/api/v1/timelines/tag/{tag}?limit=30' for tag in ('linuxmeme', 'meme')]
     calls.clear()
     mastodon('https://social.example')
     assert calls == ['https://social.example/api/v1/timelines/public?limit=30']

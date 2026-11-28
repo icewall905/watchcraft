@@ -10,7 +10,8 @@ COOKIES_PATH = DATA_DIR / "cookies.txt"
 MEDIA_DIR = Path(os.environ.get("BT_MEDIA_DIR", DATA_DIR / "media")).resolve()
 STATIC_DIR = Path(os.environ.get("BT_STATIC_DIR", Path(__file__).parent / "static"))
 
-PASSWORD = os.environ.get("BT_PASSWORD", "")
+# "accounts" (default): sign-in required. "open": legacy no-login household, for tests/dev only.
+AUTH_MODE = os.environ.get("BT_AUTH", "accounts").strip().lower() or "accounts"
 
 
 def _secret() -> str:
@@ -44,6 +45,30 @@ DEFAULT_SETTINGS: dict = {
         "brave_api_key": os.environ.get("WC_BRAVE_API_KEY", ""),
         "hub_ai": True,  # use the configured LLM for curator relevance, drafts, reports and briefings
     },
+    # Mood Board image sources. Social sources use public read APIs; Flickr/Tumblr only with a key.
+    "moodboard_sources": {
+        "web": True,  # SearXNG (search settings) with Wikimedia Commons fallback
+        "reddit": True,
+        "bluesky": True,
+        "mastodon": True,
+        "mastodon_instance": os.environ.get("WC_MOODBOARD_MASTODON_INSTANCE", "mastodon.social"),
+        "flickr_api_key": os.environ.get("WC_FLICKR_API_KEY", ""),
+        "tumblr_api_key": os.environ.get("WC_TUMBLR_API_KEY", ""),
+        # GIF platforms (free API keys); used by board runs and by the source curator when set.
+        "giphy_api_key": os.environ.get("WC_GIPHY_API_KEY", ""),
+        "tenor_api_key": os.environ.get("WC_TENOR_API_KEY", ""),
+        # Opt-in: Pinterest's robots.txt and terms forbid scraping. Slow, budgeted, auto-pausing (pinterest_guard).
+        "pinterest": False,
+        "source_timeout_s": 20,
+    },
+    # Common Room social sources. Reddit uses an app-only OAuth "script" app when both values are set
+    # (about 100 requests/min, scores and comments); without them it falls back to public RSS.
+    "commonroom": {
+        "reddit_client_id": os.environ.get("WC_REDDIT_CLIENT_ID", ""),
+        "reddit_secret": os.environ.get("WC_REDDIT_SECRET", ""),
+        "stackexchange_key": os.environ.get("WC_STACKEXCHANGE_KEY", ""),
+        "show_nsfw": False,  # grown-up profiles only; child profiles never see NSFW
+    },
     # Alert delivery. An empty URL or host disables that channel; the password is redacted in responses.
     "notify": {
         "webhook_url": "",
@@ -73,6 +98,8 @@ DEFAULT_SETTINGS: dict = {
         "worker_model": os.environ.get("BT_LLM_WORKER_MODEL", ""),
         "worker_base_url": os.environ.get("BT_LLM_WORKER_BASE_URL", ""),
         "worker_api_key": os.environ.get("BT_LLM_WORKER_API_KEY", ""),
+        # Per-task endpoint choice {task: "worker" | "judge"}; unset tasks use llm.TASKS defaults.
+        "routes": {},
     },
     "throttle": {
         "min_delay_s": 20,
@@ -100,6 +127,10 @@ DEFAULT_SETTINGS: dict = {
         "max_height": 1080,
         "prefer_codec": "avc1",  # avc1 | vp9 | av01
         "autoplay_next": True,
+        "scroll_autoplay_next": True,
+        "autoplay_delay_s": 10,  # countdown before the next suggestion plays (0 = at once)
+        "preview_autoplay": True,  # silent card previews on hover/focus
+        "preview_limit_s": 0,  # pause previews after this many seconds (0 = no limit)
         "default_speed": 1.0,
         "captions_lang": "",
     },

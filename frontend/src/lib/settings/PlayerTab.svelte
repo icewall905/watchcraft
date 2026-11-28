@@ -7,6 +7,7 @@
 	import { focusable } from '$lib/nav';
 	import TextField from '$lib/components/form/TextField.svelte';
 	import Toggle from '$lib/components/form/Toggle.svelte';
+	import Stepper from '$lib/components/form/Stepper.svelte';
 
 	const d = new SettingsDraft('player');
 	const stt = new SettingsDraft('stt');
@@ -47,13 +48,21 @@
 	<Select label="Preferred video format" bind:value={d.value.prefer_codec} options={CODECS} />
 	<Select label="Default speed" bind:value={d.value.default_speed} options={SPEEDS} />
 	<Select label="Captions" hint="Turn captions on automatically in this language when available." bind:value={d.value.captions_lang} options={LANGS} />
-	<Toggle label="Autoplay next" hint="When a video ends, play the next pick from the same playlist after a 10 second countdown." bind:checked={d.value.autoplay_next} />
+	<Toggle label="Autoplay next" hint="When a video ends, play the next pick from the same playlist after a countdown." bind:checked={d.value.autoplay_next} />
+	{#if d.value.autoplay_next}
+		<Stepper label="Autoplay next suggestion after" hint="Countdown before the next video starts. 0 plays it at once." min={0} max={60} step={1} bind:value={d.value.autoplay_delay_s} format={(v) => (v === 0 ? 'At once' : `${v} s`)} />
+	{/if}
+	<Toggle label="Autoplay next in The Scroll" hint="Play the next clip when the current one ends." bind:checked={d.value.scroll_autoplay_next} />
+	<Toggle label="Preview autoplay" hint="Play a silent preview when a thumbnail is hovered or focused." bind:checked={d.value.preview_autoplay} />
+	{#if d.value.preview_autoplay}
+		<Stepper label="Limit preview autoplay to" hint="Pause the preview after this long. 0 keeps it looping." min={0} max={300} step={5} bind:value={d.value.preview_limit_s} format={(v) => (v === 0 ? 'No limit' : `${v} s`)} />
+	{/if}
 	<SaveBar stack={stt.dirty ? 1 : 0} dirty={d.dirty} busy={d.busy} onsave={() => d.save('Player settings saved')} onreset={() => d.reset()} />
 </Section>
 
 <Section title="Generated subtitles" intro="Use your speech recognition server as an alternative to YouTube captions. Generation only starts when you choose it in the player. This connection is also used for voice search.">
 	<Toggle label="Enable generated subtitles" bind:checked={stt.value.subtitles_enabled} />
-	<TextField label="Speech recognition URL" type="url" hint="OpenAI-compatible server base URL, including /v1 when required. The server must be reachable from WatchCraft." placeholder="http://10.0.10.73:8011/v1" bind:value={stt.value.base_url} oninput={() => { if (stt.value.api_key === '********') stt.value.api_key = ''; testResult = ''; }} />
+	<TextField label="Speech recognition URL" type="url" hint="OpenAI-compatible server base URL, including /v1 when required. The server must be reachable from The Hub." placeholder="http://10.0.10.73:8011/v1" bind:value={stt.value.base_url} oninput={() => { if (stt.value.api_key === '********') stt.value.api_key = ''; testResult = ''; }} />
 	<TextField label="Speech recognition model" placeholder="Qwen3-ASR-1.7B" bind:value={stt.value.model} />
 	<TextField label="Speech recognition API key" type="password" hint="Leave empty for local servers. Shown as ******** once saved; leave that value unchanged to keep it." bind:value={stt.value.api_key} />
 	<TextField label="Speech language" hint="Optional language code for voice search and subtitles, such as en or da. Leave empty to detect automatically." bind:value={stt.value.language} />

@@ -95,12 +95,12 @@ def test_hiding_a_language_keeps_it_out_of_the_meme_feed(client):
     from bt.hub.models import MemeExample
     curator = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}])
     ids = _discover(curator, [
-        ('de', ContentItem(url='https://example.org/de', type='meme', title='Ein Witz', summary='')),
-        ('en', ContentItem(url='https://example.org/en', type='meme', title='A joke', summary='')),
+        ('de', ContentItem(url='https://example.org/de', type='meme', title='Ein Witz', summary='', meta={'tags': ['memes']})),
+        ('en', ContentItem(url='https://example.org/en', type='meme', title='A joke', summary='', meta={'tags': ['memes']})),
     ])
     with session() as s:
-        s.add(MemeExample(item_id=ids['de'], language='de'))
-        s.add(MemeExample(item_id=ids['en'], language='en'))
+        s.add(MemeExample(item_id=ids['de'], language='de', has_media=True))
+        s.add(MemeExample(item_id=ids['en'], language='en', has_media=True))
         s.commit()
 
     def feed():
@@ -123,6 +123,14 @@ def test_language_detection_fills_in_what_the_source_left_blank():
     assert detect_language('Ein Witz über Katzen') == 'de'
     assert detect_language('the cat is not happy') == 'en'
     assert detect_language('me timaron con el doblaje') == 'es'
+    assert detect_language('Hvad sker der med min server, jeg har lige købt en ny') == 'da'
+    assert detect_language('Jeg har kjøpt en ny server, hva skal jeg gjøre med den nå etter') == 'no'
+    # Non-Latin scripts name their language.
+    assert detect_language('Привет всем это мой сервер') == 'ru'
+    assert detect_language('Привіт усім це мій сервер') == 'uk'
+    assert detect_language('自宅サーバーを作りました') == 'ja'
+    assert detect_language('我的家庭服务器') == 'zh'
+    assert detect_language('Proxmox 9 на сервере with English') == ''
     # Nothing to go on: stay unknown rather than guess and hide the wrong memes.
     assert detect_language('😂😂😂') == ''
     assert detect_language('ok') == ''
@@ -170,3 +178,42 @@ def test_facets_report_the_hidden_languages(client):
     assert client.get('/api/hub/memes/facets').json()['hidden_languages'] == []
     client.post('/api/hub/memes/languages/de/hide', json={'hidden': True})
     assert client.get('/api/hub/memes/facets').json()['hidden_languages'] == ['de']
+
+
+def test_meme_language_whitelist_shows_only_chosen_languages(client):
+    """Choosing languages keeps every other language out, including ones that only appear later."""
+    from bt.hub.models import MemeExample
+    curator = make_curator(client, [{'provider': 'rss', 'url': 'https://example.org/feed'}])
+    ids = _discover(curator, [
+        (code, ContentItem(url=f'https://example.org/{code or "none"}', type='meme', title=f'Joke {code}', summary='',
+                           meta={'tags': ['memes']})) for code in ('de', 'en', 'fr', '')])
+    with session() as s:
+        for code, iid in ids.items():
+            s.add(MemeExample(item_id=iid, language=code, has_media=True))
+        s.commit()
+
+    def feed():
+        return sorted(i['id'] for i in client.get('/api/hub/memes/items?view=examples').json()['items'])
+
+    assert client.post('/api/hub/memes/languages/en/hide', json={'hidden': True}).status_code == 200
+    r = client.put('/api/hub/memes/languages', json={'languages': ['en', 'DA']}).json()
+    assert r == {'languages': ['en', 'da'], 'hidden_languages': []}  # choosing en clears the earlier hide
+    assert feed() == sorted([ids['en'], ids['']])  # unknown language still shows
+    assert client.get('/api/hub/memes/facets').json()['allowed_languages'] == ['en', 'da']
+    # A thumbs-down hide from the feed takes the language off the chosen list.
+    client.post('/api/hub/memes/languages/da/hide', json={'hidden': True})
+    assert client.get('/api/hub/memes/facets').json()['allowed_languages'] == ['en']
+    assert client.put('/api/hub/memes/languages', json={'languages': []}).status_code == 200
+    assert len(feed()) == 4  # nothing chosen: every language again
+    assert client.put('/api/hub/memes/languages', json={'languages': ['not a code']}).status_code == 422
+
+
+
+def test_master_rules_reject_languages_outside_the_whitelist():
+    from bt.hub.master import rules
+    from bt.hub.models import MemeExample
+    item = ContentItem(id=1, url='https://example.org/x', type='meme', title='x', summary='', meta={})
+    chosen = rules.ProfileRules(allowed_languages={'en'})
+    assert rules.check(item, MemeExample(item_id=1, language='de'), chosen).reject
+    assert not rules.check(item, MemeExample(item_id=1, language='en'), chosen).reject
+    assert not rules.check(item, MemeExample(item_id=1, language=''), chosen).reject

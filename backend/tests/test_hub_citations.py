@@ -66,7 +66,7 @@ def test_social_evidence_context_preserves_coverage_and_attribution(monkeypatch)
 
 def test_cited_summary_includes_captured_source_text(monkeypatch):
     prompts = []
-    def respond(system, user, *args):
+    def respond(system, user, *args, **kw):
         prompts.append(user)
         return {'text': 'A fact [1].'}
     monkeypatch.setattr(ai, '_call', respond)

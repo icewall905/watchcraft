@@ -13,7 +13,7 @@ from ..access import require_hub
 from ..db import session
 from ..hub import ai
 from .. import subtitle_jobs
-from . import dj, lyrics, service, sync, yt
+from . import dj, imports, lyrics, service, sync, yt
 from .models import MusicTrack
 
 router = APIRouter(prefix='/music', tags=['music'], dependencies=[Depends(require_hub)])
@@ -30,7 +30,7 @@ class TrackIn(BaseModel):
 
 
 class FavoriteIn(BaseModel):
-    kind: str = Field(pattern='^(track|artist)$')
+    kind: str = Field(pattern='^(track|artist|dislike|less)$')
     on: bool = True
     track: TrackIn | None = None
     artist: str = Field('', max_length=200)
@@ -46,8 +46,19 @@ class MixIn(BaseModel):
     tracks: list[TrackIn] = Field(default_factory=list, max_length=300)
 
 
+class MoodIn(BaseModel):
+    preset: str = Field(pattern='^(mellow|spooky|romantic|zen|custom)$')
+    description: str = Field('', max_length=300)
+
+
 class MixPatch(BaseModel):
     name: str = Field(min_length=1, max_length=80)
+
+
+class ImportIn(BaseModel):
+    source: str = Field(pattern='^(youtube|music_assistant)$')
+    reference: str = Field(min_length=1, max_length=1000)
+    name: str = Field('', max_length=80)
 
 
 class CopyIn(BaseModel):
@@ -95,7 +106,9 @@ def home(pid: int = Depends(require_hub)):
     with session() as s:
         return {'favorites': service.favorites(s, pid), 'mixes': service.list_mixes(s, pid),
                 'recent': service.recent(s, pid, 16), 'recent_mixes': service.recent_mixes(s, pid), 'ai': ai.enabled(), 'offline': service.offline_summary(s),
-                'curators': [{'key': k, **v} for k, v in dj.CURATORS.items()]}
+                'curators': [{'key': k, **v} for k, v in dj.CURATORS.items()],
+                'moods': [{'key': k, **{f: v[f] for f in ('name', 'emoji', 'description')}}
+                          for k, v in dj.MOODS.items()]}
 
 
 @router.get('/search')
@@ -116,7 +129,9 @@ def radio(video_id: str, pid: int = Depends(require_hub)):
     if not yt.VID_RE.match(video_id):
         raise HTTPException(404, 'bad video id')
     with _yt_errors(), session() as s:
-        return {'tracks': service.decorate(s, pid, yt.radio(video_id))}
+        disliked, less = service.taste(s, pid)
+        tracks = yt.radio(video_id)
+        return {'tracks': service.decorate(s, pid, tracks[:1] + service.prune(tracks[1:], disliked, less))}
 
 
 @router.get('/for-you')
@@ -150,6 +165,28 @@ def play(body: PlayIn, pid: int = Depends(require_hub)):
 def mixes(pid: int = Depends(require_hub)):
     with session() as s:
         return {'mixes': service.list_mixes(s, pid)}
+
+
+@router.get('/import/status')
+def import_status(pid: int = Depends(require_hub)):
+    return {'music_assistant_configured': imports.configured(), 'max_tracks': imports.MAX_TRACKS}
+
+
+@router.post('/import')
+def import_playlist(body: ImportIn, pid: int = Depends(require_hub)):
+    with _yt_errors():
+        result = imports.playlist(body.source, body.reference)
+        with session() as s:
+            m = service.create_mix(s, pid, kind='manual', name=body.name or result['name'], tracks=result['tracks'])
+            return {'mix': service.mix_dict(s, m, pid, with_tracks=True), 'imported': len(result['tracks']),
+                    'skipped': result['skipped'], 'duplicates': result['duplicates'], 'limited': result['limited']}
+
+
+@router.post('/moods')
+def create_mood(body: MoodIn, pid: int = Depends(require_hub)):
+    with _yt_errors(), session() as s:
+        m = service.create_mood(s, pid, body.preset, body.description)
+        return service.mix_dict(s, m, pid, with_tracks=True)
 
 
 @router.post('/mixes')

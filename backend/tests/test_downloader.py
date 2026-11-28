@@ -713,3 +713,67 @@ def test_seen_cleanup_failure_does_not_fail_save(monkeypatch):
         entries = s.exec(select(WatchHistory).where(WatchHistory.video_id == IDS[0])).all()
         assert len(entries) == 1 and entries[0].finished
         assert s.exec(select(Candidate).where(Candidate.video_id == IDS[0])).one().dismissed
+
+
+def test_run_survives_when_the_error_report_hits_the_same_db_lock(monkeypatch):
+    """A locked DB used to fail the iteration and then its error event too, killing the process (B-071)."""
+    from sqlalchemy.exc import OperationalError
+    dl = svc.Downloader(sleep=lambda s: None)
+    calls = []
+
+    def locked():
+        calls.append(1)
+        if len(calls) >= 3:
+            dl.stop.set()
+        raise OperationalError("UPDATE setting", {}, Exception("database is locked"))
+
+    def emit_locked(*a, **k):
+        raise OperationalError("INSERT agentevent", {}, Exception("database is locked"))
+
+    monkeypatch.setattr(dl, "iterate", locked)
+    monkeypatch.setattr(svc, "emit", emit_locked)
+    dl.run()  # returns cleanly on stop instead of raising
+    assert len(calls) == 3
+
+
+def test_long_write_transactions_are_logged_with_their_origin(monkeypatch, caplog):
+    import logging
+    from bt import db
+    monkeypatch.setattr(db, "SLOW_WRITE_S", 0.0)
+    with caplog.at_level(logging.WARNING, logger="bt.db.locks"):
+        save_setting("lock_probe", {"x": 1})
+        with session() as s:
+            s.exec(select(Setting)).all()  # reads alone never count
+            s.commit()
+    held = [r.getMessage() for r in caplog.records if r.name == "bt.db.locks"]
+    assert len(held) == 1 and "until commit" in held[0]
+    assert "INTO setting" in held[0] and "test_downloader.py" in held[0]
+
+
+def test_lock_log_counts_waiting_apart_from_holding(monkeypatch, caplog):
+    import logging
+    import threading
+    import time as _time
+    from sqlalchemy import text
+    from bt import db
+    monkeypatch.setattr(db, "SLOW_WRITE_S", 0.3)
+    holding, release = threading.Event(), threading.Event()
+
+    def holder():
+        with session() as s:
+            s.exec(text("BEGIN IMMEDIATE"))
+            holding.set()
+            release.wait(5)
+            _time.sleep(0.5)
+            s.commit()
+
+    t = threading.Thread(target=holder)
+    with caplog.at_level(logging.WARNING, logger="bt.db.locks"):
+        t.start()
+        holding.wait(5)
+        release.set()
+        save_setting("lock_waiter", {"x": 1})  # waits ~0.5 s, then holds briefly
+        t.join()
+    held = [r.getMessage() for r in caplog.records if r.name == "bt.db.locks"]
+    assert len(held) == 1, held  # only the holder; the waiter's wait is not "holding"
+    assert "BEGIN IMMEDIATE" in held[0] and "test_downloader.py" in held[0]

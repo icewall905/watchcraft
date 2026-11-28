@@ -68,7 +68,7 @@
 	$effect(() => { watching = (c?.interval_hours ?? 0) > 0; });
 </script>
 
-<svelte:head><title>{c?.subject || c?.name || 'Research'} · WatchCraft</title></svelte:head>
+<svelte:head><title>{c?.subject || c?.name || 'Research'} · The Hub</title></svelte:head>
 
 <div class="page reading-page">
 	<a class="small muted" href="/research" use:focusable>← Research</a>

@@ -9,6 +9,7 @@ from sqlmodel import Session, select
 
 from .. import engine
 from ..models import ContentItem, CuratorDiscovery, ItemState
+from ..meme_quality import GENERIC_MEME_TERMS
 from . import prefs
 
 FEATURE_MIN = 60.0   # final score an item needs to be featured (calibrate on real data: V-048)
@@ -67,8 +68,9 @@ def relevance(item: ContentItem, scout: float | None, taste: Taste) -> tuple[flo
     score = 50.0 if scout is None else float(scout)
     reasons = []
     words = set(re.split(r'[^a-z0-9]+', f'{item.title} {item.summary}'.lower()))
-    up = [w for w in taste.liked if w in words]
-    down = [w for w in taste.disliked if w in words]
+    neutral = GENERIC_MEME_TERMS if item.type == 'meme' else ()
+    up = [w for w in taste.liked if w in words and w not in neutral]
+    down = [w for w in taste.disliked if w in words and w not in neutral]
     if up and not down:
         score += TASTE_POINTS
         reasons.append(f'you keep "{up[0]}"')
@@ -91,7 +93,8 @@ def apply_lessons(s: Session, pid: int, item: ContentItem, score: float, reasons
         if lesson.scope and lesson.scope != item.type:
             continue
         keywords = [w for w in re.split(r'[^a-z0-9]+', lesson.text.lower())
-                    if len(w) >= 4 and w not in LESSON_STOP]
+                    if len(w) >= 4 and w not in LESSON_STOP
+                    and (item.type != 'meme' or w not in GENERIC_MEME_TERMS)]
         hits = [w for w in keywords if w in words]
         if not hits:
             continue

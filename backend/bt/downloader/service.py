@@ -731,7 +731,10 @@ class Downloader:
                     delay = self.iterate()
                 except Exception as e:  # never die; surface and retry
                     log.exception("downloader iteration failed")
-                    emit("download", f"⚠️ Downloader error: {e}"[:300], "error")
+                    try:
+                        emit("download", f"⚠️ Downloader error: {e}"[:300], "error")
+                    except Exception:  # the same DB lock often blocks the report too; the log line stands
+                        log.warning("could not record downloader error event", exc_info=True)
                     delay = 30
                 self.wait(delay)
         finally:

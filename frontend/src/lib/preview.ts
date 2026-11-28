@@ -6,6 +6,7 @@
 // time, and the stream is torn down the moment the pointer leaves.
 
 import { api } from './api';
+import { session } from './stores/session.svelte';
 
 const DELAY_MS = 350; // quick sweep-overs must not start fetches
 const FADE_MS = 160;
@@ -61,6 +62,7 @@ function injectCss() {
 interface Run {
 	owner: symbol;
 	el: HTMLVideoElement;
+	limit?: number;
 	player?: { destroy: () => Promise<void> };
 }
 
@@ -72,6 +74,7 @@ function stop(only?: HTMLVideoElement) {
 	const run = current;
 	current = null;
 	if (!run) return;
+	if (run.limit !== undefined) clearTimeout(run.limit);
 	run.el.classList.remove('ready');
 	run.el.classList.add('bye'); // brief fade-out, then teardown so the stream is really aborted
 	window.setTimeout(() => {
@@ -83,9 +86,17 @@ function stop(only?: HTMLVideoElement) {
 	}, FADE_MS + 30);
 }
 
+/** Player settings: previews can be turned off or capped to a few seconds (then they pause). */
+function previewPrefs() {
+	const p = session.settings?.player;
+	return { on: p?.preview_autoplay !== false, limit: Math.max(0, p?.preview_limit_s ?? 0) };
+}
+
 async function start(host: HTMLElement, opts: PreviewOpts, owner: symbol) {
 	if (!opts.id) return;
 	stop(); // at most one preview everywhere at a time
+	const prefs = previewPrefs();
+	if (!prefs.on) return;
 	if (document.visibilityState !== 'visible') return;
 	injectCss();
 
@@ -97,7 +108,15 @@ async function start(host: HTMLElement, opts: PreviewOpts, owner: symbol) {
 	el.playsInline = true;
 	el.setAttribute('aria-hidden', 'true');
 	const run: Run = { el, owner };
-	el.addEventListener('playing', () => el.classList.add('ready'), { once: true });
+	el.addEventListener('playing', () => {
+		el.classList.add('ready');
+		// Cap from the first frame, not from arming, so slow streams still get their seconds.
+		if (prefs.limit > 0) run.limit = window.setTimeout(() => {
+			if (current !== run) return;
+			el.loop = false;
+			el.pause(); // keep the last frame; the stream tears down when focus leaves (buffer goal is 8 s)
+		}, prefs.limit * 1000);
+	}, { once: true });
 	el.addEventListener('error', () => stop(el));
 	// The image may form a stacking context (for example, a hover transform). Insert the
 	// video after it so the frame paints above the still, but before badges and summaries.

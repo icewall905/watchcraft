@@ -309,3 +309,29 @@ def test_delivered_stories_do_not_consume_new_days_feature_quota():
         pipeline.run(s, 1, NOW)
         assert s.get(ItemVerdict, (1, old.id)).tier == 'keep'
         assert s.get(ItemVerdict, (1, new.id)).tier == 'feature'
+
+
+def test_master_pass_reserves_reading_space_when_memes_fill_the_recent_pool(monkeypatch):
+    monkeypatch.setattr(pipeline, 'MAX_ITEMS', 6)
+    with session() as s:
+        article = item(s, age=7200)
+        reading = item(s, type='web', age=7100)
+        foreign = item(s, pid=2, age=1)
+        video = item(s, type='video', age=1)
+        memes = [meme(s, age=100 + n) for n in range(9)]
+        s.commit()
+        selected = pipeline.visible_recent(s, 1, NOW)
+        ids = {row.id for row in selected}
+        assert len(selected) == 6
+        assert {article.id, reading.id} <= ids
+        assert foreign.id not in ids and video.id not in ids
+        assert len(ids.intersection({row.id for row in memes})) == 4
+        assert [row.first_seen for row in selected] == sorted((row.first_seen for row in selected), reverse=True)
+
+
+def test_master_pass_lends_unused_family_space_to_the_newest_items(monkeypatch):
+    monkeypatch.setattr(pipeline, 'MAX_ITEMS', 6)
+    with session() as s:
+        articles = [item(s, age=100 + n) for n in range(9)]
+        s.commit()
+        assert [row.id for row in pipeline.visible_recent(s, 1, NOW)] == [row.id for row in articles[:6]]
