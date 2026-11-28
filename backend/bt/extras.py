@@ -166,7 +166,7 @@ async def _fetch_image(url: str) -> bytes | None:
             return None
         try:
             r = await netfetch.aget(url, headers={"User-Agent": UA}, timeout=httpx.Timeout(10.0, connect=4.0))
-        except httpx.HTTPError as e:
+        except (httpx.HTTPError, OSError) as e:
             log.info("image %s: %s", url, e)
             return None
         if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("location"):

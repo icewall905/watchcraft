@@ -8,6 +8,7 @@ are followed manually for the same reason: every hop has to be re-resolved.
 """
 from __future__ import annotations
 
+import functools
 import socket
 import urllib.parse as up
 
@@ -16,7 +17,7 @@ import httpx
 from .ytdl import pinned_proxy_url, yt_proxy
 
 
-def _socks_get(url: str, *, params, headers, timeout, proxy: str) -> httpx.Response:
+def _socks_get(url: str, *, params, headers, timeout, proxy: str, follow_redirects: bool = True) -> httpx.Response:
     proxy = pinned_proxy_url(proxy)
     p = up.urlparse(url)
     try:
@@ -33,7 +34,7 @@ def _socks_get(url: str, *, params, headers, timeout, proxy: str) -> httpx.Respo
             r = c.get(up.urlunparse(p._replace(netloc=netloc)), params=params, extensions=ext,
                       headers={"Host": host, **(headers or {})})
             params = None  # only the first request carries them
-            if r.status_code in (301, 302, 303, 307, 308) and r.headers.get("location"):
+            if follow_redirects and r.status_code in (301, 302, 303, 307, 308) and r.headers.get("location"):
                 new = up.urljoin(url, r.headers["location"])
                 if new == url:
                     break
@@ -55,17 +56,19 @@ def get(url: str, *, params: dict | None = None, headers: dict | None = None,
     """Blocking GET. Uses the stored throttle proxy unless `proxy` is given (proxy test)."""
     p = proxy if proxy is not None else yt_proxy()
     if p and up.urlparse(p).scheme.startswith("socks"):
-        return _socks_get(url, params=params, headers=headers, timeout=timeout, proxy=p)
+        return _socks_get(url, params=params, headers=headers, timeout=timeout, proxy=p,
+                          follow_redirects=follow_redirects)
     return httpx.get(url, params=params, headers=headers, timeout=timeout,
                      follow_redirects=follow_redirects, proxy=p or None)
 
 
 async def aget(url: str, *, headers: dict | None = None, timeout=20.0) -> httpx.Response:
     """Async GET through the stored proxy (no redirect following: callers do their own hops)."""
-    p = yt_proxy()
+    from starlette.concurrency import run_in_threadpool
+    p = await run_in_threadpool(yt_proxy)  # socks pinning resolves and probes hosts: keep it off the event loop
     if p and up.urlparse(p).scheme.startswith("socks"):
-        from starlette.concurrency import run_in_threadpool
-        return await run_in_threadpool(_socks_get, url, None, headers, timeout, p)
+        return await run_in_threadpool(functools.partial(_socks_get, url, params=None, headers=headers, timeout=timeout,
+                                                         proxy=p, follow_redirects=False))
     async with httpx.AsyncClient(timeout=timeout, headers=headers, follow_redirects=False,
                                  proxy=p or None) as c:
         return await c.get(url)
