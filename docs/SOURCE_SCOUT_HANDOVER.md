@@ -31,6 +31,15 @@
 - Undo: every pick this hid has `hidden_at = 1795681016.0`; `commonroom-picks-before-refresh-20261126.json` holds
   score/fun/kind/wildcard/hidden for all 2107 picks.
 
+## Deployment record — Save to playlist on every card; lists keep watched (`c783361`, 2026-11-28)
+
+- Deployed `8bbbd3e..c783361` (backend + frontend, no `android/`, no schema change): every VideoCard carries
+  "Save to playlist"; manual lists no longer hide finished videos (`_category_items`).
+- Backup `/root/compose/watchcraft-backups/20261128-cards-c783361` (source tarball, online DB copy, config hashes,
+  `rollback.sh` to `release-8bbbd3e`). Prod files matched `8bbbd3e` before rsync.
+- `watchcraft:release-c783361` (`sha256:1a93b56814b6…`), zero restarts; local and public health 200.
+- Pruned `20261126-joy-92643e2`, `daily-20261127T023241Z`, tag `release-92643e2`; `/mnt/nvme_data` 104 GB free.
+
 ## Deployment record — The Scroll picker in the app shell (`8bbbd3e`, 2026-11-27)
 
 - Deployed `7693bf8..8bbbd3e` (frontend only): `3335388` rebased onto origin. Feed picker and empty-feed view render in
