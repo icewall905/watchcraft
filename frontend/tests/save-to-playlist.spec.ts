@@ -39,3 +39,19 @@ test('curated video can be saved to a new manual list, which shows no curation c
 	await expect(page.getByRole('button', { name: /Find more now/ })).toHaveCount(0);
 	await expect(page.getByRole('tablist')).toHaveCount(0);
 });
+
+test('every video card on The Screen has Save to playlist', async ({ page }) => {
+	const sub = { ...video, id: 'savevid0002', title: 'Subscribed upload' };
+	await page.route('**/api/feed/home*', (route) => route.fulfill({ json: [
+		{ kind: 'category', title: 'Science', emoji: '🔬', color: '#88f', category_id: 1, items: [{ video, score: 80, summary: 'fun', category_id: 1 }] },
+		{ kind: 'subscriptions', title: 'New from your channels', emoji: '📺', items: [{ video: sub }] }
+	] }));
+	await freshPage(page, '/tv');
+	for (const title of ['Curated egg drop', 'Subscribed upload']) {
+		const card = page.locator('.card', { has: page.getByRole('link', { name: title }) });
+		await card.hover();
+		await expect(card.getByRole('button', { name: /Save to playlist/ })).toBeVisible();
+	}
+	await page.locator('.card', { has: page.getByRole('link', { name: 'Subscribed upload' }) }).getByRole('button', { name: /Save to playlist/ }).click();
+	await expect(page.getByRole('dialog')).toContainText('Subscribed upload');
+});

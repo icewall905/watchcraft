@@ -110,9 +110,8 @@
 		{:else}
 			<div class="grid-cards" data-nav-center>
 				{#each results as v, i (v.id)}
-					<VideoCard video={v} size="grid" group="results" autofocus={i === 0}>
+					<VideoCard video={v} size="grid" group="results" autofocus={i === 0} actionsGroup="res-acts-{v.id}">
 						{#snippet actions()}
-							<button class="btn add" use:focusable={{ group: `res-acts-${v.id}`, onSelect: () => dialogs.openAddTo(v.id, v.title) }}>＋ Save to playlist…</button>
 							<OfflineButton videoId={v.id} offline={!!v.offline} status={v.download_status ?? null} group="res-acts-{v.id}" />
 						{/snippet}
 					</VideoCard>

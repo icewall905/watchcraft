@@ -517,7 +517,9 @@ def _category_items(s: Session, pid: int, cid: int, status: str = "accepted", in
         q = q.where(Candidate.status == status)
     if status == "accepted":
         q = q.where(Candidate.dismissed == False)  # noqa: E712
-        if not include_watched:
+        # Hand-picked lists keep what was watched: the user saved it to come back to.
+        cat = s.get(Category, cid)
+        if not include_watched and not (cat and cat.kind == "manual"):
             watched = _watched_ids(s, pid)
             if watched:
                 q = q.where(col(Candidate.video_id).not_in(watched))

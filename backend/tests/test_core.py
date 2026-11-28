@@ -664,4 +664,11 @@ def test_manual_list_is_saved_to_but_never_curated(monkeypatch):
     assert row["items"][0]["video"]["title"] == "Saved one"
     with session() as s:
         assert all(n.cat.id != lst["id"] for n in data.category_needs(s, lst["id"]))
+    # Watching it to the end keeps it in the hand-picked list.
+    assert c.post("/api/history", json={"video_id": "manualvid01", "position_s": 600, "duration_s": 600,
+                                        "finished": True}, headers=h).status_code == 200
+    feed = c.get(f"/api/feed/category/{lst['id']}", headers=h).json()
+    assert [i["video"]["id"] for i in feed] == ["manualvid01"]
+    row = next(r for r in c.get("/api/feed/home", headers=h).json() if r.get("category_id") == lst["id"])
+    assert row["items"] and row["items"][0]["video"]["id"] == "manualvid01"
     assert c.delete(f"/api/profiles/{kid['id']}").json()["ok"]

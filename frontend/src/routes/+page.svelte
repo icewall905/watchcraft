@@ -228,6 +228,7 @@
 							id="cw-{v.id}"
 							href="/watch/{v.id}{it.category_id ? `?c=${it.category_id}` : ''}"
 							progress={v.duration_s ? (it.position_s ?? 0) / v.duration_s : 0}
+							actionsGroup="cw-acts-{v.id}"
 						>
 							{#snippet actions()}
 								<OfflineButton videoId={v.id} offline={!!v.offline} status={v.download_status ?? null} group="cw-acts-{v.id}" />
@@ -265,6 +266,7 @@
 								score={it.score}
 								summary={it.summary}
 								color={row.color}
+								actionsGroup="row-acts-{v.id}"
 							>
 								{#snippet actions()}
 									<OfflineButton videoId={v.id} offline={!!v.offline} status={v.download_status ?? null} group="row-acts-{v.id}" />

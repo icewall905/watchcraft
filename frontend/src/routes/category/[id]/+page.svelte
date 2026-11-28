@@ -224,6 +224,8 @@
 							score={c.score}
 							summary={c.summary}
 							color={cat?.color}
+							actionsGroup="cand-acts-{c.id}"
+							save={!manual}
 						>
 							{#snippet actions()}
 								{#if manual}
@@ -232,9 +234,6 @@
 								<button class="btn why" use:focusable={{ group: `cand-acts-${c.id}`, onSelect: () => dialogs.openCandidate(c.id) }}>
 									{c.status === 'rejected' ? 'Why rejected?' : c.status === 'accepted' ? 'Why picked?' : 'Details'}
 								</button>
-								{/if}
-								{#if c.status === 'accepted' && !manual}
-									<button class="btn why" use:focusable={{ group: `cand-acts-${c.id}`, onSelect: () => dialogs.openAddTo(c.video.id, isVideo(c.video) ? c.video.title : undefined) }}>Save to playlist</button>
 								{/if}
 								{#if c.status === 'accepted'}<OfflineButton videoId={c.video.id} offline={isVideo(c.video) && !!c.video.offline} status={isVideo(c.video) ? (c.video.download_status ?? null) : null} group="cand-acts-{c.id}" />{/if}
 									{#if c.status === 'accepted' || c.status === 'found' || c.status === 'enriched'}
