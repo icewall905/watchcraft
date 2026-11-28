@@ -59,6 +59,10 @@ RULES: list[tuple[re.Pattern, tuple | None, tuple[str, ...]]] = [(re.compile(p),
     (r'^/channels/[^/]+(/block)?$', WRITE, ('subscribe',)),
     (r'^/channels$', ANY, ('subscriptions', 'subscribe')),
     (r'^/ytimport/', ANY, ('yt_import',)),
+    # A channel page lists any channel's videos: live search, or (checked in the route) a subscribed channel.
+    (r'^/channel/(?!.*/avatar$)', ANY, ('yt_search', 'subscriptions', 'subscribe')),
+    (r'^/downloads', WRITE, ('playlists_edit',)),  # save offline / remove: a server-side download of any video
+    (r'^/agent/(events|candidates|memory)', ANY, ('curators',)),  # /agent/stream is scoped per child instead
     (r'^/feed/', ANY, ('screen', 'subscriptions')),
     (r'^/shorts', ANY, ('scroll',)),
     (r'^/jellyfin(/|$)', ANY, ('marquee',)),
